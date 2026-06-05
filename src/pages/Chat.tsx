@@ -38,7 +38,8 @@ import {
   Flag,
   FolderKanban,
   Settings2,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Sparkles
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
