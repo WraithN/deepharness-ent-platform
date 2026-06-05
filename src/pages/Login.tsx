@@ -13,7 +13,7 @@ export const Login: React.FC = () => {
   const [currentSlide, setCurrentSlide] = useState(0);
 
   const slogans = [
-    { title: "全栈协同，多端智研", desc: "智能会话、需求分析、代码评审、自动化测试。一站式 AI 研发协作平台，让开发更高效。" },
+    { title: "端云协同 全栈智研", desc: "智能会话、需求分析、代码评审、自动化测试。一站式 AI 研发协作平台，让开发更高效。" },
     { title: "规范统驭，提质增效", desc: "统一团队编码规范和设计规范，自动化检查，减少代码坏味道，提升软件交付质量。" },
     { title: "虾班智守，下班无忧", desc: "全天候监控应用状态与问题，智能告警与分析定位，让您下班后也能高枕无忧。" }
   ];
