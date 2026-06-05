@@ -21,7 +21,7 @@ import {
   FileCode2,
   ChevronRight,
   Wand2,
-  Mic,
+  Plus,
   CheckCircle,
   CheckCircle2,
   UploadCloud,
@@ -254,6 +254,9 @@ export const Chat: React.FC = () => {
 
   // Code jump dialog
   const [codeJumpOpen, setCodeJumpOpen] = useState(false);
+
+  // File Upload
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Input toolbar dropdowns
   const [selectedRepos, setSelectedRepos] = useState<{id: string; name: string}[]>([]);
@@ -1068,8 +1071,20 @@ export const Chat: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground rounded-full hover:bg-muted" onClick={() => toast.success('语音输入')}>
-                  <Mic className="h-4 w-4" />
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  className="hidden" 
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) {
+                      toast.success(`已选择文件: ${e.target.files[0].name}`);
+                      // Reset value so same file can be selected again
+                      e.target.value = '';
+                    }
+                  }} 
+                />
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground rounded-full hover:bg-muted" onClick={() => fileInputRef.current?.click()}>
+                  <Plus className="h-4 w-4" />
                 </Button>
                 <Button size="sm" className="h-9 px-4 rounded-full" disabled={!input.trim()} onClick={handleSend}>
                   <span className="mr-1.5 text-sm">执行</span><Send className="h-3.5 w-3.5" />
