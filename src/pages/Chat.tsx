@@ -7,6 +7,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import {
   MessageSquarePlus,
@@ -88,8 +89,7 @@ const MOCK_MESSAGES = [
     id: 'm4', role: 'assistant',
     content: '没问题，我已经将按钮、高亮链接和部分图标的主色调更新为了深蓝色（#1890ff）。这样看起来更加商务和专业。',
     artifact: { id: 'art_2', type: 'ui', title: 'Login_Page_Design_v2.tsx' }
-  },
-  { id: 'm5', role: 'assistant', type: 'summary_card' }
+  }
 ];
 
 const MOCK_REQUIREMENTS: ReqItem[] = [
@@ -251,6 +251,9 @@ export const Chat: React.FC = () => {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historySearch, setHistorySearch] = useState('');
   const historyRef = useRef<HTMLDivElement>(null);
+
+  // Code jump dialog
+  const [codeJumpOpen, setCodeJumpOpen] = useState(false);
 
   // Input toolbar dropdowns
   const [selectedRepos, setSelectedRepos] = useState<{id: string; name: string}[]>([]);
@@ -861,38 +864,7 @@ export const Chat: React.FC = () => {
                 const isToolUse = (msg as any).type === 'tool_use';
                 const isToolResult = (msg as any).type === 'tool_result';
                 const isSessionEnd = (msg as any).type === 'session_end';
-                const isSummaryCard = (msg as any).type === 'summary_card';
                 const isInfoFlow = isThinking || isToolUse || isToolResult || isSessionEnd;
-
-                if (isSummaryCard) {
-                  return (
-                    <div key={msg.id} className="flex justify-center">
-                      <div className="w-full max-w-2xl p-4 rounded-xl border border-primary/30 bg-gradient-to-br from-primary/5 to-primary/10 soft-shadow">
-                        <div className="flex items-start gap-3">
-                          <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
-                            <CheckCircle2 className="h-5 w-5 text-primary" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <h4 className="text-sm font-semibold text-foreground mb-2">会话任务已完成</h4>
-                            <p className="text-xs text-muted-foreground mb-3">
-                              本次会话中，我为您设计了一个现代化的登录页面，并根据您的反馈调整了主色调为深蓝色（#1890ff）。页面采用卡片式布局，左侧展示品牌形象，右侧为登录表单，支持邮箱、密码输入及第三方登录选项。
-                            </p>
-                            <div className="flex flex-wrap gap-2">
-                              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => { navigate('/code'); toast.success('已跳转到工程代码窗口'); }}>
-                                <Code2 className="h-3 w-3 mr-1.5" />
-                                查看代码
-                              </Button>
-                              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => toast.success('已生成会话复盘报告')}>
-                                <FileText className="h-3 w-3 mr-1.5" />
-                                会话复盘
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }
 
                 return (
                   <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -910,23 +882,26 @@ export const Chat: React.FC = () => {
                       </div>
                     )}
                     <div className={`flex flex-col max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                      {msg.role === 'user' && (msg as any).quotedCard && (
-                        <div className="mb-2 p-2 rounded-xl border border-primary/20 bg-primary/10 flex items-center gap-2 w-fit max-w-full">
-                          {(msg as any).quotedCard.type === 'req' && <ListTodo className="h-4 w-4 text-primary shrink-0" />}
-                          {(msg as any).quotedCard.type === 'defect' && <Bug className="h-4 w-4 text-destructive shrink-0" />}
-                          {(msg as any).quotedCard.type === 'case' && <FlaskConical className="h-4 w-4 text-violet-500 shrink-0" />}
-                          <div className="flex-1 min-w-0 text-left">
-                            <p className="text-xs font-medium text-foreground truncate">{(msg as any).quotedCard.title}</p>
-                            <p className="text-[10px] text-muted-foreground">引用{(msg as any).quotedCard.type === 'req' ? '需求' : (msg as any).quotedCard.type === 'defect' ? '缺陷' : '用例'} · {(msg as any).quotedCard.id}</p>
-                          </div>
-                        </div>
-                      )}
-                      {msg.role === 'user' && (msg as any).selectedRepos && (msg as any).selectedRepos.length > 0 && (
-                        <div className="mb-2 flex flex-wrap gap-2 w-fit max-w-full justify-end">
-                          {(msg as any).selectedRepos.map((repo: any) => (
-                            <div key={repo.id} className="p-1.5 px-3 rounded-full border border-primary/20 bg-primary/10 flex items-center gap-1.5">
-                              <GitBranch className="h-3 w-3 text-primary shrink-0" />
-                              <span className="text-[10px] font-medium text-foreground">{repo.name}</span>
+                      {msg.role === 'user' && ((msg as any).quotedCard || ((msg as any).selectedRepos && (msg as any).selectedRepos.length > 0)) && (
+                        <div className="mb-2 flex flex-wrap gap-2 w-full justify-end">
+                          {(msg as any).quotedCard && (
+                            <div className="flex items-center gap-2 w-56 px-3 py-2 rounded-xl border border-primary/20 bg-primary/10 cursor-pointer hover:bg-primary/20 transition-colors" onClick={() => openDetail((msg as any).quotedCard.type, (msg as any).quotedCard.id)}>
+                              {(msg as any).quotedCard.type === 'req' && <ListTodo className="h-4 w-4 text-primary shrink-0" />}
+                              {(msg as any).quotedCard.type === 'defect' && <Bug className="h-4 w-4 text-destructive shrink-0" />}
+                              {(msg as any).quotedCard.type === 'case' && <FlaskConical className="h-4 w-4 text-violet-500 shrink-0" />}
+                              <div className="flex-1 min-w-0 text-left">
+                                <p className="text-xs font-medium text-foreground truncate">{(msg as any).quotedCard.title}</p>
+                                <p className="text-[10px] text-muted-foreground truncate">引用{(msg as any).quotedCard.type === 'req' ? '需求' : (msg as any).quotedCard.type === 'defect' ? '缺陷' : '用例'} · {(msg as any).quotedCard.id}</p>
+                              </div>
+                            </div>
+                          )}
+                          {(msg as any).selectedRepos?.map((repo: any) => (
+                            <div key={repo.id} className="flex items-center gap-2 w-56 px-3 py-2 rounded-xl border border-primary/20 bg-primary/10 cursor-pointer hover:bg-primary/20 transition-colors" onClick={() => setCodeJumpOpen(true)}>
+                              <GitBranch className="h-4 w-4 text-primary shrink-0" />
+                              <div className="flex-1 min-w-0 text-left">
+                                <p className="text-xs font-medium text-foreground truncate">{repo.name}</p>
+                                <p className="text-[10px] text-muted-foreground truncate">工程代码</p>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -940,7 +915,7 @@ export const Chat: React.FC = () => {
                         </span>}
                       </div>
                       {msg.artifact && (
-                        <div className="mt-2 p-3 rounded-xl border border-border/50 bg-card cursor-pointer hover:border-primary transition-colors flex items-center gap-3 w-full max-w-sm soft-shadow" onClick={() => toast.success('已打开详情')}>
+                        <div className="mt-2 p-3 rounded-xl border border-border/50 bg-card cursor-pointer hover:border-primary transition-colors flex items-center gap-3 w-full max-w-sm soft-shadow" onClick={() => setCodeJumpOpen(true)}>
                           <div className="h-10 w-10 rounded bg-secondary flex items-center justify-center shrink-0">
                             {msg.artifact.type === 'ui' && <Box className="h-5 w-5 text-blue-500" />}
                             {msg.artifact.type === 'code' && <FileCode2 className="h-5 w-5 text-green-500" />}
@@ -969,53 +944,41 @@ export const Chat: React.FC = () => {
         <div className="p-3 md:p-5 shrink-0 flex justify-center z-10 bg-gradient-to-t from-background via-background/95 to-background/50">
           <div className="w-full relative flex flex-col rounded-3xl border bg-background/80 backdrop-blur-xl soft-shadow overflow-visible">
             {(quotedCard || selectedRepos.length > 0) && (
-              <div className="flex flex-col gap-2 px-5 pt-3 pb-2 border-b border-border/10">
+              <div className="flex flex-wrap gap-2 px-5 pt-3 pb-2 border-b border-border/10">
                 {quotedCard && (
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-2 flex-1 min-w-0 px-3 py-2 rounded-xl bg-primary/5 border border-primary/20">
-                      {quotedCard.type === 'req' && <ListTodo className="h-3.5 w-3.5 text-primary shrink-0" />}
-                      {quotedCard.type === 'defect' && <Bug className="h-3.5 w-3.5 text-destructive shrink-0" />}
-                      {quotedCard.type === 'case' && <FlaskConical className="h-3.5 w-3.5 text-violet-500 shrink-0" />}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-foreground truncate">{quotedCard.title}</p>
-                        <p className="text-[10px] text-muted-foreground">{quotedCard.reporter} 提 · {quotedCard.id}</p>
-                      </div>
+                  <div className="flex items-center gap-2 w-56 px-3 py-2 rounded-xl bg-primary/5 border border-primary/20 shrink-0">
+                    {quotedCard.type === 'req' && <ListTodo className="h-4 w-4 text-primary shrink-0" />}
+                    {quotedCard.type === 'defect' && <Bug className="h-4 w-4 text-destructive shrink-0" />}
+                    {quotedCard.type === 'case' && <FlaskConical className="h-4 w-4 text-violet-500 shrink-0" />}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-foreground truncate">{quotedCard.title}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">{quotedCard.reporter} 提 · {quotedCard.id}</p>
                     </div>
                     <button
-                      className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-muted text-muted-foreground transition-colors shrink-0"
+                      className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-primary/20 text-muted-foreground transition-colors shrink-0 -mr-1"
                       onClick={() => setQuotedCard(null)}
                       title="移除引用"
                     >
-                      <X className="h-4 w-4" />
+                      <X className="h-3 w-3" />
                     </button>
                   </div>
                 )}
-                {selectedRepos.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    <div className="flex flex-wrap items-center gap-2 flex-1">
-                      {selectedRepos.map(repo => (
-                        <div key={repo.id} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-muted/50 border border-border/50 max-w-full">
-                          <GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                          <span className="text-[11px] font-medium text-foreground truncate">{repo.name}</span>
-                          <button
-                            className="ml-1 h-4 w-4 flex items-center justify-center rounded-full hover:bg-muted-foreground/20 text-muted-foreground"
-                            onClick={() => toggleRepo(repo)}
-                            title="移除引用"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </div>
-                      ))}
+                {selectedRepos.map(repo => (
+                  <div key={repo.id} className="flex items-center gap-2 w-56 px-3 py-2 rounded-xl bg-primary/5 border border-primary/20 shrink-0">
+                    <GitBranch className="h-4 w-4 text-primary shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-foreground truncate">{repo.name}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">引用工程代码</p>
                     </div>
                     <button
-                      className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-muted text-muted-foreground transition-colors shrink-0"
-                      onClick={() => setSelectedRepos([])}
-                      title="清除所有引用代码库"
+                      className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-primary/20 text-muted-foreground transition-colors shrink-0 -mr-1"
+                      onClick={() => toggleRepo(repo)}
+                      title="移除引用"
                     >
-                      <X className="h-4 w-4" />
+                      <X className="h-3 w-3" />
                     </button>
                   </div>
-                )}
+                ))}
               </div>
             )}
             <Textarea
@@ -1362,6 +1325,23 @@ export const Chat: React.FC = () => {
             </>
           )}
         </div>
+        {/* Code Jump Confirmation Dialog */}
+        <AlertDialog open={codeJumpOpen} onOpenChange={setCodeJumpOpen}>
+          <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md">
+            <AlertDialogHeader>
+              <AlertDialogTitle>跳转到工程代码</AlertDialogTitle>
+              <AlertDialogDescription>
+                是否要跳转到代码库窗口，查看完整的工程代码？
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogAction onClick={() => { setCodeJumpOpen(false); navigate('/code'); toast.success('已跳转到工程代码窗口'); }}>
+                确认跳转
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );
