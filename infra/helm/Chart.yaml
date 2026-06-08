@@ -1,0 +1,4 @@
+apiVersion: v2
+name: deepharness
+version: 0.1.0
+description: DeepHarness Enterprise Platform Helm Chart

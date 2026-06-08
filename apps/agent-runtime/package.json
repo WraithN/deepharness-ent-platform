@@ -1,0 +1,13 @@
+{
+  "name": "@repo/agent-runtime",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "go build -o dist/agent-runtime .",
+    "dev": "go run .",
+    "start": "go run .",
+    "test": "go test -v ./...",
+    "lint": "go vet ./...",
+    "check-types": "echo 'Go is statically typed'"
+  }
+}

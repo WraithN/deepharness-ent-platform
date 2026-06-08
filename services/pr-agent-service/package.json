@@ -1,0 +1,13 @@
+{
+  "name": "@repo/pr-agent-service",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "go build -o dist/pr-agent-service .",
+    "dev": "go run .",
+    "start": "go run .",
+    "test": "go test -v ./...",
+    "lint": "go vet ./...",
+    "check-types": "echo 'Go is statically typed'"
+  }
+}

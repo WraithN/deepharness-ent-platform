@@ -1,0 +1,12 @@
+{
+  "name": "@repo/ide-extension",
+  "version": "0.0.1",
+  "private": true,
+  "description": "VS Code / JetBrains IDE 插件（预留）",
+  "scripts": {
+    "build": "echo 'IDE Extension build not implemented'",
+    "dev": "echo 'IDE Extension dev not implemented'",
+    "lint": "echo 'No lint configured'",
+    "check-types": "echo 'No types configured'"
+  }
+}
