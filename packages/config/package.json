@@ -1,0 +1,15 @@
+{
+  "name": "@repo/config",
+  "version": "0.0.1",
+  "private": true,
+  "description": "共享配置：ESLint, Prettier, TypeScript 等",
+  "files": [
+    "eslint-preset.js",
+    "tsconfig.base.json"
+  ],
+  "scripts": {
+    "lint": "echo 'No lint for config package'",
+    "check-types": "echo 'No types for config package'",
+    "build": "echo 'No build for config package'"
+  }
+}

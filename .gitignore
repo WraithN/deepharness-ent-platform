@@ -29,3 +29,20 @@ history/*.json
 .vite_cache
 .skills
 tasks
+.opencode
+
+# Turbo
+.turbo
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# Zone.Identifier (WSL)
+*:Zone.Identifier

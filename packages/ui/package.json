@@ -1,0 +1,22 @@
+{
+  "name": "@repo/ui",
+  "version": "0.0.1",
+  "private": true,
+  "sideEffects": ["**/*.css"],
+  "exports": {
+    "./button": "./src/button.tsx",
+    "./card": "./src/card.tsx",
+    "./input": "./src/input.tsx",
+    "./label": "./src/label.tsx",
+    "./globals.css": "./src/globals.css"
+  },
+  "scripts": {
+    "lint": "echo 'No lint configured for ui package'",
+    "check-types": "echo 'No types configured for ui package'",
+    "build": "echo 'No build step for ui package'"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  }
+}
