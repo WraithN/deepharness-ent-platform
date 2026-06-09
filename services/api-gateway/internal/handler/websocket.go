@@ -6,6 +6,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/deepharness/deepharness-ent-platform/services/api-gateway/internal/hub"
+	"github.com/deepharness/deepharness-ent-platform/services/api-gateway/internal/store"
 )
 
 var upgrader = websocket.Upgrader{
@@ -16,17 +17,24 @@ var upgrader = websocket.Upgrader{
 }
 
 type WebSocketHandler struct {
-	hub *hub.Hub
+	hub     *hub.Hub
+	sessions store.SessionStore
 }
 
-func NewWebSocketHandler(h *hub.Hub) *WebSocketHandler {
-	return &WebSocketHandler{hub: h}
+func NewWebSocketHandler(h *hub.Hub, sessions store.SessionStore) *WebSocketHandler {
+	return &WebSocketHandler{hub: h, sessions: sessions}
 }
 
 func (h *WebSocketHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
 	if sessionID == "" {
 		http.Error(w, `{"code":1,"message":"missing session id"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Validate session before upgrading to WebSocket
+	if _, err := h.sessions.Get(r.Context(), sessionID); err != nil {
+		http.Error(w, `{"code":2,"message":"invalid session"}`, http.StatusForbidden)
 		return
 	}
 

@@ -26,7 +26,7 @@ func New() http.Handler {
 
 	// Handlers
 	sessionHandler := handler.NewSessionHandler(sessions)
-	wsHandler := handler.NewWebSocketHandler(h)
+	wsHandler := handler.NewWebSocketHandler(h, sessions)
 
 	// Routes
 	mux.HandleFunc("/health", handler.HealthCheck)
