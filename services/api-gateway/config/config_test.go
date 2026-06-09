@@ -1,19 +1,11 @@
 package config
 
 import (
-	"os"
 	"testing"
 	"time"
 )
 
 func TestLoad_Defaults(t *testing.T) {
-	os.Unsetenv("PORT")
-	os.Unsetenv("SESSION_STORE")
-	os.Unsetenv("MESSAGE_STORE")
-	os.Unsetenv("BROKER_TYPE")
-	os.Unsetenv("REDIS_URL")
-	os.Unsetenv("AGENT_BASE_URL")
-	os.Unsetenv("SESSION_TIMEOUT")
 	cfg := Load()
 	if cfg.Port != DEFAULT_PORT {
 		t.Errorf("expected port %s, got %s", DEFAULT_PORT, cfg.Port)
@@ -39,18 +31,12 @@ func TestLoad_Defaults(t *testing.T) {
 }
 
 func TestLoad_EnvOverride(t *testing.T) {
-	os.Setenv("PORT", "9090")
-	os.Setenv("SESSION_STORE", "redis")
-	os.Setenv("MESSAGE_STORE", "redis")
-	os.Setenv("BROKER_TYPE", "redis")
-	os.Setenv("REDIS_URL", "redis://localhost:6379")
-	os.Setenv("AGENT_BASE_URL", "http://agent:8080")
-	defer os.Unsetenv("PORT")
-	defer os.Unsetenv("SESSION_STORE")
-	defer os.Unsetenv("MESSAGE_STORE")
-	defer os.Unsetenv("BROKER_TYPE")
-	defer os.Unsetenv("REDIS_URL")
-	defer os.Unsetenv("AGENT_BASE_URL")
+	t.Setenv("PORT", "9090")
+	t.Setenv("SESSION_STORE", "redis")
+	t.Setenv("MESSAGE_STORE", "redis")
+	t.Setenv("BROKER_TYPE", "redis")
+	t.Setenv("REDIS_URL", "redis://localhost:6379")
+	t.Setenv("AGENT_BASE_URL", "http://agent:8080")
 	cfg := Load()
 	if cfg.Port != "9090" {
 		t.Errorf("expected port 9090, got %s", cfg.Port)
@@ -73,8 +59,7 @@ func TestLoad_EnvOverride(t *testing.T) {
 }
 
 func TestLoad_DurationEnv(t *testing.T) {
-	os.Setenv("SESSION_TIMEOUT", "60")
-	defer os.Unsetenv("SESSION_TIMEOUT")
+	t.Setenv("SESSION_TIMEOUT", "60m")
 	cfg := Load()
 	if cfg.SessionTimeout != 60*time.Minute {
 		t.Errorf("expected 60m, got %v", cfg.SessionTimeout)
@@ -82,8 +67,23 @@ func TestLoad_DurationEnv(t *testing.T) {
 }
 
 func TestLoad_InvalidDuration(t *testing.T) {
-	os.Setenv("SESSION_TIMEOUT", "not-a-number")
-	defer os.Unsetenv("SESSION_TIMEOUT")
+	t.Setenv("SESSION_TIMEOUT", "not-a-number")
+	cfg := Load()
+	if cfg.SessionTimeout != DEFAULT_SESSION_TIMEOUT {
+		t.Errorf("expected fallback timeout %v, got %v", DEFAULT_SESSION_TIMEOUT, cfg.SessionTimeout)
+	}
+}
+
+func TestLoad_ZeroDuration(t *testing.T) {
+	t.Setenv("SESSION_TIMEOUT", "0s")
+	cfg := Load()
+	if cfg.SessionTimeout != DEFAULT_SESSION_TIMEOUT {
+		t.Errorf("expected fallback timeout %v, got %v", DEFAULT_SESSION_TIMEOUT, cfg.SessionTimeout)
+	}
+}
+
+func TestLoad_NegativeDuration(t *testing.T) {
+	t.Setenv("SESSION_TIMEOUT", "-5m")
 	cfg := Load()
 	if cfg.SessionTimeout != DEFAULT_SESSION_TIMEOUT {
 		t.Errorf("expected fallback timeout %v, got %v", DEFAULT_SESSION_TIMEOUT, cfg.SessionTimeout)
