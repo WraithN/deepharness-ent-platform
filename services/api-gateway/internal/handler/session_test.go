@@ -1,0 +1,72 @@
+package handler
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/deepharness/deepharness-ent-platform/services/api-gateway/internal/store/memory"
+)
+
+func TestCreateSession_Success(t *testing.T) {
+	sessions := memory.NewSessionStore()
+	h := NewSessionHandler(sessions)
+
+	reqBody, _ := json.Marshal(map[string]any{
+		"agentType": "opencode",
+		"model":     "claude-3-7",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	h.CreateSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	data, ok := resp["data"].(map[string]any)
+	if !ok {
+		t.Fatal("expected data object in response")
+	}
+	if data["sessionId"] == "" {
+		t.Error("expected sessionId in response")
+	}
+	if data["wsUrl"] == "" {
+		t.Error("expected wsUrl in response")
+	}
+}
+
+func TestCreateSession_InvalidBody(t *testing.T) {
+	sessions := memory.NewSessionStore()
+	h := NewSessionHandler(sessions)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewReader([]byte("not-json")))
+	w := httptest.NewRecorder()
+
+	h.CreateSession(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestCreateSession_MethodNotAllowed(t *testing.T) {
+	sessions := memory.NewSessionStore()
+	h := NewSessionHandler(sessions)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
+	w := httptest.NewRecorder()
+
+	h.CreateSession(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
