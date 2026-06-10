@@ -10,12 +10,21 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/services/api-gateway/internal/store"
 )
 
-type SessionHandler struct {
-	sessions store.SessionStore
+// WorkerStarter is implemented by WorkerManager.
+type WorkerStarter interface {
+	StartWorker(sessionID string)
 }
 
-func NewSessionHandler(sessions store.SessionStore) *SessionHandler {
-	return &SessionHandler{sessions: sessions}
+type SessionHandler struct {
+	sessions      store.SessionStore
+	workerStarter WorkerStarter
+}
+
+func NewSessionHandler(sessions store.SessionStore, workerStarter WorkerStarter) *SessionHandler {
+	return &SessionHandler{
+		sessions:      sessions,
+		workerStarter: workerStarter,
+	}
 }
 
 type CreateSessionRequest struct {
@@ -55,6 +64,11 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	if err := h.sessions.Create(r.Context(), session); err != nil {
 		http.Error(w, `{"code":3,"message":"failed to create session"}`, http.StatusInternalServerError)
 		return
+	}
+
+	// Start agent worker for this session
+	if h.workerStarter != nil {
+		h.workerStarter.StartWorker(session.ID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
