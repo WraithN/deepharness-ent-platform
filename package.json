@@ -7,7 +7,8 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "check-types": "turbo run check-types",
-    "start": "turbo run start"
+    "start": "turbo run start",
+    "dev:all": "./scripts/start-dev.sh"
   },
   "devDependencies": {
     "turbo": "^2.5.3"
