@@ -13,7 +13,7 @@ import (
 )
 
 func TestEndToEnd_CreateSessionAndConnect(t *testing.T) {
-	srv := httptest.NewServer(New())
+	srv := httptest.NewServer(New(""))
 	defer srv.Close()
 
 	// Step 1: Create session via HTTP
@@ -70,7 +70,7 @@ func TestEndToEnd_CreateSessionAndConnect(t *testing.T) {
 }
 
 func TestWebSocket_InvalidSession(t *testing.T) {
-	srv := httptest.NewServer(New())
+	srv := httptest.NewServer(New(""))
 	defer srv.Close()
 
 	wsURL := strings.Replace(srv.URL, "http://", "ws://", 1) + "/ws/v1/sessions/nonexistent"

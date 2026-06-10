@@ -10,9 +10,13 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/services/api-gateway/internal/store/memory"
 )
 
+type mockWorkerStarter struct{}
+
+func (m *mockWorkerStarter) StartWorker(sessionID string) {}
+
 func TestCreateSession_Success(t *testing.T) {
 	sessions := memory.NewSessionStore()
-	h := NewSessionHandler(sessions)
+	h := NewSessionHandler(sessions, &mockWorkerStarter{})
 
 	reqBody, _ := json.Marshal(map[string]any{
 		"agentType": "opencode",
@@ -45,7 +49,7 @@ func TestCreateSession_Success(t *testing.T) {
 
 func TestCreateSession_InvalidBody(t *testing.T) {
 	sessions := memory.NewSessionStore()
-	h := NewSessionHandler(sessions)
+	h := NewSessionHandler(sessions, &mockWorkerStarter{})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewReader([]byte("not-json")))
 	w := httptest.NewRecorder()
@@ -59,7 +63,7 @@ func TestCreateSession_InvalidBody(t *testing.T) {
 
 func TestCreateSession_MethodNotAllowed(t *testing.T) {
 	sessions := memory.NewSessionStore()
-	h := NewSessionHandler(sessions)
+	h := NewSessionHandler(sessions, &mockWorkerStarter{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
 	w := httptest.NewRecorder()
