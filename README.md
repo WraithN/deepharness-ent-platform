@@ -10,8 +10,13 @@ A Turborepo monorepo with a unified Go backend and a React TypeScript frontend.
 │   ├── web/                       # React + Vite + TypeScript frontend
 │   ├── agent-runtime/             # Agent runtime wrapper (Rust target, currently Go stub)
 │   ├── dh-backend/                # Unified DeepHarness backend (port 8080)
-│   │   ├── tests/test-agent       # Agent Client local test tool
-│   │   └── internal/              # constants, agent (client/chat/orchestrator), gateway, worker, domain
+│   │   ├── config/                # Environment config loader
+│   │   ├── constants/             # Global constants
+│   │   ├── agent/                 # Agent client, chat, orchestrator
+│   │   ├── gateway/               # HTTP routes, WebSocket, middleware, server
+│   │   ├── worker/                # Per-session Agent worker lifecycle
+│   │   ├── domain/                # Business domain modules (identity, project, workitem, pragent, audit)
+│   │   └── tests/test-agent       # Agent Client local test tool
 │   └── mock/                      # Local Agent SSE mock (independent module)
 ├── packages/                      # Shared libraries
 │   ├── ui/                        # Shared React UI components
@@ -114,10 +119,9 @@ not set, so `pnpm dev` works without a running database.
   and can be run independently.
 
 - **`apps/dh-backend/tests/test-agent/main.go`**: A small test binary inside the
-  `dh-backend` module. It exercises `dh-backend`'s internal Agent HTTP+SSE
-  client against the standalone mock server. Because it imports
-  `dh-backend/internal/...` packages, it must live in the same Go module as
-  `dh-backend`.
+  `dh-backend` module. It exercises `dh-backend`'s Agent HTTP+SSE client against
+  the standalone mock server. It lives in the same Go module as `dh-backend` so
+  it can import the backend packages directly.
 
 ## Technologies
 
