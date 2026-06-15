@@ -46,7 +46,7 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
-import type { WorkItemDTO } from '@/lib/api-types';
+import type { WorkItemDTO, RepositoryDTO } from '@/lib/api-types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -514,6 +514,7 @@ export const Chat: React.FC = () => {
 
   // Input toolbar dropdowns
   const [selectedRepos, setSelectedRepos] = useState<{id: string; name: string}[]>([]);
+  const [availableRepos, setAvailableRepos] = useState<{id: string; name: string}[]>([]);
   const [skillPopoverOpen, setSkillPopoverOpen] = useState(false);
   const [repoMenuOpen, setRepoMenuOpen] = useState(false);
   const [promptMenuOpen, setPromptMenuOpen] = useState(false);
@@ -824,11 +825,20 @@ export const Chat: React.FC = () => {
     }
   }, [kanbanHighlightId, kanbanOpen]);
 
-  const availableRepos = [
-    { id: '1', name: 'frontend-web' },
-    { id: '2', name: 'backend-api' },
-    { id: '3', name: 'ui-components' },
-  ];
+  useEffect(() => {
+    let cancelled = false;
+    api.get<RepositoryDTO[]>('/v1/repositories?type=dev')
+      .then(repos => {
+        if (cancelled) return;
+        setAvailableRepos(repos.map(r => ({ id: r.id, name: r.name })));
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.error('Failed to load repositories:', err);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const availablePrompts = [
     { id: '1', title: '编写PRD文档模板', content: '请作为产品经理，根据以下需求生成一份结构化的PRD文档，包含：1. 背景与目标 2. 用户场景 3. 功能详情 4. 业务流程图 5. 数据埋点要求。当前需求：' },
     { id: '2', title: '竞品分析框架', content: '请帮我对【功能模块】进行竞品分析，主要对比对象包括：... 比较维度应包含用户体验、功能完整度、商业模式等。' },

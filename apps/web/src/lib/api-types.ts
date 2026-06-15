@@ -56,7 +56,7 @@ export interface UserDTO {
 }
 
 // ── Project ──
-export type RepoType = "dev" | "test";
+export type RepoType = "dev" | "test" | "case" | "product";
 
 export interface ProjectDTO {
   id: string;
@@ -66,6 +66,41 @@ export interface ProjectDTO {
   repoType: RepoType;
   meegoKey: string;
   createdAt: string;
+}
+
+export interface RepositoryDTO {
+  id: string;
+  projectId: string;
+  name: string;
+  url: string;
+  type: RepoType;
+  defaultBranch: string;
+  previewUrl?: string;
+  branches?: string[];
+}
+
+export interface BranchDTO {
+  name: string;
+  isDefault: boolean;
+  lastCommit?: string;
+  updatedAt?: string;
+}
+
+export interface FileNodeDTO {
+  name: string;
+  path: string;
+  type: "file" | "folder";
+  children?: FileNodeDTO[];
+}
+
+export interface FileContentDTO {
+  path: string;
+  name: string;
+  content: string;
+  language: string;
+  encoding: string;
+  size: number;
+  lastCommit?: string;
 }
 
 // ── Audit Event ──
