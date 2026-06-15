@@ -3,7 +3,7 @@
 #   docker compose -f infra/docker/compose.mysql.yml up -d
 # 默认连接信息：
 #   host: 127.0.0.1
-#   port: 3306
+#   port: 3307   # 主机映射端口，容器内 MySQL 仍监听 3306
 #   user: deepharness
 #   password: deepharness
 #   database: deepharness
@@ -26,6 +26,7 @@ services:
       - ../database/personalassistant/schema.sql:/docker-entrypoint-initdb.d/03_personalassistant.sql:ro
       - ../database/agent/schema.sql:/docker-entrypoint-initdb.d/04_agent.sql:ro
       - ../database/team/schema.sql:/docker-entrypoint-initdb.d/05_team.sql:ro
+      - ../database/workspace/schema.sql:/docker-entrypoint-initdb.d/06_workspace.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
       interval: 10s
