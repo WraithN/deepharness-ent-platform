@@ -46,3 +46,4 @@ go.work
 
 # Zone.Identifier (WSL)
 *:Zone.Identifier
+.worktrees/
