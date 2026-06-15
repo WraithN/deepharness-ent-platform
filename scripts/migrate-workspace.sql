@@ -1,6 +1,17 @@
 -- 工作空间数据模型迁移脚本（PostgreSQL）
 -- 将现有数据迁移到新的 workspace 模型，支持幂等多次执行
 
+-- 0. 确保存在种子租户与用户（密码均为 123456，bcrypt 哈希）
+INSERT INTO tenants (id, name) VALUES ('t1', 'DeepHarness')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO users (id, tenant_id, email, name, role, password_hash) VALUES
+  ('u1', 't1', 'xiaoming@deepharness.com', '开发者小明', 'admin', crypt('123456', gen_salt('bf'))),
+  ('u2', 't1', 'xiaohong@deepharness.com', '产品小红', 'user', crypt('123456', gen_salt('bf'))),
+  ('u3', 't1', 'xiaoli@deepharness.com', '设计小李', 'user', crypt('123456', gen_salt('bf'))),
+  ('u4', 't1', 'xiaogang@deepharness.com', '测试小刚', 'user', crypt('123456', gen_salt('bf')))
+ON CONFLICT (id) DO NOTHING;
+
 -- 1. 创建默认工作空间（幂等）
 INSERT INTO workspaces (id, tenant_id, name, description, created_at, updated_at)
 SELECT 'ws-default', 't1', '默认工作空间', '迁移生成的默认空间', NOW(), NOW()
