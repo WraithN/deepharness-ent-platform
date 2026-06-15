@@ -1,6 +1,6 @@
 -- 工作项统一 Schema（PostgreSQL 15+）
 -- 说明：本文件由 MySQL 方言迁移至 PostgreSQL 方言。
--- - UUID 类型使用 UUID 存储，由应用层生成。
+-- - ID 使用 VARCHAR(36) 存储，由应用层生成。
 -- - 时间戳使用 TIMESTAMPTZ，时区由应用层处理。
 -- - 表引擎统一使用 InnoDB。
 
@@ -13,14 +13,14 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TABLE IF NOT EXISTS workitems (
-    id UUID PRIMARY KEY,
-    tenant_id UUID NOT NULL,
-    project_id UUID NOT NULL,
+    id VARCHAR(36) PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    project_id VARCHAR(36) NOT NULL,
     title VARCHAR(500) NOT NULL,
     description TEXT,
     status VARCHAR(50) NOT NULL DEFAULT 'todo',
     priority VARCHAR(50) NOT NULL DEFAULT 'medium',
-    assignee_id UUID,
+    assignee_id VARCHAR(36),
     source VARCHAR(100) NOT NULL DEFAULT 'internal',
     external_id VARCHAR(200),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

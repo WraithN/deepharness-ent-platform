@@ -1,6 +1,6 @@
 -- 智能会话（Agent Chat）Schema（PostgreSQL 15+）
 -- 说明：
---   - UUID 使用 UUID 类型存储，由应用层生成。
+--   - ID 使用 VARCHAR(36) 存储，由应用层生成。
 --   - 时间戳使用 TIMESTAMPTZ，统一 UTC。
 --   - context / metadata 使用 JSONB 类型存储。
 
@@ -13,9 +13,9 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TABLE IF NOT EXISTS agent_sessions (
-    id UUID PRIMARY KEY,
-    workspace_id UUID NOT NULL,
-    agent_id UUID NOT NULL,
+    id VARCHAR(36) PRIMARY KEY,
+    workspace_id VARCHAR(36) NOT NULL,
+    agent_id VARCHAR(36) NOT NULL,
     agent_type VARCHAR(50) NOT NULL DEFAULT 'opencode',
     model VARCHAR(50) NOT NULL DEFAULT 'gpt-4o',
     project_id VARCHAR(50),
@@ -36,8 +36,8 @@ FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TABLE IF NOT EXISTS agent_messages (
-    id UUID PRIMARY KEY,
-    session_id UUID NOT NULL,
+    id VARCHAR(36) PRIMARY KEY,
+    session_id VARCHAR(36) NOT NULL,
     role VARCHAR(20) NOT NULL,
     type VARCHAR(20) NOT NULL DEFAULT 'text',
     content TEXT NOT NULL,

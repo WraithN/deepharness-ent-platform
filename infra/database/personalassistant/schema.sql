@@ -1,6 +1,6 @@
 -- 虾班智守（Personal Assistant）Schema（PostgreSQL 15+）
 -- 说明：
---   - UUID 使用 UUID 类型存储，由应用层生成。
+--   - ID 使用 VARCHAR(36) 存储，由应用层生成。
 --   - 时间戳使用 TIMESTAMPTZ，统一 UTC。
 --   - 表引擎使用 InnoDB，字符集 utf8mb4。
 
@@ -13,11 +13,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TABLE IF NOT EXISTS personal_assistants (
-    id UUID PRIMARY KEY,
+    id VARCHAR(36) PRIMARY KEY,
     name VARCHAR(200) NOT NULL,
     role VARCHAR(50) NOT NULL,
     description TEXT,
-    creator_id UUID NOT NULL,
+    creator_id VARCHAR(36) NOT NULL,
     creator_name VARCHAR(200) NOT NULL,
     avatar_url VARCHAR(500),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -34,8 +34,8 @@ FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TABLE IF NOT EXISTS personal_assistant_sessions (
-    id UUID PRIMARY KEY,
-    assistant_id UUID NOT NULL,
+    id VARCHAR(36) PRIMARY KEY,
+    assistant_id VARCHAR(36) NOT NULL,
     title VARCHAR(500) NOT NULL DEFAULT '新会话',
     message_count INT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -52,8 +52,8 @@ FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TABLE IF NOT EXISTS personal_assistant_messages (
-    id UUID PRIMARY KEY,
-    session_id UUID NOT NULL,
+    id VARCHAR(36) PRIMARY KEY,
+    session_id VARCHAR(36) NOT NULL,
     role VARCHAR(20) NOT NULL,
     type VARCHAR(20) NOT NULL DEFAULT 'text',
     content TEXT NOT NULL,
