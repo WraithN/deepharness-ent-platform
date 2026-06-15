@@ -970,7 +970,7 @@ export const ProjectCode: React.FC = () => {
                 const filteredRepos = repositories.filter(r => r.type === val);
                 if (filteredRepos.length > 0) {
                   setSelectedRepoId(filteredRepos[0].id);
-                  setSelectedBranch(filteredRepos[0].branches[0]);
+                  setSelectedBranch(filteredRepos[0].branches?.[0] ?? '');
                 }
                 if (val === 'case' && viewMode === 'preview') {
                   setViewMode('code');
@@ -1012,7 +1012,7 @@ export const ProjectCode: React.FC = () => {
                   <SelectValue placeholder="选择分支" />
                 </SelectTrigger>
                 <SelectContent>
-                  {currentRepo?.branches.map(branch => (
+                  {currentRepo?.branches?.map(branch => (
                     <SelectItem key={branch} value={branch}>
                       <div className="flex items-center">
                         <GitBranch className="h-4 w-4 mr-2 text-muted-foreground" />

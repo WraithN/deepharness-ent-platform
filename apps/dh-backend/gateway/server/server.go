@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"net/http"
 	"sync"
@@ -13,8 +14,12 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/orchestrator"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant"
+	paservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/project"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team"
+	teamservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
@@ -22,6 +27,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	session "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat/session"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/worker"
+	sdkmysql "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/mysql"
 )
 
 // WorkerManager manages agent worker lifecycle per session.
@@ -86,22 +92,41 @@ func (wm *WorkerManager) StopWorker(sessionID string) {
 func New(cfg config.Config) http.Handler {
 	mux := http.NewServeMux()
 
-	// Infrastructure layer (in-memory implementations)
-	sessions := session.NewSessionStore()
-	messages := session.NewMessageStore()
+	// Shared MySQL connection (if available)
+	db := initDB(cfg)
+
+	// Infrastructure layer: MySQL when available, otherwise memory.
+	var sessions chat.SessionStore
+	var messages chat.MessageStore
+	if db != nil {
+		sessions = session.NewMySQLStore(db)
+		messages = session.NewMySQLStore(db)
+		log.Println("[Chat] using mysql storage")
+	} else {
+		sessions = session.NewSessionStore()
+		messages = session.NewMessageStore()
+		log.Println("[Chat] using memory storage")
+	}
 	brok := brokermemory.NewMessageBroker()
 
 	// Business logic layer
 	h := ws.NewWebSocketHub(sessions, messages, brok)
 	wm := newWorkerManager(brok, messages, sessions, cfg.AgentBaseURL)
 
+	// Personal assistant storage: MySQL when available, otherwise memory mock.
+	initPersonalAssistantService(db)
+
+	// Team skills / prompts: MySQL when available, otherwise memory mock.
+	initTeamService(db)
+
 	// Handlers
-	sessionHandler := handler.NewSessionHandler(sessions, wm)
+	sessionHandler := handler.NewSessionHandler(sessions, messages, wm)
 	wsHandler := handler.NewWebSocketHandler(h, sessions)
 
 	// Routes
 	mux.HandleFunc("/health", handler.HealthCheck)
-	mux.HandleFunc("/api/v1/sessions", sessionHandler.CreateSession)
+	mux.HandleFunc("/api/v1/sessions", sessionHandler.Sessions)
+	mux.HandleFunc("/api/v1/sessions/{id}/messages", sessionHandler.GetMessages)
 	mux.HandleFunc("/api/v1/hello", handler.Hello)
 	mux.HandleFunc("/ws/v1/sessions/{id}", wsHandler.Handle)
 
@@ -122,6 +147,58 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/audit/events", audit.Events)
 	mux.HandleFunc("/api/v1/orchestrator/sessions", orchestrator.Sessions)
 
+	// Personal assistant module
+	mux.HandleFunc("/api/v1/personal-assistants", personalassistant.Assistants)
+	mux.HandleFunc("/api/v1/personal-assistants/{id}", personalassistant.AssistantByID)
+	mux.HandleFunc("/api/v1/personal-assistants/{id}/sessions", personalassistant.AssistantSessions)
+	mux.HandleFunc("/api/v1/personal-assistants/{id}/sessions/{sessionId}", personalassistant.DeleteSession)
+	mux.HandleFunc("/api/v1/personal-assistants/{id}/sessions/{sessionId}/messages", personalassistant.GetMessages)
+	mux.HandleFunc("/ws/v1/personal-assistant/{assistantId}/sessions/{sessionId}", personalassistant.WebSocket)
+
+	// Team skills / prompts
+	mux.HandleFunc("/api/v1/team/skills", team.Skills)
+	mux.HandleFunc("/api/v1/team/skills/{id}", team.SkillByID)
+	mux.HandleFunc("/api/v1/team/prompts", team.Prompts)
+	mux.HandleFunc("/api/v1/team/prompts/{id}", team.PromptByID)
+
 	// Apply middleware
 	return middleware.Logger(middleware.CORS(mux))
+}
+
+func initDB(cfg config.Config) *sql.DB {
+	dsn := sdkmysql.DSN(sdkmysql.Config{
+		Host:     cfg.DBHost,
+		Port:     cfg.DBPort,
+		User:     cfg.DBUser,
+		Password: cfg.DBPassword,
+		Database: cfg.DBName,
+	})
+
+	db, err := sdkmysql.OpenDB(dsn)
+	if err != nil {
+		log.Printf("[DB] mysql connect failed (%v), fallback to memory", err)
+		return nil
+	}
+	log.Printf("[DB] connected to mysql at %s:%s/%s", cfg.DBHost, cfg.DBPort, cfg.DBName)
+	return db
+}
+
+func initPersonalAssistantService(db *sql.DB) {
+	if db != nil {
+		log.Println("[PersonalAssistant] using mysql storage")
+		personalassistant.Init(paservice.NewDBPersonalAssistantService(db))
+		return
+	}
+	log.Println("[PersonalAssistant] using memory mock")
+	personalassistant.Init(paservice.NewMockPersonalAssistantService())
+}
+
+func initTeamService(db *sql.DB) {
+	if db != nil {
+		log.Println("[Team] using mysql storage")
+		team.Init(teamservice.NewDBTeamService(db))
+		return
+	}
+	log.Println("[Team] using memory mock")
+	team.Init(teamservice.NewMockTeamService())
 }

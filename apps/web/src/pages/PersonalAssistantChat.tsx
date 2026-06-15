@@ -1,84 +1,78 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Textarea } from '@/components/ui/textarea';
 import { ArrowLeft, Send, Bot, User, Loader2, PanelLeftClose, PanelLeftOpen, Plus, MessageSquare, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { api } from '@/lib/api';
+import type { PersonalAssistantDTO, PersonalAssistantSessionDTO, PersonalAssistantMessageDTO } from '@/lib/api-types';
 
-const MOCK_LOBSTERS: Record<string, {name: string, role: string}> = {
-  'lob-1': { name: '大钳子', role: '虾测试' },
-  'lob-2': { name: '小红须', role: '虾开发' },
-  'lob-3': { name: '虾产品', role: '虾产品' },
-  'lob-4': { name: '虾运营', role: '虾运营' }
+const WELCOME_MESSAGE: PersonalAssistantMessageDTO = {
+  id: 'welcome',
+  sessionId: '',
+  role: 'assistant',
+  type: 'text',
+  content: '您好！我是虾班智守，很高兴为您服务。请问有什么我可以帮您的？',
+  createdAt: new Date().toISOString(),
 };
 
-interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-interface ChatSession {
-  id: string;
-  title: string;
-  createdAt: number;
-  messages: Message[];
-}
-
-function getStorageKey(lobsterId: string) {
-  return `lobster_chat_sessions_${lobsterId}`;
-}
-
-function generateTitle(messages: Message[]): string {
-  const firstUser = messages.find(m => m.role === 'user');
-  if (firstUser) {
-    return firstUser.content.slice(0, 20) + (firstUser.content.length > 20 ? '...' : '');
-  }
-  return '新会话';
-}
-
-export const LobsterChat: React.FC = () => {
+export const PersonalAssistantChat: React.FC = () => {
   const { id } = useParams<{id: string}>();
   const navigate = useNavigate();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const socketRef = useRef<WebSocket | null>(null);
 
+  const [assistant, setAssistant] = useState<PersonalAssistantDTO | null>(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(true);
-  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [sessions, setSessions] = useState<PersonalAssistantSessionDTO[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<PersonalAssistantMessageDTO[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const lobsterInfo = id ? MOCK_LOBSTERS[id] || { name: '虾班智守', role: '专属助手' } : null;
-
-  // Load sessions from localStorage
+  // Load assistant and sessions
   useEffect(() => {
     if (!id) return;
-    const raw = localStorage.getItem(getStorageKey(id));
-    if (raw) {
-      try {
-        const parsed: ChatSession[] = JSON.parse(raw);
-        setSessions(parsed);
-        setActiveSessionId(parsed[0]?.id || null);
-      } catch {
-        createDefaultSession();
-      }
-    } else {
-      createDefaultSession();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    setLoading(true);
+    Promise.all([
+      api.get<PersonalAssistantDTO>(`/v1/personal-assistants/${id}`),
+      api.get<PersonalAssistantSessionDTO[]>(`/v1/personal-assistants/${id}/sessions`),
+    ])
+      .then(([assistantData, sessionList]) => {
+        setAssistant(assistantData);
+        setSessions(sessionList);
+        if (sessionList.length > 0) {
+          setActiveSessionId(sessionList[0].id);
+        } else {
+          return createSession(id, '新会话');
+        }
+      })
+      .catch(() => toast.error('加载智守信息失败'))
+      .finally(() => setLoading(false));
   }, [id]);
 
-  // Save sessions whenever they change
+  // Load messages when active session changes
   useEffect(() => {
-    if (!id || sessions.length === 0) return;
-    localStorage.setItem(getStorageKey(id), JSON.stringify(sessions));
-  }, [sessions, id]);
+    if (!id || !activeSessionId) return;
 
-  const activeMessages = useMemo(() => {
-    const session = sessions.find(s => s.id === activeSessionId);
-    return session?.messages || [];
-  }, [sessions, activeSessionId]);
+    api.get<PersonalAssistantMessageDTO[]>(`/v1/personal-assistants/${id}/sessions/${activeSessionId}/messages`)
+      .then(data => {
+        setMessages(data.length > 0 ? data : [WELCOME_MESSAGE]);
+      })
+      .catch(() => toast.error('加载会话消息失败'));
+
+    connectWebSocket(id, activeSessionId);
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.close();
+        socketRef.current = null;
+      }
+    };
+  }, [id, activeSessionId]);
 
   // Auto scroll
   useEffect(() => {
@@ -88,99 +82,123 @@ export const LobsterChat: React.FC = () => {
         scrollElement.scrollTop = scrollElement.scrollHeight;
       }
     }
-  }, [activeMessages, isTyping]);
+  }, [messages, isTyping]);
 
-  function createDefaultSession() {
-    const defaultSession: ChatSession = {
-      id: `session-${Date.now()}`,
-      title: '新会话',
-      createdAt: Date.now(),
-      messages: [
-        { id: '1', role: 'assistant', content: '您好！我是虾班智守，很高兴为您服务。请问有什么我可以帮您的？' }
-      ]
-    };
-    setSessions([defaultSession]);
-    setActiveSessionId(defaultSession.id);
-  }
-
-  const handleNewSession = () => {
-    const newSession: ChatSession = {
-      id: `session-${Date.now()}`,
-      title: '新会话',
-      createdAt: Date.now(),
-      messages: [
-        { id: '1', role: 'assistant', content: '您好！我是虾班智守，很高兴为您服务。请问有什么我可以帮您的？' }
-      ]
-    };
-    setSessions(prev => [newSession, ...prev]);
-    setActiveSessionId(newSession.id);
-    setInput('');
-    toast.success('新会话已创建');
+  const createSession = async (assistantId: string, title: string) => {
+    try {
+      const session = await api.post<PersonalAssistantSessionDTO>(`/v1/personal-assistants/${assistantId}/sessions`, { title });
+      setSessions(prev => [session, ...prev]);
+      setActiveSessionId(session.id);
+      return session;
+    } catch {
+      toast.error('创建会话失败');
+      return null;
+    }
   };
 
-  const handleDeleteSession = (e: React.MouseEvent, sessionId: string) => {
+  const connectWebSocket = (assistantId: string, sessionId: string) => {
+    const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/v1/personal-assistant/${assistantId}/sessions/${sessionId}`;
+    const socket = new WebSocket(wsUrl);
+    socketRef.current = socket;
+
+    socket.onopen = () => {
+      // WebSocket 已连接，后端会自动重放历史消息。
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.event === 'message' && data.payload) {
+          const msg: PersonalAssistantMessageDTO = data.payload;
+          setMessages(prev => {
+            if (prev.some(m => m.id === msg.id)) return prev;
+            return [...prev, msg];
+          });
+          setIsTyping(false);
+        }
+      } catch {
+        // ignore malformed message
+      }
+    };
+
+    socket.onerror = () => {
+      toast.error('智守连接出错');
+    };
+
+    socket.onclose = () => {
+      socketRef.current = null;
+    };
+  };
+
+  const handleNewSession = async () => {
+    if (!id) return;
+    const session = await createSession(id, '新会话');
+    if (session) {
+      setInput('');
+      toast.success('新会话已创建');
+    }
+  };
+
+  const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
-    setSessions(prev => {
-      const filtered = prev.filter(s => s.id !== sessionId);
-      if (filtered.length === 0) {
-        // If all deleted, create default
-        const defaultSession: ChatSession = {
-          id: `session-${Date.now()}`,
-          title: '新会话',
-          createdAt: Date.now(),
-          messages: [
-            { id: '1', role: 'assistant', content: '您好！我是虾班智守，很高兴为您服务。请问有什么我可以帮您的？' }
-          ]
-        };
-        setActiveSessionId(defaultSession.id);
-        return [defaultSession];
-      }
+    if (!id) return;
+
+    try {
+      await api.delete(`/v1/personal-assistants/${id}/sessions/${sessionId}`);
+      const updated = sessions.filter(s => s.id !== sessionId);
+      setSessions(updated);
       if (activeSessionId === sessionId) {
-        setActiveSessionId(filtered[0].id);
+        if (updated.length > 0) {
+          setActiveSessionId(updated[0].id);
+        } else {
+          await createSession(id, '新会话');
+        }
       }
-      return filtered;
-    });
+      toast.success('会话已删除');
+    } catch {
+      toast.error('删除会话失败');
+    }
   };
 
   const handleSend = () => {
-    if (!input.trim() || !lobsterInfo || !activeSessionId) return;
+    if (!input.trim() || !assistant || !activeSessionId || !socketRef.current) return;
 
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: input };
+    const content = input.trim();
+    const userMsg: PersonalAssistantMessageDTO = {
+      id: `pending-${Date.now()}`,
+      sessionId: activeSessionId,
+      role: 'user',
+      type: 'text',
+      content,
+      createdAt: new Date().toISOString(),
+    };
 
-    setSessions(prev => prev.map(s => {
-      if (s.id !== activeSessionId) return s;
-      const updatedMessages = [...s.messages, userMsg];
-      // Update title on first user message
-      const title = s.title === '新会话' && s.messages.length === 1
-        ? generateTitle(updatedMessages)
-        : s.title;
-      return { ...s, messages: updatedMessages, title };
-    }));
-
+    setMessages(prev => [...prev, userMsg]);
     setInput('');
     setIsTyping(true);
 
-    // Mock response
-    setTimeout(() => {
-      const aiMsg: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: `我是${lobsterInfo.name}(${lobsterInfo.role})，已经收到您的指令：“${userMsg.content}”。我马上开始处理！`
-      };
-      setSessions(prev => prev.map(s => {
-        if (s.id !== activeSessionId) return s;
-        return { ...s, messages: [...s.messages, aiMsg] };
-      }));
-      setIsTyping(false);
-    }, 1500);
+    socketRef.current.send(JSON.stringify({
+      event: 'message',
+      payload: { type: 'text', content }
+    }));
   };
 
-  const formatTime = (ts: number) => {
+  const formatTime = (ts: string) => {
     const d = new Date(ts);
     return `${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
   };
 
-  if (!lobsterInfo) return <div>找不到该智手</div>;
+  if (loading) {
+    return (
+      <div className="flex h-[calc(100vh-6rem)] md:h-[calc(100vh-8rem)] w-full items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!assistant) return <div>找不到该智守</div>;
+
+  const activeSession = sessions.find(s => s.id === activeSessionId);
 
   return (
     <div className="flex h-[calc(100vh-6rem)] md:h-[calc(100vh-8rem)] w-full bg-background rounded-none md:rounded-2xl soft-shadow overflow-hidden border-y md:border border-border/50">
@@ -215,7 +233,7 @@ export const LobsterChat: React.FC = () => {
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">{session.title}</div>
                   <div className="text-xs text-muted-foreground truncate">
-                    {formatTime(session.createdAt)} · {session.messages.length} 条消息
+                    {formatTime(session.updatedAt)} · {session.messageCount} 条消息
                   </div>
                 </div>
                 <Button
@@ -236,7 +254,7 @@ export const LobsterChat: React.FC = () => {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <div className="h-16 border-b border-border/50 flex items-center px-4 shrink-0 bg-muted/10 gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/lobster')} title="返回">
+          <Button variant="ghost" size="icon" onClick={() => navigate('/personal-assistant')} title="返回">
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <Button variant="ghost" size="icon" className="hidden md:flex" onClick={() => setIsHistoryOpen(!isHistoryOpen)} title={isHistoryOpen ? '收起会话' : '展开会话'}>
@@ -247,15 +265,15 @@ export const LobsterChat: React.FC = () => {
              <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-primary/50 animate-[spin_3s_linear_infinite]" />
           </div>
           <div className="min-w-0">
-            <h2 className="font-bold truncate">{lobsterInfo.name}</h2>
-            <p className="text-xs text-muted-foreground">{lobsterInfo.role}</p>
+            <h2 className="font-bold truncate">{assistant.name}</h2>
+            <p className="text-xs text-muted-foreground">{assistant.role}</p>
           </div>
         </div>
 
         {/* Messages */}
         <ScrollArea className="flex-1 p-4" ref={scrollRef}>
           <div className="space-y-6 max-w-3xl mx-auto">
-            {activeMessages.map(msg => (
+            {messages.map(msg => (
               <div key={msg.id} className={`flex gap-3 max-w-[85%] ${msg.role === 'user' ? 'ml-auto flex-row-reverse' : ''}`}>
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-primary/20 text-primary' : 'bg-red-100 text-red-600 relative overflow-hidden'}`}>
                   {msg.role === 'user' ? <User className="w-4 h-4" /> : (
@@ -286,23 +304,26 @@ export const LobsterChat: React.FC = () => {
         </ScrollArea>
 
         {/* Input */}
-        <div className="p-4 border-t bg-background shrink-0">
-          <div className="relative flex items-center max-w-3xl mx-auto">
-            <Input
+        <div className="p-3 md:p-5 shrink-0 flex justify-center z-10 bg-gradient-to-t from-background via-background/95 to-background/50">
+          <div className="w-full relative flex flex-col rounded-3xl border bg-background/80 backdrop-blur-xl soft-shadow overflow-visible">
+            <Textarea
               value={input}
               onChange={e => setInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSend()}
-              placeholder={`跟 ${lobsterInfo.name} 聊点什么...`}
-              className="pr-12 h-12 rounded-xl bg-muted/50 border-border/50 focus-visible:ring-primary/20"
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+              placeholder={`跟 ${assistant.name} 聊点什么...`}
+              className="min-h-[80px] w-full resize-none border-0 focus-visible:ring-0 px-5 py-4 text-base shadow-none bg-transparent"
             />
-            <Button
-              size="icon"
-              className="absolute right-1.5 h-9 w-9 rounded-lg"
-              onClick={handleSend}
-              disabled={!input.trim() || isTyping}
-            >
-              <Send className="w-4 h-4" />
-            </Button>
+            <div className="flex items-center justify-end px-3 pb-3 mt-auto">
+              <Button
+                size="sm"
+                className="h-9 px-4 rounded-full"
+                onClick={handleSend}
+                disabled={!input.trim() || isTyping || !activeSessionId}
+              >
+                <span className="mr-1.5 text-sm">发送</span>
+                <Send className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           </div>
         </div>
       </div>

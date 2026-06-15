@@ -55,3 +55,25 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	delete(s.sessions, id)
 	return nil
 }
+
+func (s *SessionStore) UpdateTitle(ctx context.Context, id string, title string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[id]
+	if !ok {
+		return fmt.Errorf("session not found: %s", id)
+	}
+	sess.Title = title
+	s.sessions[id] = sess
+	return nil
+}
+
+func (s *SessionStore) ListSessions(ctx context.Context) ([]chat.Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]chat.Session, 0, len(s.sessions))
+	for _, sess := range s.sessions {
+		result = append(result, sess)
+	}
+	return result, nil
+}

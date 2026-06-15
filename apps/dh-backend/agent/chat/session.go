@@ -3,11 +3,12 @@ package chat
 import "time"
 
 type Session struct {
-	ID        string
-	AgentType string
-	Model     string
-	ProjectID string
-	Context   map[string]any
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID        string         `json:"id"`
+	AgentType string         `json:"agentType"`
+	Model     string         `json:"model"`
+	ProjectID string         `json:"projectId"`
+	Title     string         `json:"title"`
+	Context   map[string]any `json:"context,omitempty"`
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
 }

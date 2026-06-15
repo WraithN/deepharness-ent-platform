@@ -22,6 +22,8 @@ export interface Skill {
   downloads: number;
   rating: number;
   installed: boolean;
+  icon?: string;
+  phase?: string;
 }
 
 export interface Prompt {
@@ -31,6 +33,7 @@ export interface Prompt {
   useCase: string;
   usageCount: number;
   addedToSpace: boolean;
+  content?: string;
 }
 
 export type RequirementStatus = 'backlog' | 'todo' | 'in-progress' | 'done';

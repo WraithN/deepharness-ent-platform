@@ -12,8 +12,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import MultiSelect from '@/components/ui/multi-select';
-import { mockSettings, mockUsers, mockCurrentUser, mockSkills, mockPrompts } from '@/mock/data';
+import { mockSettings, mockUsers, mockCurrentUser } from '@/mock/data';
+import { teamApi } from '@/lib/team-api';
 import { toast } from 'sonner';
+import type { Skill, Prompt } from '@/types';
 import { useSearchParams } from 'react-router-dom';
 
 export const Settings: React.FC = () => {
@@ -34,6 +36,25 @@ export const Settings: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [promptSearchTerm, setPromptSearchTerm] = useState('');
 
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [prompts, setPrompts] = useState<Prompt[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([teamApi.listSkills(), teamApi.listPrompts()])
+      .then(([loadedSkills, loadedPrompts]) => {
+        if (cancelled) return;
+        setSkills(loadedSkills);
+        setPrompts(loadedPrompts);
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.error('Failed to load team skills/prompts:', err);
+        toast.error('加载团队技能/提示词失败');
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const [skillMarketOpen, setSkillMarketOpen] = useState(false);
   const [skillSearch, setSkillSearch] = useState('');
   const [skillCategory, setSkillCategory] = useState('全部');
@@ -53,16 +74,16 @@ export const Settings: React.FC = () => {
   const [promptMarketCategory, setPromptMarketCategory] = useState('全部');
   const [selectedPromptIds, setSelectedPromptIds] = useState<string[]>([]);
 
-  const skillCategories = ['全部', ...Array.from(new Set(mockSkills.map(s => s.category)))];
-  const promptCategories = ['全部', ...Array.from(new Set(mockPrompts.map(p => p.useCase)))];
+  const skillCategories = ['全部', ...Array.from(new Set(skills.map(s => s.category)))];
+  const promptCategories = ['全部', ...Array.from(new Set(prompts.map(p => p.useCase)))];
 
-  const filteredSkills = mockSkills.filter(s => {
+  const filteredSkills = skills.filter(s => {
     const matchSearch = s.name.toLowerCase().includes(skillSearch.toLowerCase()) || s.description.toLowerCase().includes(skillSearch.toLowerCase());
     const matchCategory = skillCategory === '全部' || s.category === skillCategory;
     return matchSearch && matchCategory;
   });
 
-  const filteredPromptsMarket = mockPrompts.filter(p => {
+  const filteredPromptsMarket = prompts.filter(p => {
     const matchSearch = p.name.toLowerCase().includes(promptMarketSearch.toLowerCase()) || p.description.toLowerCase().includes(promptMarketSearch.toLowerCase());
     const matchCategory = promptMarketCategory === '全部' || p.useCase === promptMarketCategory;
     return matchSearch && matchCategory;
@@ -388,12 +409,7 @@ export const Settings: React.FC = () => {
                     </div>
                     <div className="w-full sm:w-80 shrink-0">
                       <MultiSelect 
-                        options={[
-                          { value: item.defaultSkill, label: item.defaultSkill },
-                          { value: '通用智能体', label: '通用智能体 (默认)' },
-                          { value: '代码扫描专家', label: '代码扫描专家' },
-                          { value: '数据库优化助手', label: '数据库优化助手' }
-                        ]}
+                        options={skills.map(s => ({ value: s.name, label: s.name }))}
                         defaultSelected={[item.defaultSkill]}
                         onChange={(selected) => {
                           console.log('Selected skills for', item.phase, ':', selected);
@@ -429,57 +445,57 @@ export const Settings: React.FC = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-8">
-                {[
-                  { 
-                    phase: '需求设计阶段', 
-                    prompts: [
-                      { id: 1, title: '编写PRD文档模板', content: '请作为产品经理，根据以下需求生成一份结构化的PRD文档，包含：1. 背景与目标 2. 用户场景 3. 功能详情 4. 业务流程图 5. 数据埋点要求。当前需求：' },
-                      { id: 2, title: '竞品分析框架', content: '请帮我对【功能模块】进行竞品分析，主要对比对象包括：... 比较维度应包含用户体验、功能完整度、商业模式等。' }
-                    ]
-                  },
-                  { 
-                    phase: '代码开发阶段', 
-                    prompts: [
-                      { id: 3, title: 'React组件生成标准', content: '请生成一个React组件，要求：使用TypeScript，TailwindCSS进行样式编写，遵循响应式设计，分离逻辑与视图，并添加适当的JSDoc注释。' },
-                      { id: 4, title: 'Go API 接口规范', content: '实现一个RESTful API端点，语言为Go，使用Gin框架。要求包含参数验证、统一的错误处理封装、以及完整的Swagger注释。' }
-                    ]
-                  }
-                ].map(group => ({
-                  ...group,
-                  prompts: group.prompts.filter(p => 
-                    p.title.toLowerCase().includes(promptSearchTerm.toLowerCase()) || 
-                    p.content.toLowerCase().includes(promptSearchTerm.toLowerCase())
-                  )
-                })).filter(group => group.prompts.length > 0).map((group, groupIdx) => (
-                  <div key={groupIdx} className="space-y-3">
-                    <h3 className="text-sm font-semibold text-muted-foreground border-b border-border/50 pb-2">{group.phase}</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {group.prompts.map((prompt) => (
-                        <Card key={prompt.id} className="bg-muted/10 border-border/50 border-dashed hover:border-primary/50 transition-colors group">
-                          <CardContent className="p-4 flex flex-col h-full">
-                            <div className="flex items-start justify-between mb-2">
-                              <h4 className="font-medium text-sm flex items-center">
-                                <FileText className="h-4 w-4 mr-2 text-primary" />
-                                {prompt.title}
-                              </h4>
-                              <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-                                <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-primary/10 hover:text-primary" onClick={() => toast.success('内容已复制到剪贴板')}>
-                                  <Copy className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => toast.success('已删除')}>
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
+                {prompts
+                  .filter(p => p.name.toLowerCase().includes(promptSearchTerm.toLowerCase()) || (p.content || '').toLowerCase().includes(promptSearchTerm.toLowerCase()))
+                  .reduce<{useCase: string; items: Prompt[]}[]>((groups, p) => {
+                    const group = groups.find(g => g.useCase === p.useCase);
+                    if (group) {
+                      group.items.push(p);
+                    } else {
+                      groups.push({ useCase: p.useCase, items: [p] });
+                    }
+                    return groups;
+                  }, [])
+                  .map(group => (
+                    <div key={group.useCase} className="space-y-3">
+                      <h3 className="text-sm font-semibold text-muted-foreground border-b border-border/50 pb-2">{group.useCase}</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {group.items.map((prompt) => (
+                          <Card key={prompt.id} className="bg-muted/10 border-border/50 border-dashed hover:border-primary/50 transition-colors group">
+                            <CardContent className="p-4 flex flex-col h-full">
+                              <div className="flex items-start justify-between mb-2">
+                                <h4 className="font-medium text-sm flex items-center">
+                                  <FileText className="h-4 w-4 mr-2 text-primary" />
+                                  {prompt.name}
+                                </h4>
+                                <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-primary/10 hover:text-primary" onClick={() => {
+                                    navigator.clipboard.writeText(prompt.content || prompt.description).then(() => toast.success('内容已复制到剪贴板'));
+                                  }}>
+                                    <Copy className="h-3.5 w-3.5" />
+                                  </Button>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => {
+                                    teamApi.deletePrompt(prompt.id).then(() => {
+                                      setPrompts(prev => prev.filter(p => p.id !== prompt.id));
+                                      toast.success('已删除');
+                                    }).catch(() => toast.error('删除失败'));
+                                  }}>
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
                               </div>
-                            </div>
-                            <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed flex-1">
-                              {prompt.content}
-                            </p>
-                          </CardContent>
-                        </Card>
-                      ))}
+                              <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed flex-1">
+                                {prompt.content || prompt.description}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                {prompts.filter(p => p.name.toLowerCase().includes(promptSearchTerm.toLowerCase()) || (p.content || '').toLowerCase().includes(promptSearchTerm.toLowerCase())).length === 0 && (
+                  <div className="text-center py-12 text-muted-foreground">未找到匹配的提示词</div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -840,9 +856,14 @@ export const Settings: React.FC = () => {
             <Button
               disabled={selectedSkillIds.length === 0}
               onClick={() => {
-                toast.success(`已将 ${selectedSkillIds.length} 个技能添加到「${skillPhase}」阶段`);
-                setSkillMarketOpen(false);
-                setSelectedSkillIds([]);
+                Promise.all(selectedSkillIds.map(id => teamApi.updateSkillInstalled(id, true)))
+                  .then(() => {
+                    setSkills(prev => prev.map(s => selectedSkillIds.includes(s.id) ? { ...s, installed: true } : s));
+                    toast.success(`已将 ${selectedSkillIds.length} 个技能添加到「${skillPhase}」阶段`);
+                    setSkillMarketOpen(false);
+                    setSelectedSkillIds([]);
+                  })
+                  .catch(() => toast.error('添加技能失败'));
               }}
             >
               添加 ({selectedSkillIds.length})
@@ -880,12 +901,25 @@ export const Settings: React.FC = () => {
                   return;
                 }
                 setIsGeneratingSkill(true);
-                setTimeout(() => {
+                const name = createSkillPrompt.trim().slice(0, 20) || 'AI 生成自定义技能';
+                teamApi.createSkill({
+                  name,
+                  description: createSkillPrompt.trim(),
+                  category: skillCategory !== '全部' ? skillCategory : '通用',
+                  tags: '',
+                  icon: 'Puzzle',
+                  phase: skillPhase,
+                  rating: 5.0,
+                }).then(skill => {
+                  setSkills(prev => [skill, ...prev]);
                   setIsGeneratingSkill(false);
                   toast.success('自定义技能生成成功并已自动安装');
                   setCreateSkillOpen(false);
                   setCreateSkillPrompt('');
-                }, 1500);
+                }).catch(() => {
+                  setIsGeneratingSkill(false);
+                  toast.error('技能生成失败');
+                });
               }}
               disabled={isGeneratingSkill}
             >
@@ -924,12 +958,22 @@ export const Settings: React.FC = () => {
                   return;
                 }
                 setIsGeneratingPrompt(true);
-                setTimeout(() => {
+                const name = createPromptDesc.trim().slice(0, 20) || 'AI 生成自定义提示词';
+                teamApi.createPrompt({
+                  name,
+                  description: createPromptDesc.trim(),
+                  content: createPromptDesc.trim(),
+                  useCase: promptMarketCategory !== '全部' ? promptMarketCategory : '通用',
+                }).then(prompt => {
+                  setPrompts(prev => [prompt, ...prev]);
                   setIsGeneratingPrompt(false);
                   toast.success('自定义提示词生成成功并已添加');
                   setCreatePromptOpen(false);
                   setCreatePromptDesc('');
-                }, 1500);
+                }).catch(() => {
+                  setIsGeneratingPrompt(false);
+                  toast.error('提示词生成失败');
+                });
               }}
               disabled={isGeneratingPrompt}
             >
@@ -1009,9 +1053,14 @@ export const Settings: React.FC = () => {
             <Button
               disabled={selectedPromptIds.length === 0}
               onClick={() => {
-                toast.success(`已将 ${selectedPromptIds.length} 个提示词添加到空间常用列表`);
-                setPromptMarketOpen(false);
-                setSelectedPromptIds([]);
+                Promise.all(selectedPromptIds.map(id => teamApi.updatePromptAdded(id, true)))
+                  .then(() => {
+                    setPrompts(prev => prev.map(p => selectedPromptIds.includes(p.id) ? { ...p, addedToSpace: true } : p));
+                    toast.success(`已将 ${selectedPromptIds.length} 个提示词添加到空间常用列表`);
+                    setPromptMarketOpen(false);
+                    setSelectedPromptIds([]);
+                  })
+                  .catch(() => toast.error('添加提示词失败'));
               }}
             >
               添加 ({selectedPromptIds.length})

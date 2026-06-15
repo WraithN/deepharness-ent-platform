@@ -1,21 +1,17 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { Plus, MessageSquare, Loader2, Sparkles, Wand2, User, ChevronRight, ChevronLeft, Briefcase } from 'lucide-react';
+import { Plus, MessageSquare, Loader2, Sparkles, Wand2, User, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+import { api } from '@/lib/api';
+import type { PersonalAssistantDTO, CreatePersonalAssistantRequest, LobsterRole } from '@/lib/api-types';
 
-// Mock lobsters data
-const MOCK_LOBSTERS = [
-  { id: 'lob-1', name: '大钳子', role: '测试虾', desc: '专注寻找代码中的 Bug，不放过任何一个角落', creator: 'Meego', isMine: true },
-  { id: 'lob-2', name: '小红须', role: '开发虾', desc: '精通多语言的高效编码助手，擅长快速实现功能', creator: '张三', isMine: false }
-];
-
-const AVAILABLE_ROLES = [
+const AVAILABLE_ROLES: { id: LobsterRole; title: LobsterRole; desc: string; icon: string }[] = [
   { id: '测试虾', title: '测试虾', desc: '专注寻找代码中的 Bug，编写自动化测试用例', icon: '🐞' },
   { id: '运维虾', title: '运维虾', desc: '监控系统状态，配置 CI/CD 流水线，保障系统稳定', icon: '🔧' },
   { id: '设计虾', title: '设计虾', desc: 'UI/UX 设计专家，提供绝佳的交互体验方案', icon: '🎨' },
@@ -24,23 +20,30 @@ const AVAILABLE_ROLES = [
   { id: '运营虾', title: '运营虾', desc: '数据分析与活动策划，提升用户活跃度与留存', icon: '📊' },
 ];
 
-export const LobsterAssistant: React.FC = () => {
+export const PersonalAssistantPage: React.FC = () => {
   const navigate = useNavigate();
-  const [lobsters, setLobsters] = useState(MOCK_LOBSTERS);
+  const [lobsters, setLobsters] = useState<PersonalAssistantDTO[]>([]);
+  const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  
+
   // Create Wizard State
   const [step, setStep] = useState(1);
   const [newLobsterName, setNewLobsterName] = useState('');
   const [newLobsterDesc, setNewLobsterDesc] = useState('');
-  const [newLobsterRole, setNewLobsterRole] = useState('');
+
+  useEffect(() => {
+    setLoading(true);
+    api.get<PersonalAssistantDTO[]>('/v1/personal-assistants')
+      .then(data => setLobsters(data))
+      .catch(() => toast.error('加载虾班智守失败'))
+      .finally(() => setLoading(false));
+  }, []);
 
   const openCreateModal = () => {
     setStep(1);
     setNewLobsterName('');
     setNewLobsterDesc('');
-    setNewLobsterRole('');
     setCreateOpen(true);
   };
 
@@ -54,27 +57,23 @@ export const LobsterAssistant: React.FC = () => {
     }
   };
 
-  const handleCreate = (selectedRole: string) => {
-    setNewLobsterRole(selectedRole);
-    setStep(3);
+  const handleCreate = async (selectedRole: LobsterRole) => {
     setIsLoading(true);
-    
-    // Simulate summoning delay
-    setTimeout(() => {
-      const newLobster = {
-        id: `lob-${Date.now()}`,
+    try {
+      const req: CreatePersonalAssistantRequest = {
         name: newLobsterName,
         role: selectedRole,
-        desc: newLobsterDesc || `您的专属${selectedRole}，随时准备为您效劳！`,
-        creator: 'Meego',
-        isMine: true
+        description: newLobsterDesc || `您的专属${selectedRole}，随时准备为您效劳！`,
       };
-      
-      setLobsters([...lobsters, newLobster]);
-      setIsLoading(false);
+      const created = await api.post<PersonalAssistantDTO>('/v1/personal-assistants', req);
+      setLobsters(prev => [...prev, created]);
       setCreateOpen(false);
       toast.success('虾班智守召唤成功！');
-    }, 2500);
+    } catch {
+      toast.error('召唤失败');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const roleColors: Record<string, string> = {
@@ -85,6 +84,14 @@ export const LobsterAssistant: React.FC = () => {
     '产品虾': 'bg-amber-500/10 text-amber-500 border-amber-500/20',
     '运营虾': 'bg-pink-500/10 text-pink-500 border-pink-500/20',
   };
+
+  if (loading && lobsters.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 space-y-6 max-w-7xl mx-auto w-full pb-12">
@@ -122,7 +129,7 @@ export const LobsterAssistant: React.FC = () => {
             className={`h-full flex flex-col soft-shadow cursor-pointer transition-all overflow-hidden group claude-card ${!lobster.isMine ? 'opacity-70 grayscale-[20%]' : 'hover:-translate-y-1'}`}
             onClick={() => {
               if (lobster.isMine) {
-                navigate(`/lobster/chat/${lobster.id}`);
+                navigate(`/personal-assistant/chat/${lobster.id}`);
               } else {
                 toast.info('只能与自己创建的智守进行沟通');
               }
@@ -147,19 +154,20 @@ export const LobsterAssistant: React.FC = () => {
               </div>
             </CardHeader>
             <CardContent className="flex-1 flex flex-col text-center pb-4">
-              <p className="text-sm text-muted-foreground line-clamp-3 flex-1 mb-4">{lobster.desc}</p>
+              <p className="text-sm text-muted-foreground line-clamp-3 flex-1 mb-4">{lobster.description}</p>
               
               <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground mb-4">
                 <User className="w-3.5 h-3.5" />
-                <span>创建人: {lobster.creator}</span>
+                <span>创建人: {lobster.creatorName}</span>
               </div>
               
               <Button 
                 variant="ghost" 
                 disabled={!lobster.isMine}
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   if (lobster.isMine) {
-                    navigate(`/lobster/chat/${lobster.id}`);
+                    navigate(`/personal-assistant/chat/${lobster.id}`);
                   }
                 }}
                 className={`w-full mt-auto ${lobster.isMine ? 'group-hover:bg-primary group-hover:text-primary-foreground transition-colors' : ''}`}

@@ -16,7 +16,8 @@ func (m *mockWorkerStarter) StartWorker(sessionID string) {}
 
 func TestCreateSession_Success(t *testing.T) {
 	sessions := session.NewSessionStore()
-	h := NewSessionHandler(sessions, &mockWorkerStarter{})
+	messages := session.NewMessageStore()
+	h := NewSessionHandler(sessions, messages, &mockWorkerStarter{})
 
 	reqBody, _ := json.Marshal(map[string]any{
 		"agentType": "opencode",
@@ -49,7 +50,8 @@ func TestCreateSession_Success(t *testing.T) {
 
 func TestCreateSession_InvalidBody(t *testing.T) {
 	sessions := session.NewSessionStore()
-	h := NewSessionHandler(sessions, &mockWorkerStarter{})
+	messages := session.NewMessageStore()
+	h := NewSessionHandler(sessions, messages, &mockWorkerStarter{})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewReader([]byte("not-json")))
 	w := httptest.NewRecorder()
@@ -61,14 +63,15 @@ func TestCreateSession_InvalidBody(t *testing.T) {
 	}
 }
 
-func TestCreateSession_MethodNotAllowed(t *testing.T) {
+func TestSessions_MethodNotAllowed(t *testing.T) {
 	sessions := session.NewSessionStore()
-	h := NewSessionHandler(sessions, &mockWorkerStarter{})
+	messages := session.NewMessageStore()
+	h := NewSessionHandler(sessions, messages, &mockWorkerStarter{})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/sessions", nil)
 	w := httptest.NewRecorder()
 
-	h.CreateSession(w, req)
+	h.Sessions(w, req)
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)

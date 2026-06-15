@@ -11,8 +11,8 @@ import { SmartTest } from "@/pages/SmartTest";
 import { Settings } from "@/pages/Settings";
 import { Requirements } from "@/pages/Requirements";
 import { ProjectCode } from "@/pages/ProjectCode";
-import { LobsterAssistant } from "@/pages/LobsterAssistant";
-import { LobsterChat } from "@/pages/LobsterChat";
+import { PersonalAssistantPage } from "@/pages/PersonalAssistantPage";
+import { PersonalAssistantChat } from "@/pages/PersonalAssistantChat";
 import { AdminPage } from "@/pages/AdminPage";
 
 import { Profile } from "@/pages/Profile";
@@ -47,8 +47,8 @@ export const routes: RouteObject[] = [
       { path: "market/prompts", element: <PromptMarket /> },
       { path: "review", element: <SmartReview /> },
       { path: "testing", element: <SmartTest /> },
-      { path: "lobster", element: <LobsterAssistant /> },
-      { path: "lobster/chat/:id", element: <LobsterChat /> },
+      { path: "personal-assistant", element: <PersonalAssistantPage /> },
+      { path: "personal-assistant/chat/:id", element: <PersonalAssistantChat /> },
       { path: "settings", element: <Settings /> },
       { path: "*", element: <Navigate to="/login" replace /> },
     ],

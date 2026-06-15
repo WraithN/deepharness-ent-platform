@@ -41,6 +41,9 @@ export interface WorkItemDTO {
   externalId: string;
   createdAt: string;
   updatedAt: string;
+  type?: 'requirement' | 'defect' | 'case';
+  severity?: string;
+  steps?: string[];
 }
 
 // ── User ──
@@ -142,4 +145,50 @@ export interface AgentSessionDTO {
   status: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// ── Personal Assistant（虾班智守）──
+export type LobsterRole =
+  | "测试虾"
+  | "运维虾"
+  | "设计虾"
+  | "开发虾"
+  | "产品虾"
+  | "运营虾";
+
+export interface PersonalAssistantDTO {
+  id: string;
+  name: string;
+  role: LobsterRole;
+  description: string;
+  creatorId: string;
+  creatorName: string;
+  isMine: boolean;
+  avatarUrl?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface CreatePersonalAssistantRequest {
+  name: string;
+  role: LobsterRole;
+  description?: string;
+}
+
+export interface PersonalAssistantSessionDTO {
+  id: string;
+  assistantId: string;
+  title: string;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PersonalAssistantMessageDTO {
+  id: string;
+  sessionId: string;
+  role: "user" | "assistant" | "system";
+  type: "text";
+  content: string;
+  createdAt: string;
 }
