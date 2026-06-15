@@ -113,7 +113,7 @@ not set, so `pnpm dev` works without a running database.
 
 ## Mock & Test Tools
 
-- **`apps/mock/main.go`**: A standalone Agent SSE mock server. It simulates the
+- **`apps/agent-runtime/mock/main.go`**: A standalone Agent SSE mock server. It simulates the
   streaming response of an external Agent Runtime (e.g. OpenCode / Claude Code)
   for local development and testing. It has no dependency on `apps/dh-backend`
   and can be run independently.

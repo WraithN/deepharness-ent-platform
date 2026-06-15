@@ -5,7 +5,7 @@
 ## 启动
 
 ```bash
-cd apps/mock
+cd apps/agent-runtime/mock
 make run
 # 或
 PORT=19090 go run .
