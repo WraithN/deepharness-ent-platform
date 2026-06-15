@@ -26,6 +26,7 @@ const (
 // Repository 表示一个可被代码库页面操作的代码仓库实例。
 type Repository struct {
 	ID            string   `json:"id"`
+	WorkspaceID   string   `json:"workspaceId"`
 	ProjectID     string   `json:"projectId"`
 	Name          string   `json:"name"`
 	URL           string   `json:"url"`
