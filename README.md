@@ -85,14 +85,14 @@ pnpm build
 | `pnpm check-types` | Type-check all apps |
 | `pnpm test` | Run all tests |
 
-## Database (MySQL)
+## Database (PostgreSQL)
 
-This project uses **MySQL 8.0** as the primary database.
+This project uses **PostgreSQL 15** as the primary database.
 
-Start a local MySQL instance with Docker Compose:
+Start a local PostgreSQL instance with Docker Compose:
 
 ```bash
-docker compose -f infra/docker/compose.mysql.yml up -d
+docker compose -f infra/docker/compose.postgres.yml up -d
 ```
 
 Default connection (used by Go services):
@@ -100,13 +100,13 @@ Default connection (used by Go services):
 | Variable | Value |
 |----------|-------|
 | `DB_HOST` | `127.0.0.1` |
-| `DB_PORT` | `3307` (host) / `3306` (container) |
+| `DB_PORT` | `5432` |
 | `DB_USER` | `deepharness` |
 | `DB_PASSWORD` | `deepharness` |
 | `DB_NAME` | `deepharness` |
 
 Schema files are located in `infra/database/` and are automatically mounted into
-the MySQL container on first startup.
+the PostgreSQL container on first startup.
 
 `apps/dh-backend` gracefully falls back to in-memory mock data when `DB_HOST` is
 not set, so `pnpm dev` works without a running database.

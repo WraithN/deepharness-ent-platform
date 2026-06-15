@@ -1,0 +1,37 @@
+# PostgreSQL 15 开发环境
+# 使用方式：
+#   docker compose -f infra/docker/compose.postgres.yml up -d
+# 默认连接信息：
+#   host: 127.0.0.1
+#   port: 5432
+#   user: deepharness
+#   password: deepharness
+#   database: deepharness
+services:
+  postgres:
+    image: postgres:15
+    container_name: deepharness-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: deepharness
+      POSTGRES_PASSWORD: deepharness
+      POSTGRES_DB: deepharness
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../database/identity/schema.sql:/docker-entrypoint-initdb.d/01_identity.sql:ro
+      - ../database/workitem/schema.sql:/docker-entrypoint-initdb.d/02_workitem.sql:ro
+      - ../database/personalassistant/schema.sql:/docker-entrypoint-initdb.d/03_personalassistant.sql:ro
+      - ../database/agent/schema.sql:/docker-entrypoint-initdb.d/04_agent.sql:ro
+      - ../database/team/schema.sql:/docker-entrypoint-initdb.d/05_team.sql:ro
+      - ../database/workspace/schema.sql:/docker-entrypoint-initdb.d/06_workspace.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deepharness -d deepharness"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  postgres_data:
