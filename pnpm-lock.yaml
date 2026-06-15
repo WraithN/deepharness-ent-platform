@@ -14,9 +14,9 @@ importers:
 
   apps/agent-runtime: {}
 
-  apps/dh-backend: {}
+  apps/agent-runtime/mock: {}
 
-  apps/mock: {}
+  apps/dh-backend: {}
 
   apps/web:
     dependencies:

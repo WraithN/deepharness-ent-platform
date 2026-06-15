@@ -9,7 +9,7 @@
 - `apps/web`：React + Vite + TypeScript 前端应用（包名 `@repo/web`）。
 - `apps/agent-runtime`：Agent 运行时（包名 `@repo/agent-runtime`），定位为外部 Rust 可执行程序（OpenCode / Claude Code 等智能体封装），当前为 Go 占位实现。
 - `apps/dh-backend`：DeepHarness 后端统一入口（包名 `@repo/dh-backend`），包含管理控制台接口、WebSocket 会话、Agent Runtime 生命周期管理，以及 identity / project / workitem / orchestrator / pr-agent / audit 等业务模块。
-- `apps/mock`：本地 Agent SSE 模拟器（独立 Go 模块），用于模拟外部 Agent Runtime 的流式响应。
+- `apps/agent-runtime/mock`：本地 Agent SSE 模拟器（独立 Go 模块），用于模拟外部 Agent Runtime 的流式响应。
 - `packages/go-sdk`：共享 Go SDK，包含 DDD 领域模型和基础设施抽象。
 - `packages/ui`：共享 React UI 组件库。
 - `packages/api-types`：前后端共享 API TypeScript 类型。

@@ -99,9 +99,9 @@ build_services() {
     log_info "Building services..."
 
     # Build agent mock
-    if [ ! -f "apps/mock/dist/mock" ] || [ "apps/mock/main.go" -nt "apps/mock/dist/mock" ]; then
+    if [ ! -f "apps/agent-runtime/mock/dist/mock" ] || [ "apps/agent-runtime/mock/main.go" -nt "apps/agent-runtime/mock/dist/mock" ]; then
         log_info "Building mock..."
-        cd apps/mock
+        cd apps/agent-runtime/mock
         go build -o dist/mock .
         cd ../..
         log_success "mock built"
@@ -126,7 +126,7 @@ start_agent_mock() {
         kill_port "$AGENT_MOCK_PORT"
     fi
 
-    cd apps/mock
+    cd apps/agent-runtime/mock
     PORT=$AGENT_MOCK_PORT ./dist/mock > /tmp/agent-mock.log 2>&1 &
     local pid=$!
     PIDS+=("$pid")
