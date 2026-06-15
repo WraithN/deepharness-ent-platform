@@ -27,9 +27,9 @@ func (s *MySQLStore) Create(ctx context.Context, sess chat.Session) error {
 		return fmt.Errorf("marshal context failed: %w", err)
 	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO agent_sessions (id, agent_type, model, project_id, title, context, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, sess.ID, sess.AgentType, sess.Model, sess.ProjectID, sess.Title, ctxJSON, sess.CreatedAt, sess.UpdatedAt)
+		INSERT INTO agent_sessions (id, workspace_id, agent_id, agent_type, model, project_id, title, context, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, sess.ID, sess.WorkspaceID, sess.AgentID, sess.AgentType, sess.Model, sess.ProjectID, sess.Title, ctxJSON, sess.CreatedAt, sess.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert session failed: %w", err)
 	}
@@ -40,9 +40,9 @@ func (s *MySQLStore) Get(ctx context.Context, id string) (chat.Session, error) {
 	var sess chat.Session
 	var ctxJSON []byte
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, agent_type, model, project_id, title, context, created_at, updated_at
+		SELECT id, workspace_id, agent_id, agent_type, model, project_id, title, context, created_at, updated_at
 		FROM agent_sessions WHERE id = ?
-	`, id).Scan(&sess.ID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt)
+	`, id).Scan(&sess.ID, &sess.WorkspaceID, &sess.AgentID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return chat.Session{}, fmt.Errorf("session not found: %s", id)
 	}
@@ -81,7 +81,7 @@ func (s *MySQLStore) Delete(ctx context.Context, id string) error {
 
 func (s *MySQLStore) ListSessions(ctx context.Context) ([]chat.Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, agent_type, model, project_id, title, context, created_at, updated_at
+		SELECT id, workspace_id, agent_id, agent_type, model, project_id, title, context, created_at, updated_at
 		FROM agent_sessions
 		ORDER BY updated_at DESC
 	`)

@@ -6,6 +6,8 @@
 
 CREATE TABLE IF NOT EXISTS agent_sessions (
     id CHAR(36) PRIMARY KEY,
+    workspace_id CHAR(36) NOT NULL DEFAULT '',
+    agent_id CHAR(36) NOT NULL DEFAULT '',
     agent_type VARCHAR(50) NOT NULL DEFAULT 'opencode',
     model VARCHAR(50) NOT NULL DEFAULT 'gpt-4o',
     project_id VARCHAR(50),
@@ -13,6 +15,8 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     context JSON,
     created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
     updated_at DATETIME(3) NOT NULL DEFAULT NOW(3) ON UPDATE NOW(3),
+    INDEX idx_agent_sessions_workspace (workspace_id),
+    INDEX idx_agent_sessions_agent (agent_id),
     INDEX idx_agent_sessions_updated (updated_at DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

@@ -29,10 +29,12 @@ func NewSessionHandler(sessions chat.SessionStore, messages chat.MessageStore, w
 }
 
 type CreateSessionRequest struct {
-	AgentType string         `json:"agentType"`
-	Model     string         `json:"model"`
-	ProjectID string         `json:"projectId"`
-	Context   map[string]any `json:"context"`
+	WorkspaceID string         `json:"workspaceId"`
+	AgentID     string         `json:"agentId"`
+	AgentType   string         `json:"agentType"`
+	Model       string         `json:"model"`
+	ProjectID   string         `json:"projectId"`
+	Context     map[string]any `json:"context"`
 }
 
 type CreateSessionResponse struct {
@@ -64,14 +66,25 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	workspaceID := req.WorkspaceID
+	if workspaceID == "" {
+		workspaceID = "ws-default"
+	}
+	agentID := req.AgentID
+	if agentID == "" {
+		agentID = "agent-default"
+	}
+
 	session := chat.Session{
-		ID:        uuid.New().String(),
-		AgentType: req.AgentType,
-		Model:     req.Model,
-		ProjectID: req.ProjectID,
-		Context:   req.Context,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:          uuid.New().String(),
+		WorkspaceID: workspaceID,
+		AgentID:     agentID,
+		AgentType:   req.AgentType,
+		Model:       req.Model,
+		ProjectID:   req.ProjectID,
+		Context:     req.Context,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
 
 	if err := h.sessions.Create(r.Context(), session); err != nil {
