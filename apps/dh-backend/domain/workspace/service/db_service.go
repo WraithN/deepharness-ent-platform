@@ -54,7 +54,7 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 
 	_, err = tx.Exec(`
 		INSERT INTO workspaces (id, tenant_id, name, description, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`, ws.ID, ws.TenantID, ws.Name, ws.Description, ws.CreatedAt, ws.UpdatedAt)
 	if err != nil {
 		return workspace.Workspace{}, fmt.Errorf("insert workspace failed: %w", err)
@@ -62,7 +62,7 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 
 	_, err = tx.Exec(`
 		INSERT INTO workspace_members (workspace_id, user_id, role, sub_role, joined_at)
-		VALUES (?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5)
 	`, ws.ID, ownerUserID, MemberRoleAdmin, MemberSubRolePM, now)
 	if err != nil {
 		return workspace.Workspace{}, fmt.Errorf("insert workspace member failed: %w", err)
@@ -80,7 +80,7 @@ func (s *DBWorkspaceService) GetWorkspace(id string) (workspace.Workspace, error
 	var desc sql.NullString
 	err := s.db.QueryRow(`
 		SELECT id, tenant_id, name, description, created_at, updated_at
-		FROM workspaces WHERE id = ?
+		FROM workspaces WHERE id = $1
 	`, id).Scan(&ws.ID, &ws.TenantID, &ws.Name, &desc, &ws.CreatedAt, &ws.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return workspace.Workspace{}, errors.New("workspace not found")
@@ -97,7 +97,7 @@ func (s *DBWorkspaceService) ListWorkspaces(tenantID string) ([]workspace.Worksp
 	query := `SELECT id, tenant_id, name, description, created_at, updated_at FROM workspaces`
 	var args []any
 	if tenantID != "" {
-		query += ` WHERE tenant_id = ?`
+		query += ` WHERE tenant_id = $1`
 		args = append(args, tenantID)
 	}
 	query += ` ORDER BY created_at DESC`
@@ -131,7 +131,7 @@ func (s *DBWorkspaceService) AddMember(workspaceID, userID, role, subRole string
 	}
 	_, err := s.db.Exec(`
 		INSERT INTO workspace_members (workspace_id, user_id, role, sub_role, joined_at)
-		VALUES (?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5)
 	`, workspaceID, userID, role, nullString(subRole), time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("add member failed: %w", err)
@@ -146,7 +146,7 @@ func (s *DBWorkspaceService) ListMembers(workspaceID string) ([]workspace.Member
 	}
 	rows, err := s.db.Query(`
 		SELECT workspace_id, user_id, role, sub_role, joined_at
-		FROM workspace_members WHERE workspace_id = ?
+		FROM workspace_members WHERE workspace_id = $1
 	`, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list members failed: %w", err)
@@ -172,7 +172,7 @@ func (s *DBWorkspaceService) ListMembers(workspaceID string) ([]workspace.Member
 // RemoveMember 移除工作空间成员。
 func (s *DBWorkspaceService) RemoveMember(workspaceID, userID string) error {
 	res, err := s.db.Exec(`
-		DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?
+		DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2
 	`, workspaceID, userID)
 	if err != nil {
 		return fmt.Errorf("remove member failed: %w", err)
@@ -203,12 +203,12 @@ func (s *DBWorkspaceService) SetDemandProject(workspaceID string, req DemandProj
 
 	_, err = tx.Exec(`
 		INSERT INTO demand_projects (id, workspace_id, platform, external_key, name, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			platform = VALUES(platform),
-			external_key = VALUES(external_key),
-			name = VALUES(name),
-			updated_at = VALUES(updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (workspace_id) DO UPDATE SET
+			platform = EXCLUDED.platform,
+			external_key = EXCLUDED.external_key,
+			name = EXCLUDED.name,
+			updated_at = EXCLUDED.updated_at
 	`, uuid.New().String(), workspaceID, req.Platform, req.ExternalKey, req.Name, now, now)
 	if err != nil {
 		return workspace.DemandProject{}, fmt.Errorf("set demand project failed: %w", err)
@@ -231,7 +231,7 @@ func (s *DBWorkspaceService) GetDemandProject(workspaceID string) (workspace.Dem
 	var config sql.NullString
 	err := s.db.QueryRow(`
 		SELECT id, workspace_id, platform, external_key, name, config, created_at, updated_at
-		FROM demand_projects WHERE workspace_id = ?
+		FROM demand_projects WHERE workspace_id = $1
 	`, workspaceID).Scan(&dp.ID, &dp.WorkspaceID, &dp.Platform, &dp.ExternalKey, &dp.Name, &config, &dp.CreatedAt, &dp.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return workspace.DemandProject{}, errors.New("demand project not found")
@@ -248,11 +248,11 @@ func (s *DBWorkspaceService) GetDemandProject(workspaceID string) (workspace.Dem
 
 // ListRepositories 返回工作空间下的仓库列表，支持按类型过滤。
 func (s *DBWorkspaceService) ListRepositories(workspaceID string, repoType project.RepoType) ([]project.Repository, error) {
-	query := `SELECT id, workspace_id, name, url, type, default_branch, created_at, updated_at FROM repositories WHERE workspace_id = ?`
+	query := `SELECT id, workspace_id, name, url, type, default_branch, created_at, updated_at FROM repositories WHERE workspace_id = $1`
 	var args []any
 	args = append(args, workspaceID)
 	if repoType != "" {
-		query += ` AND type = ?`
+		query += ` AND type = $2`
 		args = append(args, repoType)
 	}
 	query += ` ORDER BY created_at DESC`
@@ -299,7 +299,7 @@ func (s *DBWorkspaceService) CreateRepository(workspaceID string, req Repository
 
 	_, err := s.db.Exec(`
 		INSERT INTO repositories (id, workspace_id, name, url, type, default_branch, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`, repo.ID, repo.WorkspaceID, repo.Name, repo.URL, repo.Type, repo.DefaultBranch, repo.CreatedAt, repo.UpdatedAt)
 	if err != nil {
 		return project.Repository{}, fmt.Errorf("insert repository failed: %w", err)
@@ -310,7 +310,7 @@ func (s *DBWorkspaceService) CreateRepository(workspaceID string, req Repository
 // DeleteRepository 删除工作空间下的仓库。
 func (s *DBWorkspaceService) DeleteRepository(workspaceID, repoID string) error {
 	res, err := s.db.Exec(`
-		DELETE FROM repositories WHERE id = ? AND workspace_id = ?
+		DELETE FROM repositories WHERE id = $1 AND workspace_id = $2
 	`, repoID, workspaceID)
 	if err != nil {
 		return fmt.Errorf("delete repository failed: %w", err)
@@ -329,7 +329,7 @@ func (s *DBWorkspaceService) DeleteRepository(workspaceID, repoID string) error 
 func (s *DBWorkspaceService) ListAgents(workspaceID string) ([]agent.Agent, error) {
 	rows, err := s.db.Query(`
 		SELECT id, workspace_id, name, role, description, config, is_default, created_by_user_id, created_at, updated_at
-		FROM agents WHERE workspace_id = ? ORDER BY created_at DESC
+		FROM agents WHERE workspace_id = $1 ORDER BY created_at DESC
 	`, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list agents failed: %w", err)
@@ -390,14 +390,14 @@ func (s *DBWorkspaceService) CreateAgent(workspaceID string, req AgentRequest) (
 	defer tx.Rollback()
 
 	if req.IsDefault {
-		if _, err := tx.Exec(`UPDATE agents SET is_default = 0 WHERE workspace_id = ?`, workspaceID); err != nil {
+		if _, err := tx.Exec(`UPDATE agents SET is_default = false WHERE workspace_id = $1`, workspaceID); err != nil {
 			return agent.Agent{}, fmt.Errorf("clear default agent failed: %w", err)
 		}
 	}
 
 	_, err = tx.Exec(`
 		INSERT INTO agents (id, workspace_id, name, role, description, config, is_default, created_by_user_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, a.ID, a.WorkspaceID, a.Name, a.Role, a.Description, configStr, a.IsDefault, a.CreatedByUserID, a.CreatedAt, a.UpdatedAt)
 	if err != nil {
 		return agent.Agent{}, fmt.Errorf("insert agent failed: %w", err)
@@ -416,7 +416,7 @@ func (s *DBWorkspaceService) GetDefaultAgent(workspaceID string) (agent.Agent, e
 	var config sql.NullString
 	err := s.db.QueryRow(`
 		SELECT id, workspace_id, name, role, description, config, is_default, created_by_user_id, created_at, updated_at
-		FROM agents WHERE workspace_id = ? AND is_default = 1
+		FROM agents WHERE workspace_id = $1 AND is_default = true
 	`, workspaceID).Scan(&a.ID, &a.WorkspaceID, &a.Name, &role, &description, &config, &a.IsDefault, &createdBy, &a.CreatedAt, &a.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return agent.Agent{}, errors.New("default agent not found")
@@ -436,11 +436,11 @@ func (s *DBWorkspaceService) GetDefaultAgent(workspaceID string) (agent.Agent, e
 
 // ListStandards 返回工作空间下的规范列表，支持按仓库过滤。
 func (s *DBWorkspaceService) ListStandards(workspaceID string, repoID string) ([]workspace.Standard, error) {
-	query := `SELECT id, workspace_id, repository_id, type, name, content, created_at, updated_at FROM workspace_standards WHERE workspace_id = ?`
+	query := `SELECT id, workspace_id, repository_id, type, name, content, created_at, updated_at FROM workspace_standards WHERE workspace_id = $1`
 	var args []any
 	args = append(args, workspaceID)
 	if repoID != "" {
-		query += ` AND repository_id = ?`
+		query += ` AND repository_id = $2`
 		args = append(args, repoID)
 	}
 	query += ` ORDER BY created_at DESC`
@@ -490,7 +490,7 @@ func (s *DBWorkspaceService) SaveStandard(workspaceID string, req StandardReques
 	}
 	_, err := s.db.Exec(`
 		INSERT INTO workspace_standards (id, workspace_id, repository_id, type, name, content, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`, st.ID, st.WorkspaceID, st.RepositoryID, st.Type, st.Name, st.Content, st.CreatedAt, st.UpdatedAt)
 	if err != nil {
 		return workspace.Standard{}, fmt.Errorf("insert standard failed: %w", err)
@@ -512,8 +512,8 @@ func (s *DBWorkspaceService) updateStandard(workspaceID string, req StandardRequ
 
 	res, err := tx.Exec(`
 		UPDATE workspace_standards
-		SET repository_id = ?, type = ?, name = ?, content = ?, updated_at = ?
-		WHERE id = ? AND workspace_id = ?
+		SET repository_id = $1, type = $2, name = $3, content = $4, updated_at = $5
+		WHERE id = $6 AND workspace_id = $7
 	`, nullString(req.RepositoryID), req.Type, req.Name, req.Content, now, req.ID, workspaceID)
 	if err != nil {
 		return workspace.Standard{}, fmt.Errorf("update standard failed: %w", err)
@@ -540,7 +540,7 @@ func (s *DBWorkspaceService) updateStandard(workspaceID string, req StandardRequ
 // DeleteStandard 删除工作空间下的规范。
 func (s *DBWorkspaceService) DeleteStandard(workspaceID, standardID string) error {
 	res, err := s.db.Exec(`
-		DELETE FROM workspace_standards WHERE id = ? AND workspace_id = ?
+		DELETE FROM workspace_standards WHERE id = $1 AND workspace_id = $2
 	`, standardID, workspaceID)
 	if err != nil {
 		return fmt.Errorf("delete standard failed: %w", err)
@@ -561,7 +561,7 @@ func (s *DBWorkspaceService) GetCICD(workspaceID string) (workspace.CICD, error)
 	var config sql.NullString
 	err := s.db.QueryRow(`
 		SELECT id, workspace_id, trigger_branches, webhook_url, script, config, created_at, updated_at
-		FROM workspace_cicd WHERE workspace_id = ?
+		FROM workspace_cicd WHERE workspace_id = $1
 	`, workspaceID).Scan(&c.ID, &c.WorkspaceID, &c.TriggerBranches, &c.WebhookURL, &c.Script, &config, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return workspace.CICD{}, errors.New("cicd not found")
@@ -591,12 +591,12 @@ func (s *DBWorkspaceService) SaveCICD(workspaceID string, req CICDRequest) (work
 	now := time.Now().UTC()
 	_, err = tx.Exec(`
 		INSERT INTO workspace_cicd (id, workspace_id, trigger_branches, webhook_url, script, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			trigger_branches = VALUES(trigger_branches),
-			webhook_url = VALUES(webhook_url),
-			script = VALUES(script),
-			updated_at = VALUES(updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (workspace_id) DO UPDATE SET
+			trigger_branches = EXCLUDED.trigger_branches,
+			webhook_url = EXCLUDED.webhook_url,
+			script = EXCLUDED.script,
+			updated_at = EXCLUDED.updated_at
 	`, uuid.New().String(), workspaceID, req.TriggerBranches, req.WebhookURL, req.Script, now, now)
 	if err != nil {
 		return workspace.CICD{}, fmt.Errorf("save cicd failed: %w", err)
@@ -616,7 +616,7 @@ func (s *DBWorkspaceService) SaveCICD(workspaceID string, req CICDRequest) (work
 // workspaceExists 校验工作空间是否存在。
 func (s *DBWorkspaceService) workspaceExists(workspaceID string) error {
 	var id string
-	err := s.db.QueryRow(`SELECT id FROM workspaces WHERE id = ?`, workspaceID).Scan(&id)
+	err := s.db.QueryRow(`SELECT id FROM workspaces WHERE id = $1`, workspaceID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("workspace not found")
 	}
@@ -629,7 +629,7 @@ func (s *DBWorkspaceService) workspaceExists(workspaceID string) error {
 // workspaceExistsTx 在事务中校验工作空间是否存在。
 func workspaceExistsTx(tx *sql.Tx, workspaceID string) error {
 	var id string
-	err := tx.QueryRow(`SELECT id FROM workspaces WHERE id = ?`, workspaceID).Scan(&id)
+	err := tx.QueryRow(`SELECT id FROM workspaces WHERE id = $1`, workspaceID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("workspace not found")
 	}
@@ -645,7 +645,7 @@ func (s *DBWorkspaceService) getStandard(id string) (workspace.Standard, error) 
 	var repoID sql.NullString
 	err := s.db.QueryRow(`
 		SELECT id, workspace_id, repository_id, type, name, content, created_at, updated_at
-		FROM workspace_standards WHERE id = ?
+		FROM workspace_standards WHERE id = $1
 	`, id).Scan(&st.ID, &st.WorkspaceID, &repoID, &st.Type, &st.Name, &st.Content, &st.CreatedAt, &st.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return workspace.Standard{}, errors.New("standard not found")
@@ -663,7 +663,7 @@ func getStandardTx(tx *sql.Tx, id string) (workspace.Standard, error) {
 	var repoID sql.NullString
 	err := tx.QueryRow(`
 		SELECT id, workspace_id, repository_id, type, name, content, created_at, updated_at
-		FROM workspace_standards WHERE id = ?
+		FROM workspace_standards WHERE id = $1
 	`, id).Scan(&st.ID, &st.WorkspaceID, &repoID, &st.Type, &st.Name, &st.Content, &st.CreatedAt, &st.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return workspace.Standard{}, errors.New("standard not found")
@@ -681,7 +681,7 @@ func getDemandProjectTx(tx *sql.Tx, workspaceID string) (workspace.DemandProject
 	var config sql.NullString
 	err := tx.QueryRow(`
 		SELECT id, workspace_id, platform, external_key, name, config, created_at, updated_at
-		FROM demand_projects WHERE workspace_id = ?
+		FROM demand_projects WHERE workspace_id = $1
 	`, workspaceID).Scan(&dp.ID, &dp.WorkspaceID, &dp.Platform, &dp.ExternalKey, &dp.Name, &config, &dp.CreatedAt, &dp.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return workspace.DemandProject{}, errors.New("demand project not found")
@@ -702,7 +702,7 @@ func getCICDTx(tx *sql.Tx, workspaceID string) (workspace.CICD, error) {
 	var config sql.NullString
 	err := tx.QueryRow(`
 		SELECT id, workspace_id, trigger_branches, webhook_url, script, config, created_at, updated_at
-		FROM workspace_cicd WHERE workspace_id = ?
+		FROM workspace_cicd WHERE workspace_id = $1
 	`, workspaceID).Scan(&c.ID, &c.WorkspaceID, &c.TriggerBranches, &c.WebhookURL, &c.Script, &config, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return workspace.CICD{}, errors.New("cicd not found")

@@ -140,7 +140,7 @@ func (s *DBTeamService) CreateSkill(req CreateSkillRequest) (Skill, error) {
 
 	_, err := s.db.Exec(`
 		INSERT INTO team_skills (id, name, description, category, tags, downloads, rating, installed, icon, phase, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`, skill.ID, skill.Name, skill.Description, skill.Category, strings.Join(skill.Tags, ","), skill.Downloads, skill.Rating, skill.Installed, skill.Icon, skill.Phase, skill.CreatedAt, skill.UpdatedAt)
 	if err != nil {
 		return Skill{}, fmt.Errorf("insert skill failed: %w", err)
@@ -159,7 +159,7 @@ func (s *DBTeamService) UpdateSkill(id string, req UpdateSkillRequest) (Skill, e
 	}
 
 	_, err = s.db.Exec(`
-		UPDATE team_skills SET installed = ?, updated_at = ? WHERE id = ?
+		UPDATE team_skills SET installed = $1, updated_at = $2 WHERE id = $3
 	`, skill.Installed, time.Now().UTC(), id)
 	if err != nil {
 		return Skill{}, fmt.Errorf("update skill failed: %w", err)
@@ -169,7 +169,7 @@ func (s *DBTeamService) UpdateSkill(id string, req UpdateSkillRequest) (Skill, e
 
 // DeleteSkill 删除技能。
 func (s *DBTeamService) DeleteSkill(id string) error {
-	res, err := s.db.Exec(`DELETE FROM team_skills WHERE id = ?`, id)
+	res, err := s.db.Exec(`DELETE FROM team_skills WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete skill failed: %w", err)
 	}
@@ -185,7 +185,7 @@ func (s *DBTeamService) getSkill(id string) (Skill, error) {
 	var tags sql.NullString
 	err := s.db.QueryRow(`
 		SELECT id, name, description, category, tags, downloads, rating, installed, icon, phase, created_at, updated_at
-		FROM team_skills WHERE id = ?
+		FROM team_skills WHERE id = $1
 	`, id).Scan(&sk.ID, &sk.Name, &sk.Description, &sk.Category, &tags, &sk.Downloads, &sk.Rating, &sk.Installed, &sk.Icon, &sk.Phase, &sk.CreatedAt, &sk.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Skill{}, errors.New("skill not found")
@@ -238,7 +238,7 @@ func (s *DBTeamService) CreatePrompt(req CreatePromptRequest) (Prompt, error) {
 
 	_, err := s.db.Exec(`
 		INSERT INTO team_prompts (id, name, description, content, use_case, usage_count, added_to_space, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, prompt.ID, prompt.Name, prompt.Description, prompt.Content, prompt.UseCase, prompt.UsageCount, prompt.AddedToSpace, prompt.CreatedAt, prompt.UpdatedAt)
 	if err != nil {
 		return Prompt{}, fmt.Errorf("insert prompt failed: %w", err)
@@ -257,7 +257,7 @@ func (s *DBTeamService) UpdatePrompt(id string, req UpdatePromptRequest) (Prompt
 	}
 
 	_, err = s.db.Exec(`
-		UPDATE team_prompts SET added_to_space = ?, updated_at = ? WHERE id = ?
+		UPDATE team_prompts SET added_to_space = $1, updated_at = $2 WHERE id = $3
 	`, prompt.AddedToSpace, time.Now().UTC(), id)
 	if err != nil {
 		return Prompt{}, fmt.Errorf("update prompt failed: %w", err)
@@ -267,7 +267,7 @@ func (s *DBTeamService) UpdatePrompt(id string, req UpdatePromptRequest) (Prompt
 
 // DeletePrompt 删除提示词。
 func (s *DBTeamService) DeletePrompt(id string) error {
-	res, err := s.db.Exec(`DELETE FROM team_prompts WHERE id = ?`, id)
+	res, err := s.db.Exec(`DELETE FROM team_prompts WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete prompt failed: %w", err)
 	}
@@ -282,7 +282,7 @@ func (s *DBTeamService) getPrompt(id string) (Prompt, error) {
 	var p Prompt
 	err := s.db.QueryRow(`
 		SELECT id, name, description, content, use_case, usage_count, added_to_space, created_at, updated_at
-		FROM team_prompts WHERE id = ?
+		FROM team_prompts WHERE id = $1
 	`, id).Scan(&p.ID, &p.Name, &p.Description, &p.Content, &p.UseCase, &p.UsageCount, &p.AddedToSpace, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Prompt{}, errors.New("prompt not found")
