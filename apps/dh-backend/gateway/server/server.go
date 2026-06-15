@@ -14,6 +14,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity"
+	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant"
 	paservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent"
@@ -118,6 +119,9 @@ func New(cfg config.Config) http.Handler {
 	// Personal assistant storage: MySQL when available, otherwise memory mock.
 	initPersonalAssistantService(db)
 
+	// Identity module: PostgreSQL when available, otherwise empty mock.
+	initIdentityService(db)
+
 	// Workspace module: MySQL when available, otherwise memory mock.
 	initWorkspaceService(db)
 
@@ -138,6 +142,7 @@ func New(cfg config.Config) http.Handler {
 	// Internal business modules
 	mux.HandleFunc("/api/v1/identity/users", identity.Users)
 	mux.HandleFunc("/api/v1/identity/users/me", identity.Me)
+	mux.HandleFunc("/api/v1/identity/login", identity.Login)
 	mux.HandleFunc("/api/v1/projects", project.Projects)
 	mux.HandleFunc("/api/v1/projects/{id}", project.ProjectByID)
 	mux.HandleFunc("/api/v1/repositories", project.Repositories)
@@ -199,6 +204,16 @@ func initDB(cfg config.Config) *sql.DB {
 	}
 	log.Printf("[DB] connected to postgres at %s:%s/%s", cfg.DBHost, cfg.DBPort, cfg.DBName)
 	return db
+}
+
+func initIdentityService(db *sql.DB) {
+	if db != nil {
+		log.Println("[Identity] using postgres storage")
+		identity.Init(identityservice.NewDBUserService(db))
+		return
+	}
+	log.Println("[Identity] using empty memory mock")
+	identity.Init(identityservice.NewMockUserService())
 }
 
 func initPersonalAssistantService(db *sql.DB) {
