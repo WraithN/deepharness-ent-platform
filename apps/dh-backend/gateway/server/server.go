@@ -101,8 +101,8 @@ func New(cfg config.Config) http.Handler {
 	var sessions chat.SessionStore
 	var messages chat.MessageStore
 	if db != nil {
-		sessions = session.NewMySQLStore(db)
-		messages = session.NewMySQLStore(db)
+		sessions = session.NewPostgresStore(db)
+		messages = session.NewPostgresStore(db)
 		log.Println("[Chat] using postgres storage")
 	} else {
 		sessions = session.NewSessionStore()

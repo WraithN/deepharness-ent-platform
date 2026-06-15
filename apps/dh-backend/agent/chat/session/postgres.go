@@ -9,19 +9,19 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 )
 
-// MySQLStore 是基于 MySQL 的 SessionStore + MessageStore 实现。
-type MySQLStore struct {
+// PostgresStore 是基于 PostgreSQL 的 SessionStore + MessageStore 实现。
+type PostgresStore struct {
 	db *sql.DB
 }
 
-// NewMySQLStore 创建 MySQL 存储实现。
-func NewMySQLStore(db *sql.DB) *MySQLStore {
-	return &MySQLStore{db: db}
+// NewPostgresStore 创建 PostgreSQL 存储实现。
+func NewPostgresStore(db *sql.DB) *PostgresStore {
+	return &PostgresStore{db: db}
 }
 
 // ── SessionStore ──
 
-func (s *MySQLStore) Create(ctx context.Context, sess chat.Session) error {
+func (s *PostgresStore) Create(ctx context.Context, sess chat.Session) error {
 	ctxJSON, err := json.Marshal(sess.Context)
 	if err != nil {
 		return fmt.Errorf("marshal context failed: %w", err)
@@ -36,7 +36,7 @@ func (s *MySQLStore) Create(ctx context.Context, sess chat.Session) error {
 	return nil
 }
 
-func (s *MySQLStore) Get(ctx context.Context, id string) (chat.Session, error) {
+func (s *PostgresStore) Get(ctx context.Context, id string) (chat.Session, error) {
 	var sess chat.Session
 	var ctxJSON []byte
 	err := s.db.QueryRowContext(ctx, `
@@ -55,7 +55,7 @@ func (s *MySQLStore) Get(ctx context.Context, id string) (chat.Session, error) {
 	return sess, nil
 }
 
-func (s *MySQLStore) UpdateActivity(ctx context.Context, id string) error {
+func (s *PostgresStore) UpdateActivity(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE agent_sessions SET updated_at = NOW() WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("update session activity failed: %w", err)
@@ -63,7 +63,7 @@ func (s *MySQLStore) UpdateActivity(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *MySQLStore) UpdateTitle(ctx context.Context, id string, title string) error {
+func (s *PostgresStore) UpdateTitle(ctx context.Context, id string, title string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE agent_sessions SET title = $1 WHERE id = $2`, title, id)
 	if err != nil {
 		return fmt.Errorf("update session title failed: %w", err)
@@ -71,7 +71,7 @@ func (s *MySQLStore) UpdateTitle(ctx context.Context, id string, title string) e
 	return nil
 }
 
-func (s *MySQLStore) Delete(ctx context.Context, id string) error {
+func (s *PostgresStore) Delete(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM agent_sessions WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete session failed: %w", err)
@@ -79,7 +79,7 @@ func (s *MySQLStore) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *MySQLStore) ListSessions(ctx context.Context) ([]chat.Session, error) {
+func (s *PostgresStore) ListSessions(ctx context.Context) ([]chat.Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, workspace_id, agent_id, agent_type, model, project_id, title, context, created_at, updated_at
 		FROM agent_sessions
@@ -107,7 +107,7 @@ func (s *MySQLStore) ListSessions(ctx context.Context) ([]chat.Session, error) {
 
 // ── MessageStore ──
 
-func (s *MySQLStore) Append(ctx context.Context, sessionID string, msg chat.Message) error {
+func (s *PostgresStore) Append(ctx context.Context, sessionID string, msg chat.Message) error {
 	metaJSON, err := json.Marshal(msg.Metadata)
 	if err != nil {
 		return fmt.Errorf("marshal metadata failed: %w", err)
@@ -122,7 +122,7 @@ func (s *MySQLStore) Append(ctx context.Context, sessionID string, msg chat.Mess
 	return nil
 }
 
-func (s *MySQLStore) GetHistory(ctx context.Context, sessionID string, limit int) ([]chat.Message, error) {
+func (s *PostgresStore) GetHistory(ctx context.Context, sessionID string, limit int) ([]chat.Message, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, session_id, role, type, content, metadata, created_at
 		FROM agent_messages
