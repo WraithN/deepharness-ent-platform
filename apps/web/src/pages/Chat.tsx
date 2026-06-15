@@ -48,8 +48,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { teamApi } from '@/lib/team-api';
+import { workspaceApi } from '@/lib/workspace-api';
 import type { WorkItemDTO, RepositoryDTO } from '@/lib/api-types';
-import type { Skill, Prompt } from '@/types';
+import type { Skill, Prompt, WorkspaceAgent } from '@/types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -520,6 +521,8 @@ export const Chat: React.FC = () => {
   const [availableRepos, setAvailableRepos] = useState<{id: string; name: string}[]>([]);
   const [availableSkills, setAvailableSkills] = useState<Skill[]>([]);
   const [availablePrompts, setAvailablePrompts] = useState<Prompt[]>([]);
+  const [availableAgents, setAvailableAgents] = useState<WorkspaceAgent[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
   const [skillPopoverOpen, setSkillPopoverOpen] = useState(false);
   const [repoMenuOpen, setRepoMenuOpen] = useState(false);
   const [promptMenuOpen, setPromptMenuOpen] = useState(false);
@@ -735,7 +738,10 @@ export const Chat: React.FC = () => {
     }
 
     if (!sessionId) {
+      const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
       api.post<{data: {sessionId: string; wsUrl: string}}>('/v1/sessions', {
+        workspaceId,
+        agentId: selectedAgentId || 'agent-default',
         agentType: 'opencode',
         model: 'gpt-4o',
         projectId: 'p1',
@@ -865,6 +871,25 @@ export const Chat: React.FC = () => {
       .catch(err => {
         if (cancelled) return;
         console.error('Failed to load skills/prompts:', err);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    workspaceApi.listAgents(workspaceId)
+      .then(agents => {
+        if (cancelled) return;
+        setAvailableAgents(agents);
+        const defaultAgent = agents.find(a => a.isDefault) || agents[0];
+        if (defaultAgent) {
+          setSelectedAgentId(defaultAgent.id);
+        }
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.error('Failed to load workspace agents:', err);
       });
     return () => { cancelled = true; };
   }, []);
