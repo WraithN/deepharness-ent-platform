@@ -198,7 +198,7 @@ pnpm --filter @repo/dh-backend dev
 - `apps/dh-backend` 目前无身份校验、无请求限流，生产需补充。
 - `infra/database/` 提供 MySQL 8.0 Schema 脚本（`identity/schema.sql`、`workitem/schema.sql`）。
 - `infra/docker/compose.mysql.yml` 提供 MySQL 8.0 开发环境。
-- `packages/go-sdk/infrastructure/mysql/` 提供统一的 MySQL 连接封装。
+- `packages/go-sdk/infrastructure/postgres/` 提供统一的 PostgreSQL 连接封装。
 - `infra/docker/` 提供了 `Dockerfile.web`。
 - `infra/k8s/` 提供了基础 K8s 部署清单。
 - `infra/helm/` 提供了 Helm Chart 模板。

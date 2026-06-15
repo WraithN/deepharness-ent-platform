@@ -29,7 +29,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket/broker"
 	brokermemory "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket/broker/memory"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/worker"
-	sdkmysql "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/mysql"
+	sdkpostgres "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/postgres"
 )
 
 // WorkerManager manages agent worker lifecycle per session.
@@ -103,7 +103,7 @@ func New(cfg config.Config) http.Handler {
 	if db != nil {
 		sessions = session.NewMySQLStore(db)
 		messages = session.NewMySQLStore(db)
-		log.Println("[Chat] using mysql storage")
+		log.Println("[Chat] using postgres storage")
 	} else {
 		sessions = session.NewSessionStore()
 		messages = session.NewMessageStore()
@@ -184,7 +184,7 @@ func New(cfg config.Config) http.Handler {
 }
 
 func initDB(cfg config.Config) *sql.DB {
-	dsn := sdkmysql.DSN(sdkmysql.Config{
+	dsn := sdkpostgres.DSN(sdkpostgres.Config{
 		Host:     cfg.DBHost,
 		Port:     cfg.DBPort,
 		User:     cfg.DBUser,
@@ -192,18 +192,18 @@ func initDB(cfg config.Config) *sql.DB {
 		Database: cfg.DBName,
 	})
 
-	db, err := sdkmysql.OpenDB(dsn)
+	db, err := sdkpostgres.OpenDB(dsn)
 	if err != nil {
-		log.Printf("[DB] mysql connect failed (%v), fallback to memory", err)
+		log.Printf("[DB] postgres connect failed (%v), fallback to memory", err)
 		return nil
 	}
-	log.Printf("[DB] connected to mysql at %s:%s/%s", cfg.DBHost, cfg.DBPort, cfg.DBName)
+	log.Printf("[DB] connected to postgres at %s:%s/%s", cfg.DBHost, cfg.DBPort, cfg.DBName)
 	return db
 }
 
 func initPersonalAssistantService(db *sql.DB) {
 	if db != nil {
-		log.Println("[PersonalAssistant] using mysql storage")
+		log.Println("[PersonalAssistant] using postgres storage")
 		personalassistant.Init(paservice.NewDBPersonalAssistantService(db))
 		return
 	}
@@ -213,7 +213,7 @@ func initPersonalAssistantService(db *sql.DB) {
 
 func initWorkspaceService(db *sql.DB) {
 	if db != nil {
-		log.Println("[Workspace] using mysql storage")
+		log.Println("[Workspace] using postgres storage")
 		workspace.Init(workspaceservice.NewDBWorkspaceService(db))
 		return
 	}
@@ -223,7 +223,7 @@ func initWorkspaceService(db *sql.DB) {
 
 func initTeamService(db *sql.DB) {
 	if db != nil {
-		log.Println("[Team] using mysql storage")
+		log.Println("[Team] using postgres storage")
 		team.Init(teamservice.NewDBTeamService(db))
 		return
 	}

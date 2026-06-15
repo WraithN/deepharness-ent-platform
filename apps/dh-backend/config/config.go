@@ -12,7 +12,7 @@ const (
 	DEFAULT_BROKER_TYPE     = "memory"
 	DEFAULT_SESSION_TIMEOUT = 30 * time.Minute
 	DEFAULT_DB_HOST         = "127.0.0.1"
-	DEFAULT_DB_PORT         = "3307"
+	DEFAULT_DB_PORT         = "5432"
 	DEFAULT_DB_USER         = "deepharness"
 	DEFAULT_DB_PASSWORD     = "deepharness"
 	DEFAULT_DB_NAME         = "deepharness"
