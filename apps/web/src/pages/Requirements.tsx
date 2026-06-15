@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { api } from '@/lib/api';
+import type { WorkItemDTO } from '@/lib/api-types';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,21 +9,57 @@ import { LayoutList, LayoutGrid, Plus, MoreHorizontal, RefreshCw } from 'lucide-
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 
-// Mock data
-const mockRequirements = [
-  { id: 'REQ-001', title: '智能会话界面重构', status: '进行中', owner: '张三', priority: '高', createdAt: '2026-05-28' },
-  { id: 'REQ-002', title: '空间设置新增Skill与Prompt管理', status: '待处理', owner: '李四', priority: '中', createdAt: '2026-05-28' },
-  { id: 'REQ-003', title: '数据大盘成员轨迹功能', status: '已完成', owner: '王五', priority: '高', createdAt: '2026-05-27' },
-  { id: 'REQ-004', title: '支持看板模式拖拽', status: '待处理', owner: '赵六', priority: '低', createdAt: '2026-05-29' },
-];
+// 后端状态（下划线）与中文展示状态的映射
+const API_STATUS_TO_UI: Record<string, string> = {
+  backlog: '待处理',
+  todo: '待处理',
+  in_progress: '进行中',
+  done: '已完成',
+};
+
+const UI_STATUS_TO_API: Record<string, string> = {
+  '待处理': 'todo',
+  '进行中': 'in_progress',
+  '已完成': 'done',
+};
+
+const API_PRIORITY_TO_UI: Record<string, string> = {
+  low: '低',
+  medium: '中',
+  high: '高',
+};
 
 const STATUSES = ['待处理', '进行中', '已完成'];
 
+interface ReqRow {
+  id: string;
+  title: string;
+  status: string;
+  owner: string;
+  priority: string;
+  createdAt: string;
+}
+
 export const Requirements: React.FC = () => {
   const [viewMode, setViewMode] = useState<'list' | 'kanban'>('list');
-  const [requirements, setRequirements] = useState(mockRequirements);
+  const [requirements, setRequirements] = useState<ReqRow[]>([]);
   const [draggedReqId, setDraggedReqId] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    api.get<WorkItemDTO[]>('/v1/workitems?type=requirement')
+      .then(items => {
+        setRequirements(items.map(item => ({
+          id: item.id,
+          title: item.title,
+          status: API_STATUS_TO_UI[item.status] ?? '待处理',
+          owner: item.assigneeId ?? item.reporter ?? '',
+          priority: API_PRIORITY_TO_UI[item.priority] ?? '中',
+          createdAt: item.createdAt.slice(0, 10),
+        })));
+      })
+      .catch(() => toast.error('加载需求失败'));
+  }, []);
 
   const handleNewRequirement = () => {
     navigate('/chat', { state: { initialInput: '#需求设计 @新需求 ' } });
@@ -43,13 +81,21 @@ export const Requirements: React.FC = () => {
     const reqId = e.dataTransfer.getData('text/plain');
     if (!reqId || reqId === '') return;
 
-    setRequirements(prev => prev.map(req => {
-      if (req.id === reqId && req.status !== targetStatus) {
-        toast.success(`需求 ${req.id} 状态已更新为 ${targetStatus}`);
-        return { ...req, status: targetStatus };
-      }
-      return req;
-    }));
+    const req = requirements.find(r => r.id === reqId);
+    if (!req || req.status === targetStatus) {
+      setDraggedReqId(null);
+      return;
+    }
+
+    api.patch<WorkItemDTO>(`/v1/workitems/${reqId}/status`, { status: UI_STATUS_TO_API[targetStatus] })
+      .then(item => {
+        setRequirements(prev => prev.map(r => r.id === reqId ? {
+          ...r,
+          status: API_STATUS_TO_UI[item.status] ?? targetStatus,
+        } : r));
+        toast.success(`需求 ${reqId} 状态已更新为 ${targetStatus}`);
+      })
+      .catch(() => toast.error('状态更新失败'));
     setDraggedReqId(null);
   };
 

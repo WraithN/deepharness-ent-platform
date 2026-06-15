@@ -147,6 +147,18 @@ const DEF_STATUS_LABELS: Record<DefectStatus, string> = { open: '待修复', 'in
 const CASE_STATUS_LABELS: Record<CaseStatus, string> = { draft: '草稿', ready: '待执行', passed: '通过', failed: '失败', blocked: '阻塞' };
 const SEVERITY_LABELS: Record<DefectSeverity, string> = { critical: '致命', high: '严重', medium: '一般', low: '轻微' };
 
+// 后端状态使用下划线（如 in_progress），前端 UI 使用连字符（如 in-progress）。
+const toUiStatus = (status: string): string => status.replace(/_/g, '-');
+const toApiStatus = (status: string): string => status.replace(/-/g, '_');
+
+// 根据后端优先级/严重度映射为前端严重度。
+const mapSeverity = (priority: WorkItemDTO['priority'], severity?: WorkItemDTO['severity']): DefectSeverity => {
+  if (severity) return severity;
+  if (priority === 'high') return 'high';
+  if (priority === 'medium') return 'medium';
+  return 'low';
+};
+
 const STATUS_COLORS: Record<string, string> = {
   backlog: 'bg-muted text-muted-foreground border-muted-foreground/30',
   todo: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800/50',
@@ -777,16 +789,16 @@ export const Chat: React.FC = () => {
             id: item.id,
             title: item.title,
             description: item.description,
-            assigneeId: item.assigneeId,
-            reporter: item.reporter,
+            assigneeId: item.assigneeId ?? '',
+            reporter: item.reporter ?? '',
             createdAt: item.createdAt.slice(0, 10),
           };
-          if (item.id.startsWith('REQ-')) {
-            reqs.push({ ...base, status: item.status as RequirementStatus });
-          } else if (item.id.startsWith('BUG-')) {
-            defs.push({ ...base, status: item.status as DefectStatus, severity: item.priority as DefectSeverity });
-          } else if (item.id.startsWith('TC-')) {
-            tcs.push({ ...base, status: item.status as CaseStatus, steps: [] });
+          if (item.type === 'requirement') {
+            reqs.push({ ...base, status: toUiStatus(item.status) as RequirementStatus });
+          } else if (item.type === 'defect') {
+            defs.push({ ...base, status: toUiStatus(item.status) as DefectStatus, severity: mapSeverity(item.priority, item.severity) });
+          } else if (item.type === 'case') {
+            tcs.push({ ...base, status: toUiStatus(item.status) as CaseStatus, steps: item.steps ?? [] });
           }
         });
         setRequirements(reqs);
@@ -860,12 +872,40 @@ export const Chat: React.FC = () => {
     setDetailType(null); setDetailId(null);
   };
 
+  const refreshWorkItemFromApi = (id: string) => {
+    api.get<WorkItemDTO>(`/v1/workitems/${id}`)
+      .then(item => {
+        const base = {
+          id: item.id,
+          title: item.title,
+          description: item.description,
+          assigneeId: item.assigneeId ?? '',
+          reporter: item.reporter ?? '',
+          createdAt: item.createdAt.slice(0, 10),
+        };
+        if (item.type === 'requirement') {
+          const updated: ReqItem = { ...base, status: toUiStatus(item.status) as RequirementStatus };
+          setRequirements(prev => prev.map(r => r.id === id ? updated : r));
+        } else if (item.type === 'defect') {
+          const updated: DefectItem = { ...base, status: toUiStatus(item.status) as DefectStatus, severity: mapSeverity(item.priority, item.severity) };
+          setDefects(prev => prev.map(d => d.id === id ? updated : d));
+        } else if (item.type === 'case') {
+          const updated: CaseItem = { ...base, status: toUiStatus(item.status) as CaseStatus, steps: item.steps ?? [] };
+          setCases(prev => prev.map(c => c.id === id ? updated : c));
+        }
+      })
+      .catch(err => {
+        console.error('Failed to load workitem detail:', err);
+      });
+  };
+
   const openDetail = (type: 'req' | 'defect' | 'case', id: string) => {
     if (detailType === type && detailId === id) {
       closeDetail();
       return;
     }
     setDetailType(type); setDetailId(id);
+    refreshWorkItemFromApi(id);
     if (kanbanOpen) {
       if (kanbanType !== type) {
         setKanbanType(type);
@@ -920,13 +960,37 @@ export const Chat: React.FC = () => {
   };
 
   const updateReqStatus = (id: string, status: RequirementStatus) => {
-    setRequirements(prev => prev.map(r => r.id === id ? { ...r, status } : r)); toast.success('状态已更新');
+    api.patch<WorkItemDTO>(`/v1/workitems/${id}/status`, { status: toApiStatus(status) })
+      .then(item => {
+        setRequirements(prev => prev.map(r => r.id === id ? {
+          ...r,
+          status: toUiStatus(item.status) as RequirementStatus,
+        } : r));
+        toast.success('状态已更新');
+      })
+      .catch(() => toast.error('状态更新失败'));
   };
   const updateDefStatus = (id: string, status: DefectStatus) => {
-    setDefects(prev => prev.map(d => d.id === id ? { ...d, status } : d)); toast.success('状态已更新');
+    api.patch<WorkItemDTO>(`/v1/workitems/${id}/status`, { status: toApiStatus(status) })
+      .then(item => {
+        setDefects(prev => prev.map(d => d.id === id ? {
+          ...d,
+          status: toUiStatus(item.status) as DefectStatus,
+        } : d));
+        toast.success('状态已更新');
+      })
+      .catch(() => toast.error('状态更新失败'));
   };
   const updateCaseStatus = (id: string, status: CaseStatus) => {
-    setCases(prev => prev.map(c => c.id === id ? { ...c, status } : c)); toast.success('状态已更新');
+    api.patch<WorkItemDTO>(`/v1/workitems/${id}/status`, { status: toApiStatus(status) })
+      .then(item => {
+        setCases(prev => prev.map(c => c.id === id ? {
+          ...c,
+          status: toUiStatus(item.status) as CaseStatus,
+        } : c));
+        toast.success('状态已更新');
+      })
+      .catch(() => toast.error('状态更新失败'));
   };
 
   const [historyList, setHistoryList] = useState<{id: string; title: string; date: string; type: string}[]>([]);

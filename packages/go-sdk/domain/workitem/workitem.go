@@ -2,11 +2,12 @@ package workitem
 
 import "time"
 
-// WorkItem 统一工作项（需求/缺陷/任务）
+// WorkItem 统一工作项（需求/缺陷/用例）
 type WorkItem struct {
 	ID          string    `json:"id"`
 	TenantID    string    `json:"tenantId"`
 	ProjectID   string    `json:"projectId"`
+	Type        Type      `json:"type"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	Status      Status    `json:"status"`
@@ -18,6 +19,15 @@ type WorkItem struct {
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
+
+// Type 工作项类型
+type Type string
+
+const (
+	TypeRequirement Type = "requirement"
+	TypeDefect      Type = "defect"
+	TypeCase        Type = "case"
+)
 
 // Status 工作项状态
 type Status string
