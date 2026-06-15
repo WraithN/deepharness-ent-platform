@@ -169,7 +169,7 @@
 启动本地 MySQL（可选，未启动时 Go 服务使用内存 mock）：
 
 ```bash
-docker compose -f infra/docker/compose.mysql.yml up -d
+docker compose -f infra/docker/compose.postgres.yml up -d
 ```
 
 单独运行某个应用：
@@ -197,7 +197,7 @@ pnpm --filter @repo/dh-backend dev
 - 后端 CORS 中间件当前设置为 `Access-Control-Allow-Origin: *`，生产环境应收紧。
 - `apps/dh-backend` 目前无身份校验、无请求限流，生产需补充。
 - `infra/database/` 提供 MySQL 8.0 Schema 脚本（`identity/schema.sql`、`workitem/schema.sql`）。
-- `infra/docker/compose.mysql.yml` 提供 MySQL 8.0 开发环境。
+- `infra/docker/compose.postgres.yml` 提供 PostgreSQL 15 开发环境。
 - `packages/go-sdk/infrastructure/postgres/` 提供统一的 PostgreSQL 连接封装。
 - `infra/docker/` 提供了 `Dockerfile.web`。
 - `infra/k8s/` 提供了基础 K8s 部署清单。
