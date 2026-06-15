@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # DeepHarness Platform - Development Startup Script
-# Starts: Agent Mock → API Gateway → Frontend Web App
+# Starts: Agent Mock → DH Backend → Frontend Web App
 
 set -e
 
@@ -14,12 +14,12 @@ NC='\033[0m' # No Color
 
 # Ports
 AGENT_MOCK_PORT="${AGENT_MOCK_PORT:-19090}"
-API_GATEWAY_PORT="${API_GATEWAY_PORT:-8080}"
+DH_BACKEND_PORT="${DH_BACKEND_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 
 # Base URLs
 AGENT_BASE_URL="http://localhost:${AGENT_MOCK_PORT}"
-API_BASE_URL="http://localhost:${API_GATEWAY_PORT}"
+API_BASE_URL="http://localhost:${DH_BACKEND_PORT}"
 
 # PIDs
 declare -a PIDS=()
@@ -99,21 +99,21 @@ build_services() {
     log_info "Building services..."
 
     # Build agent mock
-    if [ ! -f "services/agent-mock/dist/agent-mock" ] || [ "services/agent-mock/main.go" -nt "services/agent-mock/dist/agent-mock" ]; then
-        log_info "Building agent-mock..."
-        cd services/agent-mock
-        go build -o dist/agent-mock .
+    if [ ! -f "apps/mock/dist/mock" ] || [ "apps/mock/main.go" -nt "apps/mock/dist/mock" ]; then
+        log_info "Building mock..."
+        cd apps/mock
+        go build -o dist/mock .
         cd ../..
-        log_success "agent-mock built"
+        log_success "mock built"
     fi
 
-    # Build api-gateway
-    if [ ! -f "services/api-gateway/dist/api-gateway" ] || [ "services/api-gateway/main.go" -nt "services/api-gateway/dist/api-gateway" ]; then
-        log_info "Building api-gateway..."
-        cd services/api-gateway
-        go build -o dist/api-gateway .
+    # Build dh-backend
+    if [ ! -f "apps/dh-backend/dist/dh-backend" ] || [ "apps/dh-backend/main.go" -nt "apps/dh-backend/dist/dh-backend" ]; then
+        log_info "Building dh-backend..."
+        cd apps/dh-backend
+        go build -o dist/dh-backend .
         cd ../..
-        log_success "api-gateway built"
+        log_success "dh-backend built"
     fi
 }
 
@@ -126,8 +126,8 @@ start_agent_mock() {
         kill_port "$AGENT_MOCK_PORT"
     fi
 
-    cd services/agent-mock
-    PORT=$AGENT_MOCK_PORT ./dist/agent-mock > /tmp/agent-mock.log 2>&1 &
+    cd apps/mock
+    PORT=$AGENT_MOCK_PORT ./dist/mock > /tmp/agent-mock.log 2>&1 &
     local pid=$!
     PIDS+=("$pid")
     cd ../..
@@ -141,26 +141,26 @@ start_agent_mock() {
     fi
 }
 
-# Start API Gateway
-start_api_gateway() {
-    log_info "Starting API Gateway on port $API_GATEWAY_PORT..."
+# Start DH Backend
+start_dh_backend() {
+    log_info "Starting DH Backend on port $DH_BACKEND_PORT..."
 
-    if check_port "$API_GATEWAY_PORT"; then
-        log_warn "Port $API_GATEWAY_PORT is in use, killing existing process..."
-        kill_port "$API_GATEWAY_PORT"
+    if check_port "$DH_BACKEND_PORT"; then
+        log_warn "Port $DH_BACKEND_PORT is in use, killing existing process..."
+        kill_port "$DH_BACKEND_PORT"
     fi
 
-    cd services/api-gateway
-    AGENT_BASE_URL=$AGENT_BASE_URL PORT=$API_GATEWAY_PORT ./dist/api-gateway > /tmp/api-gateway.log 2>&1 &
+    cd apps/dh-backend
+    AGENT_BASE_URL=$AGENT_BASE_URL PORT=$DH_BACKEND_PORT ./dist/dh-backend > /tmp/dh-backend.log 2>&1 &
     local pid=$!
     PIDS+=("$pid")
     cd ../..
 
-    if wait_for_service "http://localhost:${API_GATEWAY_PORT}/health" "API Gateway"; then
-        log_success "API Gateway running (PID: $pid, log: /tmp/api-gateway.log)"
+    if wait_for_service "http://localhost:${DH_BACKEND_PORT}/health" "DH Backend"; then
+        log_success "DH Backend running (PID: $pid, log: /tmp/dh-backend.log)"
     else
-        log_error "API Gateway failed to start"
-        cat /tmp/api-gateway.log
+        log_error "DH Backend failed to start"
+        cat /tmp/dh-backend.log
         exit 1
     fi
 }
@@ -205,7 +205,7 @@ main() {
     echo ""
 
     # Check if we're in the right directory
-    if [ ! -f "package.json" ] || [ ! -d "services/api-gateway" ]; then
+    if [ ! -f "package.json" ] || [ ! -d "apps/dh-backend" ]; then
         log_error "Please run this script from the project root directory"
         exit 1
     fi
@@ -226,7 +226,7 @@ main() {
 
     # Start services in order
     start_agent_mock
-    start_api_gateway
+    start_dh_backend
     start_frontend
 
     echo ""
@@ -234,12 +234,12 @@ main() {
     echo ""
     echo -e "${BLUE}Service URLs:${NC}"
     echo -e "  Frontend:     ${GREEN}http://localhost:${FRONTEND_PORT}${NC}"
-    echo -e "  API Gateway:  ${GREEN}http://localhost:${API_GATEWAY_PORT}${NC}"
+    echo -e "  DH Backend:   ${GREEN}http://localhost:${DH_BACKEND_PORT}${NC}"
     echo -e "  Agent Mock:   ${GREEN}http://localhost:${AGENT_MOCK_PORT}${NC}"
     echo ""
     echo -e "${BLUE}Logs:${NC}"
     echo -e "  Frontend:     /tmp/frontend.log"
-    echo -e "  API Gateway:  /tmp/api-gateway.log"
+    echo -e "  DH Backend:   /tmp/dh-backend.log"
     echo -e "  Agent Mock:   /tmp/agent-mock.log"
     echo ""
     echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}"

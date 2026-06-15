@@ -1,0 +1,35 @@
+# MySQL 8.0 开发环境
+# 使用方式：
+#   docker compose -f infra/docker/compose.mysql.yml up -d
+# 默认连接信息：
+#   host: 127.0.0.1
+#   port: 3306
+#   user: deepharness
+#   password: deepharness
+#   database: deepharness
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: deepharness-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: deepharness_root
+      MYSQL_DATABASE: deepharness
+      MYSQL_USER: deepharness
+      MYSQL_PASSWORD: deepharness
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../database/identity/schema.sql:/docker-entrypoint-initdb.d/01_identity.sql:ro
+      - ../database/workitem/schema.sql:/docker-entrypoint-initdb.d/02_workitem.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+volumes:
+  mysql_data:

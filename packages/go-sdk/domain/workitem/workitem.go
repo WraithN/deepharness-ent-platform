@@ -4,27 +4,37 @@ import "time"
 
 // WorkItem 统一工作项（需求/缺陷/任务）
 type WorkItem struct {
-	ID          string
-	TenantID    string
-	ProjectID   string
-	Title       string
-	Description string
-	Status      Status
-	Priority    Priority
-	AssigneeID  string
-	Source      Source
-	ExternalID  string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          string    `json:"id"`
+	TenantID    string    `json:"tenantId"`
+	ProjectID   string    `json:"projectId"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Status      Status    `json:"status"`
+	Priority    Priority  `json:"priority"`
+	AssigneeID  string    `json:"assigneeId"`
+	Reporter    string    `json:"reporter"`
+	Source      Source    `json:"source"`
+	ExternalID  string    `json:"externalId"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // Status 工作项状态
 type Status string
 
 const (
+	StatusBacklog    Status = "backlog"
 	StatusTodo       Status = "todo"
 	StatusInProgress Status = "in_progress"
 	StatusDone       Status = "done"
+	StatusOpen       Status = "open"
+	StatusFixed      Status = "fixed"
+	StatusClosed     Status = "closed"
+	StatusDraft      Status = "draft"
+	StatusReady      Status = "ready"
+	StatusPassed     Status = "passed"
+	StatusFailed     Status = "failed"
+	StatusBlocked    Status = "blocked"
 )
 
 // Priority 优先级

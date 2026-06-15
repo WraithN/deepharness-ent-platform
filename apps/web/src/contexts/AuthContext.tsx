@@ -1,26 +1,23 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-// @ts-ignore
-import { supabase } from '@/db/supabase';
-import type { User } from '@supabase/supabase-js';
-// @ts-ignore
-import type { Profile } from '@/types/types';
 import { toast } from 'sonner';
 
-export async function getProfile(userId: string): Promise<Profile | null> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (error) {
-    console.error('获取用户信息失败:', error);
-    return null;
-  }
-  return data;
+// 本地 User 类型，避免依赖 Supabase 的 User 类型。
+// 后续后端用户接口稳定后，可迁移至 packages/api-types 共享类型。
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
 }
+
+export interface Profile {
+  id: string;
+  userId: string;
+  name: string;
+  avatar?: string;
+}
+
 interface AuthContextType {
-  user: User | null;
+  user: AuthUser | null;
   profile: Profile | null;
   loading: boolean;
   signInWithUsername: (username: string, password: string) => Promise<{ error: Error | null }>;
@@ -31,8 +28,17 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/**
+ * AuthProvider 为占位实现。
+ *
+ * 说明：
+ * - 原实现依赖 Supabase（PostgreSQL 后端即服务），在迁移到 MySQL 自托管架构后，
+ *   移除 Supabase 依赖，改为基于后端 API 的占位实现。
+ * - 当前默认未登录，登录/注册/登出均为空实现，确保 UI 可正常编译运行。
+ * - 后续接入 identity-service 后，应替换为真实的 /api/v1/auth/* 调用。
+ */
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -42,67 +48,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const profileData = await getProfile(user.id);
-    setProfile(profileData);
+    // 占位：后续替换为 GET /api/v1/users/me
+    setProfile({
+      id: user.id,
+      userId: user.id,
+      name: user.name,
+    });
   };
 
   useEffect(() => {
-    supabase
-      .auth
-      .getSession()
-      // @ts-ignore
-      .then(({ data: { session } }) => {
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          getProfile(session.user.id).then(setProfile);
-        }
-      })
-      // @ts-ignore
-      .catch(error => {
-        toast.error(`获取用户信息失败: ${error.message}`);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+    // 占位：后续替换为 GET /api/v1/auth/session
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 0);
 
-    // @ts-ignore
-    // In this function, do NOT use any await calls. Use `.then()` instead to avoid deadlocks.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        getProfile(session.user.id).then(setProfile);
-      } else {
-        setProfile(null);
-      }
-    });
-
-    return () => subscription.unsubscribe();
+    return () => clearTimeout(timer);
   }, []);
 
-  const signInWithUsername = async (username: string, password: string) => {
+  const signInWithUsername = async (_username: string, _password: string) => {
     try {
-      const email = `${username}@miaoda.com`;
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) throw error;
+      // 占位：后续替换为 POST /api/v1/auth/signin
+      toast.info('登录功能尚未接入后端，当前为占位实现');
       return { error: null };
     } catch (error) {
       return { error: error as Error };
     }
   };
 
-  const signUpWithUsername = async (username: string, password: string) => {
+  const signUpWithUsername = async (_username: string, _password: string) => {
     try {
-      const email = `${username}@miaoda.com`;
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-
-      if (error) throw error;
+      // 占位：后续替换为 POST /api/v1/auth/signup
+      toast.info('注册功能尚未接入后端，当前为占位实现');
       return { error: null };
     } catch (error) {
       return { error: error as Error };
@@ -110,7 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    // 占位：后续替换为 POST /api/v1/auth/signout
     setUser(null);
     setProfile(null);
   };

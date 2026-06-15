@@ -7,19 +7,13 @@
 **DeepHarness Enterprise Platform** 是一个面向开发团队的多租户 AI 辅助编码平台。仓库采用 **Turborepo + pnpm workspaces + Go workspaces** 组织的 monorepo 结构，包含：
 
 - `apps/web`：React + Vite + TypeScript 前端应用（包名 `@repo/web`）。
-- `apps/agent-runtime`：Go Agent 运行时（包名 `@repo/agent-runtime`），构建为 Docker 镜像。
-- `apps/ide-extension`：IDE 插件（预留）。
+- `apps/agent-runtime`：Agent 运行时（包名 `@repo/agent-runtime`），定位为外部 Rust 可执行程序（OpenCode / Claude Code 等智能体封装），当前为 Go 占位实现。
+- `apps/dh-backend`：DeepHarness 后端统一入口（包名 `@repo/dh-backend`），包含管理控制台接口、WebSocket 会话、Agent Runtime 生命周期管理，以及 identity / project / workitem / orchestrator / pr-agent / audit 等业务模块。
+- `apps/mock`：本地 Agent SSE 模拟器（独立 Go 模块），用于模拟外部 Agent Runtime 的流式响应。
 - `packages/go-sdk`：共享 Go SDK，包含 DDD 领域模型和基础设施抽象。
 - `packages/ui`：共享 React UI 组件库。
 - `packages/api-types`：前后端共享 API TypeScript 类型。
 - `packages/config`：共享配置（tsconfig, eslint presets）。
-- `services/api-gateway`：API 网关（包名 `@repo/api-gateway`）。
-- `services/identity-service`：身份与多租户服务（包名 `@repo/identity-service`）。
-- `services/project-service`：项目与代码仓库服务（包名 `@repo/project-service`）。
-- `services/workitem-service`：工作项统一服务（包名 `@repo/workitem-service`），核心服务，支持多平台适配。
-- `services/agent-orchestrator`：Agent 编排服务（包名 `@repo/agent-orchestrator`）。
-- `services/pr-agent-service`：PR-Agent 统一服务（包名 `@repo/pr-agent-service`）。
-- `services/audit-service`：审计日志服务（包名 `@repo/audit-service`）。
 
 业务核心围绕"智能会话"展开，提供 Skill 市场、Prompt 市场、需求分析、智能评审、智能测试、数据大盘、空间设置等功能。详细需求说明见 `apps/web/docs/prd.md`。
 
@@ -29,7 +23,7 @@
 .
 ├── package.json              # 根 workspace 脚本，仅依赖 turbo
 ├── turbo.json                # Turborepo 任务配置
-├── pnpm-workspace.yaml       # pnpm workspace：apps/*, packages/*, services/*
+├── pnpm-workspace.yaml       # pnpm workspace：apps/*, packages/*
 ├── go.work                   # Go workspace，管理所有 Go 模块
 ├── README.md
 ├── .gitignore
@@ -47,12 +41,44 @@
 │   │   ├── index.html
 │   │   ├── public/
 │   │   └── src/
-│   ├── agent-runtime/        # Agent 运行时 (Go)
+│   ├── agent-runtime/        # Agent 运行时（Rust 占位，当前为 Go 占位实现）
 │   │   ├── main.go
 │   │   ├── go.mod
 │   │   ├── Dockerfile
 │   │   └── package.json
-│   └── ide-extension/        # IDE 插件 (预留)
+│   ├── dh-backend/           # DeepHarness 后端统一入口
+│   │   ├── main.go
+│   │   ├── go.mod
+│   │   ├── Makefile
+│   │   ├── package.json
+│   │   ├── config/           # 环境配置加载
+│   │   ├── constants/        # 全局常量
+│   │   ├── agent/            # Agent 相关：客户端、对话模型、编排模块
+│   │   │   ├── client/       # HTTP+SSE 客户端
+│   │   │   ├── chat/         # Session/Message 领域模型、存储接口与内存实现
+│   │   │   │   ├── session/  # Session/Message 内存存储实现
+│   │   │   │   └── tests/
+│   │   │   └── orchestrator/ # Agent 会话编排
+│   │   ├── gateway/          # HTTP 路由、处理器、中间件、服务器组装
+│   │   │   ├── handler/
+│   │   │   ├── websocket/    # WebSocket Hub / broker / 连接管理
+│   │   │   │   └── broker/
+│   │   │   │       └── memory/
+│   │   │   ├── middleware/
+│   │   │   └── server/
+│   │   ├── worker/           # 每会话 Agent Worker 生命周期
+│   │   ├── domain/           # 业务领域模块（每个模块下含 handler / object / service）
+│   │   │   ├── identity/
+│   │   │   ├── project/
+│   │   │   ├── workitem/
+│   │   │   ├── pragent/
+│   │   │   └── audit/
+│   │   └── tests/            # 本地测试工具
+│   │       └── test-agent/   # Agent Client 本地测试工具
+│   └── mock/                 # 本地 Agent SSE 模拟器（独立模块）
+│       ├── main.go
+│       ├── go.mod
+│       ├── Makefile
 │       └── package.json
 ├── packages/
 │   ├── ui/                   # 共享 UI 组件库
@@ -78,23 +104,6 @@
 │   │   └── common/
 │   └── config/               # 共享配置
 │       └── package.json
-├── services/
-│   ├── api-gateway/          # API 网关
-│   │   ├── internal/
-│   │   │   ├── server/
-│   │   │   ├── handler/
-│   │   │   └── middleware/
-│   │   ├── main.go
-│   │   ├── go.mod
-│   │   └── package.json
-│   ├── identity-service/     # 身份服务 (port 8081)
-│   ├── project-service/      # 项目服务 (port 8082)
-│   ├── workitem-service/     # 工作项服务 (port 8083)
-│   │   ├── adapters/         # 各平台适配器
-│   │   └── core/             # 核心业务逻辑
-│   ├── agent-orchestrator/   # Agent 编排 (port 8084)
-│   ├── pr-agent-service/     # PR-Agent 服务 (port 8085)
-│   └── audit-service/        # 审计服务 (port 8086)
 └── infra/
     ├── database/             # 数据库迁移脚本
     ├── k8s/                  # K8s 部署清单
@@ -140,14 +149,8 @@
 - **Go SDK 引用**：各服务通过 `replace` 指令引用本地 `packages/go-sdk`
 - **UI 组件**：位于 `src/components/ui/`，使用 `cva` 管理变体，通过 `cn()` 合并类名
 - **页面组件**：位于 `src/pages/`，在 `src/routes.tsx` 中集中注册路由
-- **微服务端口**：
-  - API Gateway: 8080
-  - Identity Service: 8081
-  - Project Service: 8082
-  - WorkItem Service: 8083
-  - Agent Orchestrator: 8084
-  - PR-Agent Service: 8085
-  - Audit Service: 8086
+- **服务端口**：
+  - DH Backend: 8080
   - Agent Runtime: 8090
 
 ## 5. 构建与开发命令
@@ -163,17 +166,20 @@
 | `pnpm check-types` | 对所有 app 执行类型检查 |
 | `pnpm test` | 运行所有测试 |
 
+启动本地 MySQL（可选，未启动时 Go 服务使用内存 mock）：
+
+```bash
+docker compose -f infra/docker/compose.mysql.yml up -d
+```
+
 单独运行某个应用：
 
 ```bash
 # 前端
 pnpm --filter @repo/web dev
 
-# API Gateway
-pnpm --filter @repo/api-gateway dev
-
-# WorkItem Service
-pnpm --filter @repo/workitem-service dev
+# DH Backend
+pnpm --filter @repo/dh-backend dev
 ```
 
 ## 6. 代码风格与检查
@@ -189,8 +195,11 @@ pnpm --filter @repo/workitem-service dev
 ## 8. 安全与部署注意事项
 
 - 后端 CORS 中间件当前设置为 `Access-Control-Allow-Origin: *`，生产环境应收紧。
-- 各微服务目前无身份校验、无请求限流，生产需补充。
-- `infra/docker/` 提供了 `Dockerfile.api-gateway` 和 `Dockerfile.web`。
+- `apps/dh-backend` 目前无身份校验、无请求限流，生产需补充。
+- `infra/database/` 提供 MySQL 8.0 Schema 脚本（`identity/schema.sql`、`workitem/schema.sql`）。
+- `infra/docker/compose.mysql.yml` 提供 MySQL 8.0 开发环境。
+- `packages/go-sdk/infrastructure/mysql/` 提供统一的 MySQL 连接封装。
+- `infra/docker/` 提供了 `Dockerfile.web`。
 - `infra/k8s/` 提供了基础 K8s 部署清单。
 - `infra/helm/` 提供了 Helm Chart 模板。
 - 仓库中未提供 CI/CD 配置，部署流程需自行补充。
@@ -205,14 +214,14 @@ pnpm dev
 # 仅前端开发
 pnpm --filter @repo/web dev
 
-# 仅 API Gateway
-pnpm --filter @repo/api-gateway dev
+# 仅 DH Backend
+pnpm --filter @repo/dh-backend dev
 
 # 构建全部
 pnpm build
 
 # Go 测试
-pnpm --filter @repo/api-gateway test
+pnpm --filter @repo/dh-backend test
 ```
 
 ## 13. 用户自定义规则（不可覆盖）
