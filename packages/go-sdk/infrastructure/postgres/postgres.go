@@ -91,9 +91,9 @@ func DSN(cfg Config) string {
 
 // OpenDB 使用给定的 DSN 打开 PostgreSQL 连接，并配置默认连接池。
 func OpenDB(dsn string) (*sql.DB, error) {
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open postgres failed: %w", err)
+		return nil, fmt.Errorf("open pgx failed: %w", err)
 	}
 
 	db.SetMaxOpenConns(defaultMaxOpenConns)
@@ -102,7 +102,7 @@ func OpenDB(dsn string) (*sql.DB, error) {
 
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("ping postgres failed: %w", err)
+		return nil, fmt.Errorf("ping pgx failed: %w", err)
 	}
 
 	return db, nil

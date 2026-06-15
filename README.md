@@ -100,7 +100,7 @@ Default connection (used by Go services):
 | Variable | Value |
 |----------|-------|
 | `DB_HOST` | `127.0.0.1` |
-| `DB_PORT` | `5432` |
+| `DB_PORT` | `5433` (host) / `5432` (container) |
 | `DB_USER` | `deepharness` |
 | `DB_PASSWORD` | `deepharness` |
 | `DB_NAME` | `deepharness` |
