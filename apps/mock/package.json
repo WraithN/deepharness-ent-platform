@@ -1,0 +1,13 @@
+{
+  "name": "@repo/mock",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "make build",
+    "dev": "make run",
+    "start": "make run",
+    "test": "make test",
+    "lint": "go vet ./...",
+    "check-types": "echo 'Go is statically typed'"
+  }
+}

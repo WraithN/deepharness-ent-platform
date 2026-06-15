@@ -1,0 +1,67 @@
+package handler
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/gorilla/websocket"
+	ws "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
+)
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		// Allow all origins for development; tighten in production.
+		return true
+	},
+}
+
+type WebSocketHandler struct {
+	hub     *ws.Hub
+	sessions chat.SessionStore
+}
+
+func NewWebSocketHandler(h *ws.Hub, sessions chat.SessionStore) *WebSocketHandler {
+	return &WebSocketHandler{hub: h, sessions: sessions}
+}
+
+func (h *WebSocketHandler) Handle(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	if sessionID == "" {
+		http.Error(w, `{"code":1,"message":"missing session id"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Validate session before upgrading to WebSocket
+	if _, err := h.sessions.Get(r.Context(), sessionID); err != nil {
+		http.Error(w, `{"code":2,"message":"invalid session"}`, http.StatusForbidden)
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("websocket upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	if err := h.hub.Register(sessionID, conn); err != nil {
+		log.Printf("websocket register failed: %v", err)
+		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "invalid_session"))
+		return
+	}
+	defer h.hub.Unregister(sessionID)
+
+	for {
+		_, message, err := conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("websocket read error: %v", err)
+			}
+			break
+		}
+		if err := h.hub.HandleMessage(sessionID, message); err != nil {
+			log.Printf("handle message error: %v", err)
+		}
+	}
+}

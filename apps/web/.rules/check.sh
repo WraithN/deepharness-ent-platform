@@ -6,15 +6,11 @@ ast-grep scan -r .rules/SelectItem.yml
 
 ast-grep scan -r .rules/contrast.yml
 
-ast-grep scan -r .rules/supabase-google-sso.yml
-
 ast-grep scan -r .rules/toast-hook.yml
 
 ast-grep scan -r .rules/slot-nesting.yml
 
 ast-grep scan -r .rules/require-button-interaction.yml
-
-ast-grep scan -r .rules/supabase-edge-function-get-body.yml
 
 useauth_output=$(ast-grep scan -r .rules/useAuth.yml 2>/dev/null)
 

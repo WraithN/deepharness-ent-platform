@@ -1,6 +1,6 @@
 # DeepHarness Enterprise Platform
 
-A Turborepo monorepo with a microservices backend (Go) and a React TypeScript frontend.
+A Turborepo monorepo with a unified Go backend and a React TypeScript frontend.
 
 ## Architecture
 
@@ -8,31 +8,24 @@ A Turborepo monorepo with a microservices backend (Go) and a React TypeScript fr
 .
 ├── apps/                          # Deployable applications
 │   ├── web/                       # React + Vite + TypeScript frontend
-│   ├── agent-runtime/             # Go Agent runtime (Dockerized)
-│   └── ide-extension/             # VS Code / JetBrains extension (reserved)
+│   ├── agent-runtime/             # Agent runtime wrapper (Rust target, currently Go stub)
+│   ├── dh-backend/                # Unified DeepHarness backend (port 8080)
+│   │   ├── tests/test-agent       # Agent Client local test tool
+│   │   └── internal/              # constants, agent (client/chat/orchestrator), gateway, worker, domain
+│   └── mock/                      # Local Agent SSE mock (independent module)
 ├── packages/                      # Shared libraries
 │   ├── ui/                        # Shared React UI components
 │   ├── api-types/                 # Shared API TypeScript types
 │   ├── go-sdk/                    # Shared Go SDK (DDD domain + infrastructure abstractions)
 │   │   ├── domain/                # Domain models (identity, project, workitem, agent, audit)
-│   │   ├── infrastructure/        # Infrastructure abstractions (git, workitem-tracker, pr-agent, llm)
+│   │   ├── infrastructure/        # Infrastructure abstractions (git, workitem-tracker, pr-agent, llm, mysql)
 │   │   └── common/                # Common utilities
 │   └── config/                    # Shared config (tsconfig, eslint presets)
-├── services/                      # Backend microservices (Go)
-│   ├── api-gateway/               # API Gateway (port 8080)
-│   ├── identity-service/          # Identity & multi-tenant service (port 8081)
-│   ├── project-service/           # Project & code repository service (port 8082)
-│   ├── workitem-service/          # Unified workitem service (port 8083)
-│   │   ├── adapters/              # Platform adapters (meego, pingcode, jira, azure-devops, github)
-│   │   └── core/                  # Core business logic
-│   ├── agent-orchestrator/        # Agent orchestration service (port 8084)
-│   ├── pr-agent-service/          # PR-Agent unified service (port 8085)
-│   └── audit-service/             # Audit log service (port 8086)
 ├── infra/                         # Infrastructure code
 │   ├── database/                  # Database migration scripts
 │   ├── k8s/                       # Kubernetes manifests
 │   ├── helm/                      # Helm charts
-│   └── docker/                    # Dockerfiles
+│   └── docker/                    # Dockerfiles and compose files
 ├── turbo.json                     # Turborepo configuration
 ├── pnpm-workspace.yaml            # pnpm workspaces
 ├── go.work                        # Go workspace
@@ -65,14 +58,8 @@ Or run individually:
 # Frontend
 pnpm --filter @repo/web dev
 
-# API Gateway
-pnpm --filter @repo/api-gateway dev
-
-# Identity Service
-pnpm --filter @repo/identity-service dev
-
-# WorkItem Service
-pnpm --filter @repo/workitem-service dev
+# DH Backend
+pnpm --filter @repo/dh-backend dev
 ```
 
 ## Build
@@ -93,8 +80,48 @@ pnpm build
 | `pnpm check-types` | Type-check all apps |
 | `pnpm test` | Run all tests |
 
+## Database (MySQL)
+
+This project uses **MySQL 8.0** as the primary database.
+
+Start a local MySQL instance with Docker Compose:
+
+```bash
+docker compose -f infra/docker/compose.mysql.yml up -d
+```
+
+Default connection (used by Go services):
+
+| Variable | Value |
+|----------|-------|
+| `DB_HOST` | `127.0.0.1` |
+| `DB_PORT` | `3307` (host) / `3306` (container) |
+| `DB_USER` | `deepharness` |
+| `DB_PASSWORD` | `deepharness` |
+| `DB_NAME` | `deepharness` |
+
+Schema files are located in `infra/database/` and are automatically mounted into
+the MySQL container on first startup.
+
+`apps/dh-backend` gracefully falls back to in-memory mock data when `DB_HOST` is
+not set, so `pnpm dev` works without a running database.
+
+## Mock & Test Tools
+
+- **`apps/mock/main.go`**: A standalone Agent SSE mock server. It simulates the
+  streaming response of an external Agent Runtime (e.g. OpenCode / Claude Code)
+  for local development and testing. It has no dependency on `apps/dh-backend`
+  and can be run independently.
+
+- **`apps/dh-backend/tests/test-agent/main.go`**: A small test binary inside the
+  `dh-backend` module. It exercises `dh-backend`'s internal Agent HTTP+SSE
+  client against the standalone mock server. Because it imports
+  `dh-backend/internal/...` packages, it must live in the same Go module as
+  `dh-backend`.
+
 ## Technologies
 
 - **Frontend**: React 18, Vite, TypeScript, Tailwind CSS, shadcn/ui
-- **Backend**: Go 1.22, standard library `net/http`, DDD architecture
+- **Backend**: Go 1.22, standard library `net/http`, unified `dh-backend` module
+- **Database**: MySQL 8.0
 - **Monorepo**: Turborepo, pnpm workspaces, Go workspaces

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { 
@@ -42,7 +42,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { mockCurrentUser } from '@/mock/data';
+import { api } from '@/lib/api';
+import type { UserDTO } from '@/lib/api-types';
+
+const DEFAULT_USER: UserDTO = { id: 'u1', tenantId: 't1', email: '', name: '开发者小明', role: 'admin', createdAt: '' };
 
 const globalNavItems = [
   { path: '/market/skills', label: '技能市场', icon: Store },
@@ -63,8 +66,15 @@ export const Layout: React.FC = () => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('');
+  const [currentUser, setCurrentUser] = useState<UserDTO>(DEFAULT_USER);
   const location = useLocation();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    api.get<UserDTO>('/v1/identity/users/me')
+      .then(user => setCurrentUser(user))
+      .catch(() => { /* 失败时保持默认用户 */ });
+  }, []);
 
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
   const closeSidebar = () => setSidebarOpen(false);
@@ -190,10 +200,10 @@ export const Layout: React.FC = () => {
             <div className="flex flex-col gap-3">
               <div
                 className="flex items-center justify-center mx-auto w-9 h-9 rounded-full bg-primary/10 hover:bg-primary/20 cursor-pointer transition-colors"
-                title={mockCurrentUser.name}
+                title={currentUser.name}
                 onClick={() => navigate('/profile')}
               >
-                <span className="text-sm font-semibold text-primary">{mockCurrentUser.name.charAt(0)}</span>
+                <span className="text-sm font-semibold text-primary">{currentUser.name.charAt(0)}</span>
               </div>
               <Button variant="ghost" size="icon" className="mx-auto w-9 h-9 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setLogoutOpen(true)} title="退出登录">
                 <LogOut className="h-4 w-4" />
@@ -206,11 +216,11 @@ export const Layout: React.FC = () => {
                 onClick={() => navigate('/profile')}
               >
                 <div className="h-9 w-9 shrink-0 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-sm">
-                  {mockCurrentUser.name.charAt(0)}
+                  {currentUser.name.charAt(0)}
                 </div>
                 <div className="flex flex-col flex-1 overflow-hidden">
-                  <span className="text-sm font-medium truncate">{mockCurrentUser.name}</span>
-                  <span className="text-xs text-muted-foreground capitalize truncate">{mockCurrentUser.role}</span>
+                  <span className="text-sm font-medium truncate">{currentUser.name}</span>
+                  <span className="text-xs text-muted-foreground capitalize truncate">{currentUser.role}</span>
                 </div>
               </div>
               <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-60 group-hover:opacity-100 transition-opacity" onClick={() => setLogoutOpen(true)} title="退出登录">

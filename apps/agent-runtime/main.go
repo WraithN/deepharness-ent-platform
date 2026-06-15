@@ -22,7 +22,7 @@ func main() {
 	})
 
 	log.Printf("Agent Runtime starting on port %s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	if err := http.ListenAndServe("127.0.0.1:"+port, mux); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }

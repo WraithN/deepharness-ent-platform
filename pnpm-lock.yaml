@@ -14,7 +14,9 @@ importers:
 
   apps/agent-runtime: {}
 
-  apps/ide-extension: {}
+  apps/dh-backend: {}
+
+  apps/mock: {}
 
   apps/web:
     dependencies:
@@ -108,9 +110,6 @@ importers:
       '@radix-ui/react-tooltip':
         specifier: ^1.2.8
         version: 1.2.8(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      '@supabase/supabase-js':
-        specifier: 2.103.1
-        version: 2.103.1
       '@types/prismjs':
         specifier: ^1.26.6
         version: 1.26.6
@@ -180,6 +179,9 @@ importers:
       react-hook-form:
         specifier: ^7.66.0
         version: 7.66.0(react@18.3.1)
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@19.2.2)(react@18.3.1)
       react-resizable-panels:
         specifier: ^2.1.8
         version: 2.1.9(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -195,6 +197,9 @@ importers:
       recharts:
         specifier: 2.15.4
         version: 2.15.4(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
       sonner:
         specifier: ^2.0.7
         version: 2.0.7(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -253,6 +258,9 @@ importers:
       autoprefixer:
         specifier: ^10.4.27
         version: 10.4.27(postcss@8.5.6)
+      playwright-core:
+        specifier: ^1.60.0
+        version: 1.60.0
       postcss:
         specifier: ^8.5.6
         version: 8.5.6
@@ -285,20 +293,6 @@ importers:
       react-dom:
         specifier: ^18.0.0
         version: 18.3.1(react@18.3.1)
-
-  services/agent-orchestrator: {}
-
-  services/api-gateway: {}
-
-  services/audit-service: {}
-
-  services/identity-service: {}
-
-  services/pr-agent-service: {}
-
-  services/project-service: {}
-
-  services/workitem-service: {}
 
 packages:
 
@@ -3094,6 +3088,11 @@ packages:
 
   pkg-types@2.3.0:
     resolution: {integrity: sha512-SIqCzDRg0s9npO5XQ3tNZioRY1uK06lA41ynBC1YmFTmnY6FjUjVt6s4LoADmwoig1qqD0oK8h1p/8mlMx8Oig==}
+
+  playwright-core@1.60.0:
+    resolution: {integrity: sha512-9bW6zvX/m0lEbgTKJ6YppOKx8H3VOPBMOCFh2irXFOT4BbHgrx5hPjwJYLT40Lu+4qtD36qKc/Hn56StUW57IA==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   pngjs@5.0.0:
     resolution: {integrity: sha512-40QW5YalBNfQo5yRYmiw7Yz6TKKVr3h6970B2YE+3fQpsWcrbj1PzJgxeJ19DRQjhMbKPIuMY8rFaXc8moolVw==}
@@ -6850,6 +6849,8 @@ snapshots:
       confbox: 0.2.2
       exsolve: 1.0.7
       pathe: 2.0.3
+
+  playwright-core@1.60.0: {}
 
   pngjs@5.0.0: {}
 

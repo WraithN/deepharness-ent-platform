@@ -136,4 +136,18 @@
     border: 1px solid rgba(189, 147, 249, 0.2);
     box-shadow: 0 0 20px rgba(189, 147, 249, 0.08), inset 0 1px 0 rgba(255,255,255,0.03);
   }
+
+  /* Scroll-to-bottom button breathe animation */
+  @keyframes breathe {
+    0%, 100% {
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    }
+    50% {
+      box-shadow: 0 2px 16px hsl(var(--primary) / 0.4);
+    }
+  }
+
+  .animate-breathe {
+    animation: breathe 2s ease-in-out infinite;
+  }
 }

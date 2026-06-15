@@ -1,31 +1,56 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
-import { mockDashboardStats, mockUsers } from '@/mock/data';
+import { mockDashboardStats } from '@/mock/data';
+import { api } from '@/lib/api';
+import type { UserDTO, AgentSessionDTO } from '@/lib/api-types';
 import { GitCommit, MessageSquare, CheckSquare, Clock, Box, Code2, ListTodo, Bot, User, Wand2, FileText, BarChart3, LineChart as LineChartIcon, PieChart as PieChartIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
-const MOCK_SESSION_TRAILS = [
-  { id: 1, user: mockUsers[0], time: '10分钟前', title: '实现登录页面UI', type: 'ui', duration: '15分钟' },
-  { id: 2, user: mockUsers[1], time: '1小时前', title: '用户管理模块需求分析', type: 'requirement', duration: '45分钟' },
-  { id: 3, user: mockUsers[2], time: '3小时前', title: '修复API跨域问题', type: 'code', duration: '30分钟' },
-  { id: 4, user: mockUsers[0], time: '昨天 15:30', title: '重构数据库表结构', type: 'code', duration: '1小时20分钟' },
-  { id: 5, user: mockUsers[3], time: '昨天 11:15', title: '生成测试用例并执行', type: 'requirement', duration: '25分钟' },
-];
+interface SessionTrail {
+  id: string;
+  user: UserDTO;
+  time: string;
+  title: string;
+  type: string;
+  duration: string;
+}
 
 import { AdminDashboard } from './AdminDashboard';
 
 export const Dashboard: React.FC = () => {
   const [selectedUserSession, setSelectedUserSession] = useState<any>(null);
   const [sessionPage, setSessionPage] = useState(1);
+  const [users, setUsers] = useState<UserDTO[]>([]);
+  const [sessionTrails, setSessionTrails] = useState<SessionTrail[]>([]);
   const sessionPageSize = 5;
-  const totalSessionPages = Math.ceil(MOCK_SESSION_TRAILS.length / sessionPageSize);
-  const paginatedSessions = MOCK_SESSION_TRAILS.slice((sessionPage - 1) * sessionPageSize, sessionPage * sessionPageSize);
-  
+  const totalSessionPages = Math.ceil(sessionTrails.length / sessionPageSize);
+  const paginatedSessions = sessionTrails.slice((sessionPage - 1) * sessionPageSize, sessionPage * sessionPageSize);
+
+  useEffect(() => {
+    api.get<UserDTO[]>('/v1/identity/users').then(setUsers).catch(() => {});
+    api.get<AgentSessionDTO[]>('/v1/orchestrator/sessions')
+      .then(sessions => {
+        const times = ['10分钟前', '1小时前', '3小时前', '昨天 15:30', '昨天 11:15'];
+        const durations = ['15分钟', '45分钟', '30分钟', '1小时20分钟', '25分钟'];
+        const types = ['ui', 'requirement', 'code', 'code', 'requirement'];
+        const mapped: SessionTrail[] = sessions.map((s, i) => ({
+          id: s.id,
+          user: { id: `u${(i % 4) + 1}`, tenantId: 't1', email: '', name: ['开发者小明', '产品小红', '设计小李', '测试小刚'][i % 4], role: 'user', createdAt: '' },
+          time: times[i % times.length],
+          title: s.title,
+          type: types[i % types.length],
+          duration: durations[i % durations.length],
+        }));
+        setSessionTrails(mapped);
+      })
+      .catch(() => {});
+  }, []);
+
   const userRole = localStorage.getItem('userRole');
   if (userRole === 'superadmin') {
     return <AdminDashboard />;
@@ -175,7 +200,7 @@ export const Dashboard: React.FC = () => {
             </div>
             <div className="flex items-center justify-between px-4 py-3 border-t border-border/50">
               <span className="text-xs text-muted-foreground">
-                共 {MOCK_SESSION_TRAILS.length} 条记录，第 {sessionPage}/{totalSessionPages} 页
+                共 {sessionTrails.length} 条记录，第 {sessionPage}/{totalSessionPages} 页
               </span>
               <div className="flex items-center gap-1">
                 <Button
