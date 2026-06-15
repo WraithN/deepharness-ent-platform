@@ -7,85 +7,17 @@ import { Folder, File, ChevronRight, ChevronDown, GitBranch, Code2, Book, Search
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
+import { api } from '@/lib/api';
+import type { RepositoryDTO, FileNodeDTO, FileContentDTO } from '@/lib/api-types';
 import { CodeBlock } from '@/components/CodeBlock';
 
-// Mock data for repositories
-const repositories = [
-  { id: '1', type: 'dev', name: 'frontend-web', url: 'https://gitlab.com/company/frontend-web.git', branches: ['main', 'develop', 'feature/login', 'fix/ui-bug'] },
-  { id: '2', type: 'dev', name: 'backend-api', url: 'https://gitlab.com/company/backend-api.git', branches: ['main', 'feature/auth', 'hotfix/db-crash'] },
-  { id: '3', type: 'dev', name: 'ui-components', url: 'https://gitlab.com/company/ui-components.git', branches: ['main', 'beta'] },
-  { id: '4', type: 'case', name: 'e2e-tests', url: 'https://gitlab.com/company/e2e-tests.git', branches: ['main', 'test/auth'] },
-  { id: '5', type: 'case', name: 'api-tests', url: 'https://gitlab.com/company/api-tests.git', branches: ['main', 'test/users'] },
-  { id: '6', type: 'product', name: 'prd-docs', url: 'https://gitlab.com/company/prd-docs.git', branches: ['main', 'v2.0'] },
-];
-
-// Mock data for file tree
+// 文件树节点类型（与后端 FileNodeDTO 对齐，增加本地缓存的 content）。
 type FileNode = {
   name: string;
+  path: string;
   type: 'file' | 'folder';
   content?: string;
   children?: FileNode[];
-};
-
-const mockFileSystem: Record<string, FileNode[]> = {
-  '1': [
-    {
-      name: 'src',
-      type: 'folder',
-      children: [
-        {
-          name: 'components',
-          type: 'folder',
-          children: [
-            { name: 'Button.tsx', type: 'file', content: 'export const Button = () => <button>Click me</button>;' },
-            { name: 'Input.tsx', type: 'file', content: 'export const Input = () => <input type="text" />;' },
-          ]
-        },
-        {
-          name: 'pages',
-          type: 'folder',
-          children: [
-            { name: 'App.tsx', type: 'file', content: 'import React from "react";\n\nexport const App = () => {\n  return (\n    <div className="app">\n      <h1>Hello World</h1>\n    </div>\n  );\n};' },
-            { name: 'index.tsx', type: 'file', content: 'import { createRoot } from "react-dom/client";\nimport { App } from "./App";\n\ncreateRoot(document.getElementById("root")!).render(<App />);' },
-          ]
-        },
-        { name: 'utils.ts', type: 'file', content: 'export const add = (a: number, b: number) => a + b;\nexport const classNames = (...classes: string[]) => classes.filter(Boolean).join(" ");' },
-      ]
-    },
-    { name: 'package.json', type: 'file', content: '{\n  "name": "frontend-web",\n  "version": "1.0.0",\n  "dependencies": {\n    "react": "^18.2.0"\n  }\n}' },
-    { name: 'README.md', type: 'file', content: '# Frontend Web\n\nThis is the main frontend application.' },
-  ],
-  '2': [
-    {
-      name: 'cmd',
-      type: 'folder',
-      children: [
-        { name: 'main.go', type: 'file', content: 'package main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("Starting API server...")\n}' },
-      ]
-    },
-    {
-      name: 'pkg',
-      type: 'folder',
-      children: [
-        { name: 'handler.go', type: 'file', content: 'package pkg\n\nimport "net/http"\n\nfunc HandleRequest(w http.ResponseWriter, r *http.Request) {\n\tw.Write([]byte("OK"))\n}' },
-      ]
-    },
-    { name: 'go.mod', type: 'file', content: 'module backend-api\n\ngo 1.20\n' },
-  ],
-  '3': [
-    { name: 'index.ts', type: 'file', content: 'export * from "./Button";\nexport * from "./Card";' },
-  ],
-  '6': [
-    {
-      name: 'docs',
-      type: 'folder',
-      children: [
-        { name: 'product-roadmap.md', type: 'file', content: '# 产品路线图\n\n## Q3 目标\n- 完成核心功能模块开发\n- 上线用户增长策略\n\n## Q4 目标\n- 国际化支持\n- 性能优化专项' },
-        { name: 'user-research.md', type: 'file', content: '# 用户调研报告\n\n## 调研方法\n定性访谈 + 问卷调查\n\n## 核心发现\n1. 用户最关注性能体验\n2. 移动端使用占比超过60%' },
-      ]
-    },
-    { name: 'README.md', type: 'file', content: '# PRD 文档库\n\n存放产品需求文档、用户调研、竞品分析等产品相关文档。' },
-  ]
 };
 
 // Mock markdown document
@@ -492,20 +424,16 @@ const FileTreeItem = ({
 };
 
 // Mock preview URLs per repo
-const PREVIEW_URLS: Record<string, string> = {
-  '1': 'https://example.com',
-  '2': 'https://httpbin.org/get',
-  '3': 'https://example.com',
-};
-
-const PreviewPanel: React.FC<{ repoId: string; branch: string; repoName: string; repoUrl: string }> = ({
+const PreviewPanel: React.FC<{ repoId: string; branch: string; repoName: string; repoUrl: string; previewUrl?: string }> = ({
   repoId,
   branch,
   repoName,
   repoUrl,
+  previewUrl,
 }) => {
-  const [inputUrl, setInputUrl] = useState(PREVIEW_URLS[repoId] || 'https://example.com');
-  const [loadedUrl, setLoadedUrl] = useState(PREVIEW_URLS[repoId] || 'https://example.com');
+  const defaultUrl = previewUrl || 'https://example.com';
+  const [inputUrl, setInputUrl] = useState(defaultUrl);
+  const [loadedUrl, setLoadedUrl] = useState(defaultUrl);
   const [loading, setLoading] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [viewScale, setViewScale] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
@@ -513,11 +441,11 @@ const PreviewPanel: React.FC<{ repoId: string; branch: string; repoName: string;
 
   // Update URL when repo changes
   React.useEffect(() => {
-    const url = PREVIEW_URLS[repoId] || 'https://example.com';
+    const url = previewUrl || 'https://example.com';
     setInputUrl(url);
     setLoadedUrl(url);
     setLoadFailed(false);
-  }, [repoId]);
+  }, [repoId, previewUrl]);
 
   const handleNavigate = () => {
     let url = inputUrl.trim();
@@ -823,10 +751,13 @@ const ReviewPanel: React.FC = () => {
 };
 
 export const ProjectCode: React.FC = () => {
-  const [fileSystem, setFileSystem] = useState<Record<string, FileNode[]>>(mockFileSystem);
-  const [selectedRepoId, setSelectedRepoId] = useState<string>(repositories[0].id);
-  const [selectedBranch, setSelectedBranch] = useState<string>(repositories[0].branches[0]);
+  const [repositories, setRepositories] = useState<RepositoryDTO[]>([]);
+  const [fileSystem, setFileSystem] = useState<Record<string, FileNode[]>>({});
+  const [selectedRepoId, setSelectedRepoId] = useState<string>('');
+  const [selectedBranch, setSelectedBranch] = useState<string>('');
   const [repoType, setRepoType] = useState<'dev' | 'case' | 'product'>('dev');
+  const [loadingRepos, setLoadingRepos] = useState(false);
+  const [loadingTree, setLoadingTree] = useState(false);
 
   // Tabs management
   const [openFiles, setOpenFiles] = useState<FileNode[]>([]);
@@ -842,6 +773,43 @@ export const ProjectCode: React.FC = () => {
   const toc = useMemo(() => extractToc(mockMarkdownDoc), []);
   const [activeTocId, setActiveTocId] = useState<string | null>(null);
   const [tocSearchQuery, setTocSearchQuery] = useState('');
+
+  // 加载仓库列表
+  useEffect(() => {
+    setLoadingRepos(true);
+    api.get<RepositoryDTO[]>('/v1/repositories')
+      .then(repos => {
+        setRepositories(repos);
+        if (repos.length > 0) {
+          const first = repos.find(r => r.type === 'dev') ?? repos[0];
+          setSelectedRepoId(first.id);
+          setSelectedBranch(first.defaultBranch);
+          setRepoType(first.type as 'dev' | 'case' | 'product');
+        }
+      })
+      .catch(() => toast.error('加载仓库列表失败'))
+      .finally(() => setLoadingRepos(false));
+  }, []);
+
+  // 仓库或分支切换时加载文件树
+  useEffect(() => {
+    if (!selectedRepoId || !selectedBranch) return;
+    setLoadingTree(true);
+    api.get<FileNodeDTO[]>(`/v1/repositories/${selectedRepoId}/tree?branch=${encodeURIComponent(selectedBranch)}`)
+      .then(nodes => {
+        setFileSystem(prev => ({ ...prev, [selectedRepoId]: dtoToFileNodes(nodes) }));
+      })
+      .catch(() => toast.error('加载文件树失败'))
+      .finally(() => setLoadingTree(false));
+  }, [selectedRepoId, selectedBranch]);
+
+  const dtoToFileNodes = (nodes: FileNodeDTO[]): FileNode[] =>
+    nodes.map(n => ({
+      name: n.name,
+      path: n.path,
+      type: n.type,
+      children: n.children ? dtoToFileNodes(n.children) : undefined,
+    }));
 
   const filteredToc = useMemo(() => {
     if (!tocSearchQuery.trim()) return toc;
@@ -883,18 +851,15 @@ export const ProjectCode: React.FC = () => {
   const handleRepoChange = (val: string) => {
     setSelectedRepoId(val);
     const repo = repositories.find(r => r.id === val);
-    if (repo && repo.branches.length > 0) {
-      setSelectedBranch(repo.branches[0]);
+    if (repo) {
+      setSelectedBranch(repo.defaultBranch);
+      setRepoType(repo.type as 'dev' | 'case' | 'product');
+      if (repo.type === 'product' && viewMode !== 'doc') setViewMode('doc');
+      if (repo.type === 'case' && viewMode === 'preview') setViewMode('doc');
     }
     setOpenFiles([]);
     setActiveFile(null);
     setSearchQuery('');
-    
-    // Check if new repo type supports current viewMode, if not fallback to 'doc'
-    if (repo) {
-      if (repo.type === 'product' && viewMode !== 'doc') setViewMode('doc');
-      if (repo.type === 'case' && viewMode === 'preview') setViewMode('doc');
-    }
   };
 
   const handleBranchChange = (val: string) => {
@@ -904,41 +869,61 @@ export const ProjectCode: React.FC = () => {
     setSearchQuery('');
   };
 
-  const handleSelectFile = (node: FileNode) => {
+  const handleSelectFile = async (node: FileNode) => {
     if (node.type !== 'file') return;
 
+    let fileNode = node;
+    if (!node.content && selectedRepoId && selectedBranch) {
+      try {
+        const content = await api.get<FileContentDTO>(
+          `/v1/repositories/${selectedRepoId}/content?branch=${encodeURIComponent(selectedBranch)}&path=${encodeURIComponent(node.path)}`
+        );
+        fileNode = { ...node, content: content.content };
+        setFileSystem(prev => ({
+          ...prev,
+          [selectedRepoId]: updateNodeContent(prev[selectedRepoId] || [], node.path, content.content),
+        }));
+      } catch {
+        toast.error('加载文件内容失败');
+        return;
+      }
+    }
+
     let newOpenFiles = [...openFiles];
-    const existingIndex = newOpenFiles.findIndex(f => f === node);
+    const existingIndex = newOpenFiles.findIndex(f => f.path === fileNode.path);
 
     if (existingIndex === -1) {
-      newOpenFiles.push(node);
+      newOpenFiles.push(fileNode);
       if (newOpenFiles.length > 8) {
         newOpenFiles.shift();
       }
       setOpenFiles(newOpenFiles);
+    } else {
+      newOpenFiles[existingIndex] = fileNode;
+      setOpenFiles(newOpenFiles);
     }
-    setActiveFile(node);
+    setActiveFile(fileNode);
     setViewMode('code');
   };
 
   const handleCloseTab = (e: React.MouseEvent, node: FileNode) => {
     e.stopPropagation();
-    const newOpenFiles = openFiles.filter(f => f !== node);
+    const newOpenFiles = openFiles.filter(f => f.path !== node.path);
     setOpenFiles(newOpenFiles);
 
-    if (activeFile === node) {
+    if (activeFile?.path === node.path) {
       setActiveFile(newOpenFiles.length > 0 ? newOpenFiles[newOpenFiles.length - 1] : null);
     }
   };
 
   // Recursively update file content in the tree
-  const updateNodeContent = (nodes: FileNode[], targetName: string, newContent: string): FileNode[] => {
+  const updateNodeContent = (nodes: FileNode[], targetPath: string, newContent: string): FileNode[] => {
     return nodes.map(node => {
-      if (node.type === 'file' && node.name === targetName) {
+      if (node.type === 'file' && node.path === targetPath) {
         return { ...node, content: newContent };
       }
       if (node.type === 'folder' && node.children) {
-        return { ...node, children: updateNodeContent(node.children, targetName, newContent) };
+        return { ...node, children: updateNodeContent(node.children, targetPath, newContent) };
       }
       return node;
     });
@@ -948,12 +933,12 @@ export const ProjectCode: React.FC = () => {
     if (!activeFile) return;
     setFileSystem(prev => ({
       ...prev,
-      [selectedRepoId]: updateNodeContent(prev[selectedRepoId] || [], activeFile.name, newContent),
+      [selectedRepoId]: updateNodeContent(prev[selectedRepoId] || [], activeFile.path, newContent),
     }));
     // Also update activeFile reference so content is fresh
     setActiveFile(prev => prev ? { ...prev, content: newContent } : prev);
     // Update openFiles references too
-    setOpenFiles(prev => prev.map(f => f.name === activeFile.name ? { ...f, content: newContent } : f));
+    setOpenFiles(prev => prev.map(f => f.path === activeFile.path ? { ...f, content: newContent } : f));
   };
 
   const handleTocClick = (id: string) => {
@@ -1386,7 +1371,7 @@ export const ProjectCode: React.FC = () => {
               </div>
             </div>
             <div className="flex-1 overflow-hidden">
-              <PreviewPanel repoId={selectedRepoId} branch={selectedBranch} repoName={currentRepo?.name || ''} repoUrl={currentRepo?.url || ''} />
+              <PreviewPanel repoId={selectedRepoId} branch={selectedBranch} repoName={currentRepo?.name || ''} repoUrl={currentRepo?.url || ''} previewUrl={currentRepo?.previewUrl} />
             </div>
           </div>
         )}
