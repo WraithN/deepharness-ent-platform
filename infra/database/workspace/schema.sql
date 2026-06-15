@@ -1,6 +1,6 @@
 -- workspace 模块：空间、需求项目、仓库、Agent、空间级技能/提示词/规范/CI-CD
 -- 本 schema 约定：
---   - 主键使用 UUID，类型为 UUID
+--   - 主键与外键均使用 VARCHAR(36)，支持固定字符串 ID
 --   - 时间戳使用 TIMESTAMPTZ
 --   - 不建立外键约束，关系校验在应用层完成
 
@@ -13,8 +13,8 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TABLE IF NOT EXISTS workspaces (
-    id UUID PRIMARY KEY,
-    tenant_id UUID NOT NULL,
+    id VARCHAR(36) PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
     name VARCHAR(200) NOT NULL,
     description TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
 );
 
 COMMENT ON TABLE workspaces IS '工作空间';
-COMMENT ON COLUMN workspaces.id IS '空间 ID（UUID）';
+COMMENT ON COLUMN workspaces.id IS '空间 ID（VARCHAR(36)）';
 COMMENT ON COLUMN workspaces.tenant_id IS '所属租户 ID';
 COMMENT ON COLUMN workspaces.name IS '空间名称';
 COMMENT ON COLUMN workspaces.description IS '空间描述';
@@ -38,8 +38,8 @@ FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TABLE IF NOT EXISTS workspace_members (
-    workspace_id UUID NOT NULL,
-    user_id UUID NOT NULL,
+    workspace_id VARCHAR(36) NOT NULL,
+    user_id VARCHAR(36) NOT NULL,
     role VARCHAR(50) NOT NULL,
     sub_role VARCHAR(50),
     joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -59,8 +59,8 @@ CREATE INDEX IF NOT EXISTS idx_workspace_members_user_id ON workspace_members (u
 -- 每个 workspace 最多对应一个 demand_project。
 -- 下方的 UNIQUE INDEX 在数据层强制这一约束，应用层应保证写入时的一致性。
 CREATE TABLE IF NOT EXISTS demand_projects (
-    id UUID PRIMARY KEY,
-    workspace_id UUID NOT NULL,
+    id VARCHAR(36) PRIMARY KEY,
+    workspace_id VARCHAR(36) NOT NULL,
     platform VARCHAR(50) NOT NULL DEFAULT 'meego',
     external_key VARCHAR(200) NOT NULL,
     name VARCHAR(200),
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS demand_projects (
 );
 
 COMMENT ON TABLE demand_projects IS '需求项目（一个空间仅对应一个）';
-COMMENT ON COLUMN demand_projects.id IS '需求项目 ID（UUID）';
+COMMENT ON COLUMN demand_projects.id IS '需求项目 ID（VARCHAR(36)）';
 COMMENT ON COLUMN demand_projects.workspace_id IS '所属空间 ID';
 COMMENT ON COLUMN demand_projects.platform IS '需求平台类型';
 COMMENT ON COLUMN demand_projects.external_key IS '外部系统项目标识';
@@ -88,8 +88,8 @@ FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TABLE IF NOT EXISTS repositories (
-    id UUID PRIMARY KEY,
-    workspace_id UUID NOT NULL,
+    id VARCHAR(36) PRIMARY KEY,
+    workspace_id VARCHAR(36) NOT NULL,
     name VARCHAR(200) NOT NULL,
     url VARCHAR(500) NOT NULL,
     type VARCHAR(50) NOT NULL,
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS repositories (
 );
 
 COMMENT ON TABLE repositories IS '代码仓库';
-COMMENT ON COLUMN repositories.id IS '仓库 ID（UUID）';
+COMMENT ON COLUMN repositories.id IS '仓库 ID（VARCHAR(36)）';
 COMMENT ON COLUMN repositories.workspace_id IS '所属空间 ID';
 COMMENT ON COLUMN repositories.name IS '仓库名称';
 COMMENT ON COLUMN repositories.url IS '仓库地址';
@@ -120,20 +120,20 @@ FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TABLE IF NOT EXISTS agents (
-    id UUID PRIMARY KEY,
-    workspace_id UUID NOT NULL,
+    id VARCHAR(36) PRIMARY KEY,
+    workspace_id VARCHAR(36) NOT NULL,
     name VARCHAR(200) NOT NULL,
     role VARCHAR(100),
     description TEXT,
     config JSONB,
     is_default BOOLEAN NOT NULL DEFAULT FALSE,
-    created_by_user_id UUID,
+    created_by_user_id VARCHAR(36),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 COMMENT ON TABLE agents IS '空间 Agent';
-COMMENT ON COLUMN agents.id IS 'Agent ID（UUID）';
+COMMENT ON COLUMN agents.id IS 'Agent ID（VARCHAR(36)）';
 COMMENT ON COLUMN agents.workspace_id IS '所属空间 ID';
 COMMENT ON COLUMN agents.name IS 'Agent 名称';
 COMMENT ON COLUMN agents.role IS 'Agent 角色';
@@ -153,7 +153,7 @@ FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TABLE IF NOT EXISTS skill_library (
-    id UUID PRIMARY KEY,
+    id VARCHAR(36) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
     category VARCHAR(100) NOT NULL DEFAULT '通用',
@@ -168,7 +168,7 @@ CREATE TABLE IF NOT EXISTS skill_library (
 );
 
 COMMENT ON TABLE skill_library IS '技能库';
-COMMENT ON COLUMN skill_library.id IS '技能 ID（UUID）';
+COMMENT ON COLUMN skill_library.id IS '技能 ID（VARCHAR(36)）';
 COMMENT ON COLUMN skill_library.name IS '技能名称';
 COMMENT ON COLUMN skill_library.description IS '技能描述';
 COMMENT ON COLUMN skill_library.category IS '技能分类';
@@ -191,7 +191,7 @@ FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TABLE IF NOT EXISTS prompt_library (
-    id UUID PRIMARY KEY,
+    id VARCHAR(36) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
     content TEXT NOT NULL,
@@ -202,7 +202,7 @@ CREATE TABLE IF NOT EXISTS prompt_library (
 );
 
 COMMENT ON TABLE prompt_library IS '提示词库';
-COMMENT ON COLUMN prompt_library.id IS '提示词 ID（UUID）';
+COMMENT ON COLUMN prompt_library.id IS '提示词 ID（VARCHAR(36)）';
 COMMENT ON COLUMN prompt_library.name IS '提示词名称';
 COMMENT ON COLUMN prompt_library.description IS '提示词描述';
 COMMENT ON COLUMN prompt_library.content IS '提示词内容';
@@ -220,9 +220,9 @@ FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TABLE IF NOT EXISTS workspace_skills (
-    id UUID PRIMARY KEY,
-    workspace_id UUID NOT NULL,
-    library_skill_id UUID,
+    id VARCHAR(36) PRIMARY KEY,
+    workspace_id VARCHAR(36) NOT NULL,
+    library_skill_id VARCHAR(36),
     name VARCHAR(255) NOT NULL,
     description TEXT,
     category VARCHAR(100) NOT NULL DEFAULT '通用',
@@ -239,7 +239,7 @@ CREATE TABLE IF NOT EXISTS workspace_skills (
 );
 
 COMMENT ON TABLE workspace_skills IS '空间技能';
-COMMENT ON COLUMN workspace_skills.id IS '空间技能 ID（UUID）';
+COMMENT ON COLUMN workspace_skills.id IS '空间技能 ID（VARCHAR(36)）';
 COMMENT ON COLUMN workspace_skills.workspace_id IS '所属空间 ID';
 COMMENT ON COLUMN workspace_skills.library_skill_id IS '关联技能库 ID（自定义技能可为空）';
 COMMENT ON COLUMN workspace_skills.name IS '技能名称';
@@ -268,9 +268,9 @@ FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TABLE IF NOT EXISTS workspace_prompts (
-    id UUID PRIMARY KEY,
-    workspace_id UUID NOT NULL,
-    library_prompt_id UUID,
+    id VARCHAR(36) PRIMARY KEY,
+    workspace_id VARCHAR(36) NOT NULL,
+    library_prompt_id VARCHAR(36),
     name VARCHAR(255) NOT NULL,
     description TEXT,
     content TEXT NOT NULL,
@@ -283,7 +283,7 @@ CREATE TABLE IF NOT EXISTS workspace_prompts (
 );
 
 COMMENT ON TABLE workspace_prompts IS '空间提示词';
-COMMENT ON COLUMN workspace_prompts.id IS '空间提示词 ID（UUID）';
+COMMENT ON COLUMN workspace_prompts.id IS '空间提示词 ID（VARCHAR(36)）';
 COMMENT ON COLUMN workspace_prompts.workspace_id IS '所属空间 ID';
 COMMENT ON COLUMN workspace_prompts.library_prompt_id IS '关联提示词库 ID（自定义提示词可为空）';
 COMMENT ON COLUMN workspace_prompts.name IS '提示词名称';
@@ -307,9 +307,9 @@ FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TABLE IF NOT EXISTS workspace_standards (
-    id UUID PRIMARY KEY,
-    workspace_id UUID NOT NULL,
-    repository_id UUID,
+    id VARCHAR(36) PRIMARY KEY,
+    workspace_id VARCHAR(36) NOT NULL,
+    repository_id VARCHAR(36),
     type VARCHAR(50) NOT NULL,
     name VARCHAR(200),
     content TEXT NOT NULL,
@@ -318,7 +318,7 @@ CREATE TABLE IF NOT EXISTS workspace_standards (
 );
 
 COMMENT ON TABLE workspace_standards IS '空间研发规范';
-COMMENT ON COLUMN workspace_standards.id IS '规范 ID（UUID）';
+COMMENT ON COLUMN workspace_standards.id IS '规范 ID（VARCHAR(36)）';
 COMMENT ON COLUMN workspace_standards.workspace_id IS '所属空间 ID';
 COMMENT ON COLUMN workspace_standards.repository_id IS '关联仓库 ID（NULL 表示空间级规范）';
 COMMENT ON COLUMN workspace_standards.type IS '规范类型（如 coding / design / engineering）';
@@ -339,8 +339,8 @@ EXECUTE FUNCTION update_updated_at_column();
 -- workspace_cicd 与 workspaces 为 1:1 关系设计：
 -- 每个 workspace 最多对应一份 CI/CD 配置。
 CREATE TABLE IF NOT EXISTS workspace_cicd (
-    id UUID PRIMARY KEY,
-    workspace_id UUID NOT NULL,
+    id VARCHAR(36) PRIMARY KEY,
+    workspace_id VARCHAR(36) NOT NULL,
     trigger_branches VARCHAR(500),
     webhook_url VARCHAR(500),
     script TEXT,
@@ -350,7 +350,7 @@ CREATE TABLE IF NOT EXISTS workspace_cicd (
 );
 
 COMMENT ON TABLE workspace_cicd IS '空间 CI/CD 配置';
-COMMENT ON COLUMN workspace_cicd.id IS 'CI/CD 配置 ID（UUID）';
+COMMENT ON COLUMN workspace_cicd.id IS 'CI/CD 配置 ID（VARCHAR(36)）';
 COMMENT ON COLUMN workspace_cicd.workspace_id IS '所属空间 ID';
 COMMENT ON COLUMN workspace_cicd.trigger_branches IS '触发分支规则';
 COMMENT ON COLUMN workspace_cicd.webhook_url IS 'Webhook 地址';
