@@ -12,10 +12,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import MultiSelect from '@/components/ui/multi-select';
-import { mockSettings, mockUsers, mockCurrentUser } from '@/mock/data';
+import { mockSettings } from '@/mock/data';
 import { teamApi } from '@/lib/team-api';
+import { workspaceApi } from '@/lib/workspace-api';
 import { toast } from 'sonner';
-import type { Skill, Prompt } from '@/types';
+import type { Skill, Prompt, Workspace, WorkspaceMember, DemandProject, WorkspaceStandard, WorkspaceCICD, WorkspaceRepository, User } from '@/types';
 import { useSearchParams } from 'react-router-dom';
 
 export const Settings: React.FC = () => {
@@ -32,12 +33,20 @@ export const Settings: React.FC = () => {
   }, [searchParams]);
 
   const [settings, setSettings] = useState(mockSettings);
-  const [users, setUsers] = useState(mockUsers);
   const [searchTerm, setSearchTerm] = useState('');
   const [promptSearchTerm, setPromptSearchTerm] = useState('');
 
   const [skills, setSkills] = useState<Skill[]>([]);
   const [prompts, setPrompts] = useState<Prompt[]>([]);
+
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([]);
+  const [demandProject, setDemandProject] = useState<DemandProject | null>(null);
+  const [workspaceStandards, setWorkspaceStandards] = useState<WorkspaceStandard[]>([]);
+  const [cicd, setCicd] = useState<WorkspaceCICD | null>(null);
+  const [cicdBranches, setCicdBranches] = useState('main, master');
+  const [cicdWebhook, setCicdWebhook] = useState('');
+  const [cicdScript, setCicdScript] = useState('npm run build\nnpm run test\nnpm run deploy');
 
   useEffect(() => {
     let cancelled = false;
@@ -52,6 +61,52 @@ export const Settings: React.FC = () => {
         console.error('Failed to load team skills/prompts:', err);
         toast.error('加载团队技能/提示词失败');
       });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    Promise.all([
+      workspaceApi.get(workspaceId).catch(() => null),
+      workspaceApi.members(workspaceId).catch(() => []),
+      workspaceApi.getDemandProject(workspaceId).catch(() => null),
+      workspaceApi.listStandards(workspaceId).catch(() => []),
+      workspaceApi.getCICD(workspaceId).catch(() => null),
+      workspaceApi.listRepositories(workspaceId).catch(() => []),
+    ]).then(([ws, mems, dp, stds, cicdCfg, repos]) => {
+      if (cancelled) return;
+      setWorkspace(ws);
+      setWorkspaceMembers(mems);
+      setDemandProject(dp);
+      setWorkspaceStandards(stds);
+      setCicd(cicdCfg);
+      if (cicdCfg) {
+        setCicdBranches(cicdCfg.triggerBranches || 'main, master');
+        setCicdWebhook(cicdCfg.webhookUrl || '');
+        setCicdScript(cicdCfg.script || 'npm run build\nnpm run test\nnpm run deploy');
+      }
+      if (dp) {
+        setSettings(prev => ({ ...prev, meegoProject: dp.externalKey || '' }));
+        setReqPlatform(dp.platform || 'meego');
+      }
+      const mappedRepos = (repos as WorkspaceRepository[]).map(r => ({ id: r.id, url: r.url, name: r.name, type: r.type as 'dev' | 'case' | 'product' }));
+      if (mappedRepos.length > 0) {
+        setGitRepos(mappedRepos);
+      }
+      if (stds.length > 0) {
+        const coding = stds.find(s => s.type === 'coding');
+        const design = stds.find(s => s.type === 'design');
+        setSettings(prev => ({
+          ...prev,
+          codingStandard: coding?.content || prev.codingStandard,
+          designStandard: design?.content || prev.designStandard,
+        }));
+      }
+    }).catch(err => {
+      console.error('Failed to load workspace settings:', err);
+      toast.error('加载空间配置失败');
+    });
     return () => { cancelled = true; };
   }, []);
 
@@ -90,7 +145,7 @@ export const Settings: React.FC = () => {
   });
   
   const [reqPlatform, setReqPlatform] = useState('meego');
-  const [gitRepos, setGitRepos] = useState<{id: string, url: string, name: string, type: 'dev' | 'case'}[]>([
+  const [gitRepos, setGitRepos] = useState<{id: string, url: string, name: string, type: 'dev' | 'case' | 'product' | 'test'}[]>([
     { id: '1', url: mockSettings.gitlabUrl || '', name: '主项目', type: 'dev' }
   ]);
 
@@ -111,12 +166,23 @@ export const Settings: React.FC = () => {
   };
 
   const handleAddRepo = () => {
-    setGitRepos([...gitRepos, { id: Date.now().toString(), url: '', name: '', type: 'dev' }]);
+    const workspaceId = workspace?.id || 'ws-default';
+    workspaceApi.createRepository(workspaceId, {
+      name: '',
+      url: '',
+      type: 'dev',
+      defaultBranch: '',
+    }).then(repo => {
+      setGitRepos([...gitRepos, { id: repo.id, url: repo.url, name: repo.name, type: repo.type as 'dev' | 'case' | 'product' }]);
+    }).catch(() => toast.error('新增仓库失败'));
   };
 
   const handleRemoveRepo = (id: string) => {
+    const workspaceId = workspace?.id || 'ws-default';
     if (gitRepos.length > 1) {
-      setGitRepos(gitRepos.filter(repo => repo.id !== id));
+      workspaceApi.deleteRepository(workspaceId, id)
+        .then(() => setGitRepos(gitRepos.filter(repo => repo.id !== id)))
+        .catch(() => toast.error('删除仓库失败'));
     } else {
       toast.error('至少需要保留一个 Git 仓库');
     }
@@ -126,8 +192,68 @@ export const Settings: React.FC = () => {
     toast.success('设置已保存');
   };
 
-  const filteredUsers = users.filter(user => 
-    user.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+  const handleSaveBasic = async () => {
+    const workspaceId = workspace?.id || 'ws-default';
+    try {
+      await workspaceApi.setDemandProject(workspaceId, {
+        platform: reqPlatform,
+        externalKey: settings.meegoProject,
+        name: workspace?.name || settings.meegoProject,
+      });
+      toast.success('基础配置已保存');
+    } catch {
+      toast.error('保存基础配置失败');
+    }
+  };
+
+  const handleSaveStandards = async () => {
+    const workspaceId = workspace?.id || 'ws-default';
+    try {
+      const coding = workspaceStandards.find(s => s.type === 'coding');
+      const design = workspaceStandards.find(s => s.type === 'design');
+      await Promise.all([
+        workspaceApi.saveStandard(workspaceId, {
+          id: coding?.id,
+          type: 'coding',
+          name: '编码规范',
+          content: settings.codingStandard,
+        }),
+        workspaceApi.saveStandard(workspaceId, {
+          id: design?.id,
+          type: 'design',
+          name: '设计规范',
+          content: settings.designStandard,
+        }),
+      ]);
+      toast.success('研发规范已保存');
+    } catch {
+      toast.error('保存研发规范失败');
+    }
+  };
+
+  const handleSaveCICD = async () => {
+    const workspaceId = workspace?.id || 'ws-default';
+    try {
+      await workspaceApi.saveCICD(workspaceId, {
+        triggerBranches: cicdBranches,
+        webhookUrl: cicdWebhook,
+        script: cicdScript,
+      });
+      toast.success('CICD 配置已保存');
+    } catch {
+      toast.error('保存 CICD 配置失败');
+    }
+  };
+
+  const displayUsers = workspaceMembers.map(m => ({
+    id: m.userId,
+    name: m.userId,
+    role: (m.subRole || (m.role === 'admin' ? 'admin' : 'developer')) as User['role'],
+    joinedAt: m.joinedAt,
+  }));
+
+  const filteredUsers = displayUsers.filter(user =>
+    user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     user.role.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -144,7 +270,8 @@ export const Settings: React.FC = () => {
 
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  
+  const [inviteRole, setInviteRole] = useState('developer');
+
   const handleInvite = () => {
     setIsInviteOpen(true);
   };
@@ -154,9 +281,17 @@ export const Settings: React.FC = () => {
       toast.error('请输入成员邮箱');
       return;
     }
-    toast.success(`邀请已发送至 ${inviteEmail}`);
-    setIsInviteOpen(false);
-    setInviteEmail('');
+    const workspaceId = workspace?.id || 'ws-default';
+    const role = inviteRole === 'admin' ? 'admin' : 'user';
+    const subRole = inviteRole === 'admin' ? 'pm' : inviteRole;
+    workspaceApi.addMember(workspaceId, { userId: inviteEmail, role, subRole })
+      .then(() => {
+        toast.success(`已添加成员 ${inviteEmail}`);
+        setIsInviteOpen(false);
+        setInviteEmail('');
+        setWorkspaceMembers(prev => [...prev, { workspaceId, userId: inviteEmail, role, subRole: subRole as WorkspaceMember['subRole'], joinedAt: new Date().toISOString() }]);
+      })
+      .catch(() => toast.error('添加成员失败'));
   };
 
   return (
@@ -294,7 +429,7 @@ export const Settings: React.FC = () => {
                 </div>
               </div>
               {!isReadOnly && (
-                <Button onClick={handleSave} className="mt-6"><Save className="mr-2 h-4 w-4" /> 保存配置</Button>
+                <Button onClick={handleSaveBasic} className="mt-6"><Save className="mr-2 h-4 w-4" /> 保存配置</Button>
               )}
             </CardContent>
           </Card>
@@ -336,7 +471,7 @@ export const Settings: React.FC = () => {
                 </TabsContent>
               </Tabs>
               {!isReadOnly && (
-                <Button onClick={handleSave} className="mt-6"><Save className="mr-2 h-4 w-4" /> 保存规范</Button>
+                <Button onClick={handleSaveStandards} className="mt-6"><Save className="mr-2 h-4 w-4" /> 保存规范</Button>
               )}
             </CardContent>
           </Card>
@@ -351,21 +486,22 @@ export const Settings: React.FC = () => {
             <CardContent className="space-y-6">
               <div className="space-y-2">
                 <Label>部署触发分支</Label>
-                <Input placeholder="例如: main, master, release/*" defaultValue="main, master" />
+                <Input placeholder="例如: main, master, release/*" value={cicdBranches} onChange={e => setCicdBranches(e.target.value)} />
               </div>
               <div className="space-y-2">
                 <Label>Webhook URL</Label>
-                <Input placeholder="输入构建触发的 Webhook URL" type="url" />
+                <Input placeholder="输入构建触发的 Webhook URL" type="url" value={cicdWebhook} onChange={e => setCicdWebhook(e.target.value)} />
               </div>
               <div className="space-y-2">
                 <Label>部署脚本命令</Label>
                 <Textarea 
                   className="min-h-[120px] text-sm bg-muted/20"
                   style={{ fontFamily: '"JetBrains Mono", monospace' }}
-                  defaultValue="npm run build&#10;npm run test&#10;npm run deploy"
+                  value={cicdScript}
+                  onChange={e => setCicdScript(e.target.value)}
                 />
               </div>
-              <Button onClick={() => toast.success('CICD配置已保存')}><Save className="mr-2 h-4 w-4" /> 保存配置</Button>
+              <Button onClick={handleSaveCICD}><Save className="mr-2 h-4 w-4" /> 保存配置</Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -677,7 +813,7 @@ export const Settings: React.FC = () => {
                   </div>
                   <div className="space-y-2">
                     <Label>角色权限</Label>
-                    <Select defaultValue="developer">
+                    <Select value={inviteRole} onValueChange={setInviteRole}>
                       <SelectTrigger>
                         <SelectValue placeholder="选择角色" />
                       </SelectTrigger>
@@ -701,7 +837,7 @@ export const Settings: React.FC = () => {
             <Card className="soft-shadow border-none overflow-hidden">
               <CardHeader className="py-4 border-b bg-muted/10">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                  <CardTitle className="text-base">空间成员 ({users.length})</CardTitle>
+                  <CardTitle className="text-base">空间成员 ({displayUsers.length})</CardTitle>
                   <div className="relative w-full sm:w-64">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input

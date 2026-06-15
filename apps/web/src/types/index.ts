@@ -124,3 +124,17 @@ export interface WorkspaceAgent {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface WorkspaceRepository {
+  id: string;
+  workspaceId: string;
+  projectId?: string;
+  name: string;
+  url: string;
+  type: 'dev' | 'test' | 'case' | 'product';
+  defaultBranch?: string;
+  previewUrl?: string;
+  branches?: string[];
+  createdAt: string;
+  updatedAt: string;
+}

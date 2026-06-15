@@ -6,6 +6,7 @@ import type {
   WorkspaceStandard,
   WorkspaceCICD,
   WorkspaceAgent,
+  WorkspaceRepository,
 } from '@/types';
 
 export const workspaceApi = {
@@ -26,6 +27,15 @@ export const workspaceApi = {
     api.post<DemandProject>(`/v1/workspaces/${workspaceId}/demand-project`, req),
 
   listAgents: (workspaceId: string) => api.get<WorkspaceAgent[]>(`/v1/workspaces/${workspaceId}/agents`),
+
+  listRepositories: (workspaceId: string) =>
+    api.get<WorkspaceRepository[]>(`/v1/workspaces/${workspaceId}/repositories`),
+  createRepository: (
+    workspaceId: string,
+    req: { name: string; url: string; type: WorkspaceRepository['type']; defaultBranch?: string }
+  ) => api.post<WorkspaceRepository>(`/v1/workspaces/${workspaceId}/repositories`, req),
+  deleteRepository: (workspaceId: string, id: string) =>
+    api.delete<void>(`/v1/workspaces/${workspaceId}/repositories/${id}`),
 
   listStandards: (workspaceId: string, repositoryId?: string) =>
     api.get<WorkspaceStandard[]>(`/v1/workspaces/${workspaceId}/standards${repositoryId ? `?repositoryId=${repositoryId}` : ''}`),
