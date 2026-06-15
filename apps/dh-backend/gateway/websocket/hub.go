@@ -117,6 +117,18 @@ func (h *Hub) HandleMessage(sessionID string, rawMsg []byte) error {
 	if err := h.messages.Append(ctx, sessionID, msg); err != nil {
 		return fmt.Errorf("append message: %w", err)
 	}
+
+	// 首次用户消息时，自动生成会话标题。
+	if sess, err := h.sessions.Get(ctx, sessionID); err == nil && sess.Title == "" && msg.Content != "" {
+		title := msg.Content
+		if len(title) > 20 {
+			title = title[:20]
+		}
+		if err := h.sessions.UpdateTitle(ctx, sessionID, title); err != nil {
+			log.Printf("failed to update session title: %v", err)
+		}
+	}
+
 	if err := h.broker.Publish(ctx, sessionID, chat.BrokerEvent{
 		Type:    "message",
 		Payload: msg,

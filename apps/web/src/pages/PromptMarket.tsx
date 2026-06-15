@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, Copy, CheckCircle, Plus, Sparkles, Loader2 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { mockPrompts } from '@/mock/data';
+import { teamApi } from '@/lib/team-api';
 import { toast } from 'sonner';
+import type { Prompt } from '@/types';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -14,7 +15,16 @@ const CATEGORIES = ['全部', '研发', '测试', '产品', '设计'];
 export const PromptMarket: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('全部');
-  const [prompts, setPrompts] = useState(mockPrompts);
+  const [prompts, setPrompts] = useState<Prompt[]>([]);
+
+  useEffect(() => {
+    teamApi.listPrompts()
+      .then(setPrompts)
+      .catch(err => {
+        console.error('Failed to load prompts:', err);
+        toast.error('加载提示词失败');
+      });
+  }, []);
 
   // AI Create state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -36,12 +46,16 @@ export const PromptMarket: React.FC = () => {
   });
 
   const handleAdd = (id: string) => {
-    setPrompts(prompts.map(p => p.id === id ? { ...p, addedToSpace: true } : p));
-    toast.success('提示词已添加到空间常用列表');
+    teamApi.updatePromptAdded(id, true)
+      .then(() => {
+        setPrompts(prompts.map(p => p.id === id ? { ...p, addedToSpace: true } : p));
+        toast.success('提示词已添加到空间常用列表');
+      })
+      .catch(() => toast.error('添加失败'));
   };
 
-  const handleCopy = () => {
-    toast.success('提示词内容已复制到剪贴板');
+  const handleCopy = (content: string) => {
+    navigator.clipboard.writeText(content).then(() => toast.success('提示词内容已复制到剪贴板'));
   };
 
   const handleCreatePrompt = () => {
@@ -50,21 +64,21 @@ export const PromptMarket: React.FC = () => {
       return;
     }
     setIsGenerating(true);
-    setTimeout(() => {
-      const newPrompt = {
-        id: `custom-prompt-${Date.now()}`,
-        name: 'AI 生成自定义提示词',
-        description: createPrompt,
-        useCase: selectedCategory !== '全部' ? selectedCategory : '研发',
-        addedToSpace: true,
-        usageCount: 0
-      };
-      setPrompts([newPrompt, ...prompts]);
+    teamApi.createPrompt({
+      name: createPrompt.trim().slice(0, 30) || 'AI 生成自定义提示词',
+      description: createPrompt.trim(),
+      content: createPrompt.trim(),
+      useCase: selectedCategory !== '全部' ? selectedCategory : '研发',
+    }).then(prompt => {
+      setPrompts([prompt, ...prompts]);
       setIsGenerating(false);
       setIsCreateOpen(false);
       setCreatePrompt('');
       toast.success('自定义提示词生成成功并已添加');
-    }, 2000);
+    }).catch(() => {
+      setIsGenerating(false);
+      toast.error('提示词生成失败');
+    });
   };
 
   return (
@@ -154,7 +168,7 @@ export const PromptMarket: React.FC = () => {
               <Button 
                 variant="outline" 
                 className="flex-1"
-                onClick={handleCopy}
+                onClick={() => handleCopy(prompt.content || prompt.description)}
               >
                 <Copy className="mr-2 h-4 w-4" /> 复制
               </Button>

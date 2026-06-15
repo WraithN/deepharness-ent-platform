@@ -25,6 +25,7 @@ import {
   CheckCircle,
   CheckCircle2,
   UploadCloud,
+  Puzzle,
   X,
   GitBranch,
   FileText,
@@ -46,7 +47,9 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { teamApi } from '@/lib/team-api';
 import type { WorkItemDTO, RepositoryDTO } from '@/lib/api-types';
+import type { Skill, Prompt } from '@/types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -153,7 +156,7 @@ const toApiStatus = (status: string): string => status.replace(/-/g, '_');
 
 // 根据后端优先级/严重度映射为前端严重度。
 const mapSeverity = (priority: WorkItemDTO['priority'], severity?: WorkItemDTO['severity']): DefectSeverity => {
-  if (severity) return severity;
+  if (severity) return severity as DefectSeverity;
   if (priority === 'high') return 'high';
   if (priority === 'medium') return 'medium';
   return 'low';
@@ -515,6 +518,8 @@ export const Chat: React.FC = () => {
   // Input toolbar dropdowns
   const [selectedRepos, setSelectedRepos] = useState<{id: string; name: string}[]>([]);
   const [availableRepos, setAvailableRepos] = useState<{id: string; name: string}[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<Skill[]>([]);
+  const [availablePrompts, setAvailablePrompts] = useState<Prompt[]>([]);
   const [skillPopoverOpen, setSkillPopoverOpen] = useState(false);
   const [repoMenuOpen, setRepoMenuOpen] = useState(false);
   const [promptMenuOpen, setPromptMenuOpen] = useState(false);
@@ -601,7 +606,7 @@ export const Chat: React.FC = () => {
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => {
     if (location.state?.initialInput) setInput(location.state.initialInput);
@@ -729,22 +734,25 @@ export const Chat: React.FC = () => {
       };
     }
 
-    api.post<{data: {sessionId: string; wsUrl: string}}>('/v1/sessions', {
-      agentType: 'opencode',
-      model: 'gpt-4o',
-      projectId: 'p1',
-    })
-      .then(res => {
-        if (cancelled) return;
-        const sid = res.data.sessionId;
-        console.log('[Chat] Session created:', sid);
-        setSessionId(sid);
-        connectWebSocket(sid);
+    if (!sessionId) {
+      api.post<{data: {sessionId: string; wsUrl: string}}>('/v1/sessions', {
+        agentType: 'opencode',
+        model: 'gpt-4o',
+        projectId: 'p1',
       })
-      .catch(err => {
-        console.error('[Chat] Failed to create session:', err);
-        toast.error('创建会话失败');
-      });
+        .then(res => {
+          if (cancelled) return;
+          const sid = res.data.sessionId;
+          console.log('[Chat] Session created:', sid);
+          setSessionId(sid);
+        })
+        .catch(err => {
+          console.error('[Chat] Failed to create session:', err);
+          toast.error('创建会话失败');
+        });
+    } else {
+      connectWebSocket(sessionId);
+    }
 
     return () => {
       cancelled = true;
@@ -754,27 +762,34 @@ export const Chat: React.FC = () => {
         wsRef.current = null;
       }
     };
-  }, []);
+  }, [sessionId]);
 
   // 从后端 API 加载历史会话
   useEffect(() => {
     let cancelled = false;
-    api.get<any[]>('/v1/orchestrator/sessions')
+    api.get<any[]>('/v1/sessions')
       .then(sessions => {
         if (cancelled) return;
-        const mapped = sessions.map((s: any) => ({
-          id: s.id,
-          title: s.title,
-          date: '近期',
-          type: s.agentType === 'ui-designer' ? 'ui' : s.agentType === 'code-assistant' ? 'code' : 'requirement',
-        }));
+        const mapped = sessions.map((s: any) => {
+          const updatedAt = s.updatedAt || s.createdAt;
+          const d = updatedAt ? new Date(updatedAt) : new Date();
+          const dateStr = `${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+          const agentType = (s.agentType || '').toLowerCase();
+          const type = agentType.includes('ui') ? 'ui' : agentType.includes('code') ? 'code' : 'requirement';
+          return {
+            id: s.id,
+            title: s.title || '新会话',
+            date: dateStr,
+            type,
+          };
+        });
         setHistoryList(mapped);
       })
       .catch(() => {
         // fallback to empty
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [sessionId]);
 
   // 从后端 API 加载工作项数据
   useEffect(() => {
@@ -839,12 +854,29 @@ export const Chat: React.FC = () => {
     return () => { cancelled = true; };
   }, []);
 
-  const availablePrompts = [
-    { id: '1', title: '编写PRD文档模板', content: '请作为产品经理，根据以下需求生成一份结构化的PRD文档，包含：1. 背景与目标 2. 用户场景 3. 功能详情 4. 业务流程图 5. 数据埋点要求。当前需求：' },
-    { id: '2', title: '竞品分析框架', content: '请帮我对【功能模块】进行竞品分析，主要对比对象包括：... 比较维度应包含用户体验、功能完整度、商业模式等。' },
-    { id: '3', title: 'React组件生成标准', content: '请生成一个React组件，要求：使用TypeScript，TailwindCSS进行样式编写，遵循响应式设计，分离逻辑与视图，并添加适当的JSDoc注释。' },
-    { id: '4', title: 'Go API 接口规范', content: '实现一个RESTful API端点，语言为Go，使用Gin框架。要求包含参数验证、统一的错误处理封装、以及完整的Swagger注释。' },
-  ];
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([teamApi.listSkills(), teamApi.listPrompts()])
+      .then(([loadedSkills, loadedPrompts]) => {
+        if (cancelled) return;
+        setAvailableSkills(loadedSkills);
+        setAvailablePrompts(loadedPrompts);
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.error('Failed to load skills/prompts:', err);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const skillIconMap: Record<string, React.ComponentType<{ className?: string }>> = {
+    ListTodo,
+    Box,
+    Code2,
+    CheckCircle,
+    UploadCloud,
+    Puzzle,
+  };
 
   const insertPrompt = (c: string) => { setInput(p => p.trimEnd() ? p.trimEnd() + '\n' + c : c); setPromptMenuOpen(false); toast.success('已插入提示词'); };
   const toggleRepo = (repo: {id: string; name: string}) => setSelectedRepos(prev => prev.find(r => r.id === repo.id) ? prev.filter(r => r.id !== repo.id) : [...prev, repo]);
@@ -1336,7 +1368,7 @@ export const Chat: React.FC = () => {
                     <div className="py-6 text-center text-xs text-muted-foreground">暂无匹配的历史会话</div>
                   )}
                   {filteredHistory.map(h => (
-                    <div key={h.id} className="group relative w-full flex items-center px-3 py-2 text-sm rounded-lg hover:bg-accent text-left transition-colors cursor-pointer" onClick={() => { setMessages([]); setHistoryOpen(false); toast.success(`切换到：${h.title}`); }}>
+                    <div key={h.id} className="group relative w-full flex items-center px-3 py-2 text-sm rounded-lg hover:bg-accent text-left transition-colors cursor-pointer" onClick={() => { setMessages([]); setSessionId(h.id); setHistoryOpen(false); toast.success(`切换到：${h.title}`); }}>
                       <div className="flex items-center gap-2 flex-1 min-w-0 pr-12 group-hover:pr-16 transition-all">
                         {h.type === 'ui' && <Box className="h-3.5 w-3.5 text-blue-500 shrink-0" />}
                         {h.type === 'requirement' && <ListTodo className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
@@ -1377,7 +1409,7 @@ export const Chat: React.FC = () => {
           <Button
             variant="ghost" size="sm"
             className="h-7 px-2.5 ml-auto text-xs gap-1.5 text-muted-foreground hover:text-foreground"
-            onClick={() => { setMessages([]); toast.success('已开启新会话'); }}
+            onClick={() => { setMessages([]); setSessionId(null); toast.success('已开启新会话'); }}
           >
             <MessageSquarePlus className="h-3.5 w-3.5" />
             新建会话
@@ -1651,9 +1683,9 @@ export const Chat: React.FC = () => {
                     <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
                       <div className="max-h-[280px] overflow-y-auto p-1">
                         {availablePrompts.map(p => (
-                          <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => insertPrompt(p.content)}>
-                            <span className="font-medium text-sm mb-1">{p.title}</span>
-                            <span className="text-xs text-muted-foreground line-clamp-2">{p.content}</span>
+                          <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => insertPrompt(p.content || p.description)}>
+                            <span className="font-medium text-sm mb-1">{p.name}</span>
+                            <span className="text-xs text-muted-foreground line-clamp-2">{p.content || p.description}</span>
                           </div>
                         ))}
                       </div>
@@ -1677,21 +1709,20 @@ export const Chat: React.FC = () => {
                           </TabsList>
                         </div>
                         <div className="max-h-[280px] overflow-y-auto p-2 space-y-1">
-                          {[
-                            { id: '1', name: '需求设计', desc: '通过对话梳理并生成结构化需求文档', phase: '需求设计', icon: ListTodo },
-                            { id: '2', name: 'UI设计', desc: '根据需求生成UI组件或页面结构', phase: 'UI设计', icon: Box },
-                            { id: '3', name: '代码开发', desc: '根据设计规范和需求编写代码', phase: '代码开发', icon: Code2 },
-                            { id: '4', name: '单元测试', desc: '生成单元测试用例', phase: '测试编写', icon: CheckCircle },
-                            { id: '5', name: '自动化部署', desc: '将完成的代码提交并部署上线', phase: '需求上线', icon: UploadCloud },
-                          ].filter(s => activeSkillTab === '全部' || s.phase === activeSkillTab).map(skill => (
-                            <div key={skill.id} className="flex items-start gap-3 p-2.5 rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors" onClick={() => { appendSkillTag(skill.name); setSkillPopoverOpen(false); }}>
-                              <div className="h-8 w-8 rounded-md bg-background flex items-center justify-center border shrink-0"><skill.icon className="h-4 w-4 text-muted-foreground" /></div>
-                              <div className="flex flex-col flex-1 min-w-0">
-                                <span className="font-medium text-sm leading-none mb-1 text-foreground">{skill.name}</span>
-                                <span className="text-xs text-muted-foreground line-clamp-2">{skill.desc}</span>
-                              </div>
-                            </div>
-                          ))}
+                          {availableSkills
+                            .filter(s => activeSkillTab === '全部' || s.phase === activeSkillTab)
+                            .map(skill => {
+                              const IconComponent = skillIconMap[skill.icon || ''] || Puzzle;
+                              return (
+                                <div key={skill.id} className="flex items-start gap-3 p-2.5 rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors" onClick={() => { appendSkillTag(skill.name); setSkillPopoverOpen(false); }}>
+                                  <div className="h-8 w-8 rounded-md bg-background flex items-center justify-center border shrink-0"><IconComponent className="h-4 w-4 text-muted-foreground" /></div>
+                                  <div className="flex flex-col flex-1 min-w-0">
+                                    <span className="font-medium text-sm leading-none mb-1 text-foreground">{skill.name}</span>
+                                    <span className="text-xs text-muted-foreground line-clamp-2">{skill.description}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
                         </div>
                       </Tabs>
                     </div>

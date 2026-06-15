@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
-import { Search, Download, Star, CheckCircle, Plus, Sparkles, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, Download, Star, CheckCircle, Plus, Sparkles, Loader2, Puzzle } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { mockSkills } from '@/mock/data';
+import { teamApi } from '@/lib/team-api';
 import { toast } from 'sonner';
+import type { Skill } from '@/types';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -14,7 +15,16 @@ const CATEGORIES = ['全部', '研发', '测试', '产品', '设计'];
 export const SkillMarket: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('全部');
-  const [skills, setSkills] = useState(mockSkills);
+  const [skills, setSkills] = useState<Skill[]>([]);
+
+  useEffect(() => {
+    teamApi.listSkills()
+      .then(setSkills)
+      .catch(err => {
+        console.error('Failed to load skills:', err);
+        toast.error('加载技能失败');
+      });
+  }, []);
   
   // AI Create state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -38,8 +48,12 @@ export const SkillMarket: React.FC = () => {
   });
 
   const handleInstall = (id: string) => {
-    setSkills(skills.map(s => s.id === id ? { ...s, installed: true } : s));
-    toast.success('技能已安装到当前工作空间');
+    teamApi.updateSkillInstalled(id, true)
+      .then(() => {
+        setSkills(skills.map(s => s.id === id ? { ...s, installed: true } : s));
+        toast.success('技能已安装到当前工作空间');
+      })
+      .catch(() => toast.error('安装失败'));
   };
 
   const handleCreateSkill = () => {
@@ -48,22 +62,24 @@ export const SkillMarket: React.FC = () => {
       return;
     }
     setIsGenerating(true);
-    setTimeout(() => {
-      const newSkill = {
-        id: `custom-skill-${Date.now()}`,
-        name: 'AI 生成自定义技能',
-        description: createPrompt,
-        category: selectedCategory !== '全部' ? selectedCategory : '研发',
-        installed: true,
-        downloads: 0,
-        rating: 5.0
-      };
-      setSkills([newSkill, ...skills]);
+    teamApi.createSkill({
+      name: createPrompt.trim().slice(0, 30) || 'AI 生成自定义技能',
+      description: createPrompt.trim(),
+      category: selectedCategory !== '全部' ? selectedCategory : '研发',
+      tags: '',
+      icon: 'Puzzle',
+      phase: '代码开发',
+      rating: 5.0,
+    }).then(skill => {
+      setSkills([skill, ...skills]);
       setIsGenerating(false);
       setIsCreateOpen(false);
       setCreatePrompt('');
       toast.success('自定义技能生成成功并已自动安装');
-    }, 2000);
+    }).catch(() => {
+      setIsGenerating(false);
+      toast.error('技能生成失败');
+    });
   };
 
   return (

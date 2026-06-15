@@ -60,9 +60,14 @@ func DSN(cfg Config) string {
 
 	params := cfg.Params
 	if params == "" {
-		params = "parseTime=true"
-	} else if !containsParam(params, "parseTime") {
-		params = params + "&parseTime=true"
+		params = "parseTime=true&charset=utf8mb4"
+	} else {
+		if !containsParam(params, "parseTime") {
+			params = params + "&parseTime=true"
+		}
+		if !containsParam(params, "charset") {
+			params = params + "&charset=utf8mb4"
+		}
 	}
 
 	return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?%s",

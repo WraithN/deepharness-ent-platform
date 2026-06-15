@@ -56,7 +56,7 @@ const tenantNavItems = [
   { path: '/chat', label: '智能会话', icon: MessageCircle },
   { path: '/code', label: '工程代码', icon: Code2 },
   { path: '/dashboard', label: '数据大盘', icon: LayoutDashboard },
-  { path: '/lobster', label: '虾班智守', icon: Bot },
+  { path: '/personal-assistant', label: '虾班智守', icon: Bot },
   { path: '/settings', label: '空间设置', icon: Settings },
 ];
 
@@ -327,7 +327,7 @@ export const Layout: React.FC = () => {
                 {location.pathname === '/chat' && '智能会话'}
                 {location.pathname === '/code' && '工程代码'}
                 {location.pathname === '/dashboard' && '数据大盘'}
-                {location.pathname.startsWith('/lobster') && '虾班智守'}
+                {location.pathname.startsWith('/personal-assistant') && '虾班智守'}
                 {location.pathname === '/settings' && '空间设置'}
                 {location.pathname === '/profile' && '个人资料'}
               </h1>
@@ -337,7 +337,7 @@ export const Layout: React.FC = () => {
                 {location.pathname === '/chat' && 'AI 驱动的多轮对话与问题解决辅助'}
                 {location.pathname === '/code' && '查看和管理您的代码仓库文件'}
                 {location.pathname === '/dashboard' && '查看团队在当前工作空间的统计数据与研发效率'}
-                {location.pathname.startsWith('/lobster') && '代码守护与自动审查助手'}
+                {location.pathname.startsWith('/personal-assistant') && '代码守护与自动审查助手'}
                 {location.pathname === '/settings' && '管理当前工作空间的成员与研发规范等配置'}
                 {location.pathname === '/profile' && '管理您的个人头像、昵称与简介信息'}
               </p>
