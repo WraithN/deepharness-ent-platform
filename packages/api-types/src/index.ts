@@ -37,11 +37,21 @@ export interface ProjectDTO {
 
 export interface WorkItemDTO {
   id: string
+  tenantId?: string
+  projectId?: string
+  type: "requirement" | "defect" | "case"
   title: string
   description: string
-  status: "todo" | "in_progress" | "done"
+  status: string
   priority: "low" | "medium" | "high"
   assigneeId?: string
+  reporter?: string
+  source?: string
+  externalId?: string
+  createdAt: string
+  updatedAt?: string
+  severity?: "critical" | "high" | "medium" | "low"
+  steps?: string[]
 }
 
 export interface AgentSessionDTO {
