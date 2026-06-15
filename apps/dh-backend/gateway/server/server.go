@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
+	session "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat/session"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket/broker"
-	brokermemory "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket/broker/memory"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/orchestrator"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/orchestrator"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant"
 	paservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent"
@@ -21,11 +21,13 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team"
 	teamservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace"
+	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 	ws "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
-	session "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat/session"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket/broker"
+	brokermemory "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket/broker/memory"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/worker"
 	sdkmysql "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/mysql"
 )
@@ -116,6 +118,9 @@ func New(cfg config.Config) http.Handler {
 	// Personal assistant storage: MySQL when available, otherwise memory mock.
 	initPersonalAssistantService(db)
 
+	// Workspace module: MySQL when available, otherwise memory mock.
+	initWorkspaceService(db)
+
 	// Team skills / prompts: MySQL when available, otherwise memory mock.
 	initTeamService(db)
 
@@ -155,6 +160,19 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/personal-assistants/{id}/sessions/{sessionId}/messages", personalassistant.GetMessages)
 	mux.HandleFunc("/ws/v1/personal-assistant/{assistantId}/sessions/{sessionId}", personalassistant.WebSocket)
 
+	// Workspace module
+	mux.HandleFunc("/api/v1/workspaces", workspace.Workspaces)
+	mux.HandleFunc("/api/v1/workspaces/{id}", workspace.WorkspaceByID)
+	mux.HandleFunc("/api/v1/workspaces/{id}/members", workspace.Members)
+	mux.HandleFunc("/api/v1/workspaces/{id}/members/{userId}", workspace.MemberByID)
+	mux.HandleFunc("/api/v1/workspaces/{id}/demand-project", workspace.DemandProject)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories", workspace.WorkspaceRepositories)
+	mux.HandleFunc("/api/v1/workspaces/{id}/agents", workspace.WorkspaceAgents)
+	mux.HandleFunc("/api/v1/workspaces/{id}/standards", workspace.WorkspaceStandards)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}", workspace.RepositoryByID)
+	mux.HandleFunc("/api/v1/workspaces/{id}/standards/{standardId}", workspace.WorkspaceStandardByID)
+	mux.HandleFunc("/api/v1/workspaces/{id}/cicd", workspace.WorkspaceCICD)
+
 	// Team skills / prompts
 	mux.HandleFunc("/api/v1/team/skills", team.Skills)
 	mux.HandleFunc("/api/v1/team/skills/{id}", team.SkillByID)
@@ -191,6 +209,16 @@ func initPersonalAssistantService(db *sql.DB) {
 	}
 	log.Println("[PersonalAssistant] using memory mock")
 	personalassistant.Init(paservice.NewMockPersonalAssistantService())
+}
+
+func initWorkspaceService(db *sql.DB) {
+	if db != nil {
+		log.Println("[Workspace] using mysql storage")
+		workspace.Init(workspaceservice.NewDBWorkspaceService(db))
+		return
+	}
+	log.Println("[Workspace] using memory mock")
+	workspace.Init(workspaceservice.NewMockWorkspaceService())
 }
 
 func initTeamService(db *sql.DB) {
