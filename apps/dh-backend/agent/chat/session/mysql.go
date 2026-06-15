@@ -28,7 +28,7 @@ func (s *MySQLStore) Create(ctx context.Context, sess chat.Session) error {
 	}
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO agent_sessions (id, workspace_id, agent_id, agent_type, model, project_id, title, context, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, sess.ID, sess.WorkspaceID, sess.AgentID, sess.AgentType, sess.Model, sess.ProjectID, sess.Title, ctxJSON, sess.CreatedAt, sess.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert session failed: %w", err)
@@ -41,7 +41,7 @@ func (s *MySQLStore) Get(ctx context.Context, id string) (chat.Session, error) {
 	var ctxJSON []byte
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, workspace_id, agent_id, agent_type, model, project_id, title, context, created_at, updated_at
-		FROM agent_sessions WHERE id = ?
+		FROM agent_sessions WHERE id = $1
 	`, id).Scan(&sess.ID, &sess.WorkspaceID, &sess.AgentID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return chat.Session{}, fmt.Errorf("session not found: %s", id)
@@ -56,7 +56,7 @@ func (s *MySQLStore) Get(ctx context.Context, id string) (chat.Session, error) {
 }
 
 func (s *MySQLStore) UpdateActivity(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE agent_sessions SET updated_at = NOW(3) WHERE id = ?`, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE agent_sessions SET updated_at = NOW() WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("update session activity failed: %w", err)
 	}
@@ -64,7 +64,7 @@ func (s *MySQLStore) UpdateActivity(ctx context.Context, id string) error {
 }
 
 func (s *MySQLStore) UpdateTitle(ctx context.Context, id string, title string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE agent_sessions SET title = ? WHERE id = ?`, title, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE agent_sessions SET title = $1 WHERE id = $2`, title, id)
 	if err != nil {
 		return fmt.Errorf("update session title failed: %w", err)
 	}
@@ -72,7 +72,7 @@ func (s *MySQLStore) UpdateTitle(ctx context.Context, id string, title string) e
 }
 
 func (s *MySQLStore) Delete(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM agent_sessions WHERE id = ?`, id)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM agent_sessions WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete session failed: %w", err)
 	}
@@ -94,7 +94,7 @@ func (s *MySQLStore) ListSessions(ctx context.Context) ([]chat.Session, error) {
 	for rows.Next() {
 		var sess chat.Session
 		var ctxJSON []byte
-		if err := rows.Scan(&sess.ID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
+		if err := rows.Scan(&sess.ID, &sess.WorkspaceID, &sess.AgentID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan session failed: %w", err)
 		}
 		if len(ctxJSON) > 0 {
@@ -114,7 +114,7 @@ func (s *MySQLStore) Append(ctx context.Context, sessionID string, msg chat.Mess
 	}
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO agent_messages (id, session_id, role, type, content, metadata, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`, msg.ID, sessionID, msg.Role, msg.Type, msg.Content, metaJSON, msg.Timestamp)
 	if err != nil {
 		return fmt.Errorf("insert message failed: %w", err)
@@ -126,9 +126,9 @@ func (s *MySQLStore) GetHistory(ctx context.Context, sessionID string, limit int
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, session_id, role, type, content, metadata, created_at
 		FROM agent_messages
-		WHERE session_id = ?
+		WHERE session_id = $1
 		ORDER BY created_at ASC
-		LIMIT ?
+		LIMIT $2
 	`, sessionID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get history failed: %w", err)
