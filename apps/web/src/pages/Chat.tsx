@@ -52,10 +52,9 @@ import { workspaceApi } from '@/lib/workspace-api';
 import { repositoryApi } from '@/lib/repository-api';
 import type { WorkItemDTO } from '@/lib/api-types';
 import type { Skill, Prompt, WorkspaceAgent } from '@/types';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { AssistantRuntimeProvider } from '@assistant-ui/react';
+import { useChatRuntime } from '@/hooks/useChatRuntime';
+import { ChatThread } from '@/components/chat/ChatThread';
 
 // ──────────────── Types ────────────────
 type RequirementStatus = 'backlog' | 'todo' | 'in-progress' | 'done';
@@ -263,242 +262,21 @@ const SectionPanel: React.FC<SectionPanelProps> = ({ icon, title, count, expande
   </div>
 );
 
-// ──────────────── ThinkingPart Component ────────────────
-const ThinkingPart: React.FC<{content: string}> = ({content}) => {
-  const [expanded, setExpanded] = useState(false);
-  const isStreaming = content.length < 50; // Heuristic: short content means still streaming
-  
-  return (
-    <div className="border border-amber-200 dark:border-amber-800/50 rounded-xl overflow-hidden">
-      <button 
-        className="w-full px-3 py-2 flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300 bg-amber-50/50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <Sparkles className="h-3.5 w-3.5 shrink-0" />
-        <span className="flex-1 text-left truncate">{expanded ? '思考过程' : content.length > 30 ? content.slice(0, 30) + '...' : content || '思考中...'}</span>
-        {isStreaming && (
-          <span className="inline-flex">
-            <span className="animate-bounce mx-0.5">.</span>
-            <span className="animate-bounce mx-0.5" style={{ animationDelay: '0.2s' }}>.</span>
-            <span className="animate-bounce mx-0.5" style={{ animationDelay: '0.4s' }}>.</span>
-          </span>
-        )}
-        {expanded ? <ChevronUp className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
-      </button>
-      {expanded && (
-        <div className="px-3 py-2 text-sm text-muted-foreground bg-amber-50/30 dark:bg-amber-900/10 whitespace-pre-wrap">
-          {content}
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ──────────────── DiffView Component (Side-by-Side Light Theme) ────────────────
-interface DiffLine {
-  type: 'context' | 'del' | 'add';
-  oldNum?: number;
-  newNum?: number;
-  content: string;
-}
-
-function parseDiffV2(diffText: string): DiffLine[] {
-  const lines = diffText.split('\n');
-  const result: DiffLine[] = [];
-  let oldLineNum = 0;
-  let newLineNum = 0;
-
-  for (const line of lines) {
-    if (line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('--- ') || line.startsWith('+++ ')) {
-      continue;
-    }
-    if (line.startsWith('@@')) {
-      const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-      if (match) {
-        oldLineNum = parseInt(match[1], 10);
-        newLineNum = parseInt(match[2], 10);
-      }
-      continue;
-    }
-    if (line.startsWith('-')) {
-      result.push({ type: 'del', oldNum: oldLineNum, content: line.slice(1) });
-      oldLineNum++;
-    } else if (line.startsWith('+')) {
-      result.push({ type: 'add', newNum: newLineNum, content: line.slice(1) });
-      newLineNum++;
-    } else {
-      const content = line.startsWith(' ') ? line.slice(1) : line;
-      result.push({ type: 'context', oldNum: oldLineNum, newNum: newLineNum, content });
-      oldLineNum++;
-      newLineNum++;
-    }
-  }
-
-  return result;
-}
-
-function highlightLine(line: string): React.ReactNode {
-  if (!line) return <span>&nbsp;</span>;
-
-  // 简单的正则语法高亮，按优先级依次替换
-  let html = line
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-
-  // 字符串
-  html = html.replace(/(["'`])(?:(?=(\\?))\2.)*?\1/g, '<span class="text-emerald-600 dark:text-emerald-400">$&</span>');
-  // 注释
-  html = html.replace(/(\/\/.*)/g, '<span class="text-gray-500 italic">$&</span>');
-  // 关键字
-  html = html.replace(/\b(interface|class|function|const|let|var|import|export|from|return|if|else|for|while|switch|case|break|continue|try|catch|throw|new|this|typeof|instanceof|async|await)\b/g, '<span class="text-purple-600 dark:text-purple-400">$&</span>');
-  // 类型
-  html = html.replace(/\b(boolean|string|number|void|any|unknown|never|object|Array|Promise|null|undefined|true|false)\b/g, '<span class="text-blue-600 dark:text-blue-400">$&</span>');
-  // JSX 标签
-  html = html.replace(/(&lt;\/?[\w-]+)/g, '<span class="text-red-600 dark:text-red-400">$&</span>');
-  // 属性名
-  html = html.replace(/\b(\w+)(?==)/g, '<span class="text-violet-600 dark:text-violet-400">$&</span>');
-
-  return <span dangerouslySetInnerHTML={{ __html: html }} />;
-}
-
-const DiffView: React.FC<{content: string}> = ({content}) => {
-  const lines = parseDiffV2(content);
-
-  return (
-    <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700 font-mono text-[13px] leading-relaxed my-1">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3.5 py-2.5 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 text-sm font-medium text-gray-700 dark:text-gray-200">
-        <div className="flex items-center gap-2">
-          <FileCode2 className="h-4 w-4" />
-          <span>文件变更</span>
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="overflow-x-auto max-h-[360px]">
-        <table className="w-full border-collapse min-w-[600px]">
-          <tbody>
-            {lines.map((line, i) => (
-              <tr
-                key={i}
-                className={`transition-colors hover:brightness-[0.97] ${
-                  line.type === 'del' ? 'bg-red-50 dark:bg-red-900/10' :
-                  line.type === 'add' ? 'bg-green-50 dark:bg-green-900/10' :
-                  'bg-transparent'
-                }`}
-              >
-                {/* Old line number */}
-                <td className="w-10 text-right pr-2 text-gray-400 text-xs select-none py-[2px]">
-                  {line.oldNum || ''}
-                </td>
-                {/* Old content */}
-                <td className={`w-1/2 py-[2px] px-2 whitespace-pre border-l-[3px] ${
-                  line.type === 'del'
-                    ? 'border-l-red-400 text-red-700 dark:text-red-300'
-                    : 'border-l-transparent text-gray-700 dark:text-gray-300'
-                }`}>
-                  {line.type !== 'add' ? highlightLine(line.content) : ''}
-                </td>
-                {/* New line number */}
-                <td className="w-10 text-right pr-2 text-gray-400 text-xs select-none py-[2px]">
-                  {line.newNum || ''}
-                </td>
-                {/* New content */}
-                <td className={`w-1/2 py-[2px] px-2 whitespace-pre border-l-[3px] ${
-                  line.type === 'add'
-                    ? 'border-l-green-400 text-green-700 dark:text-green-300'
-                    : 'border-l-transparent text-gray-700 dark:text-gray-300'
-                }`}>
-                  {line.type !== 'del' ? highlightLine(line.content) : ''}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
-
-// ──────────────── TaskList Component ────────────────
-interface TaskItemData { id: string; title: string; status: string; }
-const TaskListView: React.FC<{tasks: TaskItemData[]}> = ({tasks}) => {
-  return (
-    <div className="rounded-xl border border-border/50 bg-muted/30 p-3 space-y-2">
-      <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
-        <ListTodo className="h-3.5 w-3.5" />
-        任务列表
-      </div>
-      {tasks.map(task => {
-        const isDone = task.status === 'completed';
-        const isActive = task.status === 'in_progress';
-        return (
-          <div key={task.id} className={`flex items-center gap-2 text-sm ${isDone ? 'text-muted-foreground' : 'text-foreground'}`}>
-            <div className={`h-4 w-4 rounded border flex items-center justify-center shrink-0 ${isDone ? 'bg-green-500 border-green-500' : isActive ? 'border-amber-400' : 'border-muted-foreground/30'}`}>
-              {isDone && <CheckCircle className="h-3 w-3 text-white" />}
-              {isActive && <div className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />}
-            </div>
-            <span className={isDone ? 'line-through' : ''}>{task.title}</span>
-            {isActive && <span className="text-[10px] text-amber-500 ml-auto">进行中</span>}
-            {isDone && <span className="text-[10px] text-green-500 ml-auto">已完成</span>}
-          </div>
-        );
-      })}
-    </div>
-  );
-};
-
-// ──────────────── CodeBlock Component ────────────────
-const CodeBlock: React.FC<{code: string; language?: string}> = ({code, language = 'typescript'}) => {
-  return (
-    <div className="rounded-xl overflow-hidden border border-border/50 my-1">
-      <div className="px-3 py-1 bg-muted/80 border-b border-border/30 text-xs text-muted-foreground flex items-center justify-between">
-        <span>{language}</span>
-        <button 
-          className="hover:text-foreground transition-colors"
-          onClick={() => { navigator.clipboard.writeText(code); toast.success('已复制'); }}
-        >
-          复制
-        </button>
-      </div>
-      <SyntaxHighlighter
-        language={language}
-        style={vscDarkPlus}
-        customStyle={{ margin: 0, borderRadius: 0, fontSize: '13px', maxHeight: '400px' }}
-        showLineNumbers
-      >
-        {code}
-      </SyntaxHighlighter>
-    </div>
-  );
-};
-
 // ──────────────── Component ────────────────
 export const Chat: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [input, setInput] = useState('');
-  // Chat message with parts support (thinking + text in same bubble)
-  interface ChatPart {
-    id: string;
-    type: string;
-    content: string;
-    artifact?: any;
-    metadata?: any;
-  }
-  interface ChatMsg {
-    id: string;
-    role: 'user' | 'assistant';
-    parts: ChatPart[];
-    messageID?: string;
-    quotedCard?: any;
-    selectedRepos?: any[];
-  }
-  const [messages, setMessages] = useState<ChatMsg[]>([]);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [wsConnected, setWsConnected] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
+
+  // Input toolbar dropdowns
+  const [selectedRepos, setSelectedRepos] = useState<{id: string; name: string}[]>([]);
+  const [availableRepos, setAvailableRepos] = useState<{id: string; name: string}[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<Skill[]>([]);
+  const [availablePrompts, setAvailablePrompts] = useState<Prompt[]>([]);
+  const [availableAgents, setAvailableAgents] = useState<WorkspaceAgent[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+
+  const { runtime, sessionId, wsConnected, messages, sendMessage, switchSession } = useChatRuntime({ selectedAgentId });
 
   // Auto-scroll state
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -517,13 +295,7 @@ export const Chat: React.FC = () => {
   // File Upload
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Input toolbar dropdowns
-  const [selectedRepos, setSelectedRepos] = useState<{id: string; name: string}[]>([]);
-  const [availableRepos, setAvailableRepos] = useState<{id: string; name: string}[]>([]);
-  const [availableSkills, setAvailableSkills] = useState<Skill[]>([]);
-  const [availablePrompts, setAvailablePrompts] = useState<Prompt[]>([]);
-  const [availableAgents, setAvailableAgents] = useState<WorkspaceAgent[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+
   const [skillPopoverOpen, setSkillPopoverOpen] = useState(false);
   const [repoMenuOpen, setRepoMenuOpen] = useState(false);
   const [promptMenuOpen, setPromptMenuOpen] = useState(false);
@@ -615,161 +387,6 @@ export const Chat: React.FC = () => {
   useEffect(() => {
     if (location.state?.initialInput) setInput(location.state.initialInput);
   }, [location.state]);
-
-  // 创建会话并连接 WebSocket（带自动重连）
-  useEffect(() => {
-    let cancelled = false;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let reconnectAttempts = 0;
-    const MAX_RECONNECT_ATTEMPTS = 5;
-
-    function connectWebSocket(sid: string) {
-      if (cancelled) return;
-      const wsUrl = `ws://${window.location.host}/ws/v1/sessions/${sid}`;
-      console.log('[Chat] Connecting WebSocket:', wsUrl);
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        console.log('[Chat] WebSocket connected');
-        reconnectAttempts = 0;
-        setWsConnected(true);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log('[Chat] WS message received:', data);
-          // 兼容后端 Go 序列化的大写字段名
-          const evType = data.Type || data.type;
-          const payload = data.Payload || data.payload;
-          if (evType === 'message' && payload) {
-            const msg = payload;
-            const partId = msg.Metadata?.agentPartID || msg.metadata?.agentPartID;
-            const msgId = msg.ID || msg.id || Date.now().toString();
-            const msgRole = msg.Role || msg.role || 'assistant';
-            const msgContent = msg.Content || msg.content || '';
-            const msgType = msg.Type || msg.type || 'text';
-            const artifact = msg.Metadata?.artifact || msg.metadata?.artifact;
-            const messageID = msg.Metadata?.messageID || msg.metadata?.messageID;
-            // Preserve full metadata from backend (tasks, status, name, etc.)
-            const fullMetadata = msg.Metadata || msg.metadata || {};
-
-            if (msgRole === 'user') {
-              // User messages are standalone
-              setMessages(prev => [...prev, {
-                id: msgId,
-                role: 'user',
-                parts: [{ id: msgId, type: msgType, content: msgContent, artifact, metadata: fullMetadata }],
-                messageID,
-              }]);
-              return;
-            }
-
-            // When receiving new assistant message while not at bottom, trigger breathe hint
-            if (!isAtBottom) {
-              setHasNewMessage(true);
-            }
-
-            // Assistant messages: merge by messageID into same bubble
-            setMessages(prev => {
-              if (messageID) {
-                const existingIndex = prev.findIndex(m => m.messageID === messageID && m.role === 'assistant');
-                if (existingIndex >= 0) {
-                  const next = [...prev];
-                  const existingParts = next[existingIndex].parts;
-                  const partIndex = existingParts.findIndex(p => p.metadata?.agentPartID === partId);
-                  if (partIndex >= 0) {
-                    // Update existing part (streaming)
-                    existingParts[partIndex] = { ...existingParts[partIndex], content: msgContent, artifact, metadata: fullMetadata };
-                  } else {
-                    // Add new part
-                    existingParts.push({ id: msgId, type: msgType, content: msgContent, artifact, metadata: fullMetadata });
-                  }
-                  return next;
-                }
-              }
-              // Fallback: merge with last assistant message if no messageID
-              const lastIndex = prev.length - 1;
-              if (lastIndex >= 0 && prev[lastIndex].role === 'assistant' && !prev[lastIndex].messageID) {
-                const next = [...prev];
-                const existingParts = next[lastIndex].parts;
-                const partIndex = existingParts.findIndex(p => p.metadata?.agentPartID === partId);
-                if (partIndex >= 0) {
-                  existingParts[partIndex] = { ...existingParts[partIndex], content: msgContent, artifact, metadata: fullMetadata };
-                } else {
-                  existingParts.push({ id: msgId, type: msgType, content: msgContent, artifact, metadata: fullMetadata });
-                }
-                return next;
-              }
-              // New assistant message
-              return [...prev, {
-                id: msgId,
-                role: 'assistant',
-                parts: [{ id: msgId, type: msgType, content: msgContent, artifact, metadata: fullMetadata }],
-                messageID,
-              }];
-            });
-          } else if (evType === 'error') {
-            const errPayload = data.Error || data.error;
-            toast.error(errPayload?.Message || errPayload?.message || payload?.content || '服务异常');
-          }
-        } catch (e) {
-          console.error('[Chat] Failed to parse WS message:', e);
-        }
-      };
-
-      ws.onclose = (event) => {
-        console.log('[Chat] WebSocket closed. Code:', event.code, 'Reason:', event.reason);
-        setWsConnected(false);
-        wsRef.current = null;
-        // 自动重连（非主动关闭且未超限）
-        if (!cancelled && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-          reconnectAttempts++;
-          const delay = Math.min(1000 * reconnectAttempts, 5000);
-          console.log(`[Chat] Reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
-          reconnectTimer = setTimeout(() => connectWebSocket(sid), delay);
-        }
-      };
-
-      ws.onerror = (err) => {
-        console.error('[Chat] WebSocket error:', err);
-        setWsConnected(false);
-      };
-    }
-
-    if (!sessionId) {
-      const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
-      api.post<{data: {sessionId: string; wsUrl: string}}>('/v1/sessions', {
-        workspaceId,
-        agentId: selectedAgentId || 'agent-default',
-        agentType: 'opencode',
-        model: 'gpt-4o',
-        projectId: 'p1',
-      })
-        .then(res => {
-          if (cancelled) return;
-          const sid = res.data.sessionId;
-          console.log('[Chat] Session created:', sid);
-          setSessionId(sid);
-        })
-        .catch(err => {
-          console.error('[Chat] Failed to create session:', err);
-          toast.error('创建会话失败');
-        });
-    } else {
-      connectWebSocket(sessionId);
-    }
-
-    return () => {
-      cancelled = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
-    };
-  }, [sessionId]);
 
   // 从后端 API 加载历史会话
   useEffect(() => {
@@ -911,30 +528,10 @@ export const Chat: React.FC = () => {
 
   const handleSend = () => {
     if (!input.trim() && !quotedCard) return;
-    const um: ChatMsg = { 
-      id: Date.now().toString(), 
-      role: 'user', 
-      parts: [{ id: Date.now().toString(), type: 'text', content: input || '请帮我处理这个引用的内容' }],
-      quotedCard: quotedCard ? { ...quotedCard } : undefined,
-      selectedRepos: selectedRepos.length > 0 ? [...selectedRepos] : undefined
-    };
-    setMessages(prev => [...prev, um]);
+    sendMessage(input, { quotedCard: quotedCard ?? undefined, selectedRepos: selectedRepos.length > 0 ? [...selectedRepos] : undefined });
     setInput('');
     setQuotedCard(null);
     setSelectedRepos([]);
-
-    // 通过 WebSocket 发送消息到后端 Agent
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        event: 'message',
-        payload: {
-          type: 'text',
-          content: um.parts[0]?.content || '',
-        },
-      }));
-    } else {
-      toast.error('WebSocket 未连接，请刷新页面重试');
-    }
   };
 
   const closeDetail = () => {
@@ -1082,7 +679,8 @@ export const Chat: React.FC = () => {
 
   // ──────────────── Render ────────────────
   return (
-    <div className="h-[calc(100vh-6rem)] md:h-[calc(100vh-4rem)] flex flex-row border-0 md:border md:border-border/50 rounded-none md:rounded-2xl overflow-hidden bg-background soft-shadow max-w-full mx-auto w-full relative">
+    <AssistantRuntimeProvider runtime={runtime}>
+      <div className="h-[calc(100vh-6rem)] md:h-[calc(100vh-4rem)] flex flex-row border-0 md:border md:border-border/50 rounded-none md:rounded-2xl overflow-hidden bg-background soft-shadow max-w-full mx-auto w-full relative">
 
       {/* ── My Tasks Left Sidebar ── */}
       <div className={`hidden md:flex flex-col shrink-0 bg-muted/10 border-r border-border/50 overflow-hidden transition-all duration-300 relative ${sidebarCollapsed ? 'w-12' : 'w-[260px]'}`}>
@@ -1395,7 +993,7 @@ export const Chat: React.FC = () => {
                     <div className="py-6 text-center text-xs text-muted-foreground">暂无匹配的历史会话</div>
                   )}
                   {filteredHistory.map(h => (
-                    <div key={h.id} className="group relative w-full flex items-center px-3 py-2 text-sm rounded-lg hover:bg-accent text-left transition-colors cursor-pointer" onClick={() => { setMessages([]); setSessionId(h.id); setHistoryOpen(false); toast.success(`切换到：${h.title}`); }}>
+                    <div key={h.id} className="group relative w-full flex items-center px-3 py-2 text-sm rounded-lg hover:bg-accent text-left transition-colors cursor-pointer" onClick={() => { switchSession(h.id); setHistoryOpen(false); toast.success(`切换到：${h.title}`); }}>
                       <div className="flex items-center gap-2 flex-1 min-w-0 pr-12 group-hover:pr-16 transition-all">
                         {h.type === 'ui' && <Box className="h-3.5 w-3.5 text-blue-500 shrink-0" />}
                         {h.type === 'requirement' && <ListTodo className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
@@ -1436,7 +1034,7 @@ export const Chat: React.FC = () => {
           <Button
             variant="ghost" size="sm"
             className="h-7 px-2.5 ml-auto text-xs gap-1.5 text-muted-foreground hover:text-foreground"
-            onClick={() => { setMessages([]); setSessionId(null); toast.success('已开启新会话'); }}
+            onClick={() => { switchSession(null); toast.success('已开启新会话'); }}
           >
             <MessageSquarePlus className="h-3.5 w-3.5" />
             新建会话
@@ -1467,134 +1065,7 @@ export const Chat: React.FC = () => {
                 </div>
               </div>
             ) : (
-              messages.map(msg => {
-                const isUser = msg.role === 'user';
-                const hasThinking = msg.parts.some(p => p.type === 'thinking');
-                const hasTool = msg.parts.some(p => p.type === 'tool_use' || p.type === 'tool_result');
-                const isInfoFlow = !isUser && (hasThinking || hasTool);
-
-                return (
-                  <div key={msg.id} className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
-                    {!isUser && (
-                      <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-1">
-                        <Bot className="h-4 w-4 text-primary" />
-                      </div>
-                    )}
-                    <div className={`flex flex-col max-w-[85%] ${isUser ? 'items-end' : 'items-start'}`}>
-                      {isUser && (msg.quotedCard || (msg.selectedRepos && msg.selectedRepos.length > 0)) && (
-                        <div className="mb-2 flex flex-wrap gap-2 w-full justify-end">
-                          {msg.quotedCard && (
-                            <div className="flex items-center gap-2 w-56 px-3 py-2 rounded-xl border border-primary/20 bg-primary/10 cursor-pointer hover:bg-primary/20 transition-colors" onClick={() => openDetail(msg.quotedCard.type, msg.quotedCard.id)}>
-                              {msg.quotedCard.type === 'req' && <ListTodo className="h-4 w-4 text-primary shrink-0" />}
-                              {msg.quotedCard.type === 'defect' && <Bug className="h-4 w-4 text-destructive shrink-0" />}
-                              {msg.quotedCard.type === 'case' && <FlaskConical className="h-4 w-4 text-violet-500 shrink-0" />}
-                              <div className="flex-1 min-w-0 text-left">
-                                <p className="text-xs font-medium text-foreground truncate">{msg.quotedCard.title}</p>
-                                <p className="text-[10px] text-muted-foreground truncate">引用{msg.quotedCard.type === 'req' ? '需求' : msg.quotedCard.type === 'defect' ? '缺陷' : '用例'} · {msg.quotedCard.id}</p>
-                              </div>
-                            </div>
-                          )}
-                          {msg.selectedRepos?.map((repo: any) => (
-                            <div key={repo.id} className="flex items-center gap-2 w-56 px-3 py-2 rounded-xl border border-primary/20 bg-primary/10 cursor-pointer hover:bg-primary/20 transition-colors" onClick={() => setCodeJumpOpen(true)}>
-                              <GitBranch className="h-4 w-4 text-primary shrink-0" />
-                              <div className="flex-1 min-w-0 text-left">
-                                <p className="text-xs font-medium text-foreground truncate">{repo.name}</p>
-                                <p className="text-[10px] text-muted-foreground truncate">工程代码</p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      <div className={`flex flex-col gap-2 w-full ${isUser ? 'bg-primary text-primary-foreground rounded-2xl rounded-tr-sm shadow-sm' : 'bg-muted/60 rounded-2xl rounded-tl-sm border border-border/50 shadow-sm'}`}>
-                        {msg.parts.map((part, idx) => {
-                          if (part.type === 'thinking') {
-                            return <ThinkingPart key={part.id} content={part.content} />;
-                          }
-                          if (part.type === 'diff') {
-                            return <DiffView key={part.id} content={part.content} />;
-                          }
-                          if (part.type === 'task_list') {
-                            const tasks = part.metadata?.tasks || [];
-                            return <TaskListView key={part.id} tasks={tasks} />;
-                          }
-                          if (part.type === 'tool_use') {
-                            const isFailed = part.metadata?.status === 'failed' || part.metadata?.status === 'timeout';
-                            return (
-                              <div key={part.id} className={`px-4 py-2 text-sm rounded-xl border ${isFailed ? 'bg-red-50/50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50' : 'bg-muted/30 border-border/30 text-muted-foreground'}`}>
-                                <div className="flex items-center gap-2">
-                                  <Wrench className={`h-4 w-4 ${isFailed ? 'text-red-500' : 'text-blue-500'}`} />
-                                  <span className="font-medium">{part.metadata?.name || '工具调用'}</span>
-                                  <span className={`text-xs px-1.5 py-0.5 rounded ${isFailed ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>{part.metadata?.status || 'pending'}</span>
-                                </div>
-                                {part.content && <pre className={`mt-1 text-xs overflow-x-auto ${isFailed ? 'text-red-700 dark:text-red-300' : ''}`}>{part.content}</pre>}
-                              </div>
-                            );
-                          }
-                          if (part.type === 'tool_result') {
-                            const isFailed = part.metadata?.status === 'failed' || part.metadata?.status === 'timeout';
-                            return (
-                              <div key={part.id} className={`px-4 py-2 text-sm rounded-xl border ${isFailed ? 'bg-red-50/50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50' : 'bg-green-50/50 dark:bg-green-900/20 border-green-200 dark:border-green-800/50'}`}>
-                                <div className={`flex items-center gap-2 ${isFailed ? 'text-red-700 dark:text-red-300' : 'text-green-700 dark:text-green-300'}`}>
-                                  {isFailed ? <X className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-                                  <span className="font-medium">{isFailed ? '工具执行失败' : '工具执行结果'}</span>
-                                </div>
-                                {part.content && <pre className={`mt-1 text-xs overflow-x-auto ${isFailed ? 'text-red-700 dark:text-red-300' : 'text-foreground'}`}>{part.content}</pre>}
-                              </div>
-                            );
-                          }
-                          // Default: text (with Markdown and code highlighting)
-                          return (
-                            <div key={part.id} className={`px-4 py-3 text-sm ${isUser ? '' : ''}`}>
-                              <ReactMarkdown
-                                remarkPlugins={[remarkGfm]}
-                                components={{
-                                  code({node, inline, className, children, ...props}: any) {
-                                    const match = /language-(\w+)/.exec(className || '');
-                                    const codeString = String(children).replace(/\n$/, '');
-                                    if (!inline && match) {
-                                      return <CodeBlock code={codeString} language={match[1]} />;
-                                    }
-                                    return <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono" {...props}>{children}</code>;
-                                  },
-                                  table({children}: any) {
-                                    return <table className="border-collapse border border-border/50 text-xs my-2">{children}</table>;
-                                  },
-                                  th({children}: any) {
-                                    return <th className="border border-border/50 px-2 py-1 bg-muted/50 font-medium">{children}</th>;
-                                  },
-                                  td({children}: any) {
-                                    return <td className="border border-border/50 px-2 py-1">{children}</td>;
-                                  }
-                                }}
-                              >
-                                {part.content}
-                              </ReactMarkdown>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {msg.parts.some(p => p.artifact) && (
-                        <div className="mt-2 p-3 rounded-xl border border-border/50 bg-card cursor-pointer hover:border-primary transition-colors flex items-center gap-3 w-full max-w-sm soft-shadow" onClick={() => setCodeJumpOpen(true)}>
-                          <div className="h-10 w-10 rounded bg-secondary flex items-center justify-center shrink-0">
-                            {msg.parts.find(p => p.artifact)?.artifact?.type === 'ui' && <Box className="h-5 w-5 text-blue-500" />}
-                            {msg.parts.find(p => p.artifact)?.artifact?.type === 'code' && <FileCode2 className="h-5 w-5 text-green-500" />}
-                            {msg.parts.find(p => p.artifact)?.artifact?.type === 'requirement' && <ListTodo className="h-5 w-5 text-amber-500" />}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">{msg.parts.find(p => p.artifact)?.artifact?.title}</p>
-                            <p className="text-xs text-muted-foreground mt-0.5 flex items-center">点击查看详情 <ChevronRight className="h-3 w-3 ml-1" /></p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    {isUser && (
-                      <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center shrink-0 mt-1">
-                        <User className="h-4 w-4 text-primary-foreground" />
-                      </div>
-                    )}
-                  </div>
-                );
-              })
+              <ChatThread openDetail={openDetail} onArtifactClick={() => setCodeJumpOpen(true)} />
             )}
             <div ref={messagesEndRef} />
           </div>
@@ -2045,5 +1516,6 @@ export const Chat: React.FC = () => {
         </AlertDialog>
       </div>
     </div>
+    </AssistantRuntimeProvider>
   );
 };
