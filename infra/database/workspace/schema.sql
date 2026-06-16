@@ -55,10 +55,10 @@ COMMENT ON COLUMN workspace_members.joined_at IS '加入时间';
 
 CREATE INDEX IF NOT EXISTS idx_workspace_members_user_id ON workspace_members (user_id);
 
--- demand_projects 与 workspaces 为 1:1 关系设计：
--- 每个 workspace 最多对应一个 demand_project。
+-- workitem_projects 与 workspaces 为 1:1 关系设计：
+-- 每个 workspace 最多对应一个 workitem_project。
 -- 下方的 UNIQUE INDEX 在数据层强制这一约束，应用层应保证写入时的一致性。
-CREATE TABLE IF NOT EXISTS demand_projects (
+CREATE TABLE IF NOT EXISTS workitem_projects (
     id VARCHAR(36) PRIMARY KEY,
     workspace_id VARCHAR(36) NOT NULL,
     platform VARCHAR(50) NOT NULL DEFAULT 'meego',
@@ -69,21 +69,21 @@ CREATE TABLE IF NOT EXISTS demand_projects (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-COMMENT ON TABLE demand_projects IS '需求项目（一个空间仅对应一个）';
-COMMENT ON COLUMN demand_projects.id IS '需求项目 ID（VARCHAR(36)）';
-COMMENT ON COLUMN demand_projects.workspace_id IS '所属空间 ID';
-COMMENT ON COLUMN demand_projects.platform IS '需求平台类型';
-COMMENT ON COLUMN demand_projects.external_key IS '外部系统项目标识';
-COMMENT ON COLUMN demand_projects.name IS '需求项目名称';
-COMMENT ON COLUMN demand_projects.config IS '平台相关配置';
-COMMENT ON COLUMN demand_projects.created_at IS '创建时间';
-COMMENT ON COLUMN demand_projects.updated_at IS '更新时间';
+COMMENT ON TABLE workitem_projects IS '工作项项目（一个空间仅对应一个）';
+COMMENT ON COLUMN workitem_projects.id IS '工作项项目 ID（VARCHAR(36)）';
+COMMENT ON COLUMN workitem_projects.workspace_id IS '所属空间 ID';
+COMMENT ON COLUMN workitem_projects.platform IS '工作项平台类型';
+COMMENT ON COLUMN workitem_projects.external_key IS '外部系统项目标识';
+COMMENT ON COLUMN workitem_projects.name IS '工作项项目名称';
+COMMENT ON COLUMN workitem_projects.config IS '平台相关配置';
+COMMENT ON COLUMN workitem_projects.created_at IS '创建时间';
+COMMENT ON COLUMN workitem_projects.updated_at IS '更新时间';
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_demand_projects_workspace_id ON demand_projects (workspace_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workitem_projects_workspace_id ON workitem_projects (workspace_id);
 
-DROP TRIGGER IF EXISTS trigger_demand_projects_updated_at ON demand_projects;
-CREATE TRIGGER trigger_demand_projects_updated_at
-BEFORE UPDATE ON demand_projects
+DROP TRIGGER IF EXISTS trigger_workitem_projects_updated_at ON workitem_projects;
+CREATE TRIGGER trigger_workitem_projects_updated_at
+BEFORE UPDATE ON workitem_projects
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
@@ -94,9 +94,15 @@ CREATE TABLE IF NOT EXISTS repositories (
     url VARCHAR(500) NOT NULL,
     type VARCHAR(50) NOT NULL,
     default_branch VARCHAR(100),
+    ssh_key TEXT,
+    local_path VARCHAR(500),
+    clone_status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    last_sync_at TIMESTAMPTZ,
+    error_message TEXT,
     config JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT repositories_workspace_id_name_key UNIQUE (workspace_id, name)
 );
 
 COMMENT ON TABLE repositories IS '代码仓库';
@@ -106,6 +112,11 @@ COMMENT ON COLUMN repositories.name IS '仓库名称';
 COMMENT ON COLUMN repositories.url IS '仓库地址';
 COMMENT ON COLUMN repositories.type IS '仓库类型（如 dev / case / product）';
 COMMENT ON COLUMN repositories.default_branch IS '默认分支';
+COMMENT ON COLUMN repositories.ssh_key IS 'SSH 私钥，用于拉取私有仓库';
+COMMENT ON COLUMN repositories.local_path IS '本地克隆路径';
+COMMENT ON COLUMN repositories.clone_status IS '克隆状态：pending / cloning / success / failed';
+COMMENT ON COLUMN repositories.last_sync_at IS '最近一次同步时间';
+COMMENT ON COLUMN repositories.error_message IS '最近一次克隆/同步错误信息';
 COMMENT ON COLUMN repositories.config IS '仓库扩展配置';
 COMMENT ON COLUMN repositories.created_at IS '创建时间';
 COMMENT ON COLUMN repositories.updated_at IS '更新时间';
