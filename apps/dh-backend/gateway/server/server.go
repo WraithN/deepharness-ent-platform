@@ -127,7 +127,7 @@ func New(cfg config.Config) http.Handler {
 	initWorkspaceService(db)
 
 	// Repository module: PostgreSQL when available, otherwise memory mock.
-	initRepositoryService(db)
+	initRepositoryService(db, cfg.RepositoryRoot)
 
 	// Team skills / prompts: MySQL when available, otherwise memory mock.
 	initTeamService(db)
@@ -244,10 +244,10 @@ func initTeamService(db *sql.DB) {
 	team.Init(teamservice.NewMockTeamService())
 }
 
-func initRepositoryService(db *sql.DB) {
+func initRepositoryService(db *sql.DB, root string) {
 	if db != nil {
-		log.Println("[Repository] using postgres storage with git clone")
-		repository.Init(repositoryservice.NewDBRepositoryService(db, ""))
+		log.Printf("[Repository] using postgres storage with git clone, root=%s", root)
+		repository.Init(repositoryservice.NewDBRepositoryService(db, root))
 		return
 	}
 	log.Println("[Repository] using memory mock")
