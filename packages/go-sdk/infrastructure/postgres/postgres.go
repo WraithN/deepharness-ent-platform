@@ -1,4 +1,4 @@
-// Package mysql 提供 MySQL 数据库连接基础设施。
+// Package postgres 提供 PostgreSQL 数据库连接基础设施。
 //
 // 设计目标：
 //   - 为各微服务提供统一的 *sql.DB 初始化方式。
@@ -7,7 +7,7 @@
 //
 // 使用示例：
 //
-//	db, err := mysql.OpenDB(mysql.DSN(mysql.Config{
+//	db, err := postgres.OpenDB(postgres.DSN(postgres.Config{
 //	    Host:     os.Getenv("DB_HOST"),
 //	    Port:     os.Getenv("DB_PORT"),
 //	    User:     os.Getenv("DB_USER"),
@@ -15,27 +15,28 @@
 //	    Database: os.Getenv("DB_NAME"),
 //	}))
 //	if err != nil {
-//	    log.Fatalf("open mysql failed: %v", err)
+//	    log.Fatalf("open postgres failed: %v", err)
 //	}
 //	defer db.Close()
-package mysql
+package postgres
 
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// Config 定义 MySQL 连接配置。
+// Config 定义 PostgreSQL 连接配置。
 type Config struct {
 	Host     string
 	Port     string
 	User     string
 	Password string
 	Database string
-	// Params 为额外的 DSN 参数，例如 "parseTime=true&loc=Local"。
+	// Params 为额外的 DSN 参数，例如 "sslmode=disable&connect_timeout=10"。
 	Params string
 }
 
@@ -46,8 +47,8 @@ const (
 	defaultConnMaxLifetime = 5 * time.Minute
 )
 
-// DSN 根据 Config 构造 MySQL DSN 字符串。
-// 默认启用 parseTime=true，确保 TIME/DATE/DATETIME 类型可被扫描为 time.Time。
+// DSN 根据 Config 构造 PostgreSQL DSN 字符串（URL 形式）。
+// 默认 sslmode=disable，方便本地开发；生产环境应通过 Params 覆盖为 require/verify-full。
 func DSN(cfg Config) string {
 	host := cfg.Host
 	if host == "" {
@@ -55,36 +56,44 @@ func DSN(cfg Config) string {
 	}
 	port := cfg.Port
 	if port == "" {
-		port = "3306"
+		port = "5432"
 	}
 
 	params := cfg.Params
 	if params == "" {
-		params = "parseTime=true&charset=utf8mb4"
-	} else {
-		if !containsParam(params, "parseTime") {
-			params = params + "&parseTime=true"
-		}
-		if !containsParam(params, "charset") {
-			params = params + "&charset=utf8mb4"
-		}
+		params = "sslmode=disable"
+	} else if !containsParam(params, "sslmode") {
+		params = params + "&sslmode=disable"
 	}
 
-	return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?%s",
-		cfg.User,
-		cfg.Password,
+	user := cfg.User
+	if user == "" {
+		user = "postgres"
+	}
+	password := cfg.Password
+	if password == "" {
+		password = "postgres"
+	}
+	dbname := cfg.Database
+	if dbname == "" {
+		dbname = "postgres"
+	}
+
+	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?%s",
+		url.QueryEscape(user),
+		url.QueryEscape(password),
 		host,
 		port,
-		cfg.Database,
+		url.PathEscape(dbname),
 		params,
 	)
 }
 
-// OpenDB 使用给定的 DSN 打开 MySQL 连接，并配置默认连接池。
+// OpenDB 使用给定的 DSN 打开 PostgreSQL 连接，并配置默认连接池。
 func OpenDB(dsn string) (*sql.DB, error) {
-	db, err := sql.Open("mysql", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open mysql failed: %w", err)
+		return nil, fmt.Errorf("open pgx failed: %w", err)
 	}
 
 	db.SetMaxOpenConns(defaultMaxOpenConns)
@@ -93,7 +102,7 @@ func OpenDB(dsn string) (*sql.DB, error) {
 
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("ping mysql failed: %w", err)
+		return nil, fmt.Errorf("ping pgx failed: %w", err)
 	}
 
 	return db, nil

@@ -5,17 +5,22 @@ import (
 	"sync"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/constants"
 )
 
 type MessageStore struct {
-	mu       sync.RWMutex
-	messages map[string][]chat.Message
+	mu          sync.RWMutex
+	messages    map[string][]chat.Message
+	maxMessages int
 }
 
-func NewMessageStore() *MessageStore {
+// NewMessageStore 创建内存消息存储，maxMessages 限制每个会话保留的最大消息数。
+func NewMessageStore(maxMessages int) *MessageStore {
+	if maxMessages <= 0 {
+		maxMessages = 1000
+	}
 	return &MessageStore{
-		messages: make(map[string][]chat.Message),
+		messages:    make(map[string][]chat.Message),
+		maxMessages: maxMessages,
 	}
 }
 
@@ -23,8 +28,8 @@ func (m *MessageStore) Append(ctx context.Context, sessionID string, msg chat.Me
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.messages[sessionID] = append(m.messages[sessionID], msg)
-	if len(m.messages[sessionID]) > constants.MAX_MESSAGES_PER_SESSION {
-		m.messages[sessionID] = m.messages[sessionID][len(m.messages[sessionID])-constants.MAX_MESSAGES_PER_SESSION:]
+	if len(m.messages[sessionID]) > m.maxMessages {
+		m.messages[sessionID] = m.messages[sessionID][len(m.messages[sessionID])-m.maxMessages:]
 	}
 	return nil
 }

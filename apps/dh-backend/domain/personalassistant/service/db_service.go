@@ -66,7 +66,7 @@ func (s *DBPersonalAssistantService) CreateAssistant(userID, userName string, re
 
 	_, err := s.db.Exec(`
 		INSERT INTO personal_assistants (id, name, role, description, creator_id, creator_name, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`, assistant.ID, assistant.Name, assistant.Role, assistant.Description, assistant.CreatorID, assistant.CreatorName, assistant.CreatedAt, assistant.UpdatedAt)
 	if err != nil {
 		return object.PersonalAssistant{}, fmt.Errorf("insert assistant failed: %w", err)
@@ -81,7 +81,7 @@ func (s *DBPersonalAssistantService) GetAssistant(id string) (object.PersonalAss
 	err := s.db.QueryRow(`
 		SELECT id, name, role, description, creator_id, creator_name, avatar_url, created_at, updated_at
 		FROM personal_assistants
-		WHERE id = ?
+		WHERE id = $1
 	`, id).Scan(&a.ID, &a.Name, &a.Role, &a.Description, &a.CreatorID, &a.CreatorName, &avatarURL, &a.CreatedAt, &a.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return object.PersonalAssistant{}, errors.New("assistant not found")
@@ -105,16 +105,17 @@ func (s *DBPersonalAssistantService) DeleteAssistant(id string) error {
 
 	// 外键已配置 CASCADE，但显式清理更可控。
 	if _, err := tx.Exec(`
-		DELETE m FROM personal_assistant_messages m
-		JOIN personal_assistant_sessions s ON m.session_id = s.id
-		WHERE s.assistant_id = ?
+		DELETE FROM personal_assistant_messages
+		WHERE session_id IN (
+			SELECT id FROM personal_assistant_sessions WHERE assistant_id = $1
+		)
 	`, id); err != nil {
 		return fmt.Errorf("delete assistant messages failed: %w", err)
 	}
-	if _, err := tx.Exec(`DELETE FROM personal_assistant_sessions WHERE assistant_id = ?`, id); err != nil {
+	if _, err := tx.Exec(`DELETE FROM personal_assistant_sessions WHERE assistant_id = $1`, id); err != nil {
 		return fmt.Errorf("delete assistant sessions failed: %w", err)
 	}
-	if _, err := tx.Exec(`DELETE FROM personal_assistants WHERE id = ?`, id); err != nil {
+	if _, err := tx.Exec(`DELETE FROM personal_assistants WHERE id = $1`, id); err != nil {
 		return fmt.Errorf("delete assistant failed: %w", err)
 	}
 	return tx.Commit()
@@ -125,7 +126,7 @@ func (s *DBPersonalAssistantService) ListSessions(assistantID string) ([]object.
 	rows, err := s.db.Query(`
 		SELECT id, assistant_id, title, message_count, created_at, updated_at
 		FROM personal_assistant_sessions
-		WHERE assistant_id = ?
+		WHERE assistant_id = $1
 		ORDER BY updated_at DESC
 	`, assistantID)
 	if err != nil {
@@ -157,7 +158,7 @@ func (s *DBPersonalAssistantService) CreateSession(assistantID, title string) (o
 	}
 	_, err := s.db.Exec(`
 		INSERT INTO personal_assistant_sessions (id, assistant_id, title, message_count, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`, session.ID, session.AssistantID, session.Title, session.MessageCount, session.CreatedAt, session.UpdatedAt)
 	if err != nil {
 		return object.Session{}, fmt.Errorf("insert session failed: %w", err)
@@ -175,17 +176,17 @@ func (s *DBPersonalAssistantService) DeleteSession(assistantID, sessionID string
 
 	// 校验会话属于该助手。
 	var id string
-	if err := tx.QueryRow(`SELECT id FROM personal_assistant_sessions WHERE id = ? AND assistant_id = ?`, sessionID, assistantID).Scan(&id); err != nil {
+	if err := tx.QueryRow(`SELECT id FROM personal_assistant_sessions WHERE id = $1 AND assistant_id = $2`, sessionID, assistantID).Scan(&id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("session not found")
 		}
 		return fmt.Errorf("validate session failed: %w", err)
 	}
 
-	if _, err := tx.Exec(`DELETE FROM personal_assistant_messages WHERE session_id = ?`, sessionID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM personal_assistant_messages WHERE session_id = $1`, sessionID); err != nil {
 		return fmt.Errorf("delete messages failed: %w", err)
 	}
-	if _, err := tx.Exec(`DELETE FROM personal_assistant_sessions WHERE id = ?`, sessionID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM personal_assistant_sessions WHERE id = $1`, sessionID); err != nil {
 		return fmt.Errorf("delete session failed: %w", err)
 	}
 	return tx.Commit()
@@ -196,7 +197,7 @@ func (s *DBPersonalAssistantService) GetMessages(sessionID string) ([]object.Mes
 	rows, err := s.db.Query(`
 		SELECT id, session_id, role, type, content, created_at
 		FROM personal_assistant_messages
-		WHERE session_id = ?
+		WHERE session_id = $1
 		ORDER BY created_at ASC
 	`, sessionID)
 	if err != nil {
@@ -232,7 +233,7 @@ func (s *DBPersonalAssistantService) ProcessMessage(assistantID, sessionID, cont
 	var title string
 	var msgCount int
 	if err := tx.QueryRow(`
-		SELECT title, message_count FROM personal_assistant_sessions WHERE id = ? AND assistant_id = ?
+		SELECT title, message_count FROM personal_assistant_sessions WHERE id = $1 AND assistant_id = $2
 	`, sessionID, assistantID).Scan(&title, &msgCount); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return object.Message{}, errors.New("session not found")
@@ -251,7 +252,7 @@ func (s *DBPersonalAssistantService) ProcessMessage(assistantID, sessionID, cont
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO personal_assistant_messages (id, session_id, role, type, content, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`, userMsg.ID, userMsg.SessionID, userMsg.Role, userMsg.Type, userMsg.Content, userMsg.CreatedAt); err != nil {
 		return object.Message{}, fmt.Errorf("insert user message failed: %w", err)
 	}
@@ -266,7 +267,7 @@ func (s *DBPersonalAssistantService) ProcessMessage(assistantID, sessionID, cont
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO personal_assistant_messages (id, session_id, role, type, content, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`, reply.ID, reply.SessionID, reply.Role, reply.Type, reply.Content, reply.CreatedAt); err != nil {
 		return object.Message{}, fmt.Errorf("insert assistant message failed: %w", err)
 	}
@@ -280,8 +281,8 @@ func (s *DBPersonalAssistantService) ProcessMessage(assistantID, sessionID, cont
 	}
 	if _, err := tx.Exec(`
 		UPDATE personal_assistant_sessions
-		SET message_count = message_count + 2, updated_at = ?, title = ?
-		WHERE id = ?
+		SET message_count = message_count + 2, updated_at = $1, title = $2
+		WHERE id = $3
 	`, now, newTitle, sessionID); err != nil {
 		return object.Message{}, fmt.Errorf("update session failed: %w", err)
 	}

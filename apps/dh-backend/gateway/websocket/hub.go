@@ -8,11 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/constants"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket/broker"
 )
 
@@ -24,19 +23,30 @@ type Connection struct {
 }
 
 type Hub struct {
-	sessions    chat.SessionStore
-	messages    chat.MessageStore
-	broker      broker.MessageBroker
-	connections map[string]*Connection
-	mu          sync.RWMutex
+	sessions              chat.SessionStore
+	messages              chat.MessageStore
+	broker                broker.MessageBroker
+	connections           map[string]*Connection
+	mu                    sync.RWMutex
+	reconnectHistoryLimit int
+	writeTimeout          time.Duration
 }
 
-func NewWebSocketHub(sessions chat.SessionStore, messages chat.MessageStore, broker broker.MessageBroker) *Hub {
+// NewWebSocketHub 创建 WebSocket Hub，limit 控制重连时回放历史消息数量，writeTimeout 控制写超时。
+func NewWebSocketHub(sessions chat.SessionStore, messages chat.MessageStore, broker broker.MessageBroker, reconnectHistoryLimit int, writeTimeout time.Duration) *Hub {
+	if reconnectHistoryLimit <= 0 {
+		reconnectHistoryLimit = 50
+	}
+	if writeTimeout <= 0 {
+		writeTimeout = 10 * time.Second
+	}
 	return &Hub{
-		sessions:    sessions,
-		messages:    messages,
-		broker:      broker,
-		connections: make(map[string]*Connection),
+		sessions:              sessions,
+		messages:              messages,
+		broker:                broker,
+		connections:           make(map[string]*Connection),
+		reconnectHistoryLimit: reconnectHistoryLimit,
+		writeTimeout:          writeTimeout,
 	}
 }
 
@@ -64,7 +74,7 @@ func (h *Hub) Register(sessionID string, conn *websocket.Conn) error {
 	}
 
 	// Replay message history
-	history, err := h.messages.GetHistory(ctx, sessionID, constants.RECONNECT_HISTORY_LIMIT)
+	history, err := h.messages.GetHistory(ctx, sessionID, h.reconnectHistoryLimit)
 	if err != nil {
 		log.Printf("failed to get history: %v", err)
 	} else {
@@ -168,7 +178,7 @@ func (h *Hub) forwardEvents(ctx context.Context, c *Connection) {
 func (h *Hub) sendToConnection(c *Connection, ev chat.BrokerEvent) {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
-	c.conn.SetWriteDeadline(time.Now().Add(constants.WS_WRITE_TIMEOUT))
+	c.conn.SetWriteDeadline(time.Now().Add(h.writeTimeout))
 	if err := c.conn.WriteJSON(ev); err != nil {
 		log.Printf("websocket write error: %v", err)
 	}

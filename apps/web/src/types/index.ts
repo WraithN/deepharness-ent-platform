@@ -68,3 +68,76 @@ export interface SettingsConfig {
     apiKey?: string;
   };
 }
+
+export interface Workspace {
+  id: string;
+  tenantId: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceMember {
+  workspaceId: string;
+  userId: string;
+  role: 'admin' | 'user';
+  subRole?: 'developer' | 'tester' | 'pm' | 'designer';
+  joinedAt: string;
+}
+
+export interface WorkitemProject {
+  id: string;
+  workspaceId: string;
+  platform: string;
+  externalKey: string;
+  name: string;
+  config?: Record<string, unknown>;
+}
+
+export interface WorkspaceStandard {
+  id: string;
+  workspaceId: string;
+  repositoryId?: string;
+  type: 'coding' | 'design' | 'engineering';
+  name: string;
+  content: string;
+}
+
+export interface WorkspaceCICD {
+  id: string;
+  workspaceId: string;
+  triggerBranches: string;
+  webhookUrl: string;
+  script: string;
+}
+
+export interface WorkspaceAgent {
+  id: string;
+  workspaceId: string;
+  name: string;
+  role: string;
+  description?: string;
+  config?: Record<string, unknown>;
+  isDefault: boolean;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceRepository {
+  id: string;
+  workspaceId: string;
+  name: string;
+  url: string;
+  type: 'dev' | 'test' | 'case' | 'product';
+  defaultBranch?: string;
+  sshKey?: string;
+  localPath?: string;
+  cloneStatus: 'pending' | 'cloning' | 'cloned' | 'failed';
+  lastSyncAt?: string;
+  errorMessage?: string;
+  config?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}

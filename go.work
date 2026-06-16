@@ -1,0 +1,8 @@
+go 1.25.0
+
+use (
+	./apps/agent-runtime
+	./apps/agent-runtime/mock
+	./apps/dh-backend
+	./packages/go-sdk
+)
