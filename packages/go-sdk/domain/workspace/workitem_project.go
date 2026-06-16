@@ -2,8 +2,8 @@ package workspace
 
 import "time"
 
-// DemandProject 表示工作空间关联的需求项目（外部需求平台项目）。
-type DemandProject struct {
+// WorkitemProject 表示工作空间关联的外部工作项项目（Meego/PingCode 等）。
+type WorkitemProject struct {
 	ID          string    `json:"id"`
 	WorkspaceID string    `json:"workspaceId"`
 	Platform    string    `json:"platform"`

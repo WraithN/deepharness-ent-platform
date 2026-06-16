@@ -2,7 +2,7 @@ package workspace
 
 import "time"
 
-// Workspace 表示一个工作空间，是项目、成员、标准、CICD 等资源的容器。
+// Workspace 表示一个工作空间，是成员、工作项项目、标准、CICD 等资源的容器。
 type Workspace struct {
 	ID          string    `json:"id"`
 	TenantID    string    `json:"tenantId"`
