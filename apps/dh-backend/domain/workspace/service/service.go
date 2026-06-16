@@ -2,7 +2,6 @@ package service
 
 import (
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
-	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/project"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workspace"
 )
 
@@ -16,12 +15,8 @@ type WorkspaceService interface {
 	ListMembers(workspaceID string) ([]workspace.Member, error)
 	RemoveMember(workspaceID, userID string) error
 
-	SetDemandProject(workspaceID string, req DemandProjectRequest) (workspace.DemandProject, error)
-	GetDemandProject(workspaceID string) (workspace.DemandProject, error)
-
-	ListRepositories(workspaceID string, repoType project.RepoType) ([]project.Repository, error)
-	CreateRepository(workspaceID string, req RepositoryRequest) (project.Repository, error)
-	DeleteRepository(workspaceID, repoID string) error
+	SetWorkitemProject(workspaceID string, req WorkitemProjectRequest) (workspace.WorkitemProject, error)
+	GetWorkitemProject(workspaceID string) (workspace.WorkitemProject, error)
 
 	ListAgents(workspaceID string) ([]agent.Agent, error)
 	CreateAgent(workspaceID string, req AgentRequest) (agent.Agent, error)
@@ -35,19 +30,11 @@ type WorkspaceService interface {
 	SaveCICD(workspaceID string, req CICDRequest) (workspace.CICD, error)
 }
 
-// DemandProjectRequest 设置需求项目请求。
-type DemandProjectRequest struct {
+// WorkitemProjectRequest 设置工作项项目请求。
+type WorkitemProjectRequest struct {
 	Platform    string `json:"platform"`
 	ExternalKey string `json:"externalKey"`
 	Name        string `json:"name"`
-}
-
-// RepositoryRequest 创建仓库请求。
-type RepositoryRequest struct {
-	Name          string           `json:"name"`
-	URL           string           `json:"url"`
-	Type          project.RepoType `json:"type"`
-	DefaultBranch string           `json:"defaultBranch"`
 }
 
 // AgentRequest 创建 Agent 请求。

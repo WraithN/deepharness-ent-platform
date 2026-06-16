@@ -170,11 +170,9 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/workspaces/{id}", workspace.WorkspaceByID)
 	mux.HandleFunc("/api/v1/workspaces/{id}/members", workspace.Members)
 	mux.HandleFunc("/api/v1/workspaces/{id}/members/{userId}", workspace.MemberByID)
-	mux.HandleFunc("/api/v1/workspaces/{id}/demand-project", workspace.DemandProject)
-	mux.HandleFunc("/api/v1/workspaces/{id}/repositories", workspace.WorkspaceRepositories)
+	mux.HandleFunc("/api/v1/workspaces/{id}/workitem-project", workspace.WorkitemProject)
 	mux.HandleFunc("/api/v1/workspaces/{id}/agents", workspace.WorkspaceAgents)
 	mux.HandleFunc("/api/v1/workspaces/{id}/standards", workspace.WorkspaceStandards)
-	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}", workspace.RepositoryByID)
 	mux.HandleFunc("/api/v1/workspaces/{id}/standards/{standardId}", workspace.WorkspaceStandardByID)
 	mux.HandleFunc("/api/v1/workspaces/{id}/cicd", workspace.WorkspaceCICD)
 

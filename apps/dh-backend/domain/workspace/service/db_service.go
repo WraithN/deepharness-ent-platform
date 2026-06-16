@@ -2,13 +2,12 @@ package service
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
-	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/project"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workspace"
 	"github.com/google/uuid"
 )
@@ -88,7 +87,7 @@ func (s *DBWorkspaceService) GetWorkspace(id string) (workspace.Workspace, error
 	if err != nil {
 		return workspace.Workspace{}, fmt.Errorf("get workspace failed: %w", err)
 	}
-	ws.Description = scanNullString(desc)
+	ws.Description = sqlutil.ScanNullString(desc)
 	return ws, nil
 }
 
@@ -115,7 +114,7 @@ func (s *DBWorkspaceService) ListWorkspaces(tenantID string) ([]workspace.Worksp
 		if err := rows.Scan(&ws.ID, &ws.TenantID, &ws.Name, &desc, &ws.CreatedAt, &ws.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan workspace failed: %w", err)
 		}
-		ws.Description = scanNullString(desc)
+		ws.Description = sqlutil.ScanNullString(desc)
 		result = append(result, ws)
 	}
 	if err := rows.Err(); err != nil {
@@ -132,7 +131,7 @@ func (s *DBWorkspaceService) AddMember(workspaceID, userID, role, subRole string
 	_, err := s.db.Exec(`
 		INSERT INTO workspace_members (workspace_id, user_id, role, sub_role, joined_at)
 		VALUES ($1, $2, $3, $4, $5)
-	`, workspaceID, userID, role, nullString(subRole), time.Now().UTC())
+	`, workspaceID, userID, role, sqlutil.NullString(subRole), time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("add member failed: %w", err)
 	}
@@ -160,7 +159,7 @@ func (s *DBWorkspaceService) ListMembers(workspaceID string) ([]workspace.Member
 		if err := rows.Scan(&m.WorkspaceID, &m.UserID, &m.Role, &subRole, &m.JoinedAt); err != nil {
 			return nil, fmt.Errorf("scan member failed: %w", err)
 		}
-		m.SubRole = scanNullString(subRole)
+		m.SubRole = sqlutil.ScanNullString(subRole)
 		result = append(result, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -187,22 +186,22 @@ func (s *DBWorkspaceService) RemoveMember(workspaceID, userID string) error {
 	return nil
 }
 
-// SetDemandProject 设置工作空间的需求项目，使用 workspace_id 作为唯一键进行 upsert。
-func (s *DBWorkspaceService) SetDemandProject(workspaceID string, req DemandProjectRequest) (workspace.DemandProject, error) {
+// SetWorkitemProject 设置工作空间的工作项项目，使用 workspace_id 作为唯一键进行 upsert。
+func (s *DBWorkspaceService) SetWorkitemProject(workspaceID string, req WorkitemProjectRequest) (workspace.WorkitemProject, error) {
 	now := time.Now().UTC()
 
 	tx, err := s.db.Begin()
 	if err != nil {
-		return workspace.DemandProject{}, fmt.Errorf("begin transaction failed: %w", err)
+		return workspace.WorkitemProject{}, fmt.Errorf("begin transaction failed: %w", err)
 	}
 	defer tx.Rollback()
 
 	if err := workspaceExistsTx(tx, workspaceID); err != nil {
-		return workspace.DemandProject{}, err
+		return workspace.WorkitemProject{}, err
 	}
 
 	_, err = tx.Exec(`
-		INSERT INTO demand_projects (id, workspace_id, platform, external_key, name, created_at, updated_at)
+		INSERT INTO workitem_projects (id, workspace_id, platform, external_key, name, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (workspace_id) DO UPDATE SET
 			platform = EXCLUDED.platform,
@@ -211,118 +210,39 @@ func (s *DBWorkspaceService) SetDemandProject(workspaceID string, req DemandProj
 			updated_at = EXCLUDED.updated_at
 	`, uuid.New().String(), workspaceID, req.Platform, req.ExternalKey, req.Name, now, now)
 	if err != nil {
-		return workspace.DemandProject{}, fmt.Errorf("set demand project failed: %w", err)
+		return workspace.WorkitemProject{}, fmt.Errorf("set workitem project failed: %w", err)
 	}
 
-	dp, err := getDemandProjectTx(tx, workspaceID)
+	wp, err := getWorkitemProjectTx(tx, workspaceID)
 	if err != nil {
-		return workspace.DemandProject{}, err
+		return workspace.WorkitemProject{}, err
 	}
 
 	if err := tx.Commit(); err != nil {
-		return workspace.DemandProject{}, fmt.Errorf("commit failed: %w", err)
+		return workspace.WorkitemProject{}, fmt.Errorf("commit failed: %w", err)
 	}
-	return dp, nil
+	return wp, nil
 }
 
-// GetDemandProject 获取工作空间的需求项目。
-func (s *DBWorkspaceService) GetDemandProject(workspaceID string) (workspace.DemandProject, error) {
-	var dp workspace.DemandProject
+// GetWorkitemProject 获取工作空间的工作项项目。
+func (s *DBWorkspaceService) GetWorkitemProject(workspaceID string) (workspace.WorkitemProject, error) {
+	var wp workspace.WorkitemProject
 	var config sql.NullString
 	err := s.db.QueryRow(`
 		SELECT id, workspace_id, platform, external_key, name, config, created_at, updated_at
-		FROM demand_projects WHERE workspace_id = $1
-	`, workspaceID).Scan(&dp.ID, &dp.WorkspaceID, &dp.Platform, &dp.ExternalKey, &dp.Name, &config, &dp.CreatedAt, &dp.UpdatedAt)
+		FROM workitem_projects WHERE workspace_id = $1
+	`, workspaceID).Scan(&wp.ID, &wp.WorkspaceID, &wp.Platform, &wp.ExternalKey, &wp.Name, &config, &wp.CreatedAt, &wp.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return workspace.DemandProject{}, errors.New("demand project not found")
+		return workspace.WorkitemProject{}, errors.New("workitem project not found")
 	}
 	if err != nil {
-		return workspace.DemandProject{}, fmt.Errorf("get demand project failed: %w", err)
+		return workspace.WorkitemProject{}, fmt.Errorf("get workitem project failed: %w", err)
 	}
-	dp.Config, err = unmarshalConfig(config)
+	wp.Config, err = sqlutil.UnmarshalConfig(config)
 	if err != nil {
-		return workspace.DemandProject{}, fmt.Errorf("unmarshal demand project config failed: %w", err)
+		return workspace.WorkitemProject{}, fmt.Errorf("unmarshal workitem project config failed: %w", err)
 	}
-	return dp, nil
-}
-
-// ListRepositories 返回工作空间下的仓库列表，支持按类型过滤。
-func (s *DBWorkspaceService) ListRepositories(workspaceID string, repoType project.RepoType) ([]project.Repository, error) {
-	query := `SELECT id, workspace_id, name, url, type, default_branch, created_at, updated_at FROM repositories WHERE workspace_id = $1`
-	var args []any
-	args = append(args, workspaceID)
-	if repoType != "" {
-		query += ` AND type = $2`
-		args = append(args, repoType)
-	}
-	query += ` ORDER BY created_at DESC`
-
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list repositories failed: %w", err)
-	}
-	defer rows.Close()
-
-	result := make([]project.Repository, 0)
-	for rows.Next() {
-		var repo project.Repository
-		var defaultBranch sql.NullString
-		if err := rows.Scan(&repo.ID, &repo.WorkspaceID, &repo.Name, &repo.URL, &repo.Type, &defaultBranch, &repo.CreatedAt, &repo.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan repository failed: %w", err)
-		}
-		repo.DefaultBranch = scanNullString(defaultBranch)
-		result = append(result, repo)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate repositories failed: %w", err)
-	}
-	return result, nil
-}
-
-// CreateRepository 在工作空间下创建仓库。
-func (s *DBWorkspaceService) CreateRepository(workspaceID string, req RepositoryRequest) (project.Repository, error) {
-	if err := s.workspaceExists(workspaceID); err != nil {
-		return project.Repository{}, err
-	}
-
-	now := time.Now().UTC()
-	repo := project.Repository{
-		ID:            uuid.New().String(),
-		WorkspaceID:   workspaceID,
-		Name:          req.Name,
-		URL:           req.URL,
-		Type:          req.Type,
-		DefaultBranch: req.DefaultBranch,
-		CreatedAt:     now,
-		UpdatedAt:     now,
-	}
-
-	_, err := s.db.Exec(`
-		INSERT INTO repositories (id, workspace_id, name, url, type, default_branch, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, repo.ID, repo.WorkspaceID, repo.Name, repo.URL, repo.Type, repo.DefaultBranch, repo.CreatedAt, repo.UpdatedAt)
-	if err != nil {
-		return project.Repository{}, fmt.Errorf("insert repository failed: %w", err)
-	}
-	return repo, nil
-}
-
-// DeleteRepository 删除工作空间下的仓库。
-func (s *DBWorkspaceService) DeleteRepository(workspaceID, repoID string) error {
-	res, err := s.db.Exec(`
-		DELETE FROM repositories WHERE id = $1 AND workspace_id = $2
-	`, repoID, workspaceID)
-	if err != nil {
-		return fmt.Errorf("delete repository failed: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("get rows affected failed: %w", err)
-	}
-	if n == 0 {
-		return errors.New("repository not found")
-	}
-	return nil
+	return wp, nil
 }
 
 // ListAgents 返回工作空间下的 Agent 列表。
@@ -344,10 +264,10 @@ func (s *DBWorkspaceService) ListAgents(workspaceID string) ([]agent.Agent, erro
 		if err := rows.Scan(&a.ID, &a.WorkspaceID, &a.Name, &role, &description, &config, &a.IsDefault, &createdBy, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan agent failed: %w", err)
 		}
-		a.Role = scanNullString(role)
-		a.Description = scanNullString(description)
-		a.CreatedByUserID = scanNullString(createdBy)
-		a.Config, err = unmarshalConfig(config)
+		a.Role = sqlutil.ScanNullString(role)
+		a.Description = sqlutil.ScanNullString(description)
+		a.CreatedByUserID = sqlutil.ScanNullString(createdBy)
+		a.Config, err = sqlutil.UnmarshalConfig(config)
 		if err != nil {
 			return nil, fmt.Errorf("unmarshal agent config failed: %w", err)
 		}
@@ -378,7 +298,7 @@ func (s *DBWorkspaceService) CreateAgent(workspaceID string, req AgentRequest) (
 		UpdatedAt:   now,
 	}
 
-	configStr, err := marshalConfig(req.Config)
+	configStr, err := sqlutil.MarshalConfig(req.Config)
 	if err != nil {
 		return agent.Agent{}, fmt.Errorf("marshal agent config failed: %w", err)
 	}
@@ -424,10 +344,10 @@ func (s *DBWorkspaceService) GetDefaultAgent(workspaceID string) (agent.Agent, e
 	if err != nil {
 		return agent.Agent{}, fmt.Errorf("get default agent failed: %w", err)
 	}
-	a.Role = scanNullString(role)
-	a.Description = scanNullString(description)
-	a.CreatedByUserID = scanNullString(createdBy)
-	a.Config, err = unmarshalConfig(config)
+	a.Role = sqlutil.ScanNullString(role)
+	a.Description = sqlutil.ScanNullString(description)
+	a.CreatedByUserID = sqlutil.ScanNullString(createdBy)
+	a.Config, err = sqlutil.UnmarshalConfig(config)
 	if err != nil {
 		return agent.Agent{}, fmt.Errorf("unmarshal default agent config failed: %w", err)
 	}
@@ -458,7 +378,7 @@ func (s *DBWorkspaceService) ListStandards(workspaceID string, repoID string) ([
 		if err := rows.Scan(&st.ID, &st.WorkspaceID, &standardRepoID, &st.Type, &st.Name, &st.Content, &st.CreatedAt, &st.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan standard failed: %w", err)
 		}
-		st.RepositoryID = scanNullString(standardRepoID)
+		st.RepositoryID = sqlutil.ScanNullString(standardRepoID)
 		result = append(result, st)
 	}
 	if err := rows.Err(); err != nil {
@@ -514,7 +434,7 @@ func (s *DBWorkspaceService) updateStandard(workspaceID string, req StandardRequ
 		UPDATE workspace_standards
 		SET repository_id = $1, type = $2, name = $3, content = $4, updated_at = $5
 		WHERE id = $6 AND workspace_id = $7
-	`, nullString(req.RepositoryID), req.Type, req.Name, req.Content, now, req.ID, workspaceID)
+	`, sqlutil.NullString(req.RepositoryID), req.Type, req.Name, req.Content, now, req.ID, workspaceID)
 	if err != nil {
 		return workspace.Standard{}, fmt.Errorf("update standard failed: %w", err)
 	}
@@ -569,7 +489,7 @@ func (s *DBWorkspaceService) GetCICD(workspaceID string) (workspace.CICD, error)
 	if err != nil {
 		return workspace.CICD{}, fmt.Errorf("get cicd failed: %w", err)
 	}
-	c.Config, err = unmarshalConfig(config)
+	c.Config, err = sqlutil.UnmarshalConfig(config)
 	if err != nil {
 		return workspace.CICD{}, fmt.Errorf("unmarshal cicd config failed: %w", err)
 	}
@@ -639,24 +559,6 @@ func workspaceExistsTx(tx *sql.Tx, workspaceID string) error {
 	return nil
 }
 
-// getStandard 按 ID 查询规范。
-func (s *DBWorkspaceService) getStandard(id string) (workspace.Standard, error) {
-	var st workspace.Standard
-	var repoID sql.NullString
-	err := s.db.QueryRow(`
-		SELECT id, workspace_id, repository_id, type, name, content, created_at, updated_at
-		FROM workspace_standards WHERE id = $1
-	`, id).Scan(&st.ID, &st.WorkspaceID, &repoID, &st.Type, &st.Name, &st.Content, &st.CreatedAt, &st.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return workspace.Standard{}, errors.New("standard not found")
-	}
-	if err != nil {
-		return workspace.Standard{}, fmt.Errorf("get standard failed: %w", err)
-	}
-	st.RepositoryID = scanNullString(repoID)
-	return st, nil
-}
-
 // getStandardTx 在事务中按 ID 查询规范。
 func getStandardTx(tx *sql.Tx, id string) (workspace.Standard, error) {
 	var st workspace.Standard
@@ -671,29 +573,29 @@ func getStandardTx(tx *sql.Tx, id string) (workspace.Standard, error) {
 	if err != nil {
 		return workspace.Standard{}, fmt.Errorf("get standard failed: %w", err)
 	}
-	st.RepositoryID = scanNullString(repoID)
+	st.RepositoryID = sqlutil.ScanNullString(repoID)
 	return st, nil
 }
 
-// getDemandProjectTx 在事务中获取工作空间的需求项目。
-func getDemandProjectTx(tx *sql.Tx, workspaceID string) (workspace.DemandProject, error) {
-	var dp workspace.DemandProject
+// getWorkitemProjectTx 在事务中获取工作空间的工作项项目。
+func getWorkitemProjectTx(tx *sql.Tx, workspaceID string) (workspace.WorkitemProject, error) {
+	var wp workspace.WorkitemProject
 	var config sql.NullString
 	err := tx.QueryRow(`
 		SELECT id, workspace_id, platform, external_key, name, config, created_at, updated_at
-		FROM demand_projects WHERE workspace_id = $1
-	`, workspaceID).Scan(&dp.ID, &dp.WorkspaceID, &dp.Platform, &dp.ExternalKey, &dp.Name, &config, &dp.CreatedAt, &dp.UpdatedAt)
+		FROM workitem_projects WHERE workspace_id = $1
+	`, workspaceID).Scan(&wp.ID, &wp.WorkspaceID, &wp.Platform, &wp.ExternalKey, &wp.Name, &config, &wp.CreatedAt, &wp.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return workspace.DemandProject{}, errors.New("demand project not found")
+		return workspace.WorkitemProject{}, errors.New("workitem project not found")
 	}
 	if err != nil {
-		return workspace.DemandProject{}, fmt.Errorf("get demand project failed: %w", err)
+		return workspace.WorkitemProject{}, fmt.Errorf("get workitem project failed: %w", err)
 	}
-	dp.Config, err = unmarshalConfig(config)
+	wp.Config, err = sqlutil.UnmarshalConfig(config)
 	if err != nil {
-		return workspace.DemandProject{}, fmt.Errorf("unmarshal demand project config failed: %w", err)
+		return workspace.WorkitemProject{}, fmt.Errorf("unmarshal workitem project config failed: %w", err)
 	}
-	return dp, nil
+	return wp, nil
 }
 
 // getCICDTx 在事务中获取工作空间的 CI/CD 配置。
@@ -710,46 +612,9 @@ func getCICDTx(tx *sql.Tx, workspaceID string) (workspace.CICD, error) {
 	if err != nil {
 		return workspace.CICD{}, fmt.Errorf("get cicd failed: %w", err)
 	}
-	c.Config, err = unmarshalConfig(config)
+	c.Config, err = sqlutil.UnmarshalConfig(config)
 	if err != nil {
 		return workspace.CICD{}, fmt.Errorf("unmarshal cicd config failed: %w", err)
 	}
 	return c, nil
-}
-
-// nullString 将空字符串转换为数据库 NULL。
-func nullString(s string) sql.NullString {
-	if s == "" {
-		return sql.NullString{}
-	}
-	return sql.NullString{String: s, Valid: true}
-}
-
-// scanNullString 读取 Nullable 字符串字段。
-func scanNullString(ns sql.NullString) string {
-	return ns.String
-}
-
-// marshalConfig 将任意对象序列化为 JSON 字符串，nil 时返回 NULL。
-func marshalConfig(v any) (sql.NullString, error) {
-	if v == nil {
-		return sql.NullString{}, nil
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return sql.NullString{}, err
-	}
-	return sql.NullString{String: string(b), Valid: true}, nil
-}
-
-// unmarshalConfig 将数据库 JSON 字符串反序列化为任意对象。
-func unmarshalConfig(ns sql.NullString) (any, error) {
-	if !ns.Valid || ns.String == "" {
-		return nil, nil
-	}
-	var v any
-	if err := json.Unmarshal([]byte(ns.String), &v); err != nil {
-		return nil, err
-	}
-	return v, nil
 }

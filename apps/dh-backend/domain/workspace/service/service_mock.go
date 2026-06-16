@@ -7,50 +7,46 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
-	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/project"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workspace"
 	"github.com/google/uuid"
 )
 
 const (
-	errWorkspaceNotFound     = "workspace not found"
-	errMemberNotFound        = "member not found"
-	errDemandProjectNotFound = "demand project not found"
-	errRepositoryNotFound    = "repository not found"
-	errAgentNotFound         = "agent not found"
-	errStandardNotFound      = "standard not found"
-	errCICDNotFound          = "cicd not found"
-	errDefaultAgentNotFound  = "default agent not found"
+	errWorkspaceNotFound       = "workspace not found"
+	errMemberNotFound          = "member not found"
+	errWorkitemProjectNotFound = "workitem project not found"
+	errAgentNotFound           = "agent not found"
+	errStandardNotFound        = "standard not found"
+	errCICDNotFound            = "cicd not found"
+	errDefaultAgentNotFound    = "default agent not found"
 )
 
 // MockWorkspaceService 是 WorkspaceService 的内存实现，用于无 MySQL 的本地开发环境。
 type MockWorkspaceService struct {
-	mu             sync.RWMutex
-	workspaces     map[string]workspace.Workspace
-	members        map[string][]workspace.Member
-	demandProjects map[string]workspace.DemandProject
-	repos          map[string][]project.Repository
-	agents         map[string][]agent.Agent
-	standards      map[string][]workspace.Standard
-	cicd           map[string]workspace.CICD
+	mu               sync.RWMutex
+	workspaces       map[string]workspace.Workspace
+	members          map[string][]workspace.Member
+	workitemProjects map[string]workspace.WorkitemProject
+	agents           map[string][]agent.Agent
+	standards        map[string][]workspace.Standard
+	cicd             map[string]workspace.CICD
 }
 
 // NewMockWorkspaceService 创建内存工作空间服务，并填充默认种子数据。
 func NewMockWorkspaceService() *MockWorkspaceService {
 	s := &MockWorkspaceService{
-		workspaces:     make(map[string]workspace.Workspace),
-		members:        make(map[string][]workspace.Member),
-		demandProjects: make(map[string]workspace.DemandProject),
-		repos:          make(map[string][]project.Repository),
-		agents:         make(map[string][]agent.Agent),
-		standards:      make(map[string][]workspace.Standard),
-		cicd:           make(map[string]workspace.CICD),
+		workspaces:       make(map[string]workspace.Workspace),
+		members:          make(map[string][]workspace.Member),
+		workitemProjects: make(map[string]workspace.WorkitemProject),
+		agents:           make(map[string][]agent.Agent),
+		standards:        make(map[string][]workspace.Standard),
+		cicd:             make(map[string]workspace.CICD),
 	}
 	s.seed()
 	return s
 }
 
-// seed 初始化一个默认工作空间，包含成员、仓库、Agent、规范与 CI/CD 配置，
+// seed 初始化一个默认工作空间，包含成员、Agent、规范与 CI/CD 配置，
 // 用于本地开发服务器启动后即有内容可浏览。
 func (s *MockWorkspaceService) seed() {
 	now := time.Now().UTC()
@@ -74,18 +70,6 @@ func (s *MockWorkspaceService) seed() {
 		JoinedAt:    now,
 	}}
 
-	repoID := "repo-default"
-	s.repos[wsID] = []project.Repository{{
-		ID:            repoID,
-		WorkspaceID:   wsID,
-		Name:          "default-repo",
-		URL:           "https://github.com/deepharness/default-repo.git",
-		Type:          project.RepoTypeDev,
-		DefaultBranch: "main",
-		CreatedAt:     now,
-		UpdatedAt:     now,
-	}}
-
 	agentID := "agent-default"
 	s.agents[wsID] = []agent.Agent{{
 		ID:              agentID,
@@ -103,7 +87,7 @@ func (s *MockWorkspaceService) seed() {
 	s.standards[wsID] = []workspace.Standard{{
 		ID:           "std-default",
 		WorkspaceID:  wsID,
-		RepositoryID: repoID,
+		RepositoryID: "",
 		Type:         "coding",
 		Name:         "Default Coding Standard",
 		Content:      "Use clear naming, keep functions small, and add tests.",
@@ -240,14 +224,14 @@ func (s *MockWorkspaceService) RemoveMember(workspaceID, userID string) error {
 	return errors.New(errMemberNotFound)
 }
 
-// SetDemandProject 设置工作空间的需求项目。
-func (s *MockWorkspaceService) SetDemandProject(workspaceID string, req DemandProjectRequest) (workspace.DemandProject, error) {
+// SetWorkitemProject 设置工作空间的工作项项目。
+func (s *MockWorkspaceService) SetWorkitemProject(workspaceID string, req WorkitemProjectRequest) (workspace.WorkitemProject, error) {
 	if !s.workspaceExists(workspaceID) {
-		return workspace.DemandProject{}, errors.New(errWorkspaceNotFound)
+		return workspace.WorkitemProject{}, errors.New(errWorkspaceNotFound)
 	}
 
 	now := time.Now().UTC()
-	dp := workspace.DemandProject{
+	wp := workspace.WorkitemProject{
 		ID:          uuid.NewString(),
 		WorkspaceID: workspaceID,
 		Platform:    req.Platform,
@@ -261,96 +245,29 @@ func (s *MockWorkspaceService) SetDemandProject(workspaceID string, req DemandPr
 	defer s.mu.Unlock()
 
 	// 如果已存在则保留原 ID，仅更新字段。
-	if existing, ok := s.demandProjects[workspaceID]; ok {
-		dp.ID = existing.ID
-		dp.CreatedAt = existing.CreatedAt
+	if existing, ok := s.workitemProjects[workspaceID]; ok {
+		wp.ID = existing.ID
+		wp.CreatedAt = existing.CreatedAt
 	}
-	s.demandProjects[workspaceID] = dp
+	s.workitemProjects[workspaceID] = wp
 
-	return dp, nil
+	return wp, nil
 }
 
-// GetDemandProject 获取工作空间的需求项目。
-func (s *MockWorkspaceService) GetDemandProject(workspaceID string) (workspace.DemandProject, error) {
+// GetWorkitemProject 获取工作空间的工作项项目。
+func (s *MockWorkspaceService) GetWorkitemProject(workspaceID string) (workspace.WorkitemProject, error) {
 	if !s.workspaceExists(workspaceID) {
-		return workspace.DemandProject{}, errors.New(errWorkspaceNotFound)
+		return workspace.WorkitemProject{}, errors.New(errWorkspaceNotFound)
 	}
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	dp, ok := s.demandProjects[workspaceID]
+	wp, ok := s.workitemProjects[workspaceID]
 	if !ok {
-		return workspace.DemandProject{}, errors.New(errDemandProjectNotFound)
+		return workspace.WorkitemProject{}, errors.New(errWorkitemProjectNotFound)
 	}
-	return dp, nil
-}
-
-// ListRepositories 返回工作空间下的仓库列表，支持按类型过滤。
-func (s *MockWorkspaceService) ListRepositories(workspaceID string, repoType project.RepoType) ([]project.Repository, error) {
-	if !s.workspaceExists(workspaceID) {
-		return nil, errors.New(errWorkspaceNotFound)
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	result := make([]project.Repository, 0)
-	for _, repo := range s.repos[workspaceID] {
-		if repoType != "" && repo.Type != repoType {
-			continue
-		}
-		result = append(result, repo)
-	}
-
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].CreatedAt.After(result[j].CreatedAt)
-	})
-	return result, nil
-}
-
-// CreateRepository 在工作空间下创建仓库。
-func (s *MockWorkspaceService) CreateRepository(workspaceID string, req RepositoryRequest) (project.Repository, error) {
-	if !s.workspaceExists(workspaceID) {
-		return project.Repository{}, errors.New(errWorkspaceNotFound)
-	}
-
-	now := time.Now().UTC()
-	repo := project.Repository{
-		ID:            uuid.NewString(),
-		WorkspaceID:   workspaceID,
-		Name:          req.Name,
-		URL:           req.URL,
-		Type:          req.Type,
-		DefaultBranch: req.DefaultBranch,
-		CreatedAt:     now,
-		UpdatedAt:     now,
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.repos[workspaceID] = append(s.repos[workspaceID], repo)
-	return repo, nil
-}
-
-// DeleteRepository 删除工作空间下的仓库。
-func (s *MockWorkspaceService) DeleteRepository(workspaceID, repoID string) error {
-	if !s.workspaceExists(workspaceID) {
-		return errors.New(errWorkspaceNotFound)
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	repos := s.repos[workspaceID]
-	for i, repo := range repos {
-		if repo.ID == repoID {
-			s.repos[workspaceID] = append(repos[:i], repos[i+1:]...)
-			return nil
-		}
-	}
-	return errors.New(errRepositoryNotFound)
+	return wp, nil
 }
 
 // ListAgents 返回工作空间下的 Agent 列表。
