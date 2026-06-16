@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	session "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat/session"
@@ -36,21 +37,26 @@ import (
 
 // WorkerManager manages agent worker lifecycle per session.
 type WorkerManager struct {
-	workers  map[string]context.CancelFunc
-	mu       sync.Mutex
-	broker   broker.MessageBroker
-	messages chat.MessageStore
-	sessions chat.SessionStore
-	agentURL string
+	workers           map[string]context.CancelFunc
+	mu                sync.Mutex
+	broker            broker.MessageBroker
+	messages          chat.MessageStore
+	sessions          chat.SessionStore
+	agentURL          string
+	agentRequestTimeout time.Duration
 }
 
-func newWorkerManager(broker broker.MessageBroker, messages chat.MessageStore, sessions chat.SessionStore, agentURL string) *WorkerManager {
+func newWorkerManager(broker broker.MessageBroker, messages chat.MessageStore, sessions chat.SessionStore, agentURL string, agentRequestTimeout time.Duration) *WorkerManager {
+	if agentRequestTimeout <= 0 {
+		agentRequestTimeout = 120 * time.Second
+	}
 	return &WorkerManager{
-		workers:  make(map[string]context.CancelFunc),
-		broker:   broker,
-		messages: messages,
-		sessions: sessions,
-		agentURL: agentURL,
+		workers:           make(map[string]context.CancelFunc),
+		broker:            broker,
+		messages:          messages,
+		sessions:          sessions,
+		agentURL:          agentURL,
+		agentRequestTimeout: agentRequestTimeout,
 	}
 }
 
@@ -65,7 +71,7 @@ func (wm *WorkerManager) StartWorker(sessionID string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	wm.workers[sessionID] = cancel
 
-	agentClient := client.NewHTTPClient(wm.agentURL)
+	agentClient := client.NewHTTPClient(wm.agentURL, wm.agentRequestTimeout)
 	w := worker.NewAgentWorker(wm.broker, wm.messages, wm.sessions, agentClient)
 
 	go func() {
@@ -108,14 +114,14 @@ func New(cfg config.Config) http.Handler {
 		log.Println("[Chat] using postgres storage")
 	} else {
 		sessions = session.NewSessionStore()
-		messages = session.NewMessageStore()
+		messages = session.NewMessageStore(cfg.MaxMessagesPerSession)
 		log.Println("[Chat] using memory storage")
 	}
 	brok := brokermemory.NewMessageBroker()
 
 	// Business logic layer
-	h := ws.NewWebSocketHub(sessions, messages, brok)
-	wm := newWorkerManager(brok, messages, sessions, cfg.AgentBaseURL)
+	h := ws.NewWebSocketHub(sessions, messages, brok, cfg.WebSocketReconnectHistoryLimit, cfg.WebSocketWriteTimeout)
+	wm := newWorkerManager(brok, messages, sessions, cfg.AgentBaseURL, cfg.AgentRequestTimeout)
 
 	// Personal assistant storage: MySQL when available, otherwise memory mock.
 	initPersonalAssistantService(db)
