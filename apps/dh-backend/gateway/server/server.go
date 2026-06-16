@@ -18,7 +18,8 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant"
 	paservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/project"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository"
+	repositoryservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team"
 	teamservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem"
@@ -125,6 +126,9 @@ func New(cfg config.Config) http.Handler {
 	// Workspace module: MySQL when available, otherwise memory mock.
 	initWorkspaceService(db)
 
+	// Repository module: PostgreSQL when available, otherwise memory mock.
+	initRepositoryService(db)
+
 	// Team skills / prompts: MySQL when available, otherwise memory mock.
 	initTeamService(db)
 
@@ -143,13 +147,6 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/identity/users", identity.Users)
 	mux.HandleFunc("/api/v1/identity/users/me", identity.Me)
 	mux.HandleFunc("/api/v1/identity/login", identity.Login)
-	mux.HandleFunc("/api/v1/projects", project.Projects)
-	mux.HandleFunc("/api/v1/projects/{id}", project.ProjectByID)
-	mux.HandleFunc("/api/v1/repositories", project.Repositories)
-	mux.HandleFunc("/api/v1/repositories/{id}", project.RepositoryByID)
-	mux.HandleFunc("/api/v1/repositories/{id}/branches", project.RepositoryBranches)
-	mux.HandleFunc("/api/v1/repositories/{id}/tree", project.RepositoryTree)
-	mux.HandleFunc("/api/v1/repositories/{id}/content", project.RepositoryContent)
 	mux.HandleFunc("/api/v1/workitems", workitem.WorkItems)
 	mux.HandleFunc("/api/v1/workitems/{id}", workitem.WorkItemByID)
 	mux.HandleFunc("/api/v1/workitems/{id}/status", workitem.UpdateWorkItemStatus)
@@ -175,6 +172,9 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/workspaces/{id}/standards", workspace.WorkspaceStandards)
 	mux.HandleFunc("/api/v1/workspaces/{id}/standards/{standardId}", workspace.WorkspaceStandardByID)
 	mux.HandleFunc("/api/v1/workspaces/{id}/cicd", workspace.WorkspaceCICD)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories", repository.Repositories)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}", repository.RepositoryByID)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/sync", repository.SyncRepository)
 
 	// Team skills / prompts
 	mux.HandleFunc("/api/v1/team/skills", team.Skills)
@@ -242,4 +242,14 @@ func initTeamService(db *sql.DB) {
 	}
 	log.Println("[Team] using memory mock")
 	team.Init(teamservice.NewMockTeamService())
+}
+
+func initRepositoryService(db *sql.DB) {
+	if db != nil {
+		log.Println("[Repository] using postgres storage with git clone")
+		repository.Init(repositoryservice.NewDBRepositoryService(db, ""))
+		return
+	}
+	log.Println("[Repository] using memory mock")
+	repository.Init(repositoryservice.NewMockRepositoryService())
 }
