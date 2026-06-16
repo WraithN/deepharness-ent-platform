@@ -783,7 +783,7 @@ export const ProjectCode: React.FC = () => {
         if (repos.length > 0) {
           const first = repos.find(r => r.type === 'dev') ?? repos[0];
           setSelectedRepoId(first.id);
-          setSelectedBranch(first.defaultBranch);
+          setSelectedBranch(first.defaultBranch ?? '');
           setRepoType(first.type as 'dev' | 'case' | 'product');
         }
       })
@@ -852,7 +852,7 @@ export const ProjectCode: React.FC = () => {
     setSelectedRepoId(val);
     const repo = repositories.find(r => r.id === val);
     if (repo) {
-      setSelectedBranch(repo.defaultBranch);
+      setSelectedBranch(repo.defaultBranch ?? '');
       setRepoType(repo.type as 'dev' | 'case' | 'product');
       if (repo.type === 'product' && viewMode !== 'doc') setViewMode('doc');
       if (repo.type === 'case' && viewMode === 'preview') setViewMode('doc');
@@ -970,7 +970,7 @@ export const ProjectCode: React.FC = () => {
                 const filteredRepos = repositories.filter(r => r.type === val);
                 if (filteredRepos.length > 0) {
                   setSelectedRepoId(filteredRepos[0].id);
-                  setSelectedBranch(filteredRepos[0].branches?.[0] ?? '');
+                  setSelectedBranch(filteredRepos[0].defaultBranch ?? '');
                 }
                 if (val === 'case' && viewMode === 'preview') {
                   setViewMode('code');
@@ -1012,14 +1012,14 @@ export const ProjectCode: React.FC = () => {
                   <SelectValue placeholder="选择分支" />
                 </SelectTrigger>
                 <SelectContent>
-                  {currentRepo?.branches?.map(branch => (
-                    <SelectItem key={branch} value={branch}>
+                  {currentRepo?.defaultBranch && (
+                    <SelectItem key={currentRepo.defaultBranch} value={currentRepo.defaultBranch}>
                       <div className="flex items-center">
                         <GitBranch className="h-4 w-4 mr-2 text-muted-foreground" />
-                        <span className="truncate">{branch}</span>
+                        <span className="truncate">{currentRepo.defaultBranch}</span>
                       </div>
                     </SelectItem>
-                  ))}
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -1371,7 +1371,7 @@ export const ProjectCode: React.FC = () => {
               </div>
             </div>
             <div className="flex-1 overflow-hidden">
-              <PreviewPanel repoId={selectedRepoId} branch={selectedBranch} repoName={currentRepo?.name || ''} repoUrl={currentRepo?.url || ''} previewUrl={currentRepo?.previewUrl} />
+              <PreviewPanel repoId={selectedRepoId} branch={selectedBranch} repoName={currentRepo?.name || ''} repoUrl={currentRepo?.url || ''} />
             </div>
           </div>
         )}

@@ -138,8 +138,8 @@ CREATE TABLE IF NOT EXISTS repositories (
   config JSON,
   created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
   updated_at DATETIME(3) NOT NULL DEFAULT NOW(3) ON UPDATE NOW(3),
-  INDEX idx_repositories_workspace (workspace_id),
-  INDEX idx_repositories_type (type)
+  INDEX idx_repositories_type (type),
+  INDEX idx_repositories_workspace_type (workspace_id, type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
@@ -169,7 +169,7 @@ CREATE TABLE IF NOT EXISTS agents (
   created_by_user_id CHAR(36),
   created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
   updated_at DATETIME(3) NOT NULL DEFAULT NOW(3) ON UPDATE NOW(3),
-  INDEX idx_agents_workspace (workspace_id)
+  INDEX idx_agents_workspace_default (workspace_id, is_default)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
@@ -240,8 +240,10 @@ CREATE TABLE IF NOT EXISTS workspace_skills (
   installed TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
   updated_at DATETIME(3) NOT NULL DEFAULT NOW(3) ON UPDATE NOW(3),
-  INDEX idx_workspace_skills_workspace (workspace_id),
-  INDEX idx_workspace_skills_library (library_skill_id)
+  INDEX idx_workspace_skills_library_skill_id (library_skill_id),
+  INDEX idx_workspace_skills_phase (workspace_id, phase),
+  INDEX idx_workspace_skills_installed (workspace_id, installed),
+  INDEX idx_workspace_skills_category (workspace_id, category)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS workspace_prompts (
@@ -257,8 +259,9 @@ CREATE TABLE IF NOT EXISTS workspace_prompts (
   added_to_space TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
   updated_at DATETIME(3) NOT NULL DEFAULT NOW(3) ON UPDATE NOW(3),
-  INDEX idx_workspace_prompts_workspace (workspace_id),
-  INDEX idx_workspace_prompts_library (library_prompt_id)
+  INDEX idx_workspace_prompts_library_prompt_id (library_prompt_id),
+  INDEX idx_workspace_prompts_use_case (workspace_id, use_case),
+  INDEX idx_workspace_prompts_added (workspace_id, added_to_space)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
@@ -284,8 +287,8 @@ CREATE TABLE IF NOT EXISTS workspace_standards (
   content TEXT NOT NULL,
   created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
   updated_at DATETIME(3) NOT NULL DEFAULT NOW(3) ON UPDATE NOW(3),
-  INDEX idx_workspace_standards_workspace (workspace_id),
-  INDEX idx_workspace_standards_repo (repository_id)
+  INDEX idx_workspace_standards_repository_id (repository_id),
+  INDEX idx_workspace_standards_workspace_type (workspace_id, type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
@@ -304,14 +307,14 @@ CREATE TABLE IF NOT EXISTS workspace_standards (
 ```sql
 CREATE TABLE IF NOT EXISTS workspace_cicd (
   id CHAR(36) PRIMARY KEY,
-  workspace_id CHAR(36) NOT NULL UNIQUE,
+  workspace_id CHAR(36) NOT NULL,
   trigger_branches VARCHAR(500),
   webhook_url VARCHAR(500),
   script TEXT,
   config JSON,
   created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
   updated_at DATETIME(3) NOT NULL DEFAULT NOW(3) ON UPDATE NOW(3),
-  INDEX idx_workspace_cicd_workspace (workspace_id)
+  UNIQUE INDEX idx_workspace_cicd_workspace_id (workspace_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 

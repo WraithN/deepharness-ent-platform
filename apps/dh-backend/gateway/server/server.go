@@ -6,47 +6,57 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
+	session "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat/session"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket/broker"
-	brokermemory "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket/broker/memory"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/orchestrator"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/orchestrator"
+	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant"
 	paservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/project"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository"
+	repositoryservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team"
 	teamservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace"
+	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 	ws "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
-	session "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat/session"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket/broker"
+	brokermemory "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket/broker/memory"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/worker"
-	sdkmysql "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/mysql"
+	sdkpostgres "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/postgres"
 )
 
 // WorkerManager manages agent worker lifecycle per session.
 type WorkerManager struct {
-	workers  map[string]context.CancelFunc
-	mu       sync.Mutex
-	broker   broker.MessageBroker
-	messages chat.MessageStore
-	sessions chat.SessionStore
-	agentURL string
+	workers           map[string]context.CancelFunc
+	mu                sync.Mutex
+	broker            broker.MessageBroker
+	messages          chat.MessageStore
+	sessions          chat.SessionStore
+	agentURL          string
+	agentRequestTimeout time.Duration
 }
 
-func newWorkerManager(broker broker.MessageBroker, messages chat.MessageStore, sessions chat.SessionStore, agentURL string) *WorkerManager {
+func newWorkerManager(broker broker.MessageBroker, messages chat.MessageStore, sessions chat.SessionStore, agentURL string, agentRequestTimeout time.Duration) *WorkerManager {
+	if agentRequestTimeout <= 0 {
+		agentRequestTimeout = 120 * time.Second
+	}
 	return &WorkerManager{
-		workers:  make(map[string]context.CancelFunc),
-		broker:   broker,
-		messages: messages,
-		sessions: sessions,
-		agentURL: agentURL,
+		workers:           make(map[string]context.CancelFunc),
+		broker:            broker,
+		messages:          messages,
+		sessions:          sessions,
+		agentURL:          agentURL,
+		agentRequestTimeout: agentRequestTimeout,
 	}
 }
 
@@ -61,7 +71,7 @@ func (wm *WorkerManager) StartWorker(sessionID string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	wm.workers[sessionID] = cancel
 
-	agentClient := client.NewHTTPClient(wm.agentURL)
+	agentClient := client.NewHTTPClient(wm.agentURL, wm.agentRequestTimeout)
 	w := worker.NewAgentWorker(wm.broker, wm.messages, wm.sessions, agentClient)
 
 	go func() {
@@ -99,22 +109,31 @@ func New(cfg config.Config) http.Handler {
 	var sessions chat.SessionStore
 	var messages chat.MessageStore
 	if db != nil {
-		sessions = session.NewMySQLStore(db)
-		messages = session.NewMySQLStore(db)
-		log.Println("[Chat] using mysql storage")
+		sessions = session.NewPostgresStore(db)
+		messages = session.NewPostgresStore(db)
+		log.Println("[Chat] using postgres storage")
 	} else {
 		sessions = session.NewSessionStore()
-		messages = session.NewMessageStore()
+		messages = session.NewMessageStore(cfg.MaxMessagesPerSession)
 		log.Println("[Chat] using memory storage")
 	}
 	brok := brokermemory.NewMessageBroker()
 
 	// Business logic layer
-	h := ws.NewWebSocketHub(sessions, messages, brok)
-	wm := newWorkerManager(brok, messages, sessions, cfg.AgentBaseURL)
+	h := ws.NewWebSocketHub(sessions, messages, brok, cfg.WebSocketReconnectHistoryLimit, cfg.WebSocketWriteTimeout)
+	wm := newWorkerManager(brok, messages, sessions, cfg.AgentBaseURL, cfg.AgentRequestTimeout)
 
 	// Personal assistant storage: MySQL when available, otherwise memory mock.
 	initPersonalAssistantService(db)
+
+	// Identity module: PostgreSQL when available, otherwise empty mock.
+	initIdentityService(db)
+
+	// Workspace module: MySQL when available, otherwise memory mock.
+	initWorkspaceService(db)
+
+	// Repository module: PostgreSQL when available, otherwise memory mock.
+	initRepositoryService(db, cfg.RepositoryRoot)
 
 	// Team skills / prompts: MySQL when available, otherwise memory mock.
 	initTeamService(db)
@@ -133,13 +152,7 @@ func New(cfg config.Config) http.Handler {
 	// Internal business modules
 	mux.HandleFunc("/api/v1/identity/users", identity.Users)
 	mux.HandleFunc("/api/v1/identity/users/me", identity.Me)
-	mux.HandleFunc("/api/v1/projects", project.Projects)
-	mux.HandleFunc("/api/v1/projects/{id}", project.ProjectByID)
-	mux.HandleFunc("/api/v1/repositories", project.Repositories)
-	mux.HandleFunc("/api/v1/repositories/{id}", project.RepositoryByID)
-	mux.HandleFunc("/api/v1/repositories/{id}/branches", project.RepositoryBranches)
-	mux.HandleFunc("/api/v1/repositories/{id}/tree", project.RepositoryTree)
-	mux.HandleFunc("/api/v1/repositories/{id}/content", project.RepositoryContent)
+	mux.HandleFunc("/api/v1/identity/login", identity.Login)
 	mux.HandleFunc("/api/v1/workitems", workitem.WorkItems)
 	mux.HandleFunc("/api/v1/workitems/{id}", workitem.WorkItemByID)
 	mux.HandleFunc("/api/v1/workitems/{id}/status", workitem.UpdateWorkItemStatus)
@@ -155,6 +168,20 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/personal-assistants/{id}/sessions/{sessionId}/messages", personalassistant.GetMessages)
 	mux.HandleFunc("/ws/v1/personal-assistant/{assistantId}/sessions/{sessionId}", personalassistant.WebSocket)
 
+	// Workspace module
+	mux.HandleFunc("/api/v1/workspaces", workspace.Workspaces)
+	mux.HandleFunc("/api/v1/workspaces/{id}", workspace.WorkspaceByID)
+	mux.HandleFunc("/api/v1/workspaces/{id}/members", workspace.Members)
+	mux.HandleFunc("/api/v1/workspaces/{id}/members/{userId}", workspace.MemberByID)
+	mux.HandleFunc("/api/v1/workspaces/{id}/workitem-project", workspace.WorkitemProject)
+	mux.HandleFunc("/api/v1/workspaces/{id}/agents", workspace.WorkspaceAgents)
+	mux.HandleFunc("/api/v1/workspaces/{id}/standards", workspace.WorkspaceStandards)
+	mux.HandleFunc("/api/v1/workspaces/{id}/standards/{standardId}", workspace.WorkspaceStandardByID)
+	mux.HandleFunc("/api/v1/workspaces/{id}/cicd", workspace.WorkspaceCICD)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories", repository.Repositories)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}", repository.RepositoryByID)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/sync", repository.SyncRepository)
+
 	// Team skills / prompts
 	mux.HandleFunc("/api/v1/team/skills", team.Skills)
 	mux.HandleFunc("/api/v1/team/skills/{id}", team.SkillByID)
@@ -166,7 +193,7 @@ func New(cfg config.Config) http.Handler {
 }
 
 func initDB(cfg config.Config) *sql.DB {
-	dsn := sdkmysql.DSN(sdkmysql.Config{
+	dsn := sdkpostgres.DSN(sdkpostgres.Config{
 		Host:     cfg.DBHost,
 		Port:     cfg.DBPort,
 		User:     cfg.DBUser,
@@ -174,18 +201,28 @@ func initDB(cfg config.Config) *sql.DB {
 		Database: cfg.DBName,
 	})
 
-	db, err := sdkmysql.OpenDB(dsn)
+	db, err := sdkpostgres.OpenDB(dsn)
 	if err != nil {
-		log.Printf("[DB] mysql connect failed (%v), fallback to memory", err)
+		log.Printf("[DB] postgres connect failed (%v), fallback to memory", err)
 		return nil
 	}
-	log.Printf("[DB] connected to mysql at %s:%s/%s", cfg.DBHost, cfg.DBPort, cfg.DBName)
+	log.Printf("[DB] connected to postgres at %s:%s/%s", cfg.DBHost, cfg.DBPort, cfg.DBName)
 	return db
+}
+
+func initIdentityService(db *sql.DB) {
+	if db != nil {
+		log.Println("[Identity] using postgres storage")
+		identity.Init(identityservice.NewDBUserService(db))
+		return
+	}
+	log.Println("[Identity] using empty memory mock")
+	identity.Init(identityservice.NewMockUserService())
 }
 
 func initPersonalAssistantService(db *sql.DB) {
 	if db != nil {
-		log.Println("[PersonalAssistant] using mysql storage")
+		log.Println("[PersonalAssistant] using postgres storage")
 		personalassistant.Init(paservice.NewDBPersonalAssistantService(db))
 		return
 	}
@@ -193,12 +230,32 @@ func initPersonalAssistantService(db *sql.DB) {
 	personalassistant.Init(paservice.NewMockPersonalAssistantService())
 }
 
+func initWorkspaceService(db *sql.DB) {
+	if db != nil {
+		log.Println("[Workspace] using postgres storage")
+		workspace.Init(workspaceservice.NewDBWorkspaceService(db))
+		return
+	}
+	log.Println("[Workspace] using memory mock")
+	workspace.Init(workspaceservice.NewMockWorkspaceService())
+}
+
 func initTeamService(db *sql.DB) {
 	if db != nil {
-		log.Println("[Team] using mysql storage")
+		log.Println("[Team] using postgres storage")
 		team.Init(teamservice.NewDBTeamService(db))
 		return
 	}
 	log.Println("[Team] using memory mock")
 	team.Init(teamservice.NewMockTeamService())
+}
+
+func initRepositoryService(db *sql.DB, root string) {
+	if db != nil {
+		log.Printf("[Repository] using postgres storage with git clone, root=%s", root)
+		repository.Init(repositoryservice.NewDBRepositoryService(db, root))
+		return
+	}
+	log.Println("[Repository] using memory mock")
+	repository.Init(repositoryservice.NewMockRepositoryService())
 }

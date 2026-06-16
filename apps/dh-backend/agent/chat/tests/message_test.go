@@ -7,12 +7,13 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat/session"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/constants"
 )
+
+const testMaxMessages = 1000
 
 func TestMessageStore_AppendAndGetHistory(t *testing.T) {
 	ctx := context.Background()
-	ms := session.NewMessageStore()
+	ms := session.NewMessageStore(testMaxMessages)
 	msg := chat.Message{ID: "msg-1", SessionID: "sess-1", Content: "hello"}
 
 	if err := ms.Append(ctx, "sess-1", msg); err != nil {
@@ -30,7 +31,7 @@ func TestMessageStore_AppendAndGetHistory(t *testing.T) {
 
 func TestMessageStore_GetHistory_Limit(t *testing.T) {
 	ctx := context.Background()
-	ms := session.NewMessageStore()
+	ms := session.NewMessageStore(testMaxMessages)
 	for i := 0; i < 5; i++ {
 		ms.Append(ctx, "sess-1", chat.Message{ID: fmt.Sprintf("msg-%d", i), SessionID: "sess-1"})
 	}
@@ -42,7 +43,7 @@ func TestMessageStore_GetHistory_Limit(t *testing.T) {
 
 func TestMessageStore_GetHistory_EmptySession(t *testing.T) {
 	ctx := context.Background()
-	ms := session.NewMessageStore()
+	ms := session.NewMessageStore(testMaxMessages)
 	history, err := ms.GetHistory(ctx, "unknown", 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -54,12 +55,12 @@ func TestMessageStore_GetHistory_EmptySession(t *testing.T) {
 
 func TestMessageStore_MaxMessages(t *testing.T) {
 	ctx := context.Background()
-	ms := session.NewMessageStore()
-	for i := 0; i < constants.MAX_MESSAGES_PER_SESSION+10; i++ {
+	ms := session.NewMessageStore(testMaxMessages)
+	for i := 0; i < testMaxMessages+10; i++ {
 		ms.Append(ctx, "sess-1", chat.Message{ID: fmt.Sprintf("msg-%d", i), SessionID: "sess-1"})
 	}
-	history, _ := ms.GetHistory(ctx, "sess-1", constants.MAX_MESSAGES_PER_SESSION+10)
-	if len(history) != constants.MAX_MESSAGES_PER_SESSION {
-		t.Errorf("expected %d messages, got %d", constants.MAX_MESSAGES_PER_SESSION, len(history))
+	history, _ := ms.GetHistory(ctx, "sess-1", testMaxMessages+10)
+	if len(history) != testMaxMessages {
+		t.Errorf("expected %d messages, got %d", testMaxMessages, len(history))
 	}
 }

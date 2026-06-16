@@ -16,7 +16,7 @@ func (m *mockWorkerStarter) StartWorker(sessionID string) {}
 
 func TestCreateSession_Success(t *testing.T) {
 	sessions := session.NewSessionStore()
-	messages := session.NewMessageStore()
+	messages := session.NewMessageStore(0)
 	h := NewSessionHandler(sessions, messages, &mockWorkerStarter{})
 
 	reqBody, _ := json.Marshal(map[string]any{
@@ -50,7 +50,7 @@ func TestCreateSession_Success(t *testing.T) {
 
 func TestCreateSession_InvalidBody(t *testing.T) {
 	sessions := session.NewSessionStore()
-	messages := session.NewMessageStore()
+	messages := session.NewMessageStore(0)
 	h := NewSessionHandler(sessions, messages, &mockWorkerStarter{})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewReader([]byte("not-json")))
@@ -65,7 +65,7 @@ func TestCreateSession_InvalidBody(t *testing.T) {
 
 func TestSessions_MethodNotAllowed(t *testing.T) {
 	sessions := session.NewSessionStore()
-	messages := session.NewMessageStore()
+	messages := session.NewMessageStore(0)
 	h := NewSessionHandler(sessions, messages, &mockWorkerStarter{})
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/sessions", nil)
