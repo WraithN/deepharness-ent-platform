@@ -49,7 +49,8 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { teamApi } from '@/lib/team-api';
 import { workspaceApi } from '@/lib/workspace-api';
-import type { WorkItemDTO, RepositoryDTO } from '@/lib/api-types';
+import { repositoryApi } from '@/lib/repository-api';
+import type { WorkItemDTO } from '@/lib/api-types';
 import type { Skill, Prompt, WorkspaceAgent } from '@/types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -848,7 +849,8 @@ export const Chat: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    api.get<RepositoryDTO[]>('/v1/repositories?type=dev')
+    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    repositoryApi.list(workspaceId)
       .then(repos => {
         if (cancelled) return;
         setAvailableRepos(repos.map(r => ({ id: r.id, name: r.name })));
