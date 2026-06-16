@@ -61,25 +61,18 @@ export interface UserDTO {
 // ── Project ──
 export type RepoType = "dev" | "test" | "case" | "product";
 
-export interface ProjectDTO {
-  id: string;
-  tenantId: string;
-  name: string;
-  gitUrl: string;
-  repoType: RepoType;
-  meegoKey: string;
-  createdAt: string;
-}
-
 export interface RepositoryDTO {
   id: string;
-  projectId: string;
+  workspaceId: string;
   name: string;
   url: string;
   type: RepoType;
-  defaultBranch: string;
-  previewUrl?: string;
-  branches?: string[];
+  defaultBranch?: string;
+  sshKey?: string;
+  localPath?: string;
+  cloneStatus: 'pending' | 'cloning' | 'cloned' | 'failed';
+  lastSyncAt?: string;
+  errorMessage?: string;
 }
 
 export interface BranchDTO {

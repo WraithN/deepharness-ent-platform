@@ -2,11 +2,10 @@ import { api } from './api';
 import type {
   Workspace,
   WorkspaceMember,
-  DemandProject,
+  WorkitemProject,
   WorkspaceStandard,
   WorkspaceCICD,
   WorkspaceAgent,
-  WorkspaceRepository,
 } from '@/types';
 
 export const workspaceApi = {
@@ -21,21 +20,12 @@ export const workspaceApi = {
   removeMember: (workspaceId: string, userId: string) =>
     api.delete<void>(`/v1/workspaces/${workspaceId}/members/${userId}`),
 
-  getDemandProject: (workspaceId: string) =>
-    api.get<DemandProject>(`/v1/workspaces/${workspaceId}/demand-project`),
-  setDemandProject: (workspaceId: string, req: Partial<DemandProject>) =>
-    api.post<DemandProject>(`/v1/workspaces/${workspaceId}/demand-project`, req),
+  getWorkitemProject: (workspaceId: string) =>
+    api.get<WorkitemProject>(`/v1/workspaces/${workspaceId}/workitem-project`),
+  setWorkitemProject: (workspaceId: string, req: Partial<WorkitemProject>) =>
+    api.post<WorkitemProject>(`/v1/workspaces/${workspaceId}/workitem-project`, req),
 
   listAgents: (workspaceId: string) => api.get<WorkspaceAgent[]>(`/v1/workspaces/${workspaceId}/agents`),
-
-  listRepositories: (workspaceId: string) =>
-    api.get<WorkspaceRepository[]>(`/v1/workspaces/${workspaceId}/repositories`),
-  createRepository: (
-    workspaceId: string,
-    req: { name: string; url: string; type: WorkspaceRepository['type']; defaultBranch?: string }
-  ) => api.post<WorkspaceRepository>(`/v1/workspaces/${workspaceId}/repositories`, req),
-  deleteRepository: (workspaceId: string, id: string) =>
-    api.delete<void>(`/v1/workspaces/${workspaceId}/repositories/${id}`),
 
   listStandards: (workspaceId: string, repositoryId?: string) =>
     api.get<WorkspaceStandard[]>(`/v1/workspaces/${workspaceId}/standards${repositoryId ? `?repositoryId=${repositoryId}` : ''}`),
