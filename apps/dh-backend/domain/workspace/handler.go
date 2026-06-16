@@ -2,12 +2,10 @@ package workspace
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
-	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/project"
 )
 
 var defaultService service.WorkspaceService
@@ -183,8 +181,8 @@ func MemberByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// DemandProject 处理 GET /api/v1/workspaces/{id}/demand-project 与 POST /api/v1/workspaces/{id}/demand-project。
-func DemandProject(w http.ResponseWriter, r *http.Request) {
+// WorkitemProject 处理 GET /api/v1/workspaces/{id}/workitem-project 与 POST /api/v1/workspaces/{id}/workitem-project。
+func WorkitemProject(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := pathValueOr404(w, r, "id")
 	if !ok {
 		return
@@ -192,15 +190,15 @@ func DemandProject(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		dp, err := defaultService.GetDemandProject(workspaceID)
+		wp, err := defaultService.GetWorkitemProject(workspaceID)
 		if err != nil {
-			handleServiceError(w, err, "demand project not found", "failed to get demand project")
+			handleServiceError(w, err, "workitem project not found", "failed to get workitem project")
 			return
 		}
 		setJSONHeader(w)
-		json.NewEncoder(w).Encode(dp)
+		json.NewEncoder(w).Encode(wp)
 	case http.MethodPost:
-		var req service.DemandProjectRequest
+		var req service.WorkitemProjectRequest
 		if !decodeJSONBody(w, r, &req) {
 			return
 		}
@@ -208,88 +206,13 @@ func DemandProject(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, 1, "platform and externalKey are required")
 			return
 		}
-		dp, err := defaultService.SetDemandProject(workspaceID, req)
+		wp, err := defaultService.SetWorkitemProject(workspaceID, req)
 		if err != nil {
-			handleServiceError(w, err, "workspace not found", "failed to set demand project")
+			handleServiceError(w, err, "workspace not found", "failed to set workitem project")
 			return
 		}
 		setJSONHeader(w)
-		json.NewEncoder(w).Encode(dp)
-	default:
-		writeJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
-	}
-}
-
-// WorkspaceRepositories 处理 GET /api/v1/workspaces/{id}/repositories 与 POST /api/v1/workspaces/{id}/repositories。
-func WorkspaceRepositories(w http.ResponseWriter, r *http.Request) {
-	workspaceID, ok := pathValueOr404(w, r, "id")
-	if !ok {
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		typeStr := r.URL.Query().Get("type")
-		var repoType project.RepoType
-		if typeStr != "" {
-			var err error
-			repoType, err = repoTypeFromString(typeStr)
-			if err != nil {
-				writeJSONError(w, http.StatusBadRequest, 1, "invalid repository type")
-				return
-			}
-		}
-		repos, err := defaultService.ListRepositories(workspaceID, repoType)
-		if err != nil {
-			handleServiceError(w, err, "workspace not found", "failed to list repositories")
-			return
-		}
-		setJSONHeader(w)
-		json.NewEncoder(w).Encode(repos)
-	case http.MethodPost:
-		var req service.RepositoryRequest
-		if !decodeJSONBody(w, r, &req) {
-			return
-		}
-		if req.Name == "" || req.URL == "" || req.Type == "" {
-			writeJSONError(w, http.StatusBadRequest, 1, "name, url and type are required")
-			return
-		}
-		if !isValidRepoType(req.Type) {
-			writeJSONError(w, http.StatusBadRequest, 1, "invalid repository type")
-			return
-		}
-		repo, err := defaultService.CreateRepository(workspaceID, req)
-		if err != nil {
-			handleServiceError(w, err, "workspace not found", "failed to create repository")
-			return
-		}
-		setJSONHeader(w)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(repo)
-	default:
-		writeJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
-	}
-}
-
-// RepositoryByID 处理 DELETE /api/v1/workspaces/{id}/repositories/{repoId}。
-func RepositoryByID(w http.ResponseWriter, r *http.Request) {
-	workspaceID, ok := pathValueOr404(w, r, "id")
-	if !ok {
-		return
-	}
-	repoID, ok := pathValueOr404(w, r, "repoId")
-	if !ok {
-		return
-	}
-
-	switch r.Method {
-	case http.MethodDelete:
-		if err := defaultService.DeleteRepository(workspaceID, repoID); err != nil {
-			handleServiceError(w, err, "repository not found", "failed to delete repository")
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
+		json.NewEncoder(w).Encode(wp)
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
 	}
@@ -428,32 +351,6 @@ func WorkspaceCICD(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(cicd)
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
-	}
-}
-
-// repoTypeFromString 将查询字符串转换为仓库类型，未知或空时返回错误。
-func repoTypeFromString(s string) (project.RepoType, error) {
-	switch s {
-	case "dev":
-		return project.RepoTypeDev, nil
-	case "test":
-		return project.RepoTypeTest, nil
-	case "case":
-		return project.RepoTypeCase, nil
-	case "product":
-		return project.RepoTypeProduct, nil
-	default:
-		return "", errors.New("invalid repository type")
-	}
-}
-
-// isValidRepoType 校验仓库类型是否合法。
-func isValidRepoType(t project.RepoType) bool {
-	switch t {
-	case project.RepoTypeDev, project.RepoTypeTest, project.RepoTypeCase, project.RepoTypeProduct:
-		return true
-	default:
-		return false
 	}
 }
 
