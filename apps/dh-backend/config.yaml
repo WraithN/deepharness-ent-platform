@@ -15,7 +15,6 @@ broker:
 
 agent:
   base_url: "http://localhost:19090"
-  orchestrator_url: "http://localhost:8084"
   request_timeout: "120s"
 
 websocket:

@@ -24,8 +24,7 @@ const (
 	DEFAULT_BROKER_TYPE = "memory"
 
 	// Agent defaults
-	DEFAULT_AGENT_BASE_URL       = "http://localhost:19090"
-	DEFAULT_ORCHESTRATOR_URL     = "http://localhost:8084"
+	DEFAULT_AGENT_BASE_URL        = "http://localhost:19090"
 	DEFAULT_AGENT_REQUEST_TIMEOUT = 120 * time.Second
 
 	// WebSocket defaults
@@ -51,9 +50,8 @@ type Config struct {
 	BrokerType       string
 	RedisURL         string
 	AgentBaseURL     string
-	SessionTimeout   time.Duration
-	OrchestratorURL  string
-	DBHost           string
+	SessionTimeout time.Duration
+	DBHost         string
 	DBPort           string
 	DBUser           string
 	DBPassword       string
@@ -86,9 +84,8 @@ type yamlConfig struct {
 		Type string `yaml:"type"`
 	} `yaml:"broker"`
 	Agent struct {
-		BaseURL         string `yaml:"base_url"`
-		OrchestratorURL string `yaml:"orchestrator_url"`
-		RequestTimeout  string `yaml:"request_timeout"`
+		BaseURL        string `yaml:"base_url"`
+		RequestTimeout string `yaml:"request_timeout"`
 	} `yaml:"agent"`
 	Websocket struct {
 		ReconnectHistoryLimit int    `yaml:"reconnect_history_limit"`
@@ -118,7 +115,6 @@ func Load() Config {
 		BrokerType:            DEFAULT_BROKER_TYPE,
 		AgentBaseURL:          DEFAULT_AGENT_BASE_URL,
 		SessionTimeout:        DEFAULT_SESSION_TIMEOUT,
-		OrchestratorURL:       DEFAULT_ORCHESTRATOR_URL,
 		DBHost:                DEFAULT_DB_HOST,
 		DBPort:                DEFAULT_DB_PORT,
 		DBUser:                DEFAULT_DB_USER,
@@ -142,7 +138,6 @@ func Load() Config {
 	}
 	cfg.AgentBaseURL = getEnv("AGENT_BASE_URL", cfg.AgentBaseURL)
 	cfg.SessionTimeout = getDurationEnv("SESSION_TIMEOUT", cfg.SessionTimeout)
-	cfg.OrchestratorURL = getEnv("ORCHESTRATOR_SERVICE_URL", cfg.OrchestratorURL)
 	cfg.DBHost = getEnv("DB_HOST", cfg.DBHost)
 	cfg.DBPort = getEnv("DB_PORT", cfg.DBPort)
 	cfg.DBUser = getEnv("DB_USER", cfg.DBUser)
@@ -194,9 +189,6 @@ func loadFromYAML(cfg Config) Config {
 	}
 	if yc.Agent.BaseURL != "" {
 		cfg.AgentBaseURL = yc.Agent.BaseURL
-	}
-	if yc.Agent.OrchestratorURL != "" {
-		cfg.OrchestratorURL = yc.Agent.OrchestratorURL
 	}
 	if yc.Agent.RequestTimeout != "" {
 		cfg.AgentRequestTimeout = parseDurationOrDefault(yc.Agent.RequestTimeout, cfg.AgentRequestTimeout)
