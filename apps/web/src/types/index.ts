@@ -86,7 +86,7 @@ export interface WorkspaceMember {
   joinedAt: string;
 }
 
-export interface DemandProject {
+export interface WorkitemProject {
   id: string;
   workspaceId: string;
   platform: string;
@@ -128,13 +128,16 @@ export interface WorkspaceAgent {
 export interface WorkspaceRepository {
   id: string;
   workspaceId: string;
-  projectId?: string;
   name: string;
   url: string;
   type: 'dev' | 'test' | 'case' | 'product';
   defaultBranch?: string;
-  previewUrl?: string;
-  branches?: string[];
+  sshKey?: string;
+  localPath?: string;
+  cloneStatus: 'pending' | 'cloning' | 'cloned' | 'failed';
+  lastSyncAt?: string;
+  errorMessage?: string;
+  config?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
