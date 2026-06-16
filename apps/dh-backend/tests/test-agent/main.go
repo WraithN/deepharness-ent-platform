@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	client := client.NewHTTPClient("http://localhost:19090")
+	client := client.NewHTTPClient("http://localhost:19090", 0)
 	session := chat.Session{ID: "test-session"}
 	msg := chat.Message{Content: "hello"}
 	

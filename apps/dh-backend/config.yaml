@@ -1,6 +1,5 @@
-# DeepHarness DH Backend 配置文件
-# 优先级：环境变量 > 本文件 > 代码默认值
-# 可通过 CONFIG_FILE 环境变量指定其他路径
+# DeepHarness Backend 运行时配置
+# 优先级：环境变量 > config.yaml > 代码默认值
 
 server:
   port: "8080"
@@ -9,6 +8,7 @@ session:
   store_type: "memory"
   message_store_type: "memory"
   timeout: "30m"
+  max_messages: 1000
 
 broker:
   type: "memory"
@@ -16,6 +16,11 @@ broker:
 agent:
   base_url: "http://localhost:19090"
   orchestrator_url: "http://localhost:8084"
+  request_timeout: "120s"
+
+websocket:
+  reconnect_history_limit: 50
+  write_timeout: "10s"
 
 database:
   host: "127.0.0.1"
@@ -28,5 +33,4 @@ redis:
   url: ""
 
 repository:
-  # Git 仓库本地克隆根目录，需保证运行用户有写权限
   root: "/var/deepharness/workspace"

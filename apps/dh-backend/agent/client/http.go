@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/constants"
 )
 
 // SSEEvent represents an event from the agent's SSE stream
@@ -25,15 +25,18 @@ type HTTPClient struct {
 	client  *http.Client
 }
 
-// NewHTTPClient creates a new HTTP agent client.
-func NewHTTPClient(baseURL string) *HTTPClient {
+// NewHTTPClient creates a new HTTP agent client. timeout 控制单次请求超时。
+func NewHTTPClient(baseURL string, timeout time.Duration) *HTTPClient {
 	if baseURL == "" {
 		baseURL = "http://localhost:9090"
+	}
+	if timeout <= 0 {
+		timeout = 120 * time.Second
 	}
 	return &HTTPClient{
 		baseURL: baseURL,
 		client: &http.Client{
-			Timeout: constants.AGENT_REQUEST_TIMEOUT,
+			Timeout: timeout,
 		},
 	}
 }
