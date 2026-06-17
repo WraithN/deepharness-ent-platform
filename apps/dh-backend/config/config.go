@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -40,6 +41,14 @@ const (
 
 	// Repository defaults
 	DEFAULT_REPOSITORY_ROOT = "/var/deepharness/workspace"
+
+	// Workitem external integration defaults
+	DEFAULT_WORKITEM_SYNC_INTERVAL     = 5 * time.Minute
+	DEFAULT_WORKITEM_SYNC_WORKERS      = 4
+	DEFAULT_WORKITEM_SYNC_TIMEOUT      = 30 * time.Second
+	DEFAULT_WORKITEM_WRITEBACK_ENABLED = true
+	DEFAULT_WORKITEM_WRITEBACK_WORKERS = 2
+	DEFAULT_WORKITEM_WRITEBACK_RETRY   = 3
 )
 
 // Config 保存后端运行时的所有可配置项。
@@ -67,6 +76,15 @@ type Config struct {
 
 	// Agent Client
 	AgentRequestTimeout time.Duration
+
+	// Workitem external integration
+	WorkitemPlatformWhitelist []string
+	WorkitemSyncInterval      time.Duration
+	WorkitemSyncWorkers       int
+	WorkitemSyncTimeout       time.Duration
+	WorkitemWritebackEnabled  bool
+	WorkitemWritebackWorkers  int
+	WorkitemWritebackRetry    int
 }
 
 // yamlConfig 与 config.yaml 的分层结构对应。
@@ -104,6 +122,19 @@ type yamlConfig struct {
 	Repository struct {
 		Root string `yaml:"root"`
 	} `yaml:"repository"`
+	Workitem struct {
+		Platforms []string `yaml:"platforms"`
+		Sync      struct {
+			Interval string `yaml:"interval"`
+			Workers  int    `yaml:"workers"`
+			Timeout  string `yaml:"timeout"`
+		} `yaml:"sync"`
+		Writeback struct {
+			Enabled bool `yaml:"enabled"`
+			Workers int  `yaml:"workers"`
+			Retry   int  `yaml:"retry"`
+		} `yaml:"writeback"`
+	} `yaml:"workitem"`
 }
 
 // Load 从 config.yaml 加载配置，并以环境变量为最高优先级覆盖。
@@ -124,7 +155,13 @@ func Load() Config {
 		MaxMessagesPerSession: DEFAULT_MAX_MESSAGES_PER_SESSION,
 		WebSocketReconnectHistoryLimit: DEFAULT_RECONNECT_HISTORY_LIMIT,
 		WebSocketWriteTimeout:          DEFAULT_WS_WRITE_TIMEOUT,
-		AgentRequestTimeout:   DEFAULT_AGENT_REQUEST_TIMEOUT,
+		AgentRequestTimeout:            DEFAULT_AGENT_REQUEST_TIMEOUT,
+		WorkitemSyncInterval:           DEFAULT_WORKITEM_SYNC_INTERVAL,
+		WorkitemSyncWorkers:            DEFAULT_WORKITEM_SYNC_WORKERS,
+		WorkitemSyncTimeout:            DEFAULT_WORKITEM_SYNC_TIMEOUT,
+		WorkitemWritebackEnabled:       DEFAULT_WORKITEM_WRITEBACK_ENABLED,
+		WorkitemWritebackWorkers:       DEFAULT_WORKITEM_WRITEBACK_WORKERS,
+		WorkitemWritebackRetry:         DEFAULT_WORKITEM_WRITEBACK_RETRY,
 	}
 
 	cfg = loadFromYAML(cfg)
@@ -148,6 +185,12 @@ func Load() Config {
 	cfg.WebSocketReconnectHistoryLimit = getIntEnv("RECONNECT_HISTORY_LIMIT", cfg.WebSocketReconnectHistoryLimit)
 	cfg.WebSocketWriteTimeout = getDurationEnv("WS_WRITE_TIMEOUT", cfg.WebSocketWriteTimeout)
 	cfg.AgentRequestTimeout = getDurationEnv("AGENT_REQUEST_TIMEOUT", cfg.AgentRequestTimeout)
+	cfg.WorkitemSyncInterval = getDurationEnv("WORKITEM_SYNC_INTERVAL", cfg.WorkitemSyncInterval)
+	cfg.WorkitemSyncWorkers = getIntEnv("WORKITEM_SYNC_WORKERS", cfg.WorkitemSyncWorkers)
+	cfg.WorkitemSyncTimeout = getDurationEnv("WORKITEM_SYNC_TIMEOUT", cfg.WorkitemSyncTimeout)
+	cfg.WorkitemWritebackEnabled = getBoolEnv("WORKITEM_WRITEBACK_ENABLED", cfg.WorkitemWritebackEnabled)
+	cfg.WorkitemWritebackWorkers = getIntEnv("WORKITEM_WRITEBACK_WORKERS", cfg.WorkitemWritebackWorkers)
+	cfg.WorkitemWritebackRetry = getIntEnv("WORKITEM_WRITEBACK_RETRY", cfg.WorkitemWritebackRetry)
 
 	return cfg
 }
@@ -220,6 +263,25 @@ func loadFromYAML(cfg Config) Config {
 	if yc.Repository.Root != "" {
 		cfg.RepositoryRoot = yc.Repository.Root
 	}
+	if len(yc.Workitem.Platforms) > 0 {
+		cfg.WorkitemPlatformWhitelist = yc.Workitem.Platforms
+	}
+	if yc.Workitem.Sync.Interval != "" {
+		cfg.WorkitemSyncInterval = parseDurationOrDefault(yc.Workitem.Sync.Interval, cfg.WorkitemSyncInterval)
+	}
+	if yc.Workitem.Sync.Workers > 0 {
+		cfg.WorkitemSyncWorkers = yc.Workitem.Sync.Workers
+	}
+	if yc.Workitem.Sync.Timeout != "" {
+		cfg.WorkitemSyncTimeout = parseDurationOrDefault(yc.Workitem.Sync.Timeout, cfg.WorkitemSyncTimeout)
+	}
+	cfg.WorkitemWritebackEnabled = yc.Workitem.Writeback.Enabled
+	if yc.Workitem.Writeback.Workers > 0 {
+		cfg.WorkitemWritebackWorkers = yc.Workitem.Writeback.Workers
+	}
+	if yc.Workitem.Writeback.Retry > 0 {
+		cfg.WorkitemWritebackRetry = yc.Workitem.Writeback.Retry
+	}
 
 	return cfg
 }
@@ -257,4 +319,19 @@ func getIntEnv(key string, defaultValue int) int {
 		return defaultValue
 	}
 	return n
+}
+
+func getBoolEnv(key string, defaultValue bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultValue
+	}
+	low := strings.ToLower(v)
+	if low == "true" || low == "1" || low == "yes" {
+		return true
+	}
+	if low == "false" || low == "0" || low == "no" {
+		return false
+	}
+	return defaultValue
 }
