@@ -48,7 +48,7 @@
 - Modify: `apps/dh-backend/config/config.go`
 - Modify: `apps/dh-backend/config.yaml`
 
-- [ ] **Step 1: Add defaults and config fields to `config.go`**
+- [x] **Step 1: Add defaults and config fields to `config.go`**
 
 Add the new constants after the existing `DEFAULT_REPOSITORY_ROOT` constant:
 
@@ -128,7 +128,7 @@ Add YAML loading in `loadFromYAML()` after the repository block:
 	}
 ```
 
-- [ ] **Step 2: Add `workitem` section to `config.yaml`**
+- [x] **Step 2: Add `workitem` section to `config.yaml`**
 
 Append at the end of `apps/dh-backend/config.yaml`:
 
@@ -147,7 +147,7 @@ workitem:
     retry: 3
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run:
 
@@ -157,7 +157,7 @@ cd /home/nan/deepharness-ent-platform/apps/dh-backend && go vet ./config/...
 
 Expected: no output (0 warnings).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/dh-backend/config/config.go apps/dh-backend/config.yaml
@@ -171,7 +171,7 @@ git commit -m "feat(workitem): add external integration global config"
 **Files:**
 - Modify: `packages/go-sdk/infrastructure/workitem-tracker/tracker.go`
 
-- [ ] **Step 1: Replace the entire file with the new design**
+- [x] **Step 1: Replace the entire file with the new design**
 
 ```go
 package workitemtracker
@@ -235,7 +235,7 @@ type MappingConfig struct {
 }
 ```
 
-- [ ] **Step 2: Verify**
+- [x] **Step 2: Verify**
 
 Run:
 
@@ -245,7 +245,7 @@ cd /home/nan/deepharness-ent-platform/packages/go-sdk && go vet ./infrastructure
 
 Expected: no output.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add packages/go-sdk/infrastructure/workitem-tracker/tracker.go
@@ -259,7 +259,7 @@ git commit -m "feat(workitem): redesign Tracker and Driver interfaces"
 **Files:**
 - Create: `packages/go-sdk/infrastructure/workitem-tracker/mapping.go`
 
-- [ ] **Step 1: Create mapping helpers**
+- [x] **Step 1: Create mapping helpers**
 
 ```go
 package workitemtracker
@@ -375,7 +375,7 @@ func tryUnmarshalArray(body []byte) ([]map[string]any, error) {
 }
 ```
 
-- [ ] **Step 2: Verify**
+- [x] **Step 2: Verify**
 
 Run:
 
@@ -385,7 +385,7 @@ cd /home/nan/deepharness-ent-platform/packages/go-sdk && go vet ./infrastructure
 
 Expected: no output.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add packages/go-sdk/infrastructure/workitem-tracker/mapping.go
@@ -399,7 +399,7 @@ git commit -m "feat(workitem): add field/value mapping helpers"
 **Files:**
 - Create: `packages/go-sdk/infrastructure/workitem-tracker/http_tracker.go`
 
-- [ ] **Step 1: Create HTTPTracker**
+- [x] **Step 1: Create HTTPTracker**
 
 ```go
 package workitemtracker
@@ -534,7 +534,7 @@ func (e *ExternalError) Error() string {
 }
 ```
 
-- [ ] **Step 2: Verify**
+- [x] **Step 2: Verify**
 
 Run:
 
@@ -544,7 +544,7 @@ cd /home/nan/deepharness-ent-platform/packages/go-sdk && go vet ./infrastructure
 
 Expected: no output.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add packages/go-sdk/infrastructure/workitem-tracker/http_tracker.go

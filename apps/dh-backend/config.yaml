@@ -33,3 +33,16 @@ redis:
 
 repository:
   root: "/var/deepharness/workspace"
+
+workitem:
+  platforms:
+    - meego
+    - jira
+  sync:
+    interval: "5m"
+    workers: 4
+    timeout: "30s"
+  writeback:
+    enabled: true
+    workers: 2
+    retry: 3
