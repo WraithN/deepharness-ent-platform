@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useExternalStoreRuntime, type ThreadMessageLike, type AssistantRuntime } from '@assistant-ui/react';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, type ApiResponse } from '@/lib/api';
 import type { ChatMsg, ChatPart } from '@/components/chat/types';
 
 const RUNNING_IDLE_TIMEOUT_MS = 3000;
@@ -37,6 +38,37 @@ function convertMessage(msg: ChatMsg): ThreadMessageLike {
   };
 }
 
+function mergePartIntoMessage(msg: ChatMsg, partId: string | undefined, newPart: ChatPart): ChatMsg {
+  const partIndex = msg.parts.findIndex(p => p.metadata?.agentPartID === partId);
+  const newParts = partIndex >= 0
+    ? msg.parts.map((p, idx) => idx === partIndex ? { ...p, ...newPart } : p)
+    : [...msg.parts, newPart];
+  return { ...msg, parts: newParts };
+}
+
+function updateAssistantMessage(messages: ChatMsg[], messageID: string | undefined, partId: string | undefined, newPart: ChatPart): ChatMsg[] {
+  if (messageID) {
+    const existingIndex = messages.findIndex(m => m.messageID === messageID && m.role === 'assistant');
+    if (existingIndex >= 0) {
+      const next = [...messages];
+      next[existingIndex] = mergePartIntoMessage(next[existingIndex], partId, newPart);
+      return next;
+    }
+  }
+  const lastIndex = messages.length - 1;
+  if (lastIndex >= 0 && messages[lastIndex].role === 'assistant' && !messages[lastIndex].messageID) {
+    const next = [...messages];
+    next[lastIndex] = mergePartIntoMessage(next[lastIndex], partId, newPart);
+    return next;
+  }
+  return [...messages, {
+    id: newPart.id,
+    role: 'assistant',
+    parts: [newPart],
+    messageID,
+  }];
+}
+
 interface UseChatRuntimeOptions {
   selectedAgentId?: string;
 }
@@ -59,6 +91,8 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
   const [isRunning, setIsRunning] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const runningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didCreateSessionRef = useRef(false);
+  const pendingSendRef = useRef<{ text: string; context: SendContext } | null>(null);
 
   const markRunning = useCallback(() => {
     setIsRunning(true);
@@ -70,6 +104,10 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
 
   const switchSession = useCallback((nextSessionId: string | null) => {
     setMessages([]);
+    if (nextSessionId === null) {
+      // 允许重新创建新会话
+      didCreateSessionRef.current = false;
+    }
     setSessionId(nextSessionId);
   }, []);
 
@@ -92,8 +130,10 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
         event: 'message',
         payload: { type: 'text', content: userMsg.parts[0]?.content || '' },
       }));
+      pendingSendRef.current = null;
     } else {
-      toast.error('WebSocket 未连接，请刷新页面重试');
+      pendingSendRef.current = { text, context };
+      toast.info('正在连接会话，连接成功后自动发送');
     }
   }, [markRunning]);
 
@@ -112,12 +152,23 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
       wsRef.current = ws;
 
       ws.onopen = () => {
+        if (wsRef.current !== ws) return;
         console.log('[Chat] WebSocket connected');
         reconnectAttempts = 0;
         setWsConnected(true);
+
+        const pending = pendingSendRef.current;
+        if (pending && wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            event: 'message',
+            payload: { type: 'text', content: pending.text || '请帮我处理这个引用的内容' },
+          }));
+          pendingSendRef.current = null;
+        }
       };
 
       ws.onmessage = (event) => {
+        if (wsRef.current !== ws) return;
         try {
           const data = JSON.parse(event.data);
           console.log('[Chat] WS message received:', data);
@@ -136,50 +187,22 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
             const fullMetadata = msg.Metadata || msg.metadata || {};
 
             if (msgRole === 'user') {
-              setMessages(prev => [...prev, {
-                id: msgId,
-                role: 'user',
-                parts: [{ id: msgId, type: msgType, content: msgContent, artifact, metadata: fullMetadata }],
-                messageID,
-              }]);
+              flushSync(() => {
+                setMessages(prev => [...prev, {
+                  id: msgId,
+                  role: 'user',
+                  parts: [{ id: msgId, type: msgType, content: msgContent, artifact, metadata: fullMetadata }],
+                  messageID,
+                }]);
+              });
               return;
             }
 
             markRunning();
 
-            setMessages(prev => {
-              if (messageID) {
-                const existingIndex = prev.findIndex(m => m.messageID === messageID && m.role === 'assistant');
-                if (existingIndex >= 0) {
-                  const next = [...prev];
-                  const existingParts = next[existingIndex].parts;
-                  const partIndex = existingParts.findIndex(p => p.metadata?.agentPartID === partId);
-                  if (partIndex >= 0) {
-                    existingParts[partIndex] = { ...existingParts[partIndex], content: msgContent, artifact, metadata: fullMetadata };
-                  } else {
-                    existingParts.push({ id: msgId, type: msgType, content: msgContent, artifact, metadata: fullMetadata });
-                  }
-                  return next;
-                }
-              }
-              const lastIndex = prev.length - 1;
-              if (lastIndex >= 0 && prev[lastIndex].role === 'assistant' && !prev[lastIndex].messageID) {
-                const next = [...prev];
-                const existingParts = next[lastIndex].parts;
-                const partIndex = existingParts.findIndex(p => p.metadata?.agentPartID === partId);
-                if (partIndex >= 0) {
-                  existingParts[partIndex] = { ...existingParts[partIndex], content: msgContent, artifact, metadata: fullMetadata };
-                } else {
-                  existingParts.push({ id: msgId, type: msgType, content: msgContent, artifact, metadata: fullMetadata });
-                }
-                return next;
-              }
-              return [...prev, {
-                id: msgId,
-                role: 'assistant',
-                parts: [{ id: msgId, type: msgType, content: msgContent, artifact, metadata: fullMetadata }],
-                messageID,
-              }];
+            const newPart: ChatPart = { id: msgId, type: msgType, content: msgContent, artifact, metadata: fullMetadata };
+            flushSync(() => {
+              setMessages(prev => updateAssistantMessage(prev, messageID, partId, newPart));
             });
           } else if (evType === 'error') {
             const errPayload = data.Error || data.error;
@@ -192,6 +215,7 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
       };
 
       ws.onclose = (event) => {
+        if (wsRef.current !== ws) return;
         console.log('[Chat] WebSocket closed. Code:', event.code, 'Reason:', event.reason);
         setWsConnected(false);
         wsRef.current = null;
@@ -204,14 +228,18 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
       };
 
       ws.onerror = (err) => {
+        if (wsRef.current !== ws) return;
         console.error('[Chat] WebSocket error:', err);
         setWsConnected(false);
       };
     }
 
     if (!sessionId) {
+      if (didCreateSessionRef.current) return;
+      didCreateSessionRef.current = true;
+
       const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
-      api.post<{ data: { sessionId: string; wsUrl: string } }>('/v1/sessions', {
+      api.post<ApiResponse<{ sessionId: string; wsUrl: string }>>('/v1/sessions', {
         workspaceId,
         agentId: selectedAgentId || 'agent-default',
         agentType: 'opencode',
@@ -221,7 +249,7 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
         .then(res => {
           if (cancelled) return;
           const sid = res.data.sessionId;
-          console.log('[Chat] Session created:', sid);
+          console.log('[Chat] Session created:', sid, res);
           setSessionId(sid);
         })
         .catch(err => {
@@ -242,7 +270,7 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, selectedAgentId]);
+  }, [sessionId]);
 
   const runtime = useExternalStoreRuntime<ChatMsg>({
     messages,

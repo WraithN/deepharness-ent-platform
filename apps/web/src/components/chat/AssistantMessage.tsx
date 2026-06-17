@@ -1,9 +1,7 @@
 import React from 'react';
 import { Bot, Box, FileCode2, ListTodo, CheckCircle2, Wrench, X } from 'lucide-react';
 import type { MessageState, TextMessagePart, ReasoningMessagePart, DataMessagePart } from '@assistant-ui/react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { ChatCodeBlock } from './ChatCodeBlock';
+import { MarkdownView } from './MarkdownView';
 import { ThinkingPart } from './ThinkingPart';
 import { DiffView } from './DiffView';
 import { TaskListView, type TaskItemData } from './TaskListView';
@@ -56,30 +54,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
               if (!textPart.text) return null;
               return (
                 <div key={idx} className="px-4 py-3 text-sm">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      code({ inline, className, children, ...props }: any) {
-                        const match = /language-(\w+)/.exec(className || '');
-                        const codeString = String(children).replace(/\n$/, '');
-                        if (!inline && match) {
-                          return <ChatCodeBlock code={codeString} language={match[1]} />;
-                        }
-                        return <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono" {...props}>{children}</code>;
-                      },
-                      table({ children }: any) {
-                        return <table className="border-collapse border border-border/50 text-xs my-2">{children}</table>;
-                      },
-                      th({ children }: any) {
-                        return <th className="border border-border/50 px-2 py-1 bg-muted/50 font-medium">{children}</th>;
-                      },
-                      td({ children }: any) {
-                        return <td className="border border-border/50 px-2 py-1">{children}</td>;
-                      },
-                    }}
-                  >
-                    {textPart.text}
-                  </ReactMarkdown>
+                  <MarkdownView content={textPart.text} />
                 </div>
               );
             }
@@ -123,7 +98,11 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
                       {isFailed ? <X className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
                       <span className="font-medium">{isFailed ? '工具执行失败' : '工具执行结果'}</span>
                     </div>
-                    {original.content && <pre className={`mt-1 text-xs overflow-x-auto ${isFailed ? 'text-red-700 dark:text-red-300' : 'text-foreground'}`}>{original.content}</pre>}
+                    {original.content && (
+                      <div className={`mt-1 ${isFailed ? 'text-red-700 dark:text-red-300' : 'text-foreground'}`}>
+                        <MarkdownView content={original.content} />
+                      </div>
+                    )}
                   </div>
                 );
               }

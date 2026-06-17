@@ -1,5 +1,5 @@
-import React from 'react';
-import { FileCode2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { FileCode2, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface DiffLine {
   type: 'context' | 'del' | 'add';
@@ -61,12 +61,19 @@ function highlightLine(line: string): React.ReactNode {
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
+const MAX_LINE_CHARS = 80;
+const COLLAPSED_LINES = 6;
+
 interface DiffViewProps {
   content: string;
 }
 
 export const DiffView: React.FC<DiffViewProps> = ({ content }) => {
+  const [expanded, setExpanded] = useState(false);
   const lines = parseDiffV2(content);
+  const displayLines = expanded ? lines : lines.slice(0, COLLAPSED_LINES);
+  const addCount = lines.filter(l => l.type === 'add').length;
+  const delCount = lines.filter(l => l.type === 'del').length;
 
   return (
     <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700 font-mono text-[13px] leading-relaxed my-1">
@@ -74,12 +81,15 @@ export const DiffView: React.FC<DiffViewProps> = ({ content }) => {
         <div className="flex items-center gap-2">
           <FileCode2 className="h-4 w-4" />
           <span>文件变更</span>
+          <span className="text-xs text-muted-foreground font-normal">
+            +{addCount} -{delCount}，共 {lines.length} 行
+          </span>
         </div>
       </div>
-      <div className="overflow-x-auto max-h-[360px]">
-        <table className="w-full border-collapse min-w-[600px]">
+      <div className={`relative overflow-auto ${expanded ? 'max-h-[360px]' : 'max-h-[180px]'}`}>
+        <table className="w-full border-collapse table-fixed">
           <tbody>
-            {lines.map((line, i) => (
+            {displayLines.map((line, i) => (
               <tr
                 key={i}
                 className={`transition-colors hover:brightness-[0.97] ${
@@ -88,20 +98,20 @@ export const DiffView: React.FC<DiffViewProps> = ({ content }) => {
                   'bg-transparent'
                 }`}
               >
-                <td className="w-10 text-right pr-2 text-gray-400 text-xs select-none py-[2px]">
+                <td className="w-12 text-right pr-2 text-gray-400 text-xs select-none py-[2px]">
                   {line.oldNum || ''}
                 </td>
-                <td className={`w-1/2 py-[2px] px-2 whitespace-pre border-l-[3px] ${
+                <td className={`w-[80ch] min-w-[80ch] py-[2px] px-2 whitespace-pre-wrap border-l-[3px] align-top ${
                   line.type === 'del'
                     ? 'border-l-red-400 text-red-700 dark:text-red-300'
                     : 'border-l-transparent text-gray-700 dark:text-gray-300'
                 }`}>
                   {line.type !== 'add' ? highlightLine(line.content) : ''}
                 </td>
-                <td className="w-10 text-right pr-2 text-gray-400 text-xs select-none py-[2px]">
+                <td className="w-12 text-right pr-2 text-gray-400 text-xs select-none py-[2px]">
                   {line.newNum || ''}
                 </td>
-                <td className={`w-1/2 py-[2px] px-2 whitespace-pre border-l-[3px] ${
+                <td className={`w-[80ch] min-w-[80ch] py-[2px] px-2 whitespace-pre-wrap border-l-[3px] align-top ${
                   line.type === 'add'
                     ? 'border-l-green-400 text-green-700 dark:text-green-300'
                     : 'border-l-transparent text-gray-700 dark:text-gray-300'
@@ -112,7 +122,26 @@ export const DiffView: React.FC<DiffViewProps> = ({ content }) => {
             ))}
           </tbody>
         </table>
+        {!expanded && lines.length > COLLAPSED_LINES && (
+          <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-background to-transparent pointer-events-none" />
+        )}
       </div>
+      {lines.length > COLLAPSED_LINES && (
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="w-full flex items-center justify-center gap-1 py-1.5 text-xs text-muted-foreground hover:bg-accent transition-colors"
+        >
+          {expanded ? (
+            <>
+              收起 <ChevronUp className="h-3.5 w-3.5" />
+            </>
+          ) : (
+            <>
+              展开全部 {lines.length} 行 <ChevronDown className="h-3.5 w-3.5" />
+            </>
+          )}
+        </button>
+      )}
     </div>
   );
 };
