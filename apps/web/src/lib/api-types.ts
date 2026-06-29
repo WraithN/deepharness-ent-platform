@@ -46,6 +46,62 @@ export interface WorkItemDTO {
   steps?: string[];
 }
 
+// ── Repository Scan & Details ──
+export interface ScannedRepositoryDTO {
+  name: string;
+  path: string;
+  url: string;
+  currentBranch: string;
+  lastCommit: string;
+  lastCommitMessage: string;
+  lastCommitTime?: string;
+  isCloned: boolean;
+}
+
+export interface CommitStatsDTO {
+  totalCommits: number;
+  lastWeek: number;
+  lastMonth: number;
+  lastCommit?: string;
+  firstCommit?: string;
+}
+
+export interface BranchInfoDTO {
+	name: string;
+	isCurrent: boolean;
+	isRemote: boolean;
+	lastCommit: string;
+	lastCommitTime?: string;
+	ahead: number;
+	behind: number;
+}
+
+export interface FileNodeDTO {
+  name: string;
+  path: string;
+  type: 'file' | 'folder';
+  children?: FileNodeDTO[];
+}
+
+export interface FileContentDTO {
+  path: string;
+  name: string;
+  content: string;
+  language: string;
+  encoding: string;
+  size: number;
+}
+
+export interface RepositoryDetailsDTO {
+  repository: RepositoryDTO;
+  commitStats: CommitStatsDTO;
+  branches: BranchInfoDTO[];
+  contributors: string[];
+  fileCount: number;
+  sizeBytes: number;
+  language: string;
+}
+
 // ── User ──
 export type UserRole = "superadmin" | "admin" | "user";
 

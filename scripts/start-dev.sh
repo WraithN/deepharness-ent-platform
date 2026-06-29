@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # DeepHarness Platform - Development Startup Script
-# Starts: Agent Mock → DH Backend → Frontend Web App
+# Starts: DH Backend → Frontend Web App
 
 set -e
 
@@ -13,12 +13,10 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Ports
-AGENT_MOCK_PORT="${AGENT_MOCK_PORT:-19090}"
 DH_BACKEND_PORT="${DH_BACKEND_PORT:-8080}"
-FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+FRONTEND_PORT="${FRONTEND_PORT:-8888}"
 
 # Base URLs
-AGENT_BASE_URL="http://localhost:${AGENT_MOCK_PORT}"
 API_BASE_URL="http://localhost:${DH_BACKEND_PORT}"
 
 # PIDs
@@ -94,50 +92,15 @@ kill_port() {
     fi
 }
 
-# Build services if needed
 build_services() {
     log_info "Building services..."
 
-    # Build agent mock
-    if [ ! -f "apps/agent-runtime/mock/dist/mock" ] || [ "apps/agent-runtime/mock/main.go" -nt "apps/agent-runtime/mock/dist/mock" ]; then
-        log_info "Building mock..."
-        cd apps/agent-runtime/mock
-        go build -o dist/mock .
-        cd ../..
-        log_success "mock built"
-    fi
-
-    # Build dh-backend
     if [ ! -f "apps/dh-backend/dist/dh-backend" ] || [ "apps/dh-backend/main.go" -nt "apps/dh-backend/dist/dh-backend" ]; then
         log_info "Building dh-backend..."
         cd apps/dh-backend
         go build -o dist/dh-backend .
         cd ../..
         log_success "dh-backend built"
-    fi
-}
-
-# Start Agent Mock
-start_agent_mock() {
-    log_info "Starting Agent Mock Service on port $AGENT_MOCK_PORT..."
-
-    if check_port "$AGENT_MOCK_PORT"; then
-        log_warn "Port $AGENT_MOCK_PORT is in use, killing existing process..."
-        kill_port "$AGENT_MOCK_PORT"
-    fi
-
-    cd apps/agent-runtime/mock
-    PORT=$AGENT_MOCK_PORT ./dist/mock > /tmp/agent-mock.log 2>&1 &
-    local pid=$!
-    PIDS+=("$pid")
-    cd ../..
-
-    if wait_for_service "http://localhost:${AGENT_MOCK_PORT}/health" "Agent Mock"; then
-        log_success "Agent Mock running (PID: $pid, log: /tmp/agent-mock.log)"
-    else
-        log_error "Agent Mock failed to start"
-        cat /tmp/agent-mock.log
-        exit 1
     fi
 }
 
@@ -151,7 +114,7 @@ start_dh_backend() {
     fi
 
     cd apps/dh-backend
-    AGENT_BASE_URL=$AGENT_BASE_URL PORT=$DH_BACKEND_PORT ./dist/dh-backend > /tmp/dh-backend.log 2>&1 &
+    PORT=$DH_BACKEND_PORT ./dist/dh-backend > /tmp/dh-backend.log 2>&1 &
     local pid=$!
     PIDS+=("$pid")
     cd ../..
@@ -221,11 +184,8 @@ main() {
         exit 1
     fi
 
-    # Build services
     build_services
 
-    # Start services in order
-    start_agent_mock
     start_dh_backend
     start_frontend
 
@@ -235,12 +195,10 @@ main() {
     echo -e "${BLUE}Service URLs:${NC}"
     echo -e "  Frontend:     ${GREEN}http://localhost:${FRONTEND_PORT}${NC}"
     echo -e "  DH Backend:   ${GREEN}http://localhost:${DH_BACKEND_PORT}${NC}"
-    echo -e "  Agent Mock:   ${GREEN}http://localhost:${AGENT_MOCK_PORT}${NC}"
     echo ""
     echo -e "${BLUE}Logs:${NC}"
     echo -e "  Frontend:     /tmp/frontend.log"
     echo -e "  DH Backend:   /tmp/dh-backend.log"
-    echo -e "  Agent Mock:   /tmp/agent-mock.log"
     echo ""
     echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}"
     echo ""

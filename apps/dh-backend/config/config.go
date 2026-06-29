@@ -24,9 +24,12 @@ const (
 	// Broker defaults
 	DEFAULT_BROKER_TYPE = "memory"
 
-	// Agent defaults
-	DEFAULT_AGENT_BASE_URL        = "http://localhost:19090"
-	DEFAULT_AGENT_REQUEST_TIMEOUT = 120 * time.Second
+	// Gatewayd defaults
+	DEFAULT_GATEWAYD_ADMIN_URL = "http://127.0.0.1:2346"
+	DEFAULT_GATEWAYD_AGENT_ID  = "claude-code"
+
+	// AG-UI defaults
+	DEFAULT_AGUI_WORKSPACE = "/home/nan/deepharness-ent-platform"
 
 	// WebSocket defaults
 	DEFAULT_RECONNECT_HISTORY_LIMIT = 50
@@ -40,7 +43,7 @@ const (
 	DEFAULT_DB_NAME     = "deepharness"
 
 	// Repository defaults
-	DEFAULT_REPOSITORY_ROOT = "/var/deepharness/workspace"
+	DEFAULT_REPOSITORY_ROOT = "/home/nan/test"
 
 	// Workitem external integration defaults
 	DEFAULT_WORKITEM_SYNC_INTERVAL     = 5 * time.Minute
@@ -58,7 +61,9 @@ type Config struct {
 	MessageStoreType string
 	BrokerType       string
 	RedisURL         string
-	AgentBaseURL     string
+	GatewaydAdminURL string
+	GatewaydAgentID  string
+	AGUIWorkspace    string
 	SessionTimeout time.Duration
 	DBHost         string
 	DBPort           string
@@ -73,9 +78,6 @@ type Config struct {
 	// WebSocket
 	WebSocketReconnectHistoryLimit int
 	WebSocketWriteTimeout          time.Duration
-
-	// Agent Client
-	AgentRequestTimeout time.Duration
 
 	// Workitem external integration
 	WorkitemPlatformWhitelist []string
@@ -101,10 +103,13 @@ type yamlConfig struct {
 	Broker struct {
 		Type string `yaml:"type"`
 	} `yaml:"broker"`
-	Agent struct {
-		BaseURL        string `yaml:"base_url"`
-		RequestTimeout string `yaml:"request_timeout"`
-	} `yaml:"agent"`
+	Gatewayd struct {
+		AdminURL string `yaml:"admin_url"`
+		AgentID  string `yaml:"agent_id"`
+	} `yaml:"gatewayd"`
+	AGUI struct {
+		Workspace string `yaml:"workspace"`
+	} `yaml:"agui"`
 	Websocket struct {
 		ReconnectHistoryLimit int    `yaml:"reconnect_history_limit"`
 		WriteTimeout          string `yaml:"write_timeout"`
@@ -144,7 +149,9 @@ func Load() Config {
 		SessionStoreType:      DEFAULT_SESSION_STORE,
 		MessageStoreType:      DEFAULT_MESSAGE_STORE,
 		BrokerType:            DEFAULT_BROKER_TYPE,
-		AgentBaseURL:          DEFAULT_AGENT_BASE_URL,
+		GatewaydAdminURL:      DEFAULT_GATEWAYD_ADMIN_URL,
+		GatewaydAgentID:       DEFAULT_GATEWAYD_AGENT_ID,
+		AGUIWorkspace:         DEFAULT_AGUI_WORKSPACE,
 		SessionTimeout:        DEFAULT_SESSION_TIMEOUT,
 		DBHost:                DEFAULT_DB_HOST,
 		DBPort:                DEFAULT_DB_PORT,
@@ -155,7 +162,6 @@ func Load() Config {
 		MaxMessagesPerSession: DEFAULT_MAX_MESSAGES_PER_SESSION,
 		WebSocketReconnectHistoryLimit: DEFAULT_RECONNECT_HISTORY_LIMIT,
 		WebSocketWriteTimeout:          DEFAULT_WS_WRITE_TIMEOUT,
-		AgentRequestTimeout:            DEFAULT_AGENT_REQUEST_TIMEOUT,
 		WorkitemSyncInterval:           DEFAULT_WORKITEM_SYNC_INTERVAL,
 		WorkitemSyncWorkers:            DEFAULT_WORKITEM_SYNC_WORKERS,
 		WorkitemSyncTimeout:            DEFAULT_WORKITEM_SYNC_TIMEOUT,
@@ -173,7 +179,9 @@ func Load() Config {
 	if v := os.Getenv("REDIS_URL"); v != "" {
 		cfg.RedisURL = v
 	}
-	cfg.AgentBaseURL = getEnv("AGENT_BASE_URL", cfg.AgentBaseURL)
+	cfg.GatewaydAdminURL = getEnv("GATEWAYD_ADMIN_URL", cfg.GatewaydAdminURL)
+	cfg.GatewaydAgentID = getEnv("GATEWAYD_AGENT_ID", cfg.GatewaydAgentID)
+	cfg.AGUIWorkspace = getEnv("AGUI_WORKSPACE", cfg.AGUIWorkspace)
 	cfg.SessionTimeout = getDurationEnv("SESSION_TIMEOUT", cfg.SessionTimeout)
 	cfg.DBHost = getEnv("DB_HOST", cfg.DBHost)
 	cfg.DBPort = getEnv("DB_PORT", cfg.DBPort)
@@ -184,7 +192,6 @@ func Load() Config {
 	cfg.MaxMessagesPerSession = getIntEnv("MAX_MESSAGES_PER_SESSION", cfg.MaxMessagesPerSession)
 	cfg.WebSocketReconnectHistoryLimit = getIntEnv("RECONNECT_HISTORY_LIMIT", cfg.WebSocketReconnectHistoryLimit)
 	cfg.WebSocketWriteTimeout = getDurationEnv("WS_WRITE_TIMEOUT", cfg.WebSocketWriteTimeout)
-	cfg.AgentRequestTimeout = getDurationEnv("AGENT_REQUEST_TIMEOUT", cfg.AgentRequestTimeout)
 	cfg.WorkitemSyncInterval = getDurationEnv("WORKITEM_SYNC_INTERVAL", cfg.WorkitemSyncInterval)
 	cfg.WorkitemSyncWorkers = getIntEnv("WORKITEM_SYNC_WORKERS", cfg.WorkitemSyncWorkers)
 	cfg.WorkitemSyncTimeout = getDurationEnv("WORKITEM_SYNC_TIMEOUT", cfg.WorkitemSyncTimeout)
@@ -230,11 +237,14 @@ func loadFromYAML(cfg Config) Config {
 	if yc.Broker.Type != "" {
 		cfg.BrokerType = yc.Broker.Type
 	}
-	if yc.Agent.BaseURL != "" {
-		cfg.AgentBaseURL = yc.Agent.BaseURL
+	if yc.Gatewayd.AdminURL != "" {
+		cfg.GatewaydAdminURL = yc.Gatewayd.AdminURL
 	}
-	if yc.Agent.RequestTimeout != "" {
-		cfg.AgentRequestTimeout = parseDurationOrDefault(yc.Agent.RequestTimeout, cfg.AgentRequestTimeout)
+	if yc.Gatewayd.AgentID != "" {
+		cfg.GatewaydAgentID = yc.Gatewayd.AgentID
+	}
+	if yc.AGUI.Workspace != "" {
+		cfg.AGUIWorkspace = yc.AGUI.Workspace
 	}
 	if yc.Websocket.ReconnectHistoryLimit > 0 {
 		cfg.WebSocketReconnectHistoryLimit = yc.Websocket.ReconnectHistoryLimit

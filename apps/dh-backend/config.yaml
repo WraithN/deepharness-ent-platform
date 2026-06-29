@@ -13,9 +13,12 @@ session:
 broker:
   type: "memory"
 
-agent:
-  base_url: "http://localhost:19090"
-  request_timeout: "120s"
+gatewayd:
+  admin_url: "http://127.0.0.1:2346"
+  agent_id: "claude-code"
+
+agui:
+  workspace: "/home/nan/deepharness-ent-platform"
 
 websocket:
   reconnect_history_limit: 50
@@ -32,7 +35,7 @@ redis:
   url: ""
 
 repository:
-  root: "/var/deepharness/workspace"
+  root: "/home/nan/test"
 
 workitem:
   platforms:

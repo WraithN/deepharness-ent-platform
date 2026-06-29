@@ -18,11 +18,11 @@ type AgentWorker struct {
 	broker      broker.MessageBroker
 	messages    chat.MessageStore
 	sessions    chat.SessionStore
-	agentClient *client.HTTPClient
+	agentClient client.Client
 }
 
 // NewAgentWorker creates a new agent worker.
-func NewAgentWorker(broker broker.MessageBroker, messages chat.MessageStore, sessions chat.SessionStore, agentClient *client.HTTPClient) *AgentWorker {
+func NewAgentWorker(broker broker.MessageBroker, messages chat.MessageStore, sessions chat.SessionStore, agentClient client.Client) *AgentWorker {
 	return &AgentWorker{
 		broker:      broker,
 		messages:    messages,

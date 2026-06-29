@@ -3,12 +3,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Folder, File, ChevronRight, ChevronDown, GitBranch, Code2, Book, Search, X, Share2, FileText, Activity, FileCode, Eye, ShieldCheck, Sparkles, RefreshCw, Loader2, Braces, Globe, Palette, Terminal, Settings, Image, FileJson, FileType, FileCode2, Database } from 'lucide-react';
+import { Folder, File, ChevronRight, ChevronDown, GitBranch, Code2, Book, Search, X, Share2, FileText, Activity, FileCode, Eye, ShieldCheck, Sparkles, RefreshCw, Loader2, Braces, Globe, Palette, Terminal, Settings, Image, FileJson, FileType, FileCode2, Database, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
-import type { RepositoryDTO, FileNodeDTO, FileContentDTO } from '@/lib/api-types';
+import type { RepositoryDTO, FileNodeDTO, FileContentDTO, ScannedRepositoryDTO, RepositoryDetailsDTO, BranchInfoDTO } from '@/lib/api-types';
 import { CodeBlock } from '@/components/CodeBlock';
 
 // 文件树节点类型（与后端 FileNodeDTO 对齐，增加本地缓存的 content）。
@@ -759,6 +759,23 @@ export const ProjectCode: React.FC = () => {
   const [loadingRepos, setLoadingRepos] = useState(false);
   const [loadingTree, setLoadingTree] = useState(false);
 
+  // Workspace ID - using actual workspace ID from DB
+  const workspaceId = 'bb8040a8-b382-4017-899f-50d0e4c3be24';
+
+  // Scan functionality
+  const [scannedRepos, setScannedRepos] = useState<ScannedRepositoryDTO[]>([]);
+  const [loadingScan, setLoadingScan] = useState(false);
+  const [showScanPanel, setShowScanPanel] = useState(false);
+
+  // Repository details
+  const [repoDetails, setRepoDetails] = useState<RepositoryDetailsDTO | null>(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+
+  // Branches
+  const [branches, setBranches] = useState<BranchInfoDTO[]>([]);
+  const [loadingBranches, setLoadingBranches] = useState(false);
+  const [switchingBranch, setSwitchingBranch] = useState(false);
+
   // Tabs management
   const [openFiles, setOpenFiles] = useState<FileNode[]>([]);
   const [activeFile, setActiveFile] = useState<FileNode | null>(null);
@@ -767,7 +784,11 @@ export const ProjectCode: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
 
   // View mode tabs
-  const [viewMode, setViewMode] = useState<'code' | 'graph' | 'review' | 'doc' | 'preview'>('code');
+  const [viewMode, setViewMode] = useState<'code' | 'graph' | 'review' | 'doc' | 'preview' | 'details'>('code');
+
+  // Code view mode for file viewer
+  const [codeViewMode, setCodeViewMode] = useState<'code' | 'preview' | 'blame'>('code');
+  const [codeDarkMode, setCodeDarkMode] = useState(false);
 
   // Document TOC
   const toc = useMemo(() => extractToc(mockMarkdownDoc), []);
@@ -776,32 +797,127 @@ export const ProjectCode: React.FC = () => {
 
   // 加载仓库列表
   useEffect(() => {
-    setLoadingRepos(true);
-    api.get<RepositoryDTO[]>('/v1/repositories')
-      .then(repos => {
+    const loadRepos = async () => {
+      setLoadingRepos(true);
+      try {
+        const repos = await api.get<RepositoryDTO[]>(
+          `/v1/workspaces/${workspaceId}/repositories`
+        );
         setRepositories(repos);
         if (repos.length > 0) {
           const first = repos.find(r => r.type === 'dev') ?? repos[0];
           setSelectedRepoId(first.id);
-          setSelectedBranch(first.defaultBranch ?? '');
           setRepoType(first.type as 'dev' | 'case' | 'product');
+
+          // Load branches for first repo
+          const branchList = await api.get<BranchInfoDTO[]>(
+            `/v1/workspaces/${workspaceId}/repositories/${first.id}/branches`
+          );
+          setBranches(branchList);
+          if (branchList.length > 0) {
+            const current = branchList.find(b => b.isCurrent) || branchList[0];
+            setSelectedBranch(current.name);
+          } else {
+            setSelectedBranch(first.defaultBranch ?? '');
+          }
         }
-      })
-      .catch(() => toast.error('加载仓库列表失败'))
-      .finally(() => setLoadingRepos(false));
-  }, []);
+      } catch {
+        toast.error('加载仓库列表失败');
+      } finally {
+        setLoadingRepos(false);
+      }
+    };
+    loadRepos();
+  }, [workspaceId]);
+
+  // 加载仓库详情
+  const loadRepositoryDetails = async (repoId: string) => {
+    if (!repoId) return;
+    setLoadingDetails(true);
+    try {
+      const details = await api.get<RepositoryDetailsDTO>(
+        `/v1/workspaces/${workspaceId}/repositories/${repoId}/details`
+      );
+      setRepoDetails(details);
+    } catch {
+      toast.error('加载仓库详情失败');
+    } finally {
+      setLoadingDetails(false);
+    }
+  };
+
+  // 加载仓库分支列表
+  const loadBranches = async (repoId: string) => {
+    if (!repoId) return;
+    setLoadingBranches(true);
+    try {
+      const branchList = await api.get<BranchInfoDTO[]>(
+        `/v1/workspaces/${workspaceId}/repositories/${repoId}/branches`
+      );
+      setBranches(branchList);
+      if (branchList.length > 0 && !selectedBranch) {
+        const current = branchList.find(b => b.isCurrent) || branchList[0];
+        setSelectedBranch(current.name);
+      }
+    } catch {
+      toast.error('加载分支列表失败');
+    } finally {
+      setLoadingBranches(false);
+    }
+  };
+
+  // 扫描本地仓库
+  const handleScanRepositories = async () => {
+    setLoadingScan(true);
+    try {
+      // Scan and auto-import to DB
+      await api.get<ScannedRepositoryDTO[]>(
+        `/v1/workspaces/${workspaceId}/repositories/scan`
+      );
+
+      // Refresh repo list after scan
+      const repos = await api.get<RepositoryDTO[]>(
+        `/v1/workspaces/${workspaceId}/repositories`
+      );
+      setRepositories(repos);
+
+      // Auto-select first repo and load branches
+      if (repos.length > 0) {
+        const first = repos.find(r => r.type === 'dev') ?? repos[0];
+        setSelectedRepoId(first.id);
+        setSelectedBranch(first.defaultBranch ?? '');
+        setRepoType(first.type as 'dev' | 'case' | 'product');
+
+        // Load branches for the selected repo
+        const branchList = await api.get<BranchInfoDTO[]>(
+          `/v1/workspaces/${workspaceId}/repositories/${first.id}/branches`
+        );
+        setBranches(branchList);
+        if (branchList.length > 0) {
+          const current = branchList.find(b => b.isCurrent) || branchList[0];
+          setSelectedBranch(current.name);
+        }
+      }
+
+      toast.success(`扫描完成，共 ${repos.length} 个仓库`);
+    } catch {
+      toast.error('扫描仓库失败');
+    } finally {
+      setLoadingScan(false);
+    }
+  };
 
   // 仓库或分支切换时加载文件树
   useEffect(() => {
     if (!selectedRepoId || !selectedBranch) return;
     setLoadingTree(true);
-    api.get<FileNodeDTO[]>(`/v1/repositories/${selectedRepoId}/tree?branch=${encodeURIComponent(selectedBranch)}`)
+    api.get<FileNodeDTO[]>(`/v1/workspaces/${workspaceId}/repositories/${selectedRepoId}/tree?branch=${encodeURIComponent(selectedBranch)}`)
       .then(nodes => {
         setFileSystem(prev => ({ ...prev, [selectedRepoId]: dtoToFileNodes(nodes) }));
       })
       .catch(() => toast.error('加载文件树失败'))
       .finally(() => setLoadingTree(false));
-  }, [selectedRepoId, selectedBranch]);
+  }, [selectedRepoId, selectedBranch, workspaceId]);
 
   const dtoToFileNodes = (nodes: FileNodeDTO[]): FileNode[] =>
     nodes.map(n => ({
@@ -856,17 +972,32 @@ export const ProjectCode: React.FC = () => {
       setRepoType(repo.type as 'dev' | 'case' | 'product');
       if (repo.type === 'product' && viewMode !== 'doc') setViewMode('doc');
       if (repo.type === 'case' && viewMode === 'preview') setViewMode('doc');
+      loadRepositoryDetails(val);
+      loadBranches(val);
     }
     setOpenFiles([]);
     setActiveFile(null);
     setSearchQuery('');
   };
 
-  const handleBranchChange = (val: string) => {
-    setSelectedBranch(val);
-    setOpenFiles([]);
-    setActiveFile(null);
-    setSearchQuery('');
+  const handleBranchChange = async (val: string) => {
+    if (val === selectedBranch) return;
+    
+    setSwitchingBranch(true);
+    try {
+      await api.post(`/v1/workspaces/${workspaceId}/repositories/${selectedRepoId}/switch-branch`, {
+        branch: val,
+      });
+      setSelectedBranch(val);
+      setOpenFiles([]);
+      setActiveFile(null);
+      setSearchQuery('');
+      toast.success(`已切换到分支: ${val}`);
+    } catch {
+      toast.error('切换分支失败');
+    } finally {
+      setSwitchingBranch(false);
+    }
   };
 
   const handleSelectFile = async (node: FileNode) => {
@@ -876,7 +1007,7 @@ export const ProjectCode: React.FC = () => {
     if (!node.content && selectedRepoId && selectedBranch) {
       try {
         const content = await api.get<FileContentDTO>(
-          `/v1/repositories/${selectedRepoId}/content?branch=${encodeURIComponent(selectedBranch)}&path=${encodeURIComponent(node.path)}`
+          `/v1/workspaces/${workspaceId}/repositories/${selectedRepoId}/content?branch=${encodeURIComponent(selectedBranch)}&path=${encodeURIComponent(node.path)}`
         );
         fileNode = { ...node, content: content.content };
         setFileSystem(prev => ({
@@ -935,10 +1066,22 @@ export const ProjectCode: React.FC = () => {
       ...prev,
       [selectedRepoId]: updateNodeContent(prev[selectedRepoId] || [], activeFile.path, newContent),
     }));
-    // Also update activeFile reference so content is fresh
     setActiveFile(prev => prev ? { ...prev, content: newContent } : prev);
-    // Update openFiles references too
     setOpenFiles(prev => prev.map(f => f.path === activeFile.path ? { ...f, content: newContent } : f));
+  };
+
+  const handleSaveFileContent = async (newContent: string) => {
+    if (!activeFile || !selectedRepoId) return;
+    try {
+      await api.post(`/v1/workspaces/${workspaceId}/repositories/${selectedRepoId}/save`, {
+        path: activeFile.path,
+        content: newContent,
+      });
+      handleUpdateFileContent(newContent);
+      toast.success('文件已保存');
+    } catch (err) {
+      toast.error('保存失败');
+    }
   };
 
   const handleTocClick = (id: string) => {
@@ -955,6 +1098,7 @@ export const ProjectCode: React.FC = () => {
     { key: 'review' as const, label: '评审模式', icon: ShieldCheck },
     { key: 'doc' as const, label: '文档模式', icon: FileText },
     { key: 'preview' as const, label: '预览模式', icon: Eye },
+    { key: 'details' as const, label: '仓库详情', icon: Activity },
   ];
 
   return (
@@ -1007,27 +1151,88 @@ export const ProjectCode: React.FC = () => {
 
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-muted-foreground whitespace-nowrap hidden sm:inline">分支:</span>
-              <Select value={selectedBranch} onValueChange={handleBranchChange}>
+              <Select value={selectedBranch} onValueChange={handleBranchChange} disabled={switchingBranch}>
                 <SelectTrigger className="w-[120px] sm:w-[160px] h-9">
                   <SelectValue placeholder="选择分支" />
                 </SelectTrigger>
                 <SelectContent>
-                  {currentRepo?.defaultBranch && (
-                    <SelectItem key={currentRepo.defaultBranch} value={currentRepo.defaultBranch}>
-                      <div className="flex items-center">
-                        <GitBranch className="h-4 w-4 mr-2 text-muted-foreground" />
-                        <span className="truncate">{currentRepo.defaultBranch}</span>
+                  {branches.map((branch) => (
+                    <SelectItem key={branch.name} value={branch.name}>
+                      <div className="flex items-center gap-2">
+                        <GitBranch className={`h-4 w-4 ${branch.isCurrent ? 'text-primary' : 'text-muted-foreground'}`} />
+                        <span className="truncate">{branch.name}</span>
+                        {branch.isRemote && (
+                          <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground">远程</span>
+                        )}
+                        {branch.isCurrent && (
+                          <span className="text-[10px] px-1 py-0.5 rounded bg-primary/10 text-primary">当前</span>
+                        )}
                       </div>
                     </SelectItem>
-                  )}
+                  ))}
                 </SelectContent>
               </Select>
+              {switchingBranch && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
             </div>
 
-            <Button variant="outline" size="icon" className="h-9 w-9 hidden md:flex text-muted-foreground hover:text-foreground" onClick={() => toast.success('分支已同步')} title="同步分支">
-              <RefreshCw className="h-4 w-4" />
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9"
+              onClick={handleScanRepositories}
+              disabled={loadingScan}
+              title="刷新本地仓库"
+            >
+              {loadingScan ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             </Button>
           </div>
+
+          {/* Scanned Repositories Panel - hidden now since auto-import works */}
+          {false && showScanPanel && scannedRepos.length > 0 && (
+            <div className="border-t border-border/50 pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-foreground">发现的本地仓库</h3>
+                <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setShowScanPanel(false)}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-60 overflow-y-auto">
+                {scannedRepos.map((repo, idx) => (
+                  <Card key={idx} className="overflow-hidden border-border/50">
+                    <CardContent className="p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <Book className="h-4 w-4 text-primary shrink-0" />
+                            <span className="text-sm font-medium truncate">{repo.name}</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1 truncate">{repo.path}</p>
+                          <div className="flex items-center gap-2 mt-2">
+                            <GitBranch className="h-3 w-3 text-muted-foreground" />
+                            <span className="text-xs text-muted-foreground">{repo.currentBranch || 'unknown'}</span>
+                          </div>
+                          {repo.lastCommit && (
+                            <div className="text-xs text-muted-foreground mt-1 truncate">
+                              最新: {repo.lastCommit.substring(0, 7)}
+                            </div>
+                          )}
+                        </div>
+                        {repo.isCloned ? (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 shrink-0">
+                            已关联
+                          </span>
+                        ) : (
+                          <Button size="sm" variant="secondary" className="h-7 text-xs shrink-0">
+                            导入
+                          </Button>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1147,14 +1352,41 @@ export const ProjectCode: React.FC = () => {
                         </div>
                       ))}
                     </div>
+
+                    {/* Breadcrumb path navigation */}
+                    {activeFile && (
+                      <div className="flex items-center h-8 px-4 border-b border-border/50 bg-muted/5 shrink-0">
+                        <div className="flex items-center gap-1.5 text-xs">
+                          {activeFile.path.split('/').map((segment, idx, arr) => (
+                            <React.Fragment key={idx}>
+                              <button
+                                className={`hover:text-foreground transition-colors ${
+                                  idx === arr.length - 1 ? 'text-foreground font-medium' : 'text-muted-foreground'
+                                }`}
+                              >
+                                {segment}
+                              </button>
+                              {idx < arr.length - 1 && (
+                                <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {activeFile && (
                       <ScrollArea className="flex-1">
-                        <div className="p-4 md:p-6 h-full">
+                        <div className="p-2 md:p-3 h-full">
                           <CodeBlock
                             content={activeFile.content || ''}
                             filename={activeFile.name}
                             editable
                             onChange={handleUpdateFileContent}
+                            onSave={handleSaveFileContent}
+                            viewMode={codeViewMode}
+                            onViewModeChange={setCodeViewMode}
+                            onThemeChange={setCodeDarkMode}
                           />
                         </div>
                       </ScrollArea>
@@ -1373,6 +1605,141 @@ export const ProjectCode: React.FC = () => {
             <div className="flex-1 overflow-hidden">
               <PreviewPanel repoId={selectedRepoId} branch={selectedBranch} repoName={currentRepo?.name || ''} repoUrl={currentRepo?.url || ''} />
             </div>
+          </div>
+        )}
+
+        {viewMode === 'details' && (
+          <div className="h-full flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/50 shrink-0 bg-background/90">
+              <div className="flex items-center gap-2">
+                <Activity className="h-4 w-4 text-primary" />
+                <span className="text-sm font-semibold">仓库详情</span>
+                <span className="text-xs text-muted-foreground">{currentRepo?.name}</span>
+              </div>
+              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => loadRepositoryDetails(selectedRepoId)} disabled={loadingDetails}>
+                {loadingDetails ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                刷新
+              </Button>
+            </div>
+            <ScrollArea className="flex-1 p-6">
+              <div className="max-w-5xl mx-auto space-y-6">
+                {loadingDetails ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  </div>
+                ) : repoDetails ? (
+                  <>
+                    {/* Commit Stats */}
+                    <div>
+                      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <Activity className="h-5 w-5 text-primary" />
+                        提交统计
+                      </h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <Card>
+                          <CardContent className="p-4 text-center">
+                            <p className="text-2xl font-bold text-foreground">{repoDetails.commitStats.totalCommits}</p>
+                            <p className="text-xs text-muted-foreground mt-1">总提交数</p>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="p-4 text-center">
+                            <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{repoDetails.commitStats.lastWeek}</p>
+                            <p className="text-xs text-muted-foreground mt-1">本周提交</p>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="p-4 text-center">
+                            <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">{repoDetails.commitStats.lastMonth}</p>
+                            <p className="text-xs text-muted-foreground mt-1">本月提交</p>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="p-4 text-center">
+                            <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{repoDetails.fileCount}</p>
+                            <p className="text-xs text-muted-foreground mt-1">文件数量</p>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    </div>
+
+                    {/* Branches */}
+                    <div>
+                      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <GitBranch className="h-5 w-5 text-primary" />
+                        分支列表
+                      </h3>
+                      <div className="space-y-2">
+                        {repoDetails.branches.map((branch, idx) => (
+                          <div key={idx} className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-muted/10">
+                            <div className="flex items-center gap-3">
+                              <GitBranch className={`h-4 w-4 ${branch.isCurrent ? 'text-primary' : 'text-muted-foreground'}`} />
+                              <div>
+                                <span className="text-sm font-medium">{branch.name}</span>
+                                {branch.isCurrent && (
+                                  <span className="ml-2 text-xs px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">当前</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              最后提交: {branch.lastCommit.substring(0, 7)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Contributors */}
+                    <div>
+                      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <Users className="h-5 w-5 text-primary" />
+                        贡献者
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
+                        {repoDetails.contributors.map((contributor, idx) => (
+                          <div key={idx} className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/30 border border-border/50">
+                            <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center">
+                              <span className="text-xs font-medium text-primary">{contributor.charAt(0)}</span>
+                            </div>
+                            <span className="text-sm">{contributor}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Repository Info */}
+                    <div>
+                      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <Book className="h-5 w-5 text-primary" />
+                        仓库信息
+                      </h3>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <div className="p-3 rounded-lg border border-border/50 bg-muted/10">
+                          <p className="text-xs text-muted-foreground">语言</p>
+                          <p className="text-sm font-medium mt-1">{repoDetails.language || '未知'}</p>
+                        </div>
+                        <div className="p-3 rounded-lg border border-border/50 bg-muted/10">
+                          <p className="text-xs text-muted-foreground">大小</p>
+                          <p className="text-sm font-medium mt-1">{(repoDetails.sizeBytes / 1024).toFixed(2)} KB</p>
+                        </div>
+                        <div className="p-3 rounded-lg border border-border/50 bg-muted/10">
+                          <p className="text-xs text-muted-foreground">克隆状态</p>
+                          <p className="text-sm font-medium mt-1">
+                            {repoDetails.repository.cloneStatus === 'cloned' ? '已克隆' :
+                             repoDetails.repository.cloneStatus === 'cloning' ? '克隆中' :
+                             repoDetails.repository.cloneStatus === 'failed' ? '失败' : '待处理'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-12 text-muted-foreground">
+                    请选择一个仓库查看详情
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
           </div>
         )}
         <TerminalDrawer />

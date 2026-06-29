@@ -25,9 +25,12 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.RedisURL != "" {
 		t.Errorf("expected empty redis url, got %s", cfg.RedisURL)
 	}
-	const defaultAgentBaseURL = "http://localhost:19090"
-	if cfg.AgentBaseURL != defaultAgentBaseURL {
-		t.Errorf("expected agent base url %s, got %s", defaultAgentBaseURL, cfg.AgentBaseURL)
+	const defaultGatewaydAdminURL = "http://127.0.0.1:2346"
+	if cfg.GatewaydAdminURL != defaultGatewaydAdminURL {
+		t.Errorf("expected gatewayd admin url %s, got %s", defaultGatewaydAdminURL, cfg.GatewaydAdminURL)
+	}
+	if cfg.GatewaydAgentID != DEFAULT_GATEWAYD_AGENT_ID {
+		t.Errorf("expected gatewayd agent id %s, got %s", DEFAULT_GATEWAYD_AGENT_ID, cfg.GatewaydAgentID)
 	}
 }
 
@@ -37,7 +40,8 @@ func TestLoad_EnvOverride(t *testing.T) {
 	t.Setenv("MESSAGE_STORE", "redis")
 	t.Setenv("BROKER_TYPE", "redis")
 	t.Setenv("REDIS_URL", "redis://localhost:6379")
-	t.Setenv("AGENT_BASE_URL", "http://agent:8080")
+	t.Setenv("GATEWAYD_ADMIN_URL", "http://gatewayd:2346")
+	t.Setenv("GATEWAYD_AGENT_ID", "test-agent")
 	cfg := Load()
 	if cfg.Port != "9090" {
 		t.Errorf("expected port 9090, got %s", cfg.Port)
@@ -54,8 +58,11 @@ func TestLoad_EnvOverride(t *testing.T) {
 	if cfg.RedisURL != "redis://localhost:6379" {
 		t.Errorf("expected redis://localhost:6379, got %s", cfg.RedisURL)
 	}
-	if cfg.AgentBaseURL != "http://agent:8080" {
-		t.Errorf("expected http://agent:8080, got %s", cfg.AgentBaseURL)
+	if cfg.GatewaydAdminURL != "http://gatewayd:2346" {
+		t.Errorf("expected http://gatewayd:2346, got %s", cfg.GatewaydAdminURL)
+	}
+	if cfg.GatewaydAgentID != "test-agent" {
+		t.Errorf("expected test-agent, got %s", cfg.GatewaydAgentID)
 	}
 }
 

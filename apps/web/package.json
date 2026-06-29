@@ -9,7 +9,10 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
+    "@ag-ui/client": "^0.0.57",
+    "@assistant-ui/core": "^0.2.19",
     "@assistant-ui/react": "^0.14.22",
+    "@assistant-ui/react-ag-ui": "^0.0.43",
     "@hello-pangea/dnd": "^18.0.1",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
@@ -40,6 +43,7 @@
     "@radix-ui/react-toggle": "^1.1.10",
     "@radix-ui/react-toggle-group": "^1.1.11",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@tailwindcss/typography": "^0.5.20",
     "@types/prismjs": "^1.26.6",
     "axios": "^1.13.1",
     "class-variance-authority": "^0.7.1",

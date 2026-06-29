@@ -74,6 +74,11 @@ func (c *GitClient) DefaultLocalPath(workspaceID, repoName string) string {
 	return p
 }
 
+// Root 返回仓库根目录路径。
+func (c *GitClient) Root() string {
+	return c.root
+}
+
 // authFromKey 从 SSH 私钥文本构造 go-git 认证器。
 func authFromKey(privateKey string) (gitssh.AuthMethod, error) {
 	if privateKey == "" {

@@ -1,122 +1,382 @@
 package client
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
-	"strings"
+	"net/url"
+	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 )
 
-// SSEEvent represents an event from the agent's SSE stream
 type SSEEvent struct {
 	Type       string          `json:"type"`
 	Properties json.RawMessage `json:"properties"`
 }
 
-// HTTPClient makes HTTP requests to the Coding Agent and parses SSE responses.
-type HTTPClient struct {
-	baseURL string
-	client  *http.Client
+type GatewaydClient struct {
+	adminURL   string
+	agentID    string
+	httpClient *http.Client
+
+	mu          sync.RWMutex
+	subscribers map[string][]chan SSEEvent
+
+	conn   *websocket.Conn
+	connMu sync.Mutex
+	done   chan struct{}
+	once   sync.Once
+
+	resolvedID  string // actual gatewayd instance ID (resolved from plugin_key)
+	resolveMu   sync.RWMutex
+	resolveOnce sync.Once
+
+	// running 用于控制后台 WebSocket 连接的懒启动。
+	running bool
+	runMu   sync.Mutex
 }
 
-// NewHTTPClient creates a new HTTP agent client. timeout 控制单次请求超时。
-func NewHTTPClient(baseURL string, timeout time.Duration) *HTTPClient {
-	if baseURL == "" {
-		baseURL = "http://localhost:9090"
+func NewGatewaydClient(adminURL string, agentID string) *GatewaydClient {
+	if adminURL == "" {
+		adminURL = "http://127.0.0.1:2346"
 	}
-	if timeout <= 0 {
-		timeout = 120 * time.Second
+	if agentID == "" {
+		agentID = "opencode"
 	}
-	return &HTTPClient{
-		baseURL: baseURL,
-		client: &http.Client{
-			Timeout: timeout,
-		},
+	c := &GatewaydClient{
+		adminURL:    adminURL,
+		agentID:     agentID,
+		httpClient:  &http.Client{Timeout: 30 * time.Second},
+		subscribers: make(map[string][]chan SSEEvent),
+		done:        make(chan struct{}),
+	}
+	// 旧版 WebSocket 连接改为懒启动：只有在真正发送消息时才连接，
+	// 避免 AG-UI 迁移后仍然持续重试旧 gatewayd 事件通道。
+	return c
+}
+
+func (c *GatewaydClient) ensureRunning() {
+	c.runMu.Lock()
+	defer c.runMu.Unlock()
+
+	if c.running {
+		return
+	}
+	c.running = true
+	go c.run()
+}
+
+func (c *GatewaydClient) run() {
+	// 首次失败后使用指数退避，最多重试 5 次，避免无限打印日志。
+	backoff := time.Second
+	maxBackoff := 30 * time.Second
+	failures := 0
+	const maxFailures = 5
+
+	for {
+		select {
+		case <-c.done:
+			return
+		default:
+		}
+
+		c.connect()
+
+		select {
+		case <-c.done:
+			return
+		case <-time.After(backoff):
+		}
+
+		failures++
+		if failures >= maxFailures {
+			log.Printf("[GatewaydClient] reached max reconnection attempts (%d), stopping background reconnect", maxFailures)
+			c.runMu.Lock()
+			c.running = false
+			c.runMu.Unlock()
+			return
+		}
+		if backoff < maxBackoff {
+			backoff *= 2
+		}
 	}
 }
 
-// SendMessage sends a user message to the agent and returns a channel of SSE events.
-func (c *HTTPClient) SendMessage(ctx context.Context, session chat.Session, msg chat.Message) (<-chan SSEEvent, error) {
-	url := fmt.Sprintf("%s/session/%s/prompt", c.baseURL, session.ID)
-
-	reqBody, err := json.Marshal(map[string]any{
-		"parts": []map[string]string{
-			{"type": "text", "text": msg.Content},
-		},
-	})
+func (c *GatewaydClient) connect() {
+	wsURL := c.WsURL()
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+		log.Printf("[GatewaydClient] ws connect failed: %v, retrying...", err)
+		return
+	}
+	c.connMu.Lock()
+	c.conn = conn
+	c.connMu.Unlock()
+	log.Printf("[GatewaydClient] connected to %s", wsURL)
+
+	defer func() {
+		conn.Close()
+		c.connMu.Lock()
+		c.conn = nil
+		c.connMu.Unlock()
+	}()
+
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			log.Printf("[GatewaydClient] ws read error: %v", err)
+			return
+		}
+		c.handleWSMessage(msg)
+	}
+}
+
+type agentEvent struct {
+	EventType  string          `json:"event_type"`
+	InstanceID *string         `json:"instance_id"`
+	Payload    json.RawMessage `json:"payload"`
+}
+
+type agentPayload struct {
+	ConversationID string `json:"conversation_id"`
+	Text           string `json:"text"`
+	Content        string `json:"content"`
+	Message        string `json:"message"`
+	SessionID      string `json:"sessionID"`
+}
+
+func (c *GatewaydClient) handleWSMessage(msg []byte) {
+	var ev agentEvent
+	if err := json.Unmarshal(msg, &ev); err != nil {
+		log.Printf("[GatewaydClient] failed to unmarshal event: %v", err)
+		return
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
+	var payload agentPayload
+	json.Unmarshal(ev.Payload, &payload)
+
+	convID := payload.ConversationID
+	if convID == "" {
+		convID = payload.SessionID
+	}
+	if convID == "" {
+		return
+	}
+
+	c.mu.RLock()
+	subs, ok := c.subscribers[convID]
+	c.mu.RUnlock()
+	if !ok || len(subs) == 0 {
+		return
+	}
+
+	sseEvent := c.transformEvent(ev.EventType, ev.Payload)
+
+	if sseEvent != nil {
+		for _, ch := range subs {
+			select {
+			case ch <- *sseEvent:
+			default:
+			}
+		}
+	}
+
+	if ev.EventType == "agent.done" || ev.EventType == "agent.error" {
+		c.mu.Lock()
+		delete(c.subscribers, convID)
+		c.mu.Unlock()
+		for _, ch := range subs {
+			close(ch)
+		}
+	}
+}
+
+func (c *GatewaydClient) transformEvent(eventType string, rawPayload json.RawMessage) *SSEEvent {
+	switch eventType {
+	case "agent.token":
+		var p struct {
+			Text string `json:"text"`
+		}
+		json.Unmarshal(rawPayload, &p)
+
+		props, _ := json.Marshal(map[string]any{
+			"part": map[string]any{
+				"id":      uuid.New().String(),
+				"type":    "text",
+				"content": p.Text,
+				"delta":   p.Text,
+			},
+		})
+		return &SSEEvent{Type: "message.part.updated", Properties: props}
+
+	case "agent.thinking":
+		var p struct {
+			Content  string `json:"content"`
+			Type     string `json:"type"`
+			ToolName string `json:"toolName"`
+			Failed   bool   `json:"failed"`
+		}
+		json.Unmarshal(rawPayload, &p)
+
+		partType := "reasoning"
+		if p.Type == "tool_use" {
+			partType = "tool_use"
+		} else if p.Type == "tool_result" {
+			partType = "tool_result"
+		}
+
+		props, _ := json.Marshal(map[string]any{
+			"part": map[string]any{
+				"id":      uuid.New().String(),
+				"type":    partType,
+				"content": p.Content,
+				"name":    p.ToolName,
+			},
+		})
+		return &SSEEvent{Type: "message.part.updated", Properties: props}
+
+	case "agent.error":
+		var p struct {
+			Message string `json:"message"`
+		}
+		json.Unmarshal(rawPayload, &p)
+
+		props, _ := json.Marshal(map[string]any{
+			"error": map[string]any{
+				"message": p.Message,
+				"code":    0,
+			},
+		})
+		return &SSEEvent{Type: "session.error", Properties: props}
+
+	case "agent.done":
+		return nil
+	default:
+		return nil
+	}
+}
+
+func (c *GatewaydClient) WsURL() string {
+	u, err := url.Parse(c.adminURL)
+	if err != nil {
+		return "ws://127.0.0.1:2346/agents/events"
+	}
+	scheme := "ws"
+	if u.Scheme == "https" {
+		scheme = "wss"
+	}
+	return fmt.Sprintf("%s://%s/agents/events", scheme, u.Host)
+}
+
+// AdminURL returns the gatewayd HTTP admin URL.
+func (c *GatewaydClient) AdminURL() string {
+	return c.adminURL
+}
+
+// AgentID returns the configured agent plugin key.
+func (c *GatewaydClient) AgentID() string {
+	return c.agentID
+}
+
+// ResolveAgentID queries the gatewayd /agents API to find the actual instance ID
+// matching the configured plugin_key (c.agentID, e.g. "opencode").
+// Cached after first successful resolution.
+func (c *GatewaydClient) ResolveAgentID(ctx context.Context) (string, error) {
+	c.resolveMu.RLock()
+	if c.resolvedID != "" {
+		c.resolveMu.RUnlock()
+		return c.resolvedID, nil
+	}
+	c.resolveMu.RUnlock()
+
+	var agentID string
+	c.resolveOnce.Do(func() {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.adminURL+"/agents", nil)
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			agentID = c.agentID // fallback
+			return
+		}
+		defer resp.Body.Close()
+
+		var agents []struct {
+			ID        string `json:"id"`
+			PluginKey string `json:"plugin_key"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&agents); err != nil {
+			agentID = c.agentID
+			return
+		}
+		for _, a := range agents {
+			if a.PluginKey == c.agentID {
+				agentID = a.ID
+				break
+			}
+		}
+		if agentID == "" {
+			agentID = c.agentID
+		}
+
+		c.resolveMu.Lock()
+		c.resolvedID = agentID
+		c.resolveMu.Unlock()
+	})
+	return agentID, nil
+}
+
+func (c *GatewaydClient) SendMessage(ctx context.Context, session chat.Session, msg chat.Message) (<-chan SSEEvent, error) {
+	// 只有在旧版会话路径真正发送消息时，才启动 WebSocket 监听。
+	c.ensureRunning()
+
+	convID := session.ID
+
+	agentID, err := c.ResolveAgentID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve agent: %w", err)
+	}
+
+	body, _ := json.Marshal(map[string]string{
+		"conversation_id": convID,
+		"message":         msg.Content,
+	})
+
+	postURL := fmt.Sprintf("%s/agents/%s/message", c.adminURL, agentID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
 
-	resp, err := c.client.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
+		return nil, fmt.Errorf("post message: %w", err)
 	}
+	resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		return nil, fmt.Errorf("agent returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("gatewayd returned status %d", resp.StatusCode)
 	}
 
-	events := make(chan SSEEvent, 10)
-	go func() {
-		defer close(events)
-		defer resp.Body.Close()
-		c.parseSSE(resp, events)
-	}()
+	ch := make(chan SSEEvent, 100)
+	c.mu.Lock()
+	c.subscribers[convID] = append(c.subscribers[convID], ch)
+	c.mu.Unlock()
 
-	return events, nil
-}
+	msgID := uuid.New().String()
+	msgProps, _ := json.Marshal(map[string]any{
+		"info": map[string]any{
+			"id": msgID,
+		},
+	})
+	ch <- SSEEvent{Type: "message.updated", Properties: msgProps}
 
-// parseSSE reads the HTTP response body and parses SSE events.
-func (c *HTTPClient) parseSSE(resp *http.Response, events chan<- SSEEvent) {
-	scanner := bufio.NewScanner(resp.Body)
-	var currentData strings.Builder
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if line == "" {
-			// Empty line means end of event
-			if currentData.Len() > 0 {
-				data := currentData.String()
-				currentData.Reset()
-
-				// Remove "data: " prefix
-				if strings.HasPrefix(data, "data: ") {
-					data = data[6:]
-				}
-
-				var ev SSEEvent
-				if err := json.Unmarshal([]byte(data), &ev); err == nil {
-					select {
-					case events <- ev:
-					default:
-						// Channel full, drop event
-					}
-				}
-			}
-			continue
-		}
-
-		if strings.HasPrefix(line, "data: ") {
-			if currentData.Len() > 0 {
-				currentData.WriteString("\n")
-			}
-			currentData.WriteString(line)
-		}
-	}
+	return ch, nil
 }

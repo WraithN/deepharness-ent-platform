@@ -127,3 +127,108 @@ func (s *MockRepositoryService) Sync(workspaceID, repoID string) error {
 	_, err := s.Get(workspaceID, repoID)
 	return err
 }
+
+func (s *MockRepositoryService) Scan(workspaceID string) ([]ScannedRepository, error) {
+	repos, err := s.List(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ScannedRepository, 0, len(repos))
+	now := time.Now().UTC()
+	for _, r := range repos {
+		result = append(result, ScannedRepository{
+			Name:              r.Name,
+			Path:              r.LocalPath,
+			URL:               r.URL,
+			CurrentBranch:     r.DefaultBranch,
+			LastCommit:        "abc123def",
+			LastCommitMessage: "Mock commit message",
+			LastCommitTime:    &now,
+			IsCloned:          true,
+		})
+	}
+
+	return result, nil
+}
+
+func (s *MockRepositoryService) GetDetails(workspaceID, repoID string) (*RepositoryDetails, error) {
+	repo, err := s.Get(workspaceID, repoID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	return &RepositoryDetails{
+		Repository: repo,
+		CommitStats: CommitStats{
+			TotalCommits: 125,
+			LastWeek:     12,
+			LastMonth:    45,
+			LastCommit:   &now,
+			FirstCommit:  &now,
+		},
+		Branches: []BranchInfo{
+			{Name: "main", IsCurrent: true, LastCommit: "abc123def", LastCommitTime: &now},
+			{Name: "develop", IsCurrent: false, LastCommit: "def456abc", LastCommitTime: &now},
+		},
+		Contributors: []string{"Developer 1", "Developer 2"},
+		FileCount:    42,
+		SizeBytes:    1024 * 1024 * 5,
+		Language:     "TypeScript",
+	}, nil
+}
+
+func (s *MockRepositoryService) GetFileTree(workspaceID, repoID, branch string) ([]FileNode, error) {
+	return []FileNode{
+		{
+			Name: "src",
+			Path: "src",
+			Type: "folder",
+			Children: []FileNode{
+				{Name: "main.go", Path: "src/main.go", Type: "file"},
+				{Name: "utils", Path: "src/utils", Type: "folder", Children: []FileNode{
+					{Name: "helper.go", Path: "src/utils/helper.go", Type: "file"},
+				}},
+			},
+		},
+		{Name: "go.mod", Path: "go.mod", Type: "file"},
+		{Name: "README.md", Path: "README.md", Type: "file"},
+	}, nil
+}
+
+func (s *MockRepositoryService) GetFileContent(workspaceID, repoID, branch, path string) (*FileContent, error) {
+	return &FileContent{
+		Path:     path,
+		Name:     path,
+		Content:  "// Mock file content\npackage main\n\nfunc main() {\n\tprintln(\"Hello World\")\n}",
+		Language: "go",
+		Encoding: "utf-8",
+		Size:     1024,
+	}, nil
+}
+
+func (s *MockRepositoryService) GetBranches(workspaceID, repoID string) ([]BranchInfo, error) {
+	now := time.Now().UTC()
+	return []BranchInfo{
+		{Name: "main", IsCurrent: true, IsRemote: false, LastCommit: "abc123def", LastCommitTime: &now},
+		{Name: "develop", IsCurrent: false, IsRemote: false, LastCommit: "def456abc", LastCommitTime: &now},
+		{Name: "feature/test", IsCurrent: false, IsRemote: true, LastCommit: "ghi789jkl", LastCommitTime: &now},
+	}, nil
+}
+
+func (s *MockRepositoryService) SwitchBranch(workspaceID, repoID, branchName string) error {
+	return nil
+}
+
+func (s *MockRepositoryService) SaveFileContent(workspaceID, repoID, path, content string) error {
+	return nil
+}
+
+func (s *MockRepositoryService) GitCommit(workspaceID, repoID, message string) (string, error) {
+	return "mock-commit-hash", nil
+}
+
+func (s *MockRepositoryService) GitStatus(workspaceID, repoID string) (string, error) {
+	return "", nil
+}

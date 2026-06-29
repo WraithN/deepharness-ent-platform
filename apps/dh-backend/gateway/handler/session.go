@@ -7,24 +7,20 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
 )
 
-// WorkerStarter is implemented by WorkerManager.
-type WorkerStarter interface {
-	StartWorker(sessionID string)
-}
-
 type SessionHandler struct {
-	sessions      chat.SessionStore
-	messages      chat.MessageStore
-	workerStarter WorkerStarter
+	sessions       chat.SessionStore
+	messages       chat.MessageStore
+	gatewaydClient *client.GatewaydClient
 }
 
-func NewSessionHandler(sessions chat.SessionStore, messages chat.MessageStore, workerStarter WorkerStarter) *SessionHandler {
+func NewSessionHandler(sessions chat.SessionStore, messages chat.MessageStore, gatewaydClient *client.GatewaydClient) *SessionHandler {
 	return &SessionHandler{
-		sessions:      sessions,
-		messages:      messages,
-		workerStarter: workerStarter,
+		sessions:       sessions,
+		messages:       messages,
+		gatewaydClient: gatewaydClient,
 	}
 }
 
@@ -38,8 +34,10 @@ type CreateSessionRequest struct {
 }
 
 type CreateSessionResponse struct {
-	SessionID string `json:"sessionId"`
-	WsURL     string `json:"wsUrl"`
+	SessionID    string `json:"sessionId"`
+	GatewaydURL  string `json:"gatewaydUrl"`
+	GatewaydWsURL string `json:"gatewaydWsUrl"`
+	AgentID      string `json:"agentId"`
 }
 
 func (h *SessionHandler) Sessions(w http.ResponseWriter, r *http.Request) {
@@ -92,9 +90,10 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start agent worker for this session
-	if h.workerStarter != nil {
-		h.workerStarter.StartWorker(session.ID)
+	// Resolve the actual gatewayd agent instance ID for frontend direct connection
+	gwAgentID := h.gatewaydClient.AgentID() // fallback to configured plugin key
+	if resolvedID, err := h.gatewaydClient.ResolveAgentID(r.Context()); err == nil && resolvedID != "" {
+		gwAgentID = resolvedID
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -102,8 +101,10 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		"code":    0,
 		"message": "success",
 		"data": CreateSessionResponse{
-			SessionID: session.ID,
-			WsURL:     "/ws/v1/sessions/" + session.ID,
+			SessionID:    session.ID,
+			GatewaydURL:  h.gatewaydClient.AdminURL(),
+			GatewaydWsURL: h.gatewaydClient.WsURL(),
+			AgentID:      gwAgentID,
 		},
 	})
 }

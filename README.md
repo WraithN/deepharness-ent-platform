@@ -111,18 +111,6 @@ the PostgreSQL container on first startup.
 `apps/dh-backend` gracefully falls back to in-memory mock data when `DB_HOST` is
 not set, so `pnpm dev` works without a running database.
 
-## Mock & Test Tools
-
-- **`apps/agent-runtime/mock/main.go`**: A standalone Agent SSE mock server. It simulates the
-  streaming response of an external Agent Runtime (e.g. OpenCode / Claude Code)
-  for local development and testing. It has no dependency on `apps/dh-backend`
-  and can be run independently.
-
-- **`apps/dh-backend/tests/test-agent/main.go`**: A small test binary inside the
-  `dh-backend` module. It exercises `dh-backend`'s Agent HTTP+SSE client against
-  the standalone mock server. It lives in the same Go module as `dh-backend` so
-  it can import the backend packages directly.
-
 ## Technologies
 
 - **Frontend**: React 18, Vite, TypeScript, Tailwind CSS, shadcn/ui
