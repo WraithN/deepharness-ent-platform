@@ -1,18 +1,20 @@
 import React from 'react';
-import { Bot, Box, FileCode2, ListTodo, CheckCircle2, Wrench, X } from 'lucide-react';
+import { Bot, Box, FileCode2, ListTodo, CheckCircle2, Wrench, X, Copy, RefreshCw, Loader2 } from 'lucide-react';
 import type { MessageState, TextMessagePart, ReasoningMessagePart, DataMessagePart } from '@assistant-ui/react';
 import { MarkdownView } from './MarkdownView';
 import { ThinkingPart } from './ThinkingPart';
 import { DiffView } from './DiffView';
 import { TaskListView, type TaskItemData } from './TaskListView';
 import type { ChatPart } from './types';
+import { toast } from 'sonner';
 
 interface AssistantMessageProps {
   message: MessageState;
   onArtifactClick?: () => void;
+  onRegenerate?: () => void;
 }
 
-export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onArtifactClick }) => {
+export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onArtifactClick, onRegenerate }) => {
   const content = Array.isArray(message.content) ? message.content : [];
 
   let artifact: { type: string; title: string } | undefined;
@@ -29,6 +31,12 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
     }
   }
 
+  const textContent = content
+    .filter(p => p.type === 'text')
+    .map(p => (p as TextMessagePart).text)
+    .filter(Boolean)
+    .join('\n');
+
   if (!artifact) {
     for (const part of content) {
       if (part.type === 'data') {
@@ -41,6 +49,18 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
     }
   }
 
+  // 当前助手消息是否没有任何可见内容（空文本、空思考、空工具）且仍在生成中。
+  // 这种情况下在气泡内展示“思考中...”占位动画，避免 TTFT 期间页面看起来没有响应。
+  const isRunning = message.status?.type === 'running';
+  const hasVisibleContent = content.some((part) => {
+    if (part.type === 'text') return Boolean((part as TextMessagePart).text);
+    if (part.type === 'reasoning') return Boolean((part as ReasoningMessagePart).text);
+    if (part.type === 'tool-call') return true;
+    if (part.type === 'data') return true;
+    return false;
+  });
+  const showThinkingPlaceholder = isRunning && !hasVisibleContent;
+
   return (
     <div className="flex gap-3 justify-start">
       <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-1">
@@ -48,6 +68,17 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
       </div>
       <div className="flex flex-col max-w-[85%] items-start">
         <div className="flex flex-col gap-2 w-full bg-muted/60 rounded-2xl rounded-tl-sm border border-border/50 shadow-sm">
+          {showThinkingPlaceholder && (
+            <div className="px-4 py-3 flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>思考中</span>
+              <span className="inline-flex">
+                <span className="animate-bounce mx-0.5">.</span>
+                <span className="animate-bounce mx-0.5" style={{ animationDelay: '0.2s' }}>.</span>
+                <span className="animate-bounce mx-0.5" style={{ animationDelay: '0.4s' }}>.</span>
+              </span>
+            </div>
+          )}
           {content.map((part, idx) => {
             if (part.type === 'text') {
               const textPart = part as TextMessagePart;
@@ -123,6 +154,24 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
               <p className="text-sm font-medium truncate">{artifact.title}</p>
               <p className="text-xs text-muted-foreground mt-0.5 flex items-center">点击查看详情 <span className="ml-1">›</span></p>
             </div>
+          </div>
+        )}
+        {textContent && (
+          <div className="flex items-center gap-1 mt-1.5">
+            <button
+              onClick={onRegenerate}
+              className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-colors"
+              title="重新生成"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => { navigator.clipboard.writeText(textContent); toast.success('已复制'); }}
+              className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-colors"
+              title="复制"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </button>
           </div>
         )}
       </div>

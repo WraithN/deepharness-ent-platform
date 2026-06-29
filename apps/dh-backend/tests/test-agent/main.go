@@ -9,14 +9,14 @@ import (
 )
 
 func main() {
-	client := client.NewHTTPClient("http://localhost:19090", 0)
+	c := client.NewGatewaydClient("http://localhost:2346", "opencode")
 	session := chat.Session{ID: "test-session"}
 	msg := chat.Message{Content: "hello"}
 	
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	
-	events, err := client.SendMessage(ctx, session, msg)
+	events, err := c.SendMessage(ctx, session, msg)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return

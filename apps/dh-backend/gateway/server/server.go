@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	session "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat/session"
@@ -28,35 +27,28 @@ import (
 	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
-	ws "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket/broker"
-	brokermemory "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/websocket/broker/memory"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/worker"
 	sdkpostgres "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/postgres"
 )
 
 // WorkerManager manages agent worker lifecycle per session.
 type WorkerManager struct {
-	workers           map[string]context.CancelFunc
-	mu                sync.Mutex
-	broker            broker.MessageBroker
-	messages          chat.MessageStore
-	sessions          chat.SessionStore
-	agentURL          string
-	agentRequestTimeout time.Duration
+	workers     map[string]context.CancelFunc
+	mu          sync.Mutex
+	broker      broker.MessageBroker
+	messages    chat.MessageStore
+	sessions    chat.SessionStore
+	agentClient client.Client
 }
 
-func newWorkerManager(broker broker.MessageBroker, messages chat.MessageStore, sessions chat.SessionStore, agentURL string, agentRequestTimeout time.Duration) *WorkerManager {
-	if agentRequestTimeout <= 0 {
-		agentRequestTimeout = 120 * time.Second
-	}
+func newWorkerManager(broker broker.MessageBroker, messages chat.MessageStore, sessions chat.SessionStore, agentClient client.Client) *WorkerManager {
 	return &WorkerManager{
-		workers:           make(map[string]context.CancelFunc),
-		broker:            broker,
-		messages:          messages,
-		sessions:          sessions,
-		agentURL:          agentURL,
-		agentRequestTimeout: agentRequestTimeout,
+		workers:     make(map[string]context.CancelFunc),
+		broker:      broker,
+		messages:    messages,
+		sessions:    sessions,
+		agentClient: agentClient,
 	}
 }
 
@@ -71,8 +63,7 @@ func (wm *WorkerManager) StartWorker(sessionID string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	wm.workers[sessionID] = cancel
 
-	agentClient := client.NewHTTPClient(wm.agentURL, wm.agentRequestTimeout)
-	w := worker.NewAgentWorker(wm.broker, wm.messages, wm.sessions, agentClient)
+	w := worker.NewAgentWorker(wm.broker, wm.messages, wm.sessions, wm.agentClient)
 
 	go func() {
 		defer func() {
@@ -117,11 +108,8 @@ func New(cfg config.Config) http.Handler {
 		messages = session.NewMessageStore(cfg.MaxMessagesPerSession)
 		log.Println("[Chat] using memory storage")
 	}
-	brok := brokermemory.NewMessageBroker()
-
 	// Business logic layer
-	h := ws.NewWebSocketHub(sessions, messages, brok, cfg.WebSocketReconnectHistoryLimit, cfg.WebSocketWriteTimeout)
-	wm := newWorkerManager(brok, messages, sessions, cfg.AgentBaseURL, cfg.AgentRequestTimeout)
+	agentClient := client.NewGatewaydClient(cfg.GatewaydAdminURL, cfg.GatewaydAgentID)
 
 	// Personal assistant storage: MySQL when available, otherwise memory mock.
 	initPersonalAssistantService(db)
@@ -139,15 +127,15 @@ func New(cfg config.Config) http.Handler {
 	initTeamService(db)
 
 	// Handlers
-	sessionHandler := handler.NewSessionHandler(sessions, messages, wm)
-	wsHandler := handler.NewWebSocketHandler(h, sessions)
+	sessionHandler := handler.NewSessionHandler(sessions, messages, agentClient)
+	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, cfg.AGUIWorkspace)
 
 	// Routes
 	mux.HandleFunc("/health", handler.HealthCheck)
+	mux.HandleFunc("/api/v1/agent", aguiHandler.AgentRun)
 	mux.HandleFunc("/api/v1/sessions", sessionHandler.Sessions)
 	mux.HandleFunc("/api/v1/sessions/{id}/messages", sessionHandler.GetMessages)
 	mux.HandleFunc("/api/v1/hello", handler.Hello)
-	mux.HandleFunc("/ws/v1/sessions/{id}", wsHandler.Handle)
 
 	// Internal business modules
 	mux.HandleFunc("/api/v1/identity/users", identity.Users)
@@ -179,8 +167,17 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/workspaces/{id}/standards/{standardId}", workspace.WorkspaceStandardByID)
 	mux.HandleFunc("/api/v1/workspaces/{id}/cicd", workspace.WorkspaceCICD)
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories", repository.Repositories)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/scan", repository.ScanRepositories)
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}", repository.RepositoryByID)
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/sync", repository.SyncRepository)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/details", repository.RepositoryDetails)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/branches", repository.RepositoryBranches)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/switch-branch", repository.SwitchBranch)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/tree", repository.RepositoryFileTree)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/content", repository.RepositoryFileContent)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/save", repository.SaveFileContent)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/commit", repository.GitCommit)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/status", repository.GitStatus)
 
 	// Team skills / prompts
 	mux.HandleFunc("/api/v1/team/skills", team.Skills)

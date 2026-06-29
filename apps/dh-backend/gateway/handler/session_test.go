@@ -8,16 +8,13 @@ import (
 	"testing"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat/session"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
 )
-
-type mockWorkerStarter struct{}
-
-func (m *mockWorkerStarter) StartWorker(sessionID string) {}
 
 func TestCreateSession_Success(t *testing.T) {
 	sessions := session.NewSessionStore()
 	messages := session.NewMessageStore(0)
-	h := NewSessionHandler(sessions, messages, &mockWorkerStarter{})
+	h := NewSessionHandler(sessions, messages, client.NewGatewaydClient("", ""))
 
 	reqBody, _ := json.Marshal(map[string]any{
 		"agentType": "opencode",
@@ -51,7 +48,7 @@ func TestCreateSession_Success(t *testing.T) {
 func TestCreateSession_InvalidBody(t *testing.T) {
 	sessions := session.NewSessionStore()
 	messages := session.NewMessageStore(0)
-	h := NewSessionHandler(sessions, messages, &mockWorkerStarter{})
+	h := NewSessionHandler(sessions, messages, client.NewGatewaydClient("", ""))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewReader([]byte("not-json")))
 	w := httptest.NewRecorder()
@@ -66,7 +63,7 @@ func TestCreateSession_InvalidBody(t *testing.T) {
 func TestSessions_MethodNotAllowed(t *testing.T) {
 	sessions := session.NewSessionStore()
 	messages := session.NewMessageStore(0)
-	h := NewSessionHandler(sessions, messages, &mockWorkerStarter{})
+	h := NewSessionHandler(sessions, messages, client.NewGatewaydClient("", ""))
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/sessions", nil)
 	w := httptest.NewRecorder()

@@ -1,3 +1,4 @@
+import '@/lib/patch-assistant-ui';
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -53,7 +54,7 @@ import { repositoryApi } from '@/lib/repository-api';
 import type { WorkItemDTO } from '@/lib/api-types';
 import type { Skill, Prompt, WorkspaceAgent } from '@/types';
 import { AssistantRuntimeProvider } from '@assistant-ui/react';
-import { useChatRuntime } from '@/hooks/useChatRuntime';
+import { useAgUiChat } from '@/hooks/useAgUiChat';
 import { ChatThread } from '@/components/chat/ChatThread';
 
 // ──────────────── Types ────────────────
@@ -276,7 +277,7 @@ export const Chat: React.FC = () => {
   const [availableAgents, setAvailableAgents] = useState<WorkspaceAgent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
 
-  const { runtime, sessionId, wsConnected, messages, sendMessage, switchSession } = useChatRuntime({ selectedAgentId });
+  const { runtime, sessionId, wsConnected, messages, isRunning, sendMessage, switchSession } = useAgUiChat();
 
   // Auto-scroll state
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -1065,7 +1066,25 @@ export const Chat: React.FC = () => {
                 </div>
               </div>
             ) : (
-              <ChatThread openDetail={openDetail} onArtifactClick={() => setCodeJumpOpen(true)} />
+              <>
+                <ChatThread
+                  openDetail={openDetail}
+                  onArtifactClick={() => setCodeJumpOpen(true)}
+                  onEditMessage={(text) => setInput(text)}
+                  onRegenerate={() => {
+                    const lastUserMsg = messages.filter(m => m.role === 'user').pop();
+                    if (lastUserMsg) {
+                      const content = typeof lastUserMsg.content === 'string'
+                        ? [{ type: 'text' as const, text: lastUserMsg.content }]
+                        : lastUserMsg.content;
+                      const textPart = content.find(p => p.type === 'text') as { text?: string } | undefined;
+                      const text = textPart?.text || '';
+                      const metadata = (lastUserMsg.metadata?.custom ?? {}) as { quotedCard?: any; selectedRepos?: any };
+                      if (text) sendMessage(text, { quotedCard: metadata.quotedCard, selectedRepos: metadata.selectedRepos });
+                    }
+                  }}
+                />
+              </>
             )}
             <div ref={messagesEndRef} />
           </div>
@@ -1243,7 +1262,7 @@ export const Chat: React.FC = () => {
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground rounded-full hover:bg-muted" onClick={() => fileInputRef.current?.click()}>
                   <Plus className="h-4 w-4" />
                 </Button>
-                <Button size="sm" className="h-9 px-4 rounded-full" disabled={!input.trim() || !wsConnected} onClick={handleSend}>
+                <Button size="sm" className="h-9 px-4 rounded-full" disabled={!input.trim() || isRunning} onClick={handleSend}>
                   <span className="mr-1.5 text-sm">执行</span><Send className="h-3.5 w-3.5" />
                 </Button>
               </div>

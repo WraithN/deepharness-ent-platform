@@ -138,3 +138,226 @@ func isValidRepoType(t string) bool {
 		return false
 	}
 }
+
+// ScanRepositories 扫描工作空间下的本地 Git 仓库。
+func ScanRepositories(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+
+	repos, err := defaultService.Scan(workspaceID)
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		return
+	}
+	handler.SetJSONHeader(w)
+	json.NewEncoder(w).Encode(repos)
+}
+
+// RepositoryDetails 获取仓库详细信息。
+func RepositoryDetails(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	repoID, ok := handler.PathValueOr404(w, r, "repoId")
+	if !ok {
+		return
+	}
+
+	details, err := defaultService.GetDetails(workspaceID, repoID)
+	if err != nil {
+		handler.HandleServiceError(w, err, "repository not found", "failed to get repository details")
+		return
+	}
+	handler.SetJSONHeader(w)
+	json.NewEncoder(w).Encode(details)
+}
+
+// RepositoryBranches 获取仓库分支列表。
+func RepositoryBranches(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	repoID, ok := handler.PathValueOr404(w, r, "repoId")
+	if !ok {
+		return
+	}
+
+	branches, err := defaultService.GetBranches(workspaceID, repoID)
+	if err != nil {
+		handler.HandleServiceError(w, err, "repository not found", "failed to get branches")
+		return
+	}
+	handler.SetJSONHeader(w)
+	json.NewEncoder(w).Encode(branches)
+}
+
+// RepositoryFileTree 获取仓库文件树。
+func RepositoryFileTree(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	repoID, ok := handler.PathValueOr404(w, r, "repoId")
+	if !ok {
+		return
+	}
+
+	branch := r.URL.Query().Get("branch")
+
+	tree, err := defaultService.GetFileTree(workspaceID, repoID, branch)
+	if err != nil {
+		handler.HandleServiceError(w, err, "repository not found", "failed to get file tree")
+		return
+	}
+	handler.SetJSONHeader(w)
+	json.NewEncoder(w).Encode(tree)
+}
+
+// RepositoryFileContent 获取仓库文件内容。
+func RepositoryFileContent(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	repoID, ok := handler.PathValueOr404(w, r, "repoId")
+	if !ok {
+		return
+	}
+
+	branch := r.URL.Query().Get("branch")
+	path := r.URL.Query().Get("path")
+
+	if path == "" {
+		handler.WriteJSONError(w, http.StatusBadRequest, 1, "path is required")
+		return
+	}
+
+	content, err := defaultService.GetFileContent(workspaceID, repoID, branch, path)
+	if err != nil {
+		handler.HandleServiceError(w, err, "file not found", "failed to get file content")
+		return
+	}
+	handler.SetJSONHeader(w)
+	json.NewEncoder(w).Encode(content)
+}
+
+// SwitchBranch 切换仓库分支并拉取最新代码。
+func SwitchBranch(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	repoID, ok := handler.PathValueOr404(w, r, "repoId")
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Branch string `json:"branch"`
+	}
+	if !handler.DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.Branch == "" {
+		handler.WriteJSONError(w, http.StatusBadRequest, 1, "branch name is required")
+		return
+	}
+
+	if err := defaultService.SwitchBranch(workspaceID, repoID, req.Branch); err != nil {
+		handler.HandleServiceError(w, err, "branch switch failed", err.Error())
+		return
+	}
+
+	handler.SetJSONHeader(w)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "branch": req.Branch})
+}
+
+// SaveFileContent 保存文件内容
+func SaveFileContent(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	repoID, ok := handler.PathValueOr404(w, r, "repoId")
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if !handler.DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.Path == "" {
+		handler.WriteJSONError(w, http.StatusBadRequest, 1, "path is required")
+		return
+	}
+
+	if err := defaultService.SaveFileContent(workspaceID, repoID, req.Path, req.Content); err != nil {
+		handler.HandleServiceError(w, err, "failed to save file", err.Error())
+		return
+	}
+
+	handler.SetJSONHeader(w)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "path": req.Path})
+}
+
+// GitCommit 提交 git 更改
+func GitCommit(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	repoID, ok := handler.PathValueOr404(w, r, "repoId")
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Message string `json:"message"`
+	}
+	if !handler.DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	hash, err := defaultService.GitCommit(workspaceID, repoID, req.Message)
+	if err != nil {
+		handler.HandleServiceError(w, err, "commit failed", err.Error())
+		return
+	}
+
+	handler.SetJSONHeader(w)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "hash": hash})
+}
+
+// GitStatus 获取 git 状态
+func GitStatus(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	repoID, ok := handler.PathValueOr404(w, r, "repoId")
+	if !ok {
+		return
+	}
+
+	status, err := defaultService.GitStatus(workspaceID, repoID)
+	if err != nil {
+		handler.HandleServiceError(w, err, "failed to get status", err.Error())
+		return
+	}
+
+	handler.SetJSONHeader(w)
+	json.NewEncoder(w).Encode(map[string]string{"status": status})
+}
