@@ -13,8 +13,6 @@ import {
   Terminal,
   ChevronDown,
   Code2,
-  PanelLeftClose,
-  PanelLeftOpen,
   Bot,
   Sun,
   Moon,
@@ -63,7 +61,7 @@ const tenantNavItems = [
 export const Layout: React.FC = () => {
   const { theme, setTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed] = useState(true);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('');
   const [currentUser, setCurrentUser] = useState<UserDTO>(DEFAULT_USER);
@@ -113,17 +111,6 @@ export const Layout: React.FC = () => {
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         } ${isCollapsed ? 'w-14' : 'w-[246px]'}`}
       >
-        {/* Collapse Toggle Button */}
-        <Button
-          variant="outline"
-          size="icon"
-          className="absolute -right-3 top-1/2 -translate-y-1/2 h-6 w-6 rounded-full border-border/80 bg-background shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 hidden lg:flex items-center justify-center text-muted-foreground hover:text-foreground"
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          title={isCollapsed ? "展开侧边栏" : "收缩侧边栏"}
-        >
-          {isCollapsed ? <PanelLeftOpen className="h-3.5 w-3.5" /> : <PanelLeftClose className="h-3.5 w-3.5" />}
-        </Button>
-
         <div className="flex h-16 shrink-0 items-center justify-between px-4 border-b overflow-hidden">
           <div className={`flex items-center gap-2 font-bold text-lg text-primary overflow-hidden ${isCollapsed ? 'w-full justify-center px-0' : 'w-full px-2'}`}>
             <Terminal className="h-6 w-6 shrink-0 transition-all duration-300" />

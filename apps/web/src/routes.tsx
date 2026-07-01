@@ -13,6 +13,7 @@ import { Requirements } from "@/pages/Requirements";
 import { ProjectCode } from "@/pages/ProjectCode";
 import { PersonalAssistantPage } from "@/pages/PersonalAssistantPage";
 import { PersonalAssistantChat } from "@/pages/PersonalAssistantChat";
+import { FileView } from "@/pages/FileView";
 import { AdminPage } from "@/pages/AdminPage";
 
 import { Profile } from "@/pages/Profile";
@@ -49,6 +50,7 @@ export const routes: RouteObject[] = [
       { path: "testing", element: <SmartTest /> },
       { path: "personal-assistant", element: <PersonalAssistantPage /> },
       { path: "personal-assistant/chat/:id", element: <PersonalAssistantChat /> },
+      { path: "file-view", element: <FileView /> },
       { path: "settings", element: <Settings /> },
       { path: "*", element: <Navigate to="/login" replace /> },
     ],

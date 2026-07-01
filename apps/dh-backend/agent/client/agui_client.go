@@ -86,13 +86,18 @@ func (c *AGUIClient) CreateThread(ctx context.Context) (string, error) {
 	return result.SessionID, nil
 }
 
-// AttachAgent 向指定 thread 挂载 agent 实例。
+// AttachAgent 向指定 thread 挂载默认 agent 实例。
 // gatewayd 会阻塞直到 agent 进程 ready，调用方需保证上下文有足够超时。
 // force=true 时会强制创建新 instance；force=false 时若 session 已有 instance 则复用。
 func (c *AGUIClient) AttachAgent(ctx context.Context, threadID string, force bool) error {
+	return c.attachAgentWithKey(ctx, threadID, force, c.pluginKey)
+}
+
+// attachAgentWithKey 向指定 thread 挂载指定插件的 agent 实例。
+func (c *AGUIClient) attachAgentWithKey(ctx context.Context, threadID string, force bool, pluginKey string) error {
 	body, _ := json.Marshal(map[string]any{
-		"plugin_key": c.pluginKey,
-		"name":       c.pluginKey + "-" + uuid.New().String()[:8],
+		"plugin_key": pluginKey,
+		"name":       pluginKey + "-" + uuid.New().String()[:8],
 		"workspace":  c.workspace,
 		"force":      force,
 	})
@@ -127,6 +132,22 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 		input.RunID = uuid.New().String()
 	}
 
+	// 优先使用输入中指定的 agent 插件 key，否则尝试从 forwardedProps 读取，最后回退到 client 默认值。
+	// agent_key 是 agentPluginKey 的别名，优先使用 agent_key。
+	pluginKey := c.pluginKey
+	if input.AgentKey != "" {
+		pluginKey = input.AgentKey
+	} else if input.AgentPluginKey != "" {
+		pluginKey = input.AgentPluginKey
+	} else if len(input.ForwardedProps) > 0 {
+		var forwarded struct {
+			AgentPluginKey string `json:"agentPluginKey"`
+		}
+		if err := json.Unmarshal(input.ForwardedProps, &forwarded); err == nil && forwarded.AgentPluginKey != "" {
+			pluginKey = forwarded.AgentPluginKey
+		}
+	}
+
 	if input.ThreadID == "" {
 		createStart := time.Now()
 		threadID, err := c.CreateThread(ctx)
@@ -143,7 +164,7 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 	attachCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	attachStart := time.Now()
-	if err := c.AttachAgent(attachCtx, input.ThreadID, false); err != nil {
+	if err := c.attachAgentWithKey(attachCtx, input.ThreadID, false, pluginKey); err != nil {
 		if isInstanceAlreadyExists(err) {
 			log.Printf("[AGUIClient] run=%s thread=%s reuse existing instance after %v", input.RunID, input.ThreadID, time.Since(attachStart))
 		} else if isSessionNotFound(err) {
@@ -153,14 +174,14 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 				return "", nil, fmt.Errorf("recreate thread after session lost: %w", createErr)
 			}
 			input.ThreadID = newThreadID
-			if attachErr := c.AttachAgent(attachCtx, input.ThreadID, true); attachErr != nil {
+			if attachErr := c.attachAgentWithKey(attachCtx, input.ThreadID, true, pluginKey); attachErr != nil {
 				return "", nil, fmt.Errorf("attach agent after recreate: %w", attachErr)
 			}
 			log.Printf("[AGUIClient] run=%s created new instance after recreate in %v", input.RunID, time.Since(attachStart))
 		} else {
 			// 其他错误时回退到 force=true，尝试新建 instance（例如旧 instance 已失效）。
 			log.Printf("[AGUIClient] run=%s AttachAgent force=false failed (%v), retrying with force=true", input.RunID, err)
-			if attachErr := c.AttachAgent(attachCtx, input.ThreadID, true); attachErr != nil {
+			if attachErr := c.attachAgentWithKey(attachCtx, input.ThreadID, true, pluginKey); attachErr != nil {
 				return "", nil, fmt.Errorf("attach agent: %w", attachErr)
 			}
 			log.Printf("[AGUIClient] run=%s created new instance with force=true after %v", input.RunID, time.Since(attachStart))
@@ -200,6 +221,7 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 		"tools":          input.Tools,
 		"context":        input.Context,
 		"forwardedProps": input.ForwardedProps,
+		"agent_key":      pluginKey,
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("marshal run input: %w", err)

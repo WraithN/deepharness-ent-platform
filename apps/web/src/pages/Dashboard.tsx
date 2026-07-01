@@ -61,7 +61,7 @@ export const Dashboard: React.FC = () => {
   const totalReqs = mockDashboardStats.requirementsCompleted.reduce((acc, curr) => acc + curr.count, 0);
 
   return (
-    <div className="flex-1 space-y-6 max-w-7xl mx-auto w-full pb-12 overflow-x-hidden">
+    <div className="flex-1 space-y-6 w-full pb-12 overflow-x-hidden">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card className="soft-shadow border border-border/50">
           <CardHeader className="flex flex-row items-center justify-between pb-2">

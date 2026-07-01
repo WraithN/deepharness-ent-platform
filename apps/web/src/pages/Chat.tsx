@@ -1,48 +1,42 @@
 import '@/lib/patch-assistant-ui';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
 import { Checkbox } from '@/components/ui/checkbox';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import {
-  MessageSquarePlus,
-  Search,
   Send,
   Bot,
-  User,
   Code2,
   Box,
   ListTodo,
-  FileCode2,
   ChevronRight,
   Wand2,
-  Plus,
+  Paperclip,
   CheckCircle,
-  CheckCircle2,
   UploadCloud,
   Puzzle,
   X,
   GitBranch,
   FileText,
-  ChevronUp,
   ChevronDown,
   ChevronLeft,
   LayoutTemplate,
   Info,
   Bug,
   FlaskConical,
-  Wrench,
-  Flag,
-  FolderKanban,
-  Settings2,
   SlidersHorizontal,
-  Sparkles
+  Plus,
+  Clock,
+  MessageSquarePlus,
+  Search
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
@@ -53,9 +47,11 @@ import { workspaceApi } from '@/lib/workspace-api';
 import { repositoryApi } from '@/lib/repository-api';
 import type { WorkItemDTO } from '@/lib/api-types';
 import type { Skill, Prompt, WorkspaceAgent } from '@/types';
-import { AssistantRuntimeProvider } from '@assistant-ui/react';
-import { useAgUiChat } from '@/hooks/useAgUiChat';
+import { AssistantRuntimeProvider, type ThreadMessageLike } from '@assistant-ui/react';
+import { useAgUiChat, type SendContext } from '@/hooks/useAgUiChat';
 import { ChatThread } from '@/components/chat/ChatThread';
+import { InlineFilePreview } from '@/components/chat/InlineFilePreview';
+import { cn } from '@/lib/utils';
 
 // ──────────────── Types ────────────────
 type RequirementStatus = 'backlog' | 'todo' | 'in-progress' | 'done';
@@ -146,6 +142,70 @@ const MOCK_CASES: CaseItem[] = [
   },
 ];
 
+// 用户输入排队上限。
+const MAX_INPUT_QUEUE = 3;
+
+// 排队输入项。
+interface InputQueueItem {
+  id: string;
+  text: string;
+  context?: SendContext;
+}
+
+// 智能体 tab 项。每个 tab 对应一个独立的后端 session（一个智能体实例），
+// 不同实例之间的会话完全隔离。
+type AgentStatus = 'error' | 'idle' | 'running' | 'active';
+
+interface AgentTab {
+  sessionId: string;
+  pluginKey: string;
+  title: string;
+  instanceId?: string;
+  status: AgentStatus;
+  lastAssistantAt?: string;
+}
+
+// 可选的智能体插件。
+const AGENT_OPTIONS: { key: string; label: string }[] = [
+  { key: 'claude-code', label: 'Claude Code' },
+  { key: 'opencode', label: 'OpenCode' },
+  { key: 'codex', label: 'Codex' },
+];
+
+const getAgentLabel = (key: string): string => AGENT_OPTIONS.find(o => o.key === key)?.label ?? key;
+
+const AGENT_STATUS_COLORS: Record<AgentStatus, string> = {
+  error: 'bg-red-500',
+  idle: 'bg-gray-400',
+  running: 'bg-yellow-400',
+  active: 'bg-green-500',
+};
+
+const AGENT_STATUS_LABELS: Record<AgentStatus, string> = {
+  error: '连接失败',
+  idle: '无活跃会话',
+  running: '进行中',
+  active: '活跃',
+};
+
+const ACTIVE_SESSION_THRESHOLD_MS = 60 * 60 * 1000;
+
+function isActiveWithinHour(lastAssistantAt?: string): boolean {
+  if (!lastAssistantAt) return false;
+  return Date.now() - new Date(lastAssistantAt).getTime() <= ACTIVE_SESSION_THRESHOLD_MS;
+}
+
+function getLastAssistantTimestamp(messages: ThreadMessageLike[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === 'assistant') {
+      if (msg.createdAt) return new Date(msg.createdAt).toISOString();
+      return new Date().toISOString();
+    }
+  }
+  return undefined;
+}
+
 // ──────────────── Label / Color Maps ────────────────
 const REQ_STATUS_LABELS: Record<RequirementStatus, string> = { backlog: '待办', todo: '待处理', 'in-progress': '进行中', done: '已完成' };
 const DEF_STATUS_LABELS: Record<DefectStatus, string> = { open: '待修复', 'in-progress': '修复中', fixed: '已修复', closed: '已关闭' };
@@ -230,39 +290,6 @@ const getColColor = (colKey: string) => {
     return 'border-border/40 text-muted-foreground';
   };
 
-// ──────────────── SectionPanel helper ────────────────
-interface SectionPanelProps {
-  icon: React.ReactNode;
-  title: string;
-  count: number;
-  expanded: boolean;
-  onToggle: () => void;
-  onKanban?: () => void;
-  children: React.ReactNode;
-}
-const SectionPanel: React.FC<SectionPanelProps> = ({ icon, title, count, expanded, onToggle, onKanban, children }) => (
-  <div className="flex flex-col min-h-0" style={{ flex: expanded ? '1 1 0' : '0 0 auto' }}>
-    <div className="flex items-center gap-1.5 px-3 py-2 border-b border-border/50 bg-background/50 shrink-0">
-      {icon}
-      <span className="text-xs font-semibold flex-1 truncate">{title}</span>
-      <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded-full shrink-0">{count}</span>
-      {onKanban && (
-        <button title="看板视图" className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors" onClick={onKanban}>
-          <LayoutTemplate className="h-3 w-3" />
-        </button>
-      )}
-      <button title={expanded ? '收起' : '展开'} className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors" onClick={onToggle}>
-        {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
-      </button>
-    </div>
-    {expanded && (
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="p-1.5 space-y-0.5">{children}</div>
-      </ScrollArea>
-    )}
-  </div>
-);
-
 // ──────────────── Component ────────────────
 export const Chat: React.FC = () => {
   const location = useLocation();
@@ -277,7 +304,13 @@ export const Chat: React.FC = () => {
   const [availableAgents, setAvailableAgents] = useState<WorkspaceAgent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
 
-  const { runtime, sessionId, wsConnected, messages, isRunning, sendMessage, switchSession } = useAgUiChat();
+  const [agentTabs, setAgentTabs] = useState<AgentTab[]>([]);
+  const [activeAgentTabId, setActiveAgentTabId] = useState<string | null>(null);
+
+  const activeTab = agentTabs.find(t => t.sessionId === activeAgentTabId) ?? null;
+  const activePluginKey = activeTab?.pluginKey ?? 'claude-code';
+
+  const { runtime, sessionId, wsConnected, messages, isRunning, sendMessage, switchSession, createSession, cancelRun } = useAgUiChat({ agentPluginKey: activePluginKey });
 
   // Auto-scroll state
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -285,13 +318,25 @@ export const Chat: React.FC = () => {
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  // History session dropdown
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [historySearch, setHistorySearch] = useState('');
-  const historyRef = useRef<HTMLDivElement>(null);
-
   // Code jump dialog
   const [codeJumpOpen, setCodeJumpOpen] = useState(false);
+
+  // 运行中切换/新建会话确认对话框。
+  const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
+  const [switchConfirmTitle, setSwitchConfirmTitle] = useState('切换会话');
+  const pendingActionRef = useRef<(() => void) | null>(null);
+
+  // Inline file preview
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const showPreview = previewPath !== null;
+
+  const handleFilePreview = useCallback((path: string) => {
+    setPreviewPath(path);
+  }, []);
+
+  const closePreview = useCallback(() => {
+    setPreviewPath(null);
+  }, []);
 
   // File Upload
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -300,21 +345,23 @@ export const Chat: React.FC = () => {
   const [skillPopoverOpen, setSkillPopoverOpen] = useState(false);
   const [repoMenuOpen, setRepoMenuOpen] = useState(false);
   const [promptMenuOpen, setPromptMenuOpen] = useState(false);
+  const [taskMenuOpen, setTaskMenuOpen] = useState(false);
+  const [compactPlusOpen, setCompactPlusOpen] = useState(false);
+  const [compactPlusSubmenu, setCompactPlusSubmenu] = useState<'repo' | 'prompt' | 'skill' | null>(null);
   const [activeSkillTab, setActiveSkillTab] = useState('全部');
+  const [activeTaskTab, setActiveTaskTab] = useState<'req' | 'defect' | 'case'>('req');
   const repoMenuRef = useRef<HTMLDivElement>(null);
   const promptMenuRef = useRef<HTMLDivElement>(null);
   const skillMenuRef = useRef<HTMLDivElement>(null);
+  const taskMenuRef = useRef<HTMLDivElement>(null);
+  const compactPlusRef = useRef<HTMLDivElement>(null);
 
   // Sidebar panels expand state
-  const [reqExpanded, setReqExpanded] = useState(true);
-  const [defectExpanded, setDefectExpanded] = useState(true);
-  const [caseExpanded, setCaseExpanded] = useState(true);
 
   // Data state
   const [requirements, setRequirements] = useState<ReqItem[]>([]);
   const [defects, setDefects] = useState<DefectItem[]>([]);
   const [cases, setCases] = useState<CaseItem[]>([]);
-  const [loading, setLoading] = useState(true);
 
   // Detail drawer
   const [detailType, setDetailType] = useState<'req' | 'defect' | 'case' | null>(null);
@@ -330,6 +377,11 @@ export const Chat: React.FC = () => {
 
   // Quoted card above input
   const [quotedCard, setQuotedCard] = useState<{ type: 'req' | 'defect' | 'case'; id: string; title: string; reporter: string } | null>(null);
+
+  // Input queue: when AI is running, user inputs are queued and sent automatically.
+  const [inputQueue, setInputQueue] = useState<InputQueueItem[]>([]);
+  const [queueMenuOpen, setQueueMenuOpen] = useState(false);
+  const queueMenuRef = useRef<HTMLDivElement>(null);
 
   // Kanban
   const [kanbanType, setKanbanType] = useState<'req' | 'defect' | 'case' | null>(null);
@@ -376,10 +428,17 @@ export const Chat: React.FC = () => {
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const t = e.target as Node;
-      if (historyRef.current && !historyRef.current.contains(t)) setHistoryOpen(false);
       if (repoMenuRef.current && !repoMenuRef.current.contains(t)) setRepoMenuOpen(false);
       if (promptMenuRef.current && !promptMenuRef.current.contains(t)) setPromptMenuOpen(false);
       if (skillMenuRef.current && !skillMenuRef.current.contains(t)) setSkillPopoverOpen(false);
+      if (taskMenuRef.current && !taskMenuRef.current.contains(t)) setTaskMenuOpen(false);
+      if (queueMenuRef.current && !queueMenuRef.current.contains(t)) setQueueMenuOpen(false);
+      if (agentMenuRef.current && !agentMenuRef.current.contains(t)) setAgentMenuOpen(false);
+      if (compactPlusRef.current && !compactPlusRef.current.contains(t)) {
+        setCompactPlusOpen(false);
+        setCompactPlusSubmenu(null);
+      }
+      if (historyRef.current && !historyRef.current.contains(t)) setHistoryOpen(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -388,33 +447,6 @@ export const Chat: React.FC = () => {
   useEffect(() => {
     if (location.state?.initialInput) setInput(location.state.initialInput);
   }, [location.state]);
-
-  // 从后端 API 加载历史会话
-  useEffect(() => {
-    let cancelled = false;
-    api.get<any[]>('/v1/sessions')
-      .then(sessions => {
-        if (cancelled) return;
-        const mapped = sessions.map((s: any) => {
-          const updatedAt = s.updatedAt || s.createdAt;
-          const d = updatedAt ? new Date(updatedAt) : new Date();
-          const dateStr = `${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-          const agentType = (s.agentType || '').toLowerCase();
-          const type = agentType.includes('ui') ? 'ui' : agentType.includes('code') ? 'code' : 'requirement';
-          return {
-            id: s.id,
-            title: s.title || '新会话',
-            date: dateStr,
-            type,
-          };
-        });
-        setHistoryList(mapped);
-      })
-      .catch(() => {
-        // fallback to empty
-      });
-    return () => { cancelled = true; };
-  }, [sessionId]);
 
   // 从后端 API 加载工作项数据
   useEffect(() => {
@@ -445,13 +477,11 @@ export const Chat: React.FC = () => {
         setRequirements(reqs);
         setDefects(defs);
         setCases(tcs);
-        setLoading(false);
       })
       .catch(err => {
         if (cancelled) return;
         console.error('Failed to load workitems:', err);
         toast.error('加载工作项失败');
-        setLoading(false);
       });
     return () => { cancelled = true; };
   }, []);
@@ -529,11 +559,49 @@ export const Chat: React.FC = () => {
 
   const handleSend = () => {
     if (!input.trim() && !quotedCard) return;
-    sendMessage(input, { quotedCard: quotedCard ?? undefined, selectedRepos: selectedRepos.length > 0 ? [...selectedRepos] : undefined });
+    const context: SendContext | undefined =
+      quotedCard || selectedRepos.length > 0
+        ? { quotedCard: quotedCard ?? undefined, selectedRepos: selectedRepos.length > 0 ? [...selectedRepos] : undefined }
+        : undefined;
+
+    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+    // 仅在 AI 正在处理上一条用户消息时才排队；如果已经看到 AI 回复（最后一条为 assistant），
+    // 说明当前没有需要等待的回复，直接发送即可，避免 isRunning 残留导致误排队。
+    const isAwaitingAssistant = isRunning && lastMessage?.role === 'user';
+
+    if (isAwaitingAssistant) {
+      // AI 正在回复时，将用户输入加入排队，最多 3 个。
+      if (inputQueue.length >= MAX_INPUT_QUEUE) {
+        toast.error(`最多排队 ${MAX_INPUT_QUEUE} 个输入`);
+        return;
+      }
+      const item: InputQueueItem = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        text: input,
+        context,
+      };
+      setInputQueue(prev => [...prev, item]);
+      toast.info('已加入排队');
+    } else {
+      sendMessage(input, context);
+    }
+
     setInput('');
     setQuotedCard(null);
     setSelectedRepos([]);
   };
+
+  // 当前对话结束后，自动发送排队中的下一条输入。
+  // 以“最后一条消息是否为 user”作为是否仍在等待 AI 回复的依据，避免 isRunning 残留导致排队消息卡死。
+  useEffect(() => {
+    if (inputQueue.length === 0) return;
+    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+    const isAwaitingAssistant = isRunning && lastMessage?.role === 'user';
+    if (isAwaitingAssistant) return;
+    const [next, ...rest] = inputQueue;
+    setInputQueue(rest);
+    sendMessage(next.text, next.context);
+  }, [isRunning, messages, inputQueue, sendMessage]);
 
   const closeDetail = () => {
     setDetailType(null); setDetailId(null);
@@ -660,10 +728,183 @@ export const Chat: React.FC = () => {
       .catch(() => toast.error('状态更新失败'));
   };
 
-  const [historyList, setHistoryList] = useState<{id: string; title: string; date: string; type: string}[]>([]);
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const agentMenuRef = useRef<HTMLDivElement>(null);
+  const initializedRef = useRef(false);
+
+  const updateAgentTab = useCallback((sessionId: string, patch: Partial<AgentTab>) => {
+    setAgentTabs(prev => prev.map(t => t.sessionId === sessionId ? { ...t, ...patch } : t));
+  }, []);
+
+  // 历史会话下拉状态。
+  const [historyList, setHistoryList] = useState<{ id: string; title: string; date: string; type: string; pluginKey?: string; instanceId?: string }[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historySearch, setHistorySearch] = useState('');
+  const historyRef = useRef<HTMLDivElement>(null);
   const filteredHistory = historyList.filter(h => h.title.includes(historySearch));
 
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // 加载历史会话列表。从 session.context 中读取插件 key 与实例 id，便于归类到对应智能体。
+  useEffect(() => {
+    api.get<{ id: string; title?: string; createdAt?: string; agentType?: string; context?: Record<string, unknown> }[]>('/v1/sessions')
+      .then(list => {
+        setHistoryList(list.map(s => ({
+          id: s.id,
+          title: s.title || s.id.slice(0, 8),
+          date: s.createdAt ? new Date(s.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '',
+          type: s.agentType || 'chat',
+          pluginKey: typeof s.context?.pluginKey === 'string' ? s.context.pluginKey : undefined,
+          instanceId: typeof s.context?.instanceId === 'string' ? s.context.instanceId : undefined,
+        })));
+      })
+      .catch(err => console.warn('[Chat] load history failed:', err));
+  }, [agentTabs.length]);
+
+  // 初始化一个默认智能体 tab。
+  useEffect(() => {
+    if (initializedRef.current || agentTabs.length > 0) return;
+    initializedRef.current = true;
+    const defaultKey = 'claude-code';
+    createSession(defaultKey).then(result => {
+      if (!result) return;
+      const tab: AgentTab = {
+        sessionId: result.sessionId,
+        pluginKey: defaultKey,
+        title: getAgentLabel(defaultKey),
+        instanceId: result.instanceId,
+        status: 'idle',
+      };
+      setAgentTabs([tab]);
+      setActiveAgentTabId(result.sessionId);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 如果当前会话正在运行，先弹出确认框；确认后取消当前 run 再执行目标动作。
+  const runIfIdleOrConfirm = useCallback((action: () => void, title: string) => {
+    if (isRunning) {
+      setSwitchConfirmTitle(title);
+      pendingActionRef.current = () => {
+        cancelRun();
+        action();
+      };
+      setSwitchConfirmOpen(true);
+      return;
+    }
+    action();
+  }, [isRunning, cancelRun]);
+
+  // 同步当前智能体 tab 的运行状态与最后 AI 输出时间。
+  useEffect(() => {
+    if (!activeAgentTabId) return;
+    const activeTab = agentTabs.find(t => t.sessionId === activeAgentTabId);
+    if (!activeTab) return;
+
+    const lastAssistant = getLastAssistantTimestamp(messages);
+    if (lastAssistant) {
+      updateAgentTab(activeAgentTabId, { lastAssistantAt: lastAssistant });
+    }
+
+    let nextStatus: AgentStatus = activeTab.status;
+    if (activeTab.status === 'error') {
+      nextStatus = 'error';
+    } else if (isRunning) {
+      nextStatus = 'running';
+    } else if (isActiveWithinHour(lastAssistant ?? activeTab.lastAssistantAt)) {
+      nextStatus = 'active';
+    } else {
+      nextStatus = 'idle';
+    }
+    if (nextStatus !== activeTab.status) {
+      updateAgentTab(activeAgentTabId, { status: nextStatus });
+    }
+  }, [isRunning, messages, activeAgentTabId, agentTabs, updateAgentTab]);
+
+  // 切换激活的智能体 tab 时，加载对应会话历史。
+  const switchAgentTab = useCallback(async (tab: AgentTab) => {
+    if (tab.sessionId === activeAgentTabId) return;
+    runIfIdleOrConfirm(async () => {
+      setActiveAgentTabId(tab.sessionId);
+      try {
+        await switchSession(tab.sessionId);
+        updateAgentTab(tab.sessionId, { status: 'idle' });
+      } catch {
+        updateAgentTab(tab.sessionId, { status: 'error' });
+      }
+    }, `切换到：${tab.title}`);
+  }, [activeAgentTabId, runIfIdleOrConfirm, switchSession, updateAgentTab]);
+
+  // 关闭智能体 tab；同步删除后端会话，若关闭的是当前激活 tab，自动切换到相邻 tab。
+  const closeAgentTab = useCallback(async (tab: AgentTab, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const doClose = async () => {
+      const remaining = agentTabs.filter(t => t.sessionId !== tab.sessionId);
+      setAgentTabs(remaining);
+      api.delete(`/v1/sessions/${tab.sessionId}`).catch(err => {
+        console.warn('[closeAgentTab] delete session failed:', err);
+      });
+      if (activeAgentTabId !== tab.sessionId) return;
+      if (remaining.length > 0) {
+        const next = remaining[0];
+        setActiveAgentTabId(next.sessionId);
+        await switchSession(next.sessionId);
+      } else {
+        setActiveAgentTabId(null);
+        await switchSession(null);
+      }
+    };
+    runIfIdleOrConfirm(doClose, `关闭：${tab.title}`);
+  }, [activeAgentTabId, agentTabs, runIfIdleOrConfirm, switchSession]);
+
+  // 为当前智能体新建一个实例（替换当前 tab 的会话）。
+  const handleNewSession = useCallback(async () => {
+    if (!activeAgentTabId) return;
+    const activeTab = agentTabs.find(t => t.sessionId === activeAgentTabId);
+    if (!activeTab) return;
+    runIfIdleOrConfirm(async () => {
+      const oldSessionId = activeTab.sessionId;
+      const result = await createSession(activeTab.pluginKey);
+      if (!result) {
+        updateAgentTab(activeAgentTabId, { status: 'error' });
+        return;
+      }
+      api.delete(`/v1/sessions/${oldSessionId}`).catch(err => {
+        console.warn('[handleNewSession] delete old session failed:', err);
+      });
+      setAgentTabs(prev =>
+        prev.map(t =>
+          t.sessionId === oldSessionId
+            ? {
+                sessionId: result.sessionId,
+                pluginKey: activeTab.pluginKey,
+                title: activeTab.title,
+                instanceId: result.instanceId,
+                status: 'idle',
+              }
+            : t
+        )
+      );
+      setActiveAgentTabId(result.sessionId);
+      await switchSession(result.sessionId);
+    }, '新建会话');
+  }, [activeAgentTabId, agentTabs, createSession, runIfIdleOrConfirm, switchSession, updateAgentTab]);
+
+  // 新增一个智能体实例 tab。
+  const addAgentTab = useCallback(async (pluginKey: string) => {
+    setAgentMenuOpen(false);
+    runIfIdleOrConfirm(async () => {
+      const result = await createSession(pluginKey);
+      if (!result) return;
+      const tab: AgentTab = {
+        sessionId: result.sessionId,
+        pluginKey,
+        title: getAgentLabel(pluginKey),
+        instanceId: result.instanceId,
+        status: 'idle',
+      };
+      setAgentTabs(prev => [...prev, tab]);
+      setActiveAgentTabId(result.sessionId);
+    }, `新增：${getAgentLabel(pluginKey)}`);
+  }, [createSession, runIfIdleOrConfirm]);
 
   // Derive task counts
   const allTasks = [...requirements, ...defects, ...cases];
@@ -678,372 +919,309 @@ export const Chat: React.FC = () => {
   const visibleDefects = defects.filter(d => filterConfig.defectStatuses.includes(d.status));
   const visibleCases = cases.filter(c => filterConfig.caseStatuses.includes(c.status));
 
+  // 渲染需求/缺陷/用例列表（用于任务上拉菜单）。
+  type TaskItem = ReqItem | DefectItem | CaseItem;
+  const renderTaskList = (type: 'req' | 'defect' | 'case', items: TaskItem[]) => {
+    if (items.length === 0) {
+      return (
+        <div className="py-6 text-center text-xs text-muted-foreground">
+          暂无{type === 'req' ? '需求' : type === 'defect' ? '缺陷' : '用例'}
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-0.5">
+        {items.map(item => {
+          const isActive = detailType === type && detailId === item.id;
+          return (
+            <div
+              key={item.id}
+              className={`group flex items-center gap-2 px-2 py-2 rounded-lg transition-colors ${
+                isActive ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-accent/60'
+              }`}
+            >
+              <div className="flex-1 min-w-0 cursor-pointer" onClick={() => openDetail(type, item.id)}>
+                <p className={`text-xs font-medium leading-snug truncate ${isActive ? 'text-primary' : 'text-foreground'}`}>
+                  {item.title}
+                </p>
+                <div className="flex items-center gap-1 mt-1 flex-wrap">
+                  <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded-full font-medium ${STATUS_COLORS[item.status]}`}>
+                    {type === 'req'
+                      ? REQ_STATUS_LABELS[item.status as RequirementStatus]
+                      : type === 'defect'
+                        ? DEF_STATUS_LABELS[item.status as DefectStatus]
+                        : CASE_STATUS_LABELS[item.status as CaseStatus]}
+                  </span>
+                  {type === 'defect' && 'severity' in item && (
+                    <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded-full font-medium ${SEVERITY_COLORS[item.severity]}`}>
+                      {SEVERITY_LABELS[item.severity]}
+                    </span>
+                  )}
+                  <span className="text-[10px] text-muted-foreground truncate">{item.reporter} 提</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                <button
+                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setQuotedCard({ type, id: item.id, title: item.title, reporter: item.reporter });
+                    toast.success('已引用到会话');
+                  }}
+                  title="引用到会话"
+                >
+                  <Send className="h-3 w-3" />
+                </button>
+                <button
+                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openDetail(type, item.id);
+                  }}
+                  title="查看详情"
+                >
+                  <Info className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   // ──────────────── Render ────────────────
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <div className="h-[calc(100vh-6rem)] md:h-[calc(100vh-4rem)] flex flex-row border-0 md:border md:border-border/50 rounded-none md:rounded-2xl overflow-hidden bg-background soft-shadow max-w-full mx-auto w-full relative">
 
-      {/* ── My Tasks Left Sidebar ── */}
-      <div className={`hidden md:flex flex-col shrink-0 bg-muted/10 border-r border-border/50 overflow-hidden transition-all duration-300 relative ${sidebarCollapsed ? 'w-12' : 'w-[260px]'}`}>
-        <button 
-          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          className="absolute top-3 -right-3 h-6 w-6 bg-background border border-border rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground z-10 opacity-0 group-hover:opacity-100 transition-opacity"
-          style={{ transform: sidebarCollapsed ? 'translateX(-12px)' : 'none' }}
+        {/* ── Inline Preview Area ── */}
+        <div
+          className={cn(
+            'h-full flex flex-col border-r border-border/50 bg-background overflow-hidden transition-all duration-500 ease-in-out',
+            showPreview ? 'w-3/4 opacity-100' : 'w-0 opacity-0'
+          )}
         >
-          {sidebarCollapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
-        </button>
-        
-        {!sidebarCollapsed ? (
-          <>
-            {loading && (
-              <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-                <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                  <div className="h-5 w-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                  <span className="text-xs">加载中...</span>
-                </div>
-              </div>
-            )}
-            {/* 我的需求 */}
-            <SectionPanel
-              icon={<ListTodo className="h-3.5 w-3.5 text-primary shrink-0" />}
-              title="我的需求"
-          count={visibleRequirements.length}
-          expanded={reqExpanded}
-          onToggle={() => setReqExpanded(v => !v)}
-          onKanban={() => openKanban('req')}
-        >
-          {visibleRequirements.map(req => (
-            <div
-              key={req.id}
-              className={`group flex items-center gap-2 px-2 py-2 rounded-lg transition-colors ${detailType === 'req' && detailId === req.id ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-accent/60'}`}
-            >
-              <div className="flex-1 min-w-0 cursor-pointer" onClick={() => openDetail('req', req.id)}>
-                <p className={`text-xs font-medium leading-snug truncate ${detailType === 'req' && detailId === req.id ? 'text-primary' : 'text-foreground'}`}>{req.title}</p>
-                <div className="flex items-center gap-1 mt-1 flex-wrap">
-                  <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded-full font-medium ${STATUS_COLORS[req.status]}`}>
-                    {REQ_STATUS_LABELS[req.status]}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground truncate">{req.reporter} 提</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                <button
-                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setQuotedCard({ type: 'req', id: req.id, title: req.title, reporter: req.reporter });
-                    toast.success('已引用需求到会话');
-                  }}
-                  title="引用到会话"
-                >
-                  <Send className="h-3 w-3" />
-                </button>
-                <button
-                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openDetail('req', req.id);
-                  }}
-                  title="查看详情"
-                >
-                  <Info className="h-3 w-3" />
-                </button>
-              </div>
-            </div>
-          ))}
-        </SectionPanel>
-
-        <div className="border-t border-border/50 shrink-0" />
-
-        {/* 我的缺陷 */}
-        <SectionPanel
-          icon={<Bug className="h-3.5 w-3.5 text-destructive shrink-0" />}
-          title="我的缺陷"
-          count={visibleDefects.length}
-          expanded={defectExpanded}
-          onToggle={() => setDefectExpanded(v => !v)}
-          onKanban={() => openKanban('defect')}
-        >
-          {visibleDefects.map(def => (
-            <div
-              key={def.id}
-              className={`group flex items-center gap-2 px-2 py-2 rounded-lg transition-colors ${detailType === 'defect' && detailId === def.id ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-accent/60'}`}
-            >
-              <div className="flex-1 min-w-0 cursor-pointer" onClick={() => openDetail('defect', def.id)}>
-                <p className={`text-xs font-medium leading-snug truncate ${detailType === 'defect' && detailId === def.id ? 'text-primary' : 'text-foreground'}`}>{def.title}</p>
-                <div className="flex items-center gap-1 mt-1 flex-wrap">
-                  <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded-full font-medium ${STATUS_COLORS[def.status]}`}>
-                    {DEF_STATUS_LABELS[def.status]}
-                  </span>
-                  <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded-full font-medium ${SEVERITY_COLORS[def.severity]}`}>
-                    {SEVERITY_LABELS[def.severity]}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground truncate">{def.reporter} 提</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                <button
-                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setQuotedCard({ type: 'defect', id: def.id, title: def.title, reporter: def.reporter });
-                    toast.success('已引用缺陷到会话');
-                  }}
-                  title="引用到会话"
-                >
-                  <Send className="h-3 w-3" />
-                </button>
-                <button
-                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openDetail('defect', def.id);
-                  }}
-                  title="查看详情"
-                >
-                  <Info className="h-3 w-3" />
-                </button>
-              </div>
-            </div>
-          ))}
-        </SectionPanel>
-
-        <div className="border-t border-border/50 shrink-0" />
-
-        {/* 我的用例 */}
-        <SectionPanel
-          icon={<FlaskConical className="h-3.5 w-3.5 text-violet-500 shrink-0" />}
-          title="我的用例"
-          count={visibleCases.length}
-          expanded={caseExpanded}
-          onToggle={() => setCaseExpanded(v => !v)}
-          onKanban={() => openKanban('case')}
-        >
-          {visibleCases.map(tc => (
-            <div
-              key={tc.id}
-              className={`group flex items-center gap-2 px-2 py-2 rounded-lg transition-colors ${detailType === 'case' && detailId === tc.id ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-accent/60'}`}
-            >
-              <div className="flex-1 min-w-0 cursor-pointer" onClick={() => openDetail('case', tc.id)}>
-                <p className={`text-xs font-medium leading-snug truncate ${detailType === 'case' && detailId === tc.id ? 'text-primary' : 'text-foreground'}`}>{tc.title}</p>
-                <div className="flex items-center gap-1 mt-1 flex-wrap">
-                  <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded-full font-medium ${STATUS_COLORS[tc.status]}`}>
-                    {CASE_STATUS_LABELS[tc.status]}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground truncate">{tc.reporter} 提</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                <button
-                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setQuotedCard({ type: 'case', id: tc.id, title: tc.title, reporter: tc.reporter });
-                    toast.success('已引用用例到会话');
-                  }}
-                  title="引用到会话"
-                >
-                  <Send className="h-3 w-3" />
-                </button>
-                <button
-                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openDetail('case', tc.id);
-                  }}
-                  title="查看详情"
-                >
-                  <Info className="h-3 w-3" />
-                </button>
-              </div>
-            </div>
-          ))}
-        </SectionPanel>
-
-        {/* Status Bar */}
-        <div className="shrink-0 border-t border-border/50 bg-background/80 px-3 py-2 flex items-center justify-between text-xs">
-          <div className="flex items-center gap-3 text-muted-foreground">
-            <span>总任务: <span className="font-semibold text-foreground">{allTasks.length}</span></span>
-            <span>已完成: <span className="font-semibold text-green-600 dark:text-green-400">{completedCount}</span></span>
-            <span>未完成: <span className="font-semibold text-amber-600 dark:text-amber-400">{uncompletedCount}</span></span>
-          </div>
-          <Dialog open={filterDialogOpen} onOpenChange={setFilterDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" title="筛选配置">
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>侧边栏筛选配置</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">需求状态</Label>
-                  <div className="space-y-1.5">
-                    {(['todo', 'backlog', 'in-progress', 'done'] as RequirementStatus[]).map(status => (
-                      <div key={status} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`req-${status}`}
-                          checked={filterConfig.reqStatuses.includes(status)}
-                          onCheckedChange={(checked) => {
-                            setFilterConfig(prev => ({
-                              ...prev,
-                              reqStatuses: checked 
-                                ? [...prev.reqStatuses, status]
-                                : prev.reqStatuses.filter(s => s !== status)
-                            }));
-                          }}
-                        />
-                        <Label htmlFor={`req-${status}`} className="text-xs cursor-pointer">{REQ_STATUS_LABELS[status as RequirementStatus]}</Label>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">缺陷状态</Label>
-                  <div className="space-y-1.5">
-                    {(['open', 'in-progress', 'fixed', 'closed'] as DefectStatus[]).map(status => (
-                      <div key={status} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`defect-${status}`}
-                          checked={filterConfig.defectStatuses.includes(status)}
-                          onCheckedChange={(checked) => {
-                            setFilterConfig(prev => ({
-                              ...prev,
-                              defectStatuses: checked 
-                                ? [...prev.defectStatuses, status]
-                                : prev.defectStatuses.filter(s => s !== status)
-                            }));
-                          }}
-                        />
-                        <Label htmlFor={`defect-${status}`} className="text-xs cursor-pointer">{DEF_STATUS_LABELS[status as DefectStatus]}</Label>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">用例状态</Label>
-                  <div className="space-y-1.5">
-                    {(['draft', 'ready', 'passed', 'failed', 'blocked'] as CaseStatus[]).map(status => (
-                      <div key={status} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`case-${status}`}
-                          checked={filterConfig.caseStatuses.includes(status)}
-                          onCheckedChange={(checked) => {
-                            setFilterConfig(prev => ({
-                              ...prev,
-                              caseStatuses: checked 
-                                ? [...prev.caseStatuses, status]
-                                : prev.caseStatuses.filter(s => s !== status)
-                            }));
-                          }}
-                        />
-                        <Label htmlFor={`case-${status}`} className="text-xs cursor-pointer">{CASE_STATUS_LABELS[status as CaseStatus]}</Label>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setFilterDialogOpen(false)}>关闭</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          {previewPath && <InlineFilePreview path={previewPath} onClose={closePreview} />}
         </div>
 
-        </>
-        ) : null}
-      </div>
-
-      {/* ── Main Chat Area ── */}
-      <div className="flex flex-col flex-1 min-w-0 bg-background relative overflow-hidden">
+        {/* ── Main Chat Area ── */}
+        <div
+          className={cn(
+            'h-full flex flex-col min-w-0 bg-background relative overflow-hidden transition-all duration-500 ease-in-out',
+            showPreview ? 'w-1/4' : 'flex-1 w-full'
+          )}
+        >
 
         {/* Chat Header */}
-        <div className="h-12 border-b border-border/50 flex items-center px-4 shrink-0 gap-2 bg-background/80 backdrop-blur-sm z-10 w-full">
-          <Bot className="h-4 w-4 text-primary shrink-0" />
-          <span className="font-semibold text-sm">DeepHarness 助手</span>
+        <div className="border-b border-border/50 flex flex-col shrink-0 bg-background/80 backdrop-blur-sm z-10 w-full">
+          {/* 第一层：助手标题 + 智能体 tabs + 新增智能体 */}
+          <div className="h-12 flex items-center px-4 gap-2">
+            <Bot className="h-4 w-4 text-primary shrink-0" />
+            <span className="font-semibold text-sm shrink-0">DeepHarness 助手</span>
 
-          {/* History dropdown */}
-          <div className="relative ml-2" ref={historyRef}>
-            <button
-              className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg border border-border/60 bg-background/80 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-              onClick={() => setHistoryOpen(v => !v)}
-            >
-              <span>历史会话</span>
-              <ChevronDown className="h-3 w-3" />
-            </button>
-            {historyOpen && (
-              <div className="absolute top-full left-0 mt-1 w-72 bg-popover border border-border/60 shadow-xl rounded-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
-                <div className="p-2 border-b border-border/50">
-                  <div className="relative">
-                    <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
-                    <Input
-                      placeholder="搜索历史会话..."
-                      className="pl-8 h-7 text-xs bg-muted/30 border-border/50 rounded-lg"
-                      value={historySearch}
-                      onChange={e => setHistorySearch(e.target.value)}
-                      autoFocus
-                    />
-                  </div>
-                </div>
-                <div className="max-h-60 overflow-y-auto p-1">
-                  {filteredHistory.length === 0 && (
-                    <div className="py-6 text-center text-xs text-muted-foreground">暂无匹配的历史会话</div>
-                  )}
-                  {filteredHistory.map(h => (
-                    <div key={h.id} className="group relative w-full flex items-center px-3 py-2 text-sm rounded-lg hover:bg-accent text-left transition-colors cursor-pointer" onClick={() => { switchSession(h.id); setHistoryOpen(false); toast.success(`切换到：${h.title}`); }}>
-                      <div className="flex items-center gap-2 flex-1 min-w-0 pr-12 group-hover:pr-16 transition-all">
-                        {h.type === 'ui' && <Box className="h-3.5 w-3.5 text-blue-500 shrink-0" />}
-                        {h.type === 'requirement' && <ListTodo className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
-                        {h.type === 'code' && <Code2 className="h-3.5 w-3.5 text-green-500 shrink-0" />}
-                        <span className="flex-1 truncate text-xs">{h.title}</span>
-                        <span className="text-[10px] text-muted-foreground shrink-0 hidden sm:inline-block group-hover:hidden">{h.date}</span>
-                      </div>
-                      
-                      {/* Action buttons (shown on hover) */}
-                      <div className="absolute right-2 opacity-0 group-hover:opacity-100 flex items-center gap-1 bg-gradient-to-l from-accent via-accent to-transparent pl-2 transition-opacity">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 rounded hover:bg-background text-muted-foreground hover:text-foreground"
-                          title="会话复盘"
-                          onClick={(e) => { e.stopPropagation(); toast.success('已生成会话复盘报告'); setHistoryOpen(false); }}
-                        >
-                          <FileText className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 rounded hover:bg-background text-muted-foreground hover:text-foreground"
-                          title="总结为技能"
-                          onClick={(e) => { e.stopPropagation(); toast.success('已将当前会话总结为新技能'); setHistoryOpen(false); }}
-                        >
-                          <Wand2 className="h-3 w-3" />
-                        </Button>
-                      </div>
+            {showPreview ? (
+              <Select
+                value={activeAgentTabId || ''}
+                onValueChange={(sid) => {
+                  const existing = agentTabs.find(t => t.sessionId === sid);
+                  if (existing) switchAgentTab(existing);
+                }}
+              >
+                <SelectTrigger className="h-7 flex-1 min-w-0 text-xs" aria-label="选择智能体">
+                  <Bot className="h-3.5 w-3.5 mr-1.5 text-muted-foreground shrink-0" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {agentTabs.map(tab => (
+                    <SelectItem key={tab.sessionId} value={tab.sessionId} className="text-xs">
+                      {tab.instanceId ? `${tab.title} · ${tab.instanceId.slice(0, 6)}` : tab.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="flex-1 min-w-0 flex items-center gap-2 overflow-x-auto">
+                {agentTabs.map(tab => {
+                  const isActive = tab.sessionId === activeAgentTabId;
+                  return (
+                    <div
+                      key={tab.sessionId}
+                      data-session-id={tab.sessionId}
+                      onClick={() => switchAgentTab(tab)}
+                      className={`group flex items-center gap-1.5 pl-2 pr-1.5 h-7 max-w-[180px] rounded-md border text-xs cursor-pointer transition-colors shrink-0 ${
+                        isActive
+                          ? 'bg-primary/10 border-primary/30 text-primary'
+                          : 'bg-background border-border/50 text-foreground hover:bg-accent'
+                      }`}
+                      title={`${tab.title} · ${AGENT_STATUS_LABELS[tab.status]}${tab.instanceId ? ' · ' + tab.instanceId : ''}`}
+                    >
+                      <span className={`h-2 w-2 rounded-full ${AGENT_STATUS_COLORS[tab.status]}`} />
+                      <Bot className="h-3 w-3 shrink-0" />
+                      <span className="truncate flex-1">{tab.instanceId ? `${tab.title} · ${tab.instanceId.slice(0, 6)}` : tab.title}</span>
+                      <button
+                        className="h-4 w-4 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-opacity shrink-0"
+                        title="关闭智能体"
+                        onClick={(e) => closeAgentTab(tab, e)}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 新增智能体 */}
+            <div className="relative shrink-0" ref={agentMenuRef}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 rounded-md text-muted-foreground hover:text-foreground"
+                onClick={() => setAgentMenuOpen(!agentMenuOpen)}
+                aria-label="新增智能体"
+                title="新增智能体"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+              {agentMenuOpen && (
+                <div className="absolute top-full right-0 mt-1 w-40 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-top-2">
+                  {AGENT_OPTIONS.map(option => (
+                    <div
+                      key={option.key}
+                      className="flex items-center gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-accent transition-colors"
+                      onClick={() => {
+                        addAgentTab(option.key);
+                        setAgentMenuOpen(false);
+                      }}
+                    >
+                      <Bot className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span>{option.label}</span>
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
-          {/* New session */}
-          <Button
-            variant="ghost" size="sm"
-            className="h-7 px-2.5 ml-auto text-xs gap-1.5 text-muted-foreground hover:text-foreground"
-            onClick={() => { switchSession(null); toast.success('已开启新会话'); }}
-          >
-            <MessageSquarePlus className="h-3.5 w-3.5" />
-            新建会话
-          </Button>
+          {/* 第二层：当前会话标题 + 历史会话 + 新建会话 */}
+          <div className="h-10 border-t border-border/50 flex items-center px-4 gap-2 bg-muted/20">
+            <span className="text-sm font-medium truncate">
+              {activeTab
+                ? (activeTab.instanceId ? `${activeTab.title} · ${activeTab.instanceId.slice(0, 6)}` : activeTab.title)
+                : '未选择智能体'}
+            </span>
+            {activeTab && (
+              <span className="text-xs text-muted-foreground">{AGENT_STATUS_LABELS[activeTab.status]}</span>
+            )}
+
+            <div className="ml-auto flex items-center gap-2 shrink-0">
+              {/* 历史会话下拉 */}
+              <div className="relative" ref={historyRef}>
+                <Button
+                  variant="outline" size="sm"
+                  className="h-7 px-2.5 text-xs gap-1.5"
+                  onClick={() => { setHistoryOpen(v => !v); setAgentMenuOpen(false); setTaskMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); }}
+                >
+                  <Clock className="h-3.5 w-3.5" />
+                  <span>历史会话</span>
+                  <ChevronDown className="h-3 w-3" />
+                </Button>
+                {historyOpen && (
+                  <div className="absolute top-full right-0 mt-1 w-72 bg-popover border shadow-xl rounded-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
+                    <div className="p-2 border-b border-border/50">
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
+                        <Input
+                          placeholder="搜索历史会话..."
+                          className="pl-8 h-7 text-xs bg-muted/30 border-border/50 rounded-lg"
+                          value={historySearch}
+                          onChange={e => setHistorySearch(e.target.value)}
+                          autoFocus
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-60 overflow-y-auto p-1">
+                      {filteredHistory.length === 0 && (
+                        <div className="py-6 text-center text-xs text-muted-foreground">暂无匹配的历史会话</div>
+                      )}
+                      {filteredHistory.map(h => (
+                        <div
+                          key={h.id}
+                          className="group relative w-full flex items-center px-3 py-2 text-sm rounded-lg hover:bg-accent text-left transition-colors cursor-pointer"
+                          onClick={() => {
+                            setHistoryOpen(false);
+                            const existing = agentTabs.find(t => t.sessionId === h.id);
+                            if (existing) {
+                              switchAgentTab(existing);
+                              toast.success(`切换到：${h.title}`);
+                              return;
+                            }
+                            const pluginKey = h.pluginKey || 'claude-code';
+                            runIfIdleOrConfirm(() => {
+                              const tab: AgentTab = {
+                                sessionId: h.id,
+                                pluginKey,
+                                title: getAgentLabel(pluginKey),
+                                instanceId: h.instanceId,
+                                status: 'idle',
+                              };
+                              setAgentTabs(prev => [...prev, tab]);
+                              setActiveAgentTabId(h.id);
+                              switchSession(h.id);
+                              toast.success(`已打开：${h.title}`);
+                            }, `打开历史：${h.title}`);
+                          }}
+                        >
+                          <div className="flex items-center gap-2 flex-1 min-w-0 pr-12 group-hover:pr-16 transition-all">
+                            {h.type === 'ui' && <Box className="h-3.5 w-3.5 text-blue-500 shrink-0" />}
+                            {h.type === 'requirement' && <ListTodo className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
+                            {h.type === 'code' && <Code2 className="h-3.5 w-3.5 text-green-500 shrink-0" />}
+                            {h.type !== 'ui' && h.type !== 'requirement' && h.type !== 'code' && <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+                            <span className="flex-1 truncate text-xs">{h.title}</span>
+                            <span className="text-[10px] text-muted-foreground shrink-0 hidden sm:inline-block group-hover:hidden">{h.date}</span>
+                          </div>
+                          <div className="absolute right-2 opacity-0 group-hover:opacity-100 flex items-center gap-1 bg-gradient-to-l from-accent via-accent to-transparent pl-2 transition-opacity">
+                            <Button
+                              variant="ghost" size="icon"
+                              className="h-6 w-6 rounded hover:bg-background text-muted-foreground hover:text-foreground"
+                              title="会话复盘"
+                              onClick={(e) => { e.stopPropagation(); toast.success('已生成会话复盘报告'); setHistoryOpen(false); }}
+                            >
+                              <FileText className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              variant="ghost" size="icon"
+                              className="h-6 w-6 rounded hover:bg-background text-muted-foreground hover:text-foreground"
+                              title="总结为技能"
+                              onClick={(e) => { e.stopPropagation(); toast.success('已将当前会话总结为新技能'); setHistoryOpen(false); }}
+                            >
+                              <Wand2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 新建会话 */}
+              <Button
+                variant="ghost" size="sm"
+                className="h-7 px-2.5 text-xs gap-1.5 text-muted-foreground hover:text-foreground shrink-0"
+                onClick={handleNewSession}
+                title="新建会话"
+              >
+                <MessageSquarePlus className="h-3.5 w-3.5" />
+                新建会话
+              </Button>
+            </div>
+          </div>
         </div>
 
         {/* Chat Messages */}
-        <ScrollArea id="chat-scroll-area" className="flex-1 p-4 bg-[#f8f9fa] dark:bg-card/30">
+        <ScrollArea id="chat-scroll-area" className="flex-1 p-4 pr-8 bg-[#f8f9fa] dark:bg-card/30">
           <div className="space-y-6">
             {messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center pt-20">
@@ -1070,6 +1248,7 @@ export const Chat: React.FC = () => {
                 <ChatThread
                   openDetail={openDetail}
                   onArtifactClick={() => setCodeJumpOpen(true)}
+                  onFilePreview={handleFilePreview}
                   onEditMessage={(text) => setInput(text)}
                   onRegenerate={() => {
                     const lastUserMsg = messages.filter(m => m.role === 'user').pop();
@@ -1170,81 +1349,236 @@ export const Chat: React.FC = () => {
             />
             <div className="flex items-center justify-between px-3 pb-3 mt-auto">
               <div className="flex items-center gap-1.5 flex-wrap">
-                {/* 代码库 */}
-                <div className="relative" ref={repoMenuRef}>
-                  <Button variant="outline" size="sm" className="h-8 rounded-full text-xs hover:bg-muted px-3" onClick={() => { setRepoMenuOpen(!repoMenuOpen); setSkillPopoverOpen(false); setPromptMenuOpen(false); }}>
-                    <Code2 className="h-3.5 w-3.5 mr-1.5" />代码库
+                {/* 任务 */}
+                <div className="relative" ref={taskMenuRef}>
+                  <Button variant="outline" size="sm" className="h-8 rounded-full text-xs hover:bg-muted px-3" onClick={() => { setTaskMenuOpen(!taskMenuOpen); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); }}>
+                    <ListTodo className="h-3.5 w-3.5 mr-1.5" />任务
+                    {uncompletedCount > 0 && (
+                      <span className="ml-1.5 h-4 min-w-4 px-1 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center">
+                        {uncompletedCount}
+                      </span>
+                    )}
                   </Button>
-                  {repoMenuOpen && (
-                    <div className="absolute bottom-full left-0 mb-2 w-48 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
-                      {availableRepos.map(repo => {
-                        const sel = selectedRepos.some(r => r.id === repo.id);
-                        return (
-                          <div key={repo.id} className="flex items-center w-full px-3 py-2 text-sm hover:bg-accent cursor-pointer text-foreground" onClick={() => toggleRepo(repo)}>
-                            <GitBranch className="h-4 w-4 mr-2 text-muted-foreground" />
-                            <span className="flex-1 truncate">{repo.name}</span>
-                            {sel && <CheckCircle className="h-4 w-4 text-primary ml-2 shrink-0" />}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {/* 提示词 */}
-                <div className="relative" ref={promptMenuRef}>
-                  <Button variant="outline" size="sm" className="h-8 rounded-full text-xs hover:bg-muted px-3" onClick={() => { setPromptMenuOpen(!promptMenuOpen); setRepoMenuOpen(false); setSkillPopoverOpen(false); }}>
-                    <FileText className="h-3.5 w-3.5 mr-1.5" />提示词
-                  </Button>
-                  {promptMenuOpen && (
-                    <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
-                      <div className="max-h-[280px] overflow-y-auto p-1">
-                        {availablePrompts.map(p => (
-                          <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => insertPrompt(p.content || p.description)}>
-                            <span className="font-medium text-sm mb-1">{p.name}</span>
-                            <span className="text-xs text-muted-foreground line-clamp-2">{p.content || p.description}</span>
-                          </div>
-                        ))}
+                  {taskMenuOpen && (
+                    <div className="absolute bottom-full left-0 mb-2 w-[360px] bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
+                      {/* 任务统计与操作 */}
+                      <div className="flex items-center justify-between px-3 py-2 border-b border-border/50 bg-muted/30 shrink-0">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <span>总任务: <span className="font-semibold text-foreground">{allTasks.length}</span></span>
+                          <span>已完成: <span className="font-semibold text-green-600 dark:text-green-400">{completedCount}</span></span>
+                          <span>未完成: <span className="font-semibold text-amber-600 dark:text-amber-400">{uncompletedCount}</span></span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            title="看板视图"
+                            className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                            onClick={() => { openKanban(activeTaskTab); setTaskMenuOpen(false); }}
+                          >
+                            <LayoutTemplate className="h-3 w-3" />
+                          </button>
+                          <button
+                            title="筛选配置"
+                            className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                            onClick={() => { setFilterDialogOpen(true); setTaskMenuOpen(false); }}
+                          >
+                            <SlidersHorizontal className="h-3 w-3" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* 技能 */}
-                <div className="relative" ref={skillMenuRef}>
-                  <Button variant="outline" size="sm" className="h-8 rounded-full text-xs hover:bg-muted px-3" onClick={() => { setSkillPopoverOpen(!skillPopoverOpen); setRepoMenuOpen(false); setPromptMenuOpen(false); }}>
-                    <Wand2 className="h-3.5 w-3.5 mr-1.5" />技能
-                  </Button>
-                  {skillPopoverOpen && (
-                    <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2">
-                      <Tabs value={activeSkillTab} onValueChange={setActiveSkillTab} className="w-full flex flex-col">
+                      <Tabs value={activeTaskTab} onValueChange={(v) => setActiveTaskTab(v as typeof activeTaskTab)} className="w-full flex flex-col flex-1 min-h-0">
                         <div className="px-1 pt-2 bg-muted/30">
                           <TabsList className="w-full justify-start h-auto bg-transparent p-0 overflow-x-auto flex-nowrap rounded-none border-b">
-                            {['全部', '需求设计', 'UI设计', '代码开发', '测试编写', '需求上线'].map(tab => (
-                              <TabsTrigger key={tab} value={tab} className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2 px-3 text-xs">{tab}</TabsTrigger>
-                            ))}
+                            <TabsTrigger value="req" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2 px-3 text-xs">需求</TabsTrigger>
+                            <TabsTrigger value="defect" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2 px-3 text-xs">缺陷</TabsTrigger>
+                            <TabsTrigger value="case" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2 px-3 text-xs">用例</TabsTrigger>
                           </TabsList>
                         </div>
-                        <div className="max-h-[280px] overflow-y-auto p-2 space-y-1">
-                          {availableSkills
-                            .filter(s => activeSkillTab === '全部' || s.phase === activeSkillTab)
-                            .map(skill => {
-                              const IconComponent = skillIconMap[skill.icon || ''] || Puzzle;
-                              return (
-                                <div key={skill.id} className="flex items-start gap-3 p-2.5 rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors" onClick={() => { appendSkillTag(skill.name); setSkillPopoverOpen(false); }}>
-                                  <div className="h-8 w-8 rounded-md bg-background flex items-center justify-center border shrink-0"><IconComponent className="h-4 w-4 text-muted-foreground" /></div>
-                                  <div className="flex flex-col flex-1 min-w-0">
-                                    <span className="font-medium text-sm leading-none mb-1 text-foreground">{skill.name}</span>
-                                    <span className="text-xs text-muted-foreground line-clamp-2">{skill.description}</span>
-                                  </div>
-                                </div>
-                              );
-                            })}
+                        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                          {activeTaskTab === 'req' && renderTaskList('req', visibleRequirements)}
+                          {activeTaskTab === 'defect' && renderTaskList('defect', visibleDefects)}
+                          {activeTaskTab === 'case' && renderTaskList('case', visibleCases)}
                         </div>
                       </Tabs>
                     </div>
                   )}
                 </div>
+
+                {/* 代码库 / 提示词 / 技能 */}
+                {showPreview ? (
+                  <div className="relative" ref={compactPlusRef}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-8 rounded-full p-0"
+                      onClick={() => { setCompactPlusOpen(!compactPlusOpen); setCompactPlusSubmenu(null); }}
+                      title="更多工具"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </Button>
+                    {/* 一级菜单：选择类型 */}
+                    {compactPlusOpen && !compactPlusSubmenu && (
+                      <div className="absolute bottom-full left-0 mb-2 bg-popover border shadow-xl rounded-xl flex items-center gap-0.5 z-50 p-1 animate-in fade-in slide-in-from-bottom-2">
+                        <button
+                          className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
+                          title="代码库"
+                          onClick={() => setCompactPlusSubmenu('repo')}
+                        >
+                          <GitBranch className="h-4 w-4 text-muted-foreground" />
+                        </button>
+                        <button
+                          className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
+                          title="提示词"
+                          onClick={() => setCompactPlusSubmenu('prompt')}
+                        >
+                          <FileText className="h-4 w-4 text-muted-foreground" />
+                        </button>
+                        <button
+                          className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
+                          title="技能"
+                          onClick={() => setCompactPlusSubmenu('skill')}
+                        >
+                          <Wand2 className="h-4 w-4 text-muted-foreground" />
+                        </button>
+                      </div>
+                    )}
+                    {/* 二级菜单：代码库 */}
+                    {compactPlusSubmenu === 'repo' && (
+                      <div className="absolute bottom-full left-0 mb-2 w-48 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
+                        {availableRepos.map(repo => {
+                          const sel = selectedRepos.some(r => r.id === repo.id);
+                          return (
+                            <div key={repo.id} className="flex items-center w-full px-3 py-2 text-sm hover:bg-accent cursor-pointer text-foreground" onClick={() => { toggleRepo(repo); setCompactPlusSubmenu(null); setCompactPlusOpen(false); }}>
+                              <GitBranch className="h-4 w-4 mr-2 text-muted-foreground" />
+                              <span className="flex-1 truncate">{repo.name}</span>
+                              {sel && <CheckCircle className="h-4 w-4 text-primary ml-2 shrink-0" />}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {/* 二级菜单：提示词 */}
+                    {compactPlusSubmenu === 'prompt' && (
+                      <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
+                        <div className="max-h-[280px] overflow-y-auto p-1">
+                          {availablePrompts.map(p => (
+                            <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => { insertPrompt(p.content || p.description); setCompactPlusSubmenu(null); setCompactPlusOpen(false); }}>
+                              <span className="font-medium text-sm mb-1">{p.name}</span>
+                              <span className="text-xs text-muted-foreground line-clamp-2">{p.content || p.description}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* 二级菜单：技能 */}
+                    {compactPlusSubmenu === 'skill' && (
+                      <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
+                        <Tabs value={activeSkillTab} onValueChange={setActiveSkillTab} className="w-full flex flex-col">
+                          <div className="px-1 pt-2 bg-muted/30">
+                            <TabsList className="w-full justify-start h-auto bg-transparent p-0 overflow-x-auto flex-nowrap rounded-none border-b">
+                              {['全部', '需求设计', 'UI设计', '代码开发', '测试编写', '需求上线'].map(tab => (
+                                <TabsTrigger key={tab} value={tab} className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2 px-3 text-xs">{tab}</TabsTrigger>
+                              ))}
+                            </TabsList>
+                          </div>
+                          <div className="max-h-[280px] overflow-y-auto p-2 space-y-1">
+                            {availableSkills
+                              .filter(s => activeSkillTab === '全部' || s.phase === activeSkillTab)
+                              .map(skill => {
+                                const IconComponent = skillIconMap[skill.icon || ''] || Puzzle;
+                                return (
+                                  <div key={skill.id} className="flex items-start gap-3 p-2.5 rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors" onClick={() => { appendSkillTag(skill.name); setCompactPlusSubmenu(null); setCompactPlusOpen(false); }}>
+                                    <div className="h-8 w-8 rounded-md bg-background flex items-center justify-center border shrink-0"><IconComponent className="h-4 w-4 text-muted-foreground" /></div>
+                                    <div className="flex flex-col flex-1 min-w-0">
+                                      <span className="font-medium text-sm leading-none mb-1 text-foreground">{skill.name}</span>
+                                      <span className="text-xs text-muted-foreground line-clamp-2">{skill.description}</span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        </Tabs>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    {/* 代码库 */}
+                    <div className="relative" ref={repoMenuRef}>
+                      <Button variant="outline" size="sm" className="h-8 rounded-full text-xs hover:bg-muted px-3" onClick={() => { setRepoMenuOpen(!repoMenuOpen); setSkillPopoverOpen(false); setPromptMenuOpen(false); setTaskMenuOpen(false); }}>
+                        <Code2 className="h-3.5 w-3.5 mr-1.5" />代码库
+                      </Button>
+                      {repoMenuOpen && (
+                        <div className="absolute bottom-full left-0 mb-2 w-48 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
+                          {availableRepos.map(repo => {
+                            const sel = selectedRepos.some(r => r.id === repo.id);
+                            return (
+                              <div key={repo.id} className="flex items-center w-full px-3 py-2 text-sm hover:bg-accent cursor-pointer text-foreground" onClick={() => toggleRepo(repo)}>
+                                <GitBranch className="h-4 w-4 mr-2 text-muted-foreground" />
+                                <span className="flex-1 truncate">{repo.name}</span>
+                                {sel && <CheckCircle className="h-4 w-4 text-primary ml-2 shrink-0" />}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 提示词 */}
+                    <div className="relative" ref={promptMenuRef}>
+                      <Button variant="outline" size="sm" className="h-8 rounded-full text-xs hover:bg-muted px-3" onClick={() => { setPromptMenuOpen(!promptMenuOpen); setRepoMenuOpen(false); setSkillPopoverOpen(false); setTaskMenuOpen(false); }}>
+                        <FileText className="h-3.5 w-3.5 mr-1.5" />提示词
+                      </Button>
+                      {promptMenuOpen && (
+                        <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
+                          <div className="max-h-[280px] overflow-y-auto p-1">
+                            {availablePrompts.map(p => (
+                              <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => insertPrompt(p.content || p.description)}>
+                                <span className="font-medium text-sm mb-1">{p.name}</span>
+                                <span className="text-xs text-muted-foreground line-clamp-2">{p.content || p.description}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 技能 */}
+                    <div className="relative" ref={skillMenuRef}>
+                      <Button variant="outline" size="sm" className="h-8 rounded-full text-xs hover:bg-muted px-3" onClick={() => { setSkillPopoverOpen(!skillPopoverOpen); setRepoMenuOpen(false); setPromptMenuOpen(false); setTaskMenuOpen(false); }}>
+                        <Wand2 className="h-3.5 w-3.5 mr-1.5" />技能
+                      </Button>
+                      {skillPopoverOpen && (
+                        <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
+                          <Tabs value={activeSkillTab} onValueChange={setActiveSkillTab} className="w-full flex flex-col">
+                            <div className="px-1 pt-2 bg-muted/30">
+                              <TabsList className="w-full justify-start h-auto bg-transparent p-0 overflow-x-auto flex-nowrap rounded-none border-b">
+                                {['全部', '需求设计', 'UI设计', '代码开发', '测试编写', '需求上线'].map(tab => (
+                                  <TabsTrigger key={tab} value={tab} className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2 px-3 text-xs">{tab}</TabsTrigger>
+                                ))}
+                              </TabsList>
+                            </div>
+                            <div className="max-h-[280px] overflow-y-auto p-2 space-y-1">
+                              {availableSkills
+                                .filter(s => activeSkillTab === '全部' || s.phase === activeSkillTab)
+                                .map(skill => {
+                                  const IconComponent = skillIconMap[skill.icon || ''] || Puzzle;
+                                  return (
+                                    <div key={skill.id} className="flex items-start gap-3 p-2.5 rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors" onClick={() => { appendSkillTag(skill.name); setSkillPopoverOpen(false); }}>
+                                      <div className="h-8 w-8 rounded-md bg-background flex items-center justify-center border shrink-0"><IconComponent className="h-4 w-4 text-muted-foreground" /></div>
+                                      <div className="flex flex-col flex-1 min-w-0">
+                                        <span className="font-medium text-sm leading-none mb-1 text-foreground">{skill.name}</span>
+                                        <span className="text-xs text-muted-foreground line-clamp-2">{skill.description}</span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                          </Tabs>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <input 
@@ -1260,15 +1594,135 @@ export const Chat: React.FC = () => {
                   }} 
                 />
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground rounded-full hover:bg-muted" onClick={() => fileInputRef.current?.click()}>
-                  <Plus className="h-4 w-4" />
+                  <Paperclip className="h-4 w-4" />
                 </Button>
-                <Button size="sm" className="h-9 px-4 rounded-full" disabled={!input.trim() || isRunning} onClick={handleSend}>
-                  <span className="mr-1.5 text-sm">执行</span><Send className="h-3.5 w-3.5" />
-                </Button>
+
+                {/* Queued inputs badge */}
+                {inputQueue.length > 0 && (
+                  <div className="relative" ref={queueMenuRef}>
+                    <button
+                      className="h-8 pl-2.5 pr-1.5 rounded-full bg-primary/10 text-primary text-xs flex items-center gap-1 hover:bg-primary/20 transition-colors"
+                      onClick={() => setQueueMenuOpen(!queueMenuOpen)}
+                      title="查看排队输入"
+                    >
+                      <span>{inputQueue.length}</span>
+                      <X className="h-3 w-3" />
+                    </button>
+                    {queueMenuOpen && (
+                      <div className="absolute bottom-full right-0 mb-2 w-64 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden p-1.5 animate-in fade-in slide-in-from-bottom-2">
+                        <div className="text-xs font-medium text-muted-foreground px-2 py-1">排队输入</div>
+                        {inputQueue.map(item => (
+                          <div key={item.id} className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-accent group">
+                            <span className="text-xs truncate flex-1" title={item.text}>{item.text}</span>
+                            <button
+                              className="h-5 w-5 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-opacity"
+                              onClick={() => setInputQueue(prev => prev.filter(i => i.id !== item.id))}
+                              title="移除"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {isRunning ? (
+                  <Button size="sm" variant="outline" className="h-9 px-4 rounded-full" onClick={cancelRun}>
+                    <span className="mr-1.5 text-sm">取消</span><X className="h-3.5 w-3.5" />
+                  </Button>
+                ) : (
+                  <Button size="sm" className="h-9 px-4 rounded-full" disabled={!input.trim() && !quotedCard} onClick={handleSend}>
+                    <span className="mr-1.5 text-sm">执行</span><Send className="h-3.5 w-3.5" />
+                  </Button>
+                )}
               </div>
             </div>
           </div>
         </div>
+
+        {/* Filter Dialog */}
+        <Dialog open={filterDialogOpen} onOpenChange={setFilterDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>任务筛选配置</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">需求状态</Label>
+                <div className="space-y-1.5">
+                  {(['todo', 'backlog', 'in-progress', 'done'] as RequirementStatus[]).map(status => (
+                    <div key={status} className="flex items-center gap-2">
+                      <Checkbox
+                        id={`req-${status}`}
+                        checked={filterConfig.reqStatuses.includes(status)}
+                        onCheckedChange={(checked) => {
+                          setFilterConfig(prev => ({
+                            ...prev,
+                            reqStatuses: checked
+                              ? [...prev.reqStatuses, status]
+                              : prev.reqStatuses.filter(s => s !== status)
+                          }));
+                        }}
+                      />
+                      <Label htmlFor={`req-${status}`} className="text-xs cursor-pointer">{REQ_STATUS_LABELS[status as RequirementStatus]}</Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">缺陷状态</Label>
+                <div className="space-y-1.5">
+                  {(['open', 'in-progress', 'fixed', 'closed'] as DefectStatus[]).map(status => (
+                    <div key={status} className="flex items-center gap-2">
+                      <Checkbox
+                        id={`defect-${status}`}
+                        checked={filterConfig.defectStatuses.includes(status)}
+                        onCheckedChange={(checked) => {
+                          setFilterConfig(prev => ({
+                            ...prev,
+                            defectStatuses: checked
+                              ? [...prev.defectStatuses, status]
+                              : prev.defectStatuses.filter(s => s !== status)
+                          }));
+                        }}
+                      />
+                      <Label htmlFor={`defect-${status}`} className="text-xs cursor-pointer">{DEF_STATUS_LABELS[status as DefectStatus]}</Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">用例状态</Label>
+                <div className="space-y-1.5">
+                  {(['draft', 'ready', 'passed', 'failed', 'blocked'] as CaseStatus[]).map(status => (
+                    <div key={status} className="flex items-center gap-2">
+                      <Checkbox
+                        id={`case-${status}`}
+                        checked={filterConfig.caseStatuses.includes(status)}
+                        onCheckedChange={(checked) => {
+                          setFilterConfig(prev => ({
+                            ...prev,
+                            caseStatuses: checked
+                              ? [...prev.caseStatuses, status]
+                              : prev.caseStatuses.filter(s => s !== status)
+                          }));
+                        }}
+                      />
+                      <Label htmlFor={`case-${status}`} className="text-xs cursor-pointer">{CASE_STATUS_LABELS[status as CaseStatus]}</Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setFilterDialogOpen(false)}>关闭</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* ── Detail Drawer ── */}
         <div className={`absolute inset-y-0 right-0 w-80 bg-background border-l border-border/50 flex flex-col z-50 transition-transform duration-300 ${detailOpen ? 'translate-x-0 shadow-2xl' : 'translate-x-full'}`}>
@@ -1529,6 +1983,28 @@ export const Chat: React.FC = () => {
               <AlertDialogCancel>取消</AlertDialogCancel>
               <AlertDialogAction onClick={() => { setCodeJumpOpen(false); navigate('/code'); toast.success('已跳转到工程代码窗口'); }}>
                 确认跳转
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* 运行中切换/新建会话确认对话框 */}
+        <AlertDialog open={switchConfirmOpen} onOpenChange={setSwitchConfirmOpen}>
+          <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md">
+            <AlertDialogHeader>
+              <AlertDialogTitle>{switchConfirmTitle}</AlertDialogTitle>
+              <AlertDialogDescription>
+                当前会话正在输出内容，切换会话会取消当前会话。是否继续？
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => { pendingActionRef.current = null; }}>取消</AlertDialogCancel>
+              <AlertDialogAction onClick={() => {
+                setSwitchConfirmOpen(false);
+                pendingActionRef.current?.();
+                pendingActionRef.current = null;
+              }}>
+                确认切换
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

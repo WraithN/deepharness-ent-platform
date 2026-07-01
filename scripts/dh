@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+#
+# dh - DeepHarness 开发辅助命令行工具
+#
+# 用法：
+#   dh gwd           显示 gatewayd 帮助与启动说明
+#   dh gwd status    检查本地 gatewayd 是否运行
+#   dh gwd help      显示本帮助
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+GATEWAYD_ADMIN_URL="${GATEWAYD_ADMIN_URL:-http://127.0.0.1:2346}"
+
+cmd="${1:-}"
+subcmd="${2:-}"
+
+print_gwd_help() {
+  cat <<EOF
+DeepHarness Gatewayd（ent-desktop）帮助
+
+Gatewayd 是 DeepHarness 后端的 Agent 运行时，负责拉起 claude-code / opencode / codex 等
+智能体插件并执行实际的模型调用。当前后端配置地址：${GATEWAYD_ADMIN_URL}
+
+[gwd status]
+  检查 gatewayd 是否可连通。
+
+[gwd help]
+  显示本帮助。
+
+[启动 gatewayd]
+  1. 确保已安装 ent-desktop（DeepHarness Agent Runtime）：
+     https://github.com/deepharness/ent-desktop （示例仓库，按实际文档为准）
+
+  2. 启动 ent-desktop gatewayd，监听 127.0.0.1:2346：
+     ent-desktop gatewayd --port 2346
+     # 或使用项目内置方式（如提供）
+     # cd <ent-desktop-dir> && pnpm dev
+
+  3. 安装所需插件（以 claude-code 为例）：
+     ent-desktop plugin install claude-code
+
+  4. 验证 gatewayd 已启动：
+     dh gwd status
+     # 或
+     curl ${GATEWAYD_ADMIN_URL}/health
+
+[环境变量]
+  GATEWAYD_ADMIN_URL   自定义 gatewayd 地址（默认 ${GATEWAYD_ADMIN_URL}）
+
+[注意事项]
+  - 未启动 gatewayd 时，创建会话仍可降级为本地 session id，但发送消息会失败。
+  - 生产环境必须保证 gatewayd 可达。
+EOF
+}
+
+check_gwd_status() {
+  if curl -s -o /dev/null -w "%{http_code}" "${GATEWAYD_ADMIN_URL}/health" 2>/dev/null | grep -q '^200$'; then
+    echo "gatewayd 运行正常：${GATEWAYD_ADMIN_URL}"
+    return 0
+  fi
+  echo "gatewayd 未运行或不可达：${GATEWAYD_ADMIN_URL}"
+  echo "请运行：dh gwd help"
+  return 1
+}
+
+case "${cmd}" in
+  gwd)
+    case "${subcmd}" in
+      status)
+        check_gwd_status
+        ;;
+      help|'')
+        print_gwd_help
+        ;;
+      *)
+        echo "未知子命令：dh gwd ${subcmd}"
+        echo "请运行：dh gwd help"
+        exit 1
+        ;;
+    esac
+    ;;
+  help|--help|-h|'')
+    cat <<EOF
+DeepHarness 开发辅助命令
+
+用法：
+  dh gwd [status|help]    gatewayd 相关帮助与状态检查
+
+更多命令将陆续添加。
+EOF
+    ;;
+  *)
+    echo "未知命令：dh ${cmd}"
+    echo "请运行：dh help"
+    exit 1
+    ;;
+esac

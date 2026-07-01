@@ -6,6 +6,34 @@ import (
 	"strings"
 )
 
+// Gatewayd 连接错误特征子串。
+const (
+	gatewaydConnectionRefused  = "connection refused"
+	gatewaydNoSuchHost         = "no such host"
+	gatewaydTimeout            = "timeout"
+	gatewaydNetworkUnreachable = "network is unreachable"
+)
+
+// IsGatewaydConnectionError 判断错误是否因 gatewayd 网络不可达导致。
+func IsGatewaydConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, gatewaydConnectionRefused) ||
+		strings.Contains(msg, gatewaydNoSuchHost) ||
+		strings.Contains(msg, gatewaydTimeout) ||
+		strings.Contains(msg, gatewaydNetworkUnreachable)
+}
+
+// FormatGatewaydError 将 gatewayd 错误转换为用户友好提示。
+func FormatGatewaydError(err error) string {
+	if IsGatewaydConnectionError(err) {
+		return "Agent运行时未启动，请联系系统管理员"
+	}
+	return err.Error()
+}
+
 // ErrorResponse 统一错误响应结构。
 type ErrorResponse struct {
 	Code    int    `json:"code"`

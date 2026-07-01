@@ -299,7 +299,7 @@ export const Settings: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 space-y-6 max-w-7xl mx-auto w-full pb-12">
+    <div className="flex-1 space-y-6 w-full pb-12">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="mb-6 flex-wrap h-auto gap-1 justify-start bg-transparent p-0">
           <TabsTrigger value="basic" className="data-[state=active]:bg-card data-[state=active]:shadow-sm rounded-full px-4 border border-transparent data-[state=active]:border-border/50">基础配置</TabsTrigger>

@@ -59,6 +59,23 @@ function convertMessage(msg: ChatMsg): ThreadMessageLike {
   };
 }
 
+/**
+ * 合并同一 assistant 消息中连续的 thinking 文本片段。
+ * 这样多个 thinking 增量事件在前端只呈现为一个连续思考过程，避免分段输出。
+ */
+function mergeContinuousThinking(parts: ChatPart[], newPart: ChatPart): ChatPart[] {
+  if (newPart.type !== 'thinking') return [...parts, newPart];
+  const last = parts[parts.length - 1];
+  if (last && last.type === 'thinking' && !last.metadata?.agentPartID && !newPart.metadata?.agentPartID) {
+    const merged: ChatPart = {
+      ...last,
+      content: last.content + newPart.content,
+    };
+    return [...parts.slice(0, -1), merged];
+  }
+  return [...parts, newPart];
+}
+
 function updateAssistantMessageAccumulated(
   messages: ChatMsg[],
   messageID: string | undefined,
@@ -77,8 +94,8 @@ function updateAssistantMessageAccumulated(
         newParts[partIndex] = newPart;
         next[existingIndex] = { ...msg, parts: newParts };
       } else {
-        // Append new part (thinking/tool events)
-        next[existingIndex] = { ...msg, parts: [...msg.parts, newPart] };
+        // Append new part (thinking/tool events)，连续 thinking 文本自动合并
+        next[existingIndex] = { ...msg, parts: mergeContinuousThinking(msg.parts, newPart) };
       }
       return next;
     }
@@ -96,7 +113,7 @@ function updateAssistantMessageAccumulated(
       newParts[emptyThinkingIdx] = newPart;
       next[lastIndex] = { ...last, parts: newParts, messageID };
     } else {
-      next[lastIndex] = { ...last, parts: [...last.parts, newPart], messageID };
+      next[lastIndex] = { ...last, parts: mergeContinuousThinking(last.parts, newPart), messageID };
     }
     return next;
   }
@@ -241,7 +258,9 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
   }
 
   function handleDoneEvent() {
-    currentMessageIDRef.current = null;
+    // 不重置 currentMessageIDRef：一次用户提问可能触发多轮内部运行（如 tool use 后继续生成），
+    // 这些运行应合并为同一个 assistant 消息，保持一轮会话只有一个 AI 头像。
+    // currentMessageIDRef 只在新用户消息发送时重置。
     accumulatedTextRef.current = '';
     setIsRunning(false);
     if (runningTimerRef.current) clearTimeout(runningTimerRef.current);

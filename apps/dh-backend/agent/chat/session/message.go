@@ -27,6 +27,12 @@ func NewMessageStore(maxMessages int) *MessageStore {
 func (m *MessageStore) Append(ctx context.Context, sessionID string, msg chat.Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// 避免同一消息重复追加（如历史消息随每次 run 重复发送）。
+	for _, existing := range m.messages[sessionID] {
+		if existing.ID == msg.ID {
+			return nil
+		}
+	}
 	m.messages[sessionID] = append(m.messages[sessionID], msg)
 	if len(m.messages[sessionID]) > m.maxMessages {
 		m.messages[sessionID] = m.messages[sessionID][len(m.messages[sessionID])-m.maxMessages:]

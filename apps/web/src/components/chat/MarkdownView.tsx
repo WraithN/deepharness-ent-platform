@@ -9,13 +9,14 @@ const COLLAPSE_CHAR_THRESHOLD = 600;
 
 interface MarkdownViewProps {
   content: string;
+  collapsible?: boolean;
 }
 
-export const MarkdownView: React.FC<MarkdownViewProps> = ({ content }) => {
+export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, collapsible = true }) => {
   const [expanded, setExpanded] = useState(false);
 
   const lineCount = content.split('\n').length;
-  const shouldCollapse = lineCount > COLLAPSE_LINE_THRESHOLD || content.length > COLLAPSE_CHAR_THRESHOLD;
+  const shouldCollapse = collapsible && (lineCount > COLLAPSE_LINE_THRESHOLD || content.length > COLLAPSE_CHAR_THRESHOLD);
 
   return (
     <div className="relative">

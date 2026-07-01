@@ -8,15 +8,16 @@ interface ChatThreadProps {
   onArtifactClick: () => void;
   onEditMessage?: (text: string) => void;
   onRegenerate?: () => void;
+  onFilePreview?: (path: string) => void;
 }
 
-export const ChatThread: React.FC<ChatThreadProps> = ({ openDetail, onArtifactClick, onEditMessage, onRegenerate }) => {
+export const ChatThread: React.FC<ChatThreadProps> = ({ openDetail, onArtifactClick, onEditMessage, onRegenerate, onFilePreview }) => {
   return (
     <ThreadPrimitive.Root className="flex flex-col h-full">
-      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto space-y-6">
+      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto space-y-6 px-2">
         <ThreadPrimitive.Messages>
           {({ message }) => {
-            console.log('[ChatThread] rendering message:', message.id, message.role, message.content);
+            // message rendering debug log removed
             if (message.role === 'user') {
               return (
                 <UserMessage
@@ -27,7 +28,7 @@ export const ChatThread: React.FC<ChatThreadProps> = ({ openDetail, onArtifactCl
                 />
               );
             }
-            return <AssistantMessage message={message} onArtifactClick={onArtifactClick} onRegenerate={onRegenerate} />;
+            return <AssistantMessage message={message} onArtifactClick={onArtifactClick} onRegenerate={onRegenerate} onFilePreview={onFilePreview} />;
           }}
         </ThreadPrimitive.Messages>
       </ThreadPrimitive.Viewport>
