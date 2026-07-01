@@ -15,6 +15,7 @@ $$ LANGUAGE plpgsql;
 CREATE TABLE IF NOT EXISTS agent_sessions (
     id VARCHAR(36) PRIMARY KEY,
     workspace_id VARCHAR(36) NOT NULL,
+    workspace_path VARCHAR(500),          -- 新增
     agent_id VARCHAR(36) NOT NULL,
     agent_type VARCHAR(50) NOT NULL DEFAULT 'opencode',
     model VARCHAR(50) NOT NULL DEFAULT 'gpt-4o',
@@ -24,6 +25,8 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS workspace_path VARCHAR(500);
 
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions (workspace_id);
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_agent ON agent_sessions (agent_id);
