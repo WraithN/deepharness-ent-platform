@@ -117,6 +117,11 @@ type RunAgentInput struct {
 	AgentPluginKey string `json:"agentPluginKey,omitempty"`
 	// AgentKey 与 AgentPluginKey 同义，优先使用 agent_key，便于前端统一字段命名。
 	AgentKey string `json:"agent_key,omitempty"`
+
+	// Workspace 仅在 dh-backend 内部使用，用于向 gatewayd 挂载 agent 时指定工作目录。
+	// 该字段不会被序列化到 gatewayd。
+	Workspace string `json:"-"`
+
 }
 
 // EventType 是 AG-UI 事件类型枚举。

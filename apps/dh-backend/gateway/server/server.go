@@ -118,7 +118,7 @@ func New(cfg config.Config) http.Handler {
 	initIdentityService(db)
 
 	// Workspace module: MySQL when available, otherwise memory mock.
-	initWorkspaceService(db)
+	workspaceService := initWorkspaceService(db)
 
 	// Repository module: PostgreSQL when available, otherwise memory mock.
 	initRepositoryService(db, cfg.RepositoryRoot)
@@ -127,7 +127,7 @@ func New(cfg config.Config) http.Handler {
 	initTeamService(db)
 
 	// Handlers
-	sessionHandler := handler.NewSessionHandler(sessions, messages, agentClient)
+	sessionHandler := handler.NewSessionHandler(sessions, messages, agentClient, workspaceService, cfg)
 	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, cfg.AGUIWorkspace, sessions, messages)
 	handler.SetFilesRoot(cfg.AGUIWorkspace)
 
@@ -234,14 +234,17 @@ func initPersonalAssistantService(db *sql.DB) {
 	personalassistant.Init(paservice.NewMockPersonalAssistantService())
 }
 
-func initWorkspaceService(db *sql.DB) {
+func initWorkspaceService(db *sql.DB) workspaceservice.WorkspaceService {
 	if db != nil {
 		log.Println("[Workspace] using postgres storage")
-		workspace.Init(workspaceservice.NewDBWorkspaceService(db))
-		return
+		svc := workspaceservice.NewDBWorkspaceService(db)
+		workspace.Init(svc)
+		return svc
 	}
 	log.Println("[Workspace] using memory mock")
-	workspace.Init(workspaceservice.NewMockWorkspaceService())
+	svc := workspaceservice.NewMockWorkspaceService()
+	workspace.Init(svc)
+	return svc
 }
 
 func initTeamService(db *sql.DB) {
