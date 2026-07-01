@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -15,6 +16,11 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
+)
+
+const (
+	// defaultGatewaydWorkspace 是向 gatewayd 挂载 agent 时使用的默认工作目录。
+	defaultGatewaydWorkspace = "/home/nan/deepharness-ent-platform"
 )
 
 type SSEEvent struct {
@@ -284,6 +290,54 @@ func (c *GatewaydClient) AdminURL() string {
 // AgentID returns the configured agent plugin key.
 func (c *GatewaydClient) AgentID() string {
 	return c.agentID
+}
+
+// AttachAgent 向 gatewayd 指定 thread 挂载指定插件的 agent 实例，
+// 返回 gatewayd 生成的 instance_id，用于前端展示智能体唯一标识。
+func (c *GatewaydClient) AttachAgent(ctx context.Context, threadID, pluginKey, workspace string) (string, error) {
+	if threadID == "" {
+		return "", fmt.Errorf("thread id is required")
+	}
+	if pluginKey == "" {
+		pluginKey = c.agentID
+	}
+	if workspace == "" {
+		workspace = defaultGatewaydWorkspace
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"plugin_key": pluginKey,
+		"name":       pluginKey + "-" + uuid.New().String()[:8],
+		"workspace":  workspace,
+		"force":      false,
+	})
+
+	postURL := fmt.Sprintf("%s/sessions/%s/agents", c.adminURL, threadID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("create attach request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("attach agent: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("attach agent status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		InstanceID string `json:"instance_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode attach response: %w", err)
+	}
+	return result.InstanceID, nil
 }
 
 // ResolveAgentID queries the gatewayd /agents API to find the actual instance ID
