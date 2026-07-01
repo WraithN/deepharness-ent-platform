@@ -2,6 +2,7 @@ package handler
 
 import (
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 
@@ -13,6 +14,16 @@ const (
 	// maxWorkspacePathLen 与 agent_sessions.workspace_path 字段长度保持一致。
 	maxWorkspacePathLen = 500
 )
+
+// ensureWorkspaceDir 保证 gatewayd 工作目录存在；创建失败仅记录日志，不阻塞会话创建。
+func ensureWorkspaceDir(path string) {
+	if path == "" {
+		return
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		log.Printf("[ensureWorkspaceDir] failed to create workspace dir %s: %v", path, err)
+	}
+}
 
 // sanitizeWorkspacePath 保证路径长度不超过数据库存储上限。
 func sanitizeWorkspacePath(path string) string {
