@@ -128,7 +128,7 @@ func New(cfg config.Config) http.Handler {
 
 	// Handlers
 	sessionHandler := handler.NewSessionHandler(sessions, messages, agentClient, workspaceService, cfg)
-	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, cfg.AGUIWorkspace)
+	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, cfg.AGUIWorkspace, sessions)
 
 	// Routes
 	mux.HandleFunc("/health", handler.HealthCheck)

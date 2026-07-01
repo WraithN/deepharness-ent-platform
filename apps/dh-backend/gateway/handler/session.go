@@ -83,7 +83,7 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		workspaceID = "ws-default"
 	}
 
-	workspacePath := resolveWorkspacePath(workspaceID, h.cfg.RepositoryRoot, h.workspaceService)
+	workspacePath := sanitizeWorkspacePath(resolveWorkspacePath(workspaceID, h.cfg.RepositoryRoot, h.workspaceService))
 
 	agentID := req.AgentID
 	if agentID == "" {
