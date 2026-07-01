@@ -82,21 +82,25 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	if workspaceID == "" {
 		workspaceID = "ws-default"
 	}
+
+	workspacePath := resolveWorkspacePath(workspaceID, h.cfg.RepositoryRoot, h.workspaceService)
+
 	agentID := req.AgentID
 	if agentID == "" {
 		agentID = "agent-default"
 	}
 
 	session := chat.Session{
-		ID:          uuid.New().String(),
-		WorkspaceID: workspaceID,
-		AgentID:     agentID,
-		AgentType:   req.AgentType,
-		Model:       req.Model,
-		ProjectID:   req.ProjectID,
-		Context:     req.Context,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		ID:            uuid.New().String(),
+		WorkspaceID:   workspaceID,
+		WorkspacePath: workspacePath,
+		AgentID:       agentID,
+		AgentType:     req.AgentType,
+		Model:         req.Model,
+		ProjectID:     req.ProjectID,
+		Context:       req.Context,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
 	}
 
 	if err := h.sessions.Create(r.Context(), session); err != nil {
@@ -105,9 +109,17 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve the actual gatewayd agent instance ID for frontend direct connection
+	pluginKey := req.AgentType
+	if pluginKey == "" {
+		pluginKey = h.gatewaydClient.AgentID()
+	}
 	gwAgentID := h.gatewaydClient.AgentID() // fallback to configured plugin key
-	if resolvedID, err := h.gatewaydClient.ResolveAgentID(r.Context()); err == nil && resolvedID != "" {
-		gwAgentID = resolvedID
+	if pluginKey != "" {
+		if instanceID, attachErr := h.gatewaydClient.AttachAgent(r.Context(), session.ID, pluginKey, workspacePath); attachErr == nil {
+			gwAgentID = instanceID
+		} else {
+			log.Printf("[CreateSession] AttachAgent failed: %v", attachErr)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -115,10 +127,10 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		"code":    0,
 		"message": "success",
 		"data": CreateSessionResponse{
-			SessionID:    session.ID,
-			GatewaydURL:  h.gatewaydClient.AdminURL(),
+			SessionID:     session.ID,
+			GatewaydURL:   h.gatewaydClient.AdminURL(),
 			GatewaydWsURL: h.gatewaydClient.WsURL(),
-			AgentID:      gwAgentID,
+			AgentID:       gwAgentID,
 		},
 	})
 }
