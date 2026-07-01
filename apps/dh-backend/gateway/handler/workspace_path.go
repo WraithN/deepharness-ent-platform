@@ -8,6 +8,8 @@ import (
 	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 )
 
+const defaultRepositoryRoot = "/home/nan/test"
+
 // resolveWorkspacePath 根据 workspace 成员、配置根目录拼接 gatewayd 工作目录。
 // 多成员时取 joined_at 最早的成员；无成员时回退到 "default"。
 func resolveWorkspacePath(workspaceID, repositoryRoot string, workspaceService workspaceservice.WorkspaceService) string {
@@ -31,7 +33,7 @@ func resolveWorkspacePath(workspaceID, repositoryRoot string, workspaceService w
 	}
 
 	if repositoryRoot == "" {
-		repositoryRoot = "/home/nan/test"
+		repositoryRoot = defaultRepositoryRoot
 	}
 
 	return filepath.Clean(filepath.Join(repositoryRoot, workspaceID, userID))
