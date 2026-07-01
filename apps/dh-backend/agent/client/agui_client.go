@@ -86,14 +86,23 @@ func (c *AGUIClient) CreateThread(ctx context.Context) (string, error) {
 	return result.SessionID, nil
 }
 
-// AttachAgent 向指定 thread 挂载 agent 实例。
+// AttachAgent 向指定 thread 挂载默认 agent 实例。
+func (c *AGUIClient) AttachAgent(ctx context.Context, threadID string, force bool, workspace string) error {
+	return c.attachAgentWithKey(ctx, threadID, force, c.pluginKey, workspace)
+}
+
+// attachAgentWithKey 向指定 thread 挂载指定插件的 agent 实例。
 // gatewayd 会阻塞直到 agent 进程 ready，调用方需保证上下文有足够超时。
 // force=true 时会强制创建新 instance；force=false 时若 session 已有 instance 则复用。
-func (c *AGUIClient) AttachAgent(ctx context.Context, threadID string, force bool) error {
+func (c *AGUIClient) attachAgentWithKey(ctx context.Context, threadID string, force bool, pluginKey string, workspace string) error {
+	if workspace == "" {
+		workspace = c.workspace
+	}
+
 	body, _ := json.Marshal(map[string]any{
-		"plugin_key": c.pluginKey,
-		"name":       c.pluginKey + "-" + uuid.New().String()[:8],
-		"workspace":  c.workspace,
+		"plugin_key": pluginKey,
+		"name":       pluginKey + "-" + uuid.New().String()[:8],
+		"workspace":  workspace,
 		"force":      force,
 	})
 
@@ -137,13 +146,18 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 		log.Printf("[AGUIClient] run=%s CreateThread took %v, threadId=%s", input.RunID, time.Since(createStart), input.ThreadID)
 	}
 
+	workspace := input.Workspace
+	if workspace == "" {
+		workspace = c.workspace
+	}
+
 	// 挂载 agent；使用独立超时，避免整体 run 上下文被拉长。
 	// 若 gatewayd 因重启等原因丢失 session，自动创建新 session 并重试。
 	// 优先尝试 force=false 复用已有 instance，减少重复创建 Claude 进程带来的 ~0.9s 延迟。
 	attachCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	attachStart := time.Now()
-	if err := c.AttachAgent(attachCtx, input.ThreadID, false); err != nil {
+	if err := c.attachAgentWithKey(attachCtx, input.ThreadID, false, c.pluginKey, workspace); err != nil {
 		if isInstanceAlreadyExists(err) {
 			log.Printf("[AGUIClient] run=%s thread=%s reuse existing instance after %v", input.RunID, input.ThreadID, time.Since(attachStart))
 		} else if isSessionNotFound(err) {
@@ -153,14 +167,14 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 				return "", nil, fmt.Errorf("recreate thread after session lost: %w", createErr)
 			}
 			input.ThreadID = newThreadID
-			if attachErr := c.AttachAgent(attachCtx, input.ThreadID, true); attachErr != nil {
+			if attachErr := c.attachAgentWithKey(attachCtx, input.ThreadID, true, c.pluginKey, workspace); attachErr != nil {
 				return "", nil, fmt.Errorf("attach agent after recreate: %w", attachErr)
 			}
 			log.Printf("[AGUIClient] run=%s created new instance after recreate in %v", input.RunID, time.Since(attachStart))
 		} else {
 			// 其他错误时回退到 force=true，尝试新建 instance（例如旧 instance 已失效）。
 			log.Printf("[AGUIClient] run=%s AttachAgent force=false failed (%v), retrying with force=true", input.RunID, err)
-			if attachErr := c.AttachAgent(attachCtx, input.ThreadID, true); attachErr != nil {
+			if attachErr := c.attachAgentWithKey(attachCtx, input.ThreadID, true, c.pluginKey, workspace); attachErr != nil {
 				return "", nil, fmt.Errorf("attach agent: %w", attachErr)
 			}
 			log.Printf("[AGUIClient] run=%s created new instance with force=true after %v", input.RunID, time.Since(attachStart))
