@@ -19,8 +19,6 @@ import (
 const (
 	// defaultAGUIPluginKey 指定默认挂载的 agent 插件。
 	defaultAGUIPluginKey = "claude-code"
-	// defaultAGUIWorkspace 是 agent 运行的工作目录。
-	defaultAGUIWorkspace = "/home/nan/deepharness-ent-platform"
 	// defaultAGUIAdminURL 是 ent-desktop gatewayd 的 Admin 接口地址。
 	defaultAGUIAdminURL = "http://127.0.0.1:2346"
 )
@@ -42,7 +40,7 @@ func NewAGUIClient(adminURL, pluginKey, workspace string) *AGUIClient {
 		pluginKey = defaultAGUIPluginKey
 	}
 	if workspace == "" {
-		workspace = defaultAGUIWorkspace
+		workspace = defaultWorkspace
 	}
 	return &AGUIClient{
 		adminURL:  adminURL,

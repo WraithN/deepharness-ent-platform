@@ -18,10 +18,6 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 )
 
-const (
-	// defaultGatewaydWorkspace 是向 gatewayd 挂载 agent 时使用的默认工作目录。
-	defaultGatewaydWorkspace = "/home/nan/deepharness-ent-platform"
-)
 
 type SSEEvent struct {
 	Type       string          `json:"type"`
@@ -302,7 +298,7 @@ func (c *GatewaydClient) AttachAgent(ctx context.Context, threadID, pluginKey, w
 		pluginKey = c.agentID
 	}
 	if workspace == "" {
-		workspace = defaultGatewaydWorkspace
+		workspace = defaultWorkspace
 	}
 
 	body, _ := json.Marshal(map[string]any{
