@@ -2,25 +2,39 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
+	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 )
 
 type SessionHandler struct {
-	sessions       chat.SessionStore
-	messages       chat.MessageStore
-	gatewaydClient *client.GatewaydClient
+	sessions         chat.SessionStore
+	messages         chat.MessageStore
+	gatewaydClient   *client.GatewaydClient
+	workspaceService workspaceservice.WorkspaceService
+	cfg              config.Config
 }
 
-func NewSessionHandler(sessions chat.SessionStore, messages chat.MessageStore, gatewaydClient *client.GatewaydClient) *SessionHandler {
+func NewSessionHandler(
+	sessions chat.SessionStore,
+	messages chat.MessageStore,
+	gatewaydClient *client.GatewaydClient,
+	workspaceService workspaceservice.WorkspaceService,
+	cfg config.Config,
+) *SessionHandler {
 	return &SessionHandler{
-		sessions:       sessions,
-		messages:       messages,
-		gatewaydClient: gatewaydClient,
+		sessions:         sessions,
+		messages:         messages,
+		gatewaydClient:   gatewaydClient,
+		workspaceService: workspaceService,
+		cfg:              cfg,
 	}
 }
 
