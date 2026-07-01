@@ -40,7 +40,7 @@ func (s *PostgresStore) Get(ctx context.Context, id string) (chat.Session, error
 	var sess chat.Session
 	var ctxJSON []byte
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, workspace_id, workspace_path, agent_id, agent_type, model, project_id, title, context, created_at, updated_at
+		SELECT id, workspace_id, COALESCE(workspace_path, ''), agent_id, agent_type, model, project_id, title, context, created_at, updated_at
 		FROM agent_sessions WHERE id = $1
 	`, id).Scan(&sess.ID, &sess.WorkspaceID, &sess.WorkspacePath, &sess.AgentID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -81,7 +81,7 @@ func (s *PostgresStore) Delete(ctx context.Context, id string) error {
 
 func (s *PostgresStore) ListSessions(ctx context.Context) ([]chat.Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, workspace_id, workspace_path, agent_id, agent_type, model, project_id, title, context, created_at, updated_at
+		SELECT id, workspace_id, COALESCE(workspace_path, ''), agent_id, agent_type, model, project_id, title, context, created_at, updated_at
 		FROM agent_sessions
 		ORDER BY updated_at DESC
 	`)

@@ -9,19 +9,22 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
 	"github.com/google/uuid"
 )
 
 // AGUIHandler 处理 AG-UI 协议的 agent run 请求。
 type AGUIHandler struct {
-	aguiClient *client.AGUIClient
+	aguiClient   *client.AGUIClient
+	sessionStore chat.SessionStore
 }
 
 // NewAGUIHandler 创建 AG-UI handler。
-func NewAGUIHandler(adminURL, pluginKey, workspace string) *AGUIHandler {
+func NewAGUIHandler(adminURL, pluginKey, workspace string, sessionStore chat.SessionStore) *AGUIHandler {
 	return &AGUIHandler{
-		aguiClient: client.NewAGUIClient(adminURL, pluginKey, workspace),
+		aguiClient:   client.NewAGUIClient(adminURL, pluginKey, workspace),
+		sessionStore: sessionStore,
 	}
 }
 
@@ -51,6 +54,14 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	// 确保每条 run 都有唯一 runId。
 	if input.RunID == "" {
 		input.RunID = uuid.New().String()
+	}
+
+	// 若前端指定了 session/thread ID，从持久化会话中恢复创建工作目录，
+	// 保证 gatewayd 在该会话生命周期内始终使用同一工作目录。
+	if input.ThreadID != "" && h.sessionStore != nil {
+		if sess, err := h.sessionStore.Get(r.Context(), input.ThreadID); err == nil && sess.WorkspacePath != "" {
+			input.Workspace = sess.WorkspacePath
+		}
 	}
 
 	// 设置 SSE 响应头。
