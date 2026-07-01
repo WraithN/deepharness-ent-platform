@@ -18,6 +18,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 )
 
+
 type SSEEvent struct {
 	Type       string          `json:"type"`
 	Properties json.RawMessage `json:"properties"`
@@ -309,28 +310,37 @@ func (c *GatewaydClient) CreateThread(ctx context.Context) (string, error) {
 }
 
 // AdminURL returns the gatewayd HTTP admin URL.
-// defaultGatewaydWorkspace 是向 gatewayd 挂载 agent 时使用的默认工作目录。
-const defaultGatewaydWorkspace = "/home/nan/deepharness-ent-platform"
+func (c *GatewaydClient) AdminURL() string {
+	return c.adminURL
+}
+
+// AgentID returns the configured agent plugin key.
+func (c *GatewaydClient) AgentID() string {
+	return c.agentID
+}
 
 // AttachAgent 向 gatewayd 指定 thread 挂载指定插件的 agent 实例，
 // 返回 gatewayd 生成的 instance_id，用于前端展示智能体唯一标识。
-func (c *GatewaydClient) AttachAgent(ctx context.Context, threadID, pluginKey string) (string, error) {
+func (c *GatewaydClient) AttachAgent(ctx context.Context, threadID, pluginKey, workspace string) (string, error) {
 	if threadID == "" {
 		return "", fmt.Errorf("thread id is required")
 	}
 	if pluginKey == "" {
 		pluginKey = c.agentID
 	}
+	if workspace == "" {
+		workspace = defaultWorkspace
+	}
 
 	body, _ := json.Marshal(map[string]any{
 		"plugin_key": pluginKey,
 		"name":       pluginKey + "-" + uuid.New().String()[:8],
-		"workspace":  defaultGatewaydWorkspace,
+		"workspace":  workspace,
 		"force":      false,
 	})
 
-	url := fmt.Sprintf("%s/sessions/%s/agents", c.adminURL, threadID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	postURL := fmt.Sprintf("%s/sessions/%s/agents", c.adminURL, threadID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("create attach request: %w", err)
 	}
@@ -355,16 +365,6 @@ func (c *GatewaydClient) AttachAgent(ctx context.Context, threadID, pluginKey st
 		return "", fmt.Errorf("decode attach response: %w", err)
 	}
 	return result.InstanceID, nil
-}
-
-// AdminURL returns the gatewayd HTTP admin URL.
-func (c *GatewaydClient) AdminURL() string {
-	return c.adminURL
-}
-
-// AgentID returns the configured agent plugin key.
-func (c *GatewaydClient) AgentID() string {
-	return c.agentID
 }
 
 // ResolveAgentID queries the gatewayd /agents API to find the actual instance ID

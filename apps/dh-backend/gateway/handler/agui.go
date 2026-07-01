@@ -73,9 +73,13 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	// 校验并复用已存在的后端 session；不存在时让 gatewayd 创建新 thread 后再写入。
 	sessionID := input.ThreadID
 	if sessionID != "" && sessionID != "main" {
-		if _, err := h.sessions.Get(r.Context(), sessionID); err == nil {
+		if sess, err := h.sessions.Get(r.Context(), sessionID); err == nil {
 			_ = h.sessions.UpdateActivity(r.Context(), sessionID)
 			log.Printf("[AGUIHandler] run=%s reuse session=%s", input.RunID, sessionID)
+			// 从持久化会话中恢复创建工作目录，保证 gatewayd 在该 session 生命周期内始终使用同一工作目录。
+			if sess.WorkspacePath != "" {
+				input.Workspace = sess.WorkspacePath
+			}
 		} else {
 			log.Printf("[AGUIHandler] run=%s session=%s not found, will create after run", input.RunID, sessionID)
 			sessionID = ""
@@ -87,7 +91,6 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	// 保存用户输入消息（最后一条或全部用户消息）。
 	// 使用 ON CONFLICT DO NOTHING 避免同一消息因重试或历史消息重复发送而主键冲突。
 	h.saveUserMessages(r.Context(), sessionID, input.Messages)
-
 	// 设置 SSE 响应头。
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

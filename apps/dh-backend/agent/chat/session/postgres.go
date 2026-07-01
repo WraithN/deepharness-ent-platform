@@ -27,9 +27,9 @@ func (s *PostgresStore) Create(ctx context.Context, sess chat.Session) error {
 		return fmt.Errorf("marshal context failed: %w", err)
 	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO agent_sessions (id, workspace_id, agent_id, agent_type, model, project_id, title, context, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, sess.ID, sess.WorkspaceID, sess.AgentID, sess.AgentType, sess.Model, sess.ProjectID, sess.Title, ctxJSON, sess.CreatedAt, sess.UpdatedAt)
+		INSERT INTO agent_sessions (id, workspace_id, workspace_path, agent_id, agent_type, model, project_id, title, context, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, sess.ID, sess.WorkspaceID, sess.WorkspacePath, sess.AgentID, sess.AgentType, sess.Model, sess.ProjectID, sess.Title, ctxJSON, sess.CreatedAt, sess.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert session failed: %w", err)
 	}
@@ -40,9 +40,9 @@ func (s *PostgresStore) Get(ctx context.Context, id string) (chat.Session, error
 	var sess chat.Session
 	var ctxJSON []byte
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, workspace_id, agent_id, agent_type, model, project_id, title, context, created_at, updated_at
+		SELECT id, workspace_id, COALESCE(workspace_path, ''), agent_id, agent_type, model, project_id, title, context, created_at, updated_at
 		FROM agent_sessions WHERE id = $1
-	`, id).Scan(&sess.ID, &sess.WorkspaceID, &sess.AgentID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt)
+	`, id).Scan(&sess.ID, &sess.WorkspaceID, &sess.WorkspacePath, &sess.AgentID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return chat.Session{}, fmt.Errorf("session not found: %s", id)
 	}
@@ -81,7 +81,7 @@ func (s *PostgresStore) Delete(ctx context.Context, id string) error {
 
 func (s *PostgresStore) ListSessions(ctx context.Context) ([]chat.Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, workspace_id, agent_id, agent_type, model, project_id, title, context, created_at, updated_at
+		SELECT id, workspace_id, COALESCE(workspace_path, ''), agent_id, agent_type, model, project_id, title, context, created_at, updated_at
 		FROM agent_sessions
 		ORDER BY updated_at DESC
 	`)
@@ -94,7 +94,7 @@ func (s *PostgresStore) ListSessions(ctx context.Context) ([]chat.Session, error
 	for rows.Next() {
 		var sess chat.Session
 		var ctxJSON []byte
-		if err := rows.Scan(&sess.ID, &sess.WorkspaceID, &sess.AgentID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
+		if err := rows.Scan(&sess.ID, &sess.WorkspaceID, &sess.WorkspacePath, &sess.AgentID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan session failed: %w", err)
 		}
 		if len(ctxJSON) > 0 {
