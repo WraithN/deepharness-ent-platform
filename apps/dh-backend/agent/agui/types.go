@@ -107,6 +107,10 @@ type RunAgentInput struct {
 	Tools          []Tool          `json:"tools"`
 	Context        []ContextItem   `json:"context"`
 	ForwardedProps json.RawMessage `json:"forwardedProps"`
+
+	// Workspace 仅在 dh-backend 内部使用，用于向 gatewayd 挂载 agent 时指定工作目录。
+	// 该字段不会被序列化到 gatewayd。
+	Workspace string `json:"-"`
 }
 
 // EventType 是 AG-UI 事件类型枚举。
