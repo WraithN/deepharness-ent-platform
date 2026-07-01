@@ -108,8 +108,9 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		workspaceID = "ws-default"
 	}
 
-	// 根据 workspace 成员与配置根目录计算 gatewayd 工作目录。
+	// 根据 workspace 成员与配置根目录计算 gatewayd 工作目录，并确保目录存在。
 	workspacePath := sanitizeWorkspacePath(resolveWorkspacePath(workspaceID, h.cfg.RepositoryRoot, h.workspaceService))
+	ensureWorkspaceDir(workspacePath)
 
 	agentID := req.AgentID
 	if agentID == "" {
