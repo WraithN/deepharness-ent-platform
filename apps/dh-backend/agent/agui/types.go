@@ -77,12 +77,17 @@ func (m Message) ContentText() string {
 // ToGatewaydMessage 转换为 gatewayd 接受的字符串 content 消息结构。
 func (m Message) ToGatewaydMessage() map[string]any {
 	content := m.ContentText()
-	return map[string]any{
+	msg := map[string]any{
 		"role":    string(m.Role),
 		"id":      m.ID,
 		"content": content,
 		"name":    m.Name,
 	}
+	// gatewayd 要求 tool 角色消息必须携带 toolCallId，否则反序列化失败。
+	if m.Role == RoleTool && m.ToolCallID != "" {
+		msg["toolCallId"] = m.ToolCallID
+	}
+	return msg
 }
 
 // Tool 定义 RunAgentInput 中携带的工具。
@@ -107,6 +112,11 @@ type RunAgentInput struct {
 	Tools          []Tool          `json:"tools"`
 	Context        []ContextItem   `json:"context"`
 	ForwardedProps json.RawMessage `json:"forwardedProps"`
+	// AgentPluginKey 指定要使用的 gatewayd agent 插件，如 claude-code、opencode、codex。
+	// 为空时由后端使用默认值。
+	AgentPluginKey string `json:"agentPluginKey,omitempty"`
+	// AgentKey 与 AgentPluginKey 同义，优先使用 agent_key，便于前端统一字段命名。
+	AgentKey string `json:"agent_key,omitempty"`
 }
 
 // EventType 是 AG-UI 事件类型枚举。

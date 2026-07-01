@@ -128,14 +128,21 @@ func New(cfg config.Config) http.Handler {
 
 	// Handlers
 	sessionHandler := handler.NewSessionHandler(sessions, messages, agentClient)
-	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, cfg.AGUIWorkspace)
+	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, cfg.AGUIWorkspace, sessions, messages)
+	handler.SetFilesRoot(cfg.AGUIWorkspace)
 
 	// Routes
 	mux.HandleFunc("/health", handler.HealthCheck)
 	mux.HandleFunc("/api/v1/agent", aguiHandler.AgentRun)
 	mux.HandleFunc("/api/v1/sessions", sessionHandler.Sessions)
+	mux.HandleFunc("/api/v1/sessions/{id}", sessionHandler.DeleteSession)
 	mux.HandleFunc("/api/v1/sessions/{id}/messages", sessionHandler.GetMessages)
 	mux.HandleFunc("/api/v1/hello", handler.Hello)
+
+	// 文件读取/下载/保存（限制在 AGUIWorkspace 根目录内）
+	mux.HandleFunc("/api/v1/files/content", handler.FileContent)
+	mux.HandleFunc("/api/v1/files/download", handler.FileDownload)
+	mux.HandleFunc("/api/v1/files/save-to-feishu", handler.SaveToFeishu)
 
 	// Internal business modules
 	mux.HandleFunc("/api/v1/identity/users", identity.Users)

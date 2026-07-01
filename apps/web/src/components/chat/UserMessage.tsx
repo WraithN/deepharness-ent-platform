@@ -4,6 +4,7 @@ import type { MessageState, TextMessagePart } from '@assistant-ui/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
+import { extractUserPrompt } from '@/hooks/useAgUiChat';
 
 interface UserMessageProps {
   message: MessageState;
@@ -16,16 +17,20 @@ export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, o
   const custom = (message.metadata?.custom || {}) as {
     quotedCard?: { type: 'req' | 'defect' | 'case'; id: string; title: string };
     selectedRepos?: { id: string; name: string }[];
+    originalText?: string;
   };
   const { quotedCard, selectedRepos } = custom;
 
-  const textPart = Array.isArray(message.content)
+  const rawTextPart = Array.isArray(message.content)
     ? (message.content.find(p => p.type === 'text') as TextMessagePart | undefined)
+    : undefined;
+  const textPart = rawTextPart?.text
+    ? { text: custom.originalText ?? extractUserPrompt(rawTextPart.text) }
     : undefined;
 
   return (
     <div className="flex gap-3 justify-end">
-      <div className="flex flex-col max-w-[85%] items-end">
+      <div className="flex flex-col max-w-[calc(100%-2.75rem)] min-w-0 items-end">
         {(quotedCard || (selectedRepos && selectedRepos.length > 0)) && (
           <div className="mb-2 flex flex-wrap gap-2 w-full justify-end">
             {quotedCard && (
@@ -59,7 +64,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, o
             ))}
           </div>
         )}
-        <div className="flex flex-col gap-2 w-full bg-primary text-primary-foreground rounded-2xl rounded-tr-sm shadow-sm">
+        <div className="flex flex-col gap-2 w-fit max-w-full bg-primary text-primary-foreground rounded-2xl rounded-tr-sm shadow-sm">
           {textPart?.text && (
             <div className="px-4 py-3 text-sm">
               <ReactMarkdown
@@ -99,7 +104,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, o
           </div>
         )}
       </div>
-      <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center shrink-0 mt-1">
+      <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center shrink-0 mt-1 shadow-sm">
         <User className="h-4 w-4 text-primary-foreground" />
       </div>
     </div>

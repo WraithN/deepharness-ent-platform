@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -49,7 +50,7 @@ func NewGatewaydClient(adminURL string, agentID string) *GatewaydClient {
 		adminURL = "http://127.0.0.1:2346"
 	}
 	if agentID == "" {
-		agentID = "opencode"
+		agentID = "claude-code"
 	}
 	c := &GatewaydClient{
 		adminURL:    adminURL,
@@ -274,6 +275,86 @@ func (c *GatewaydClient) WsURL() string {
 		scheme = "wss"
 	}
 	return fmt.Sprintf("%s://%s/agents/events", scheme, u.Host)
+}
+
+// CreateThread 在 gatewayd 上创建新 thread，返回 gatewayd 的 threadId。
+func (c *GatewaydClient) CreateThread(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.adminURL+"/sessions", nil)
+	if err != nil {
+		return "", fmt.Errorf("create thread request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("create thread: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("create thread status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode thread response: %w", err)
+	}
+	if result.SessionID == "" {
+		return "", fmt.Errorf("gatewayd returned empty sessionId")
+	}
+	return result.SessionID, nil
+}
+
+// AdminURL returns the gatewayd HTTP admin URL.
+// defaultGatewaydWorkspace 是向 gatewayd 挂载 agent 时使用的默认工作目录。
+const defaultGatewaydWorkspace = "/home/nan/deepharness-ent-platform"
+
+// AttachAgent 向 gatewayd 指定 thread 挂载指定插件的 agent 实例，
+// 返回 gatewayd 生成的 instance_id，用于前端展示智能体唯一标识。
+func (c *GatewaydClient) AttachAgent(ctx context.Context, threadID, pluginKey string) (string, error) {
+	if threadID == "" {
+		return "", fmt.Errorf("thread id is required")
+	}
+	if pluginKey == "" {
+		pluginKey = c.agentID
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"plugin_key": pluginKey,
+		"name":       pluginKey + "-" + uuid.New().String()[:8],
+		"workspace":  defaultGatewaydWorkspace,
+		"force":      false,
+	})
+
+	url := fmt.Sprintf("%s/sessions/%s/agents", c.adminURL, threadID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("create attach request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("attach agent: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("attach agent status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		InstanceID string `json:"instance_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode attach response: %w", err)
+	}
+	return result.InstanceID, nil
 }
 
 // AdminURL returns the gatewayd HTTP admin URL.

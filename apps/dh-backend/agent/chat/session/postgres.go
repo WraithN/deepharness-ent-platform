@@ -115,6 +115,7 @@ func (s *PostgresStore) Append(ctx context.Context, sessionID string, msg chat.M
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO agent_messages (id, session_id, role, type, content, metadata, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (id) DO NOTHING
 	`, msg.ID, sessionID, msg.Role, msg.Type, msg.Content, metaJSON, msg.Timestamp)
 	if err != nil {
 		return fmt.Errorf("insert message failed: %w", err)

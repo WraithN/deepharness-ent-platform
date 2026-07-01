@@ -17,7 +17,7 @@ func TestCreateSession_Success(t *testing.T) {
 	h := NewSessionHandler(sessions, messages, client.NewGatewaydClient("", ""))
 
 	reqBody, _ := json.Marshal(map[string]any{
-		"agentType": "opencode",
+		"agentType": "chat",
 		"model":     "claude-3-7",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewReader(reqBody))
@@ -40,8 +40,8 @@ func TestCreateSession_Success(t *testing.T) {
 	if data["sessionId"] == "" {
 		t.Error("expected sessionId in response")
 	}
-	if data["wsUrl"] == "" {
-		t.Error("expected wsUrl in response")
+	if data["gatewaydWsUrl"] == "" {
+		t.Error("expected gatewaydWsUrl in response")
 	}
 }
 

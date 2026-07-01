@@ -2,13 +2,15 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
+	"github.com/google/uuid"
 )
+
 
 type SessionHandler struct {
 	sessions       chat.SessionStore
@@ -31,13 +33,25 @@ type CreateSessionRequest struct {
 	Model       string         `json:"model"`
 	ProjectID   string         `json:"projectId"`
 	Context     map[string]any `json:"context"`
+	PluginKey   string         `json:"pluginKey"`
+	// AgentKey 是 PluginKey 的别名，前端可统一使用 agent_key 指定要加载的 agent。
+	AgentKey string `json:"agent_key"`
+}
+
+// resolvePluginKey 返回请求中指定的 agent 插件 key，优先使用 agent_key。
+func (r CreateSessionRequest) resolvePluginKey() string {
+	if r.AgentKey != "" {
+		return r.AgentKey
+	}
+	return r.PluginKey
 }
 
 type CreateSessionResponse struct {
-	SessionID    string `json:"sessionId"`
-	GatewaydURL  string `json:"gatewaydUrl"`
+	SessionID     string `json:"sessionId"`
+	InstanceID    string `json:"instanceId"`
+	GatewaydURL   string `json:"gatewaydUrl"`
 	GatewaydWsURL string `json:"gatewaydWsUrl"`
-	AgentID      string `json:"agentId"`
+	AgentID       string `json:"agentId"`
 }
 
 func (h *SessionHandler) Sessions(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +78,32 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 先在 gatewayd 创建 thread，再用 threadId 作为 session id，
+	// 保证前端 threadId 与后端 session id 一一对应。
+	// 开发或 gatewayd 未启动时，若连接被拒绝/超时，则降级为本地 UUID，
+	// 避免会话创建直接 500 导致前端不可用。
+	threadID, err := h.gatewaydClient.CreateThread(r.Context())
+	if err != nil {
+		if !IsGatewaydConnectionError(err) {
+			http.Error(w, `{"code":5,"message":"failed to create gatewayd thread"}`, http.StatusInternalServerError)
+			return
+		}
+		log.Printf("[CreateSession] gatewayd unreachable (%v), fallback to local session id", err)
+		threadID = uuid.New().String()
+	}
+
+	// 根据前端指定的插件 key，在 gatewayd 上挂载对应 agent 实例，
+	// 并获取 instance_id 作为智能体唯一标识返回给前端。
+	instanceID := ""
+	pluginKey := req.resolvePluginKey()
+	if pluginKey != "" {
+		if id, attachErr := h.gatewaydClient.AttachAgent(r.Context(), threadID, pluginKey); attachErr == nil {
+			instanceID = id
+		} else {
+			log.Printf("[CreateSession] AttachAgent failed: %v", attachErr)
+		}
+	}
+
 	workspaceID := req.WorkspaceID
 	if workspaceID == "" {
 		workspaceID = "ws-default"
@@ -72,15 +112,27 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	if agentID == "" {
 		agentID = "agent-default"
 	}
+	agentType := req.AgentType
+	if agentType == "" {
+		agentType = "chat"
+	}
+
+	// 在会话上下文中记录使用的插件与实例 id，便于历史会话恢复时正确归类。
+	context := req.Context
+	if context == nil {
+		context = make(map[string]any)
+	}
+	context["pluginKey"] = pluginKey
+	context["instanceId"] = instanceID
 
 	session := chat.Session{
-		ID:          uuid.New().String(),
+		ID:          threadID,
 		WorkspaceID: workspaceID,
 		AgentID:     agentID,
-		AgentType:   req.AgentType,
+		AgentType:   agentType,
 		Model:       req.Model,
 		ProjectID:   req.ProjectID,
-		Context:     req.Context,
+		Context:     context,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -90,8 +142,7 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the actual gatewayd agent instance ID for frontend direct connection
-	gwAgentID := h.gatewaydClient.AgentID() // fallback to configured plugin key
+	gwAgentID := h.gatewaydClient.AgentID()
 	if resolvedID, err := h.gatewaydClient.ResolveAgentID(r.Context()); err == nil && resolvedID != "" {
 		gwAgentID = resolvedID
 	}
@@ -101,11 +152,36 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		"code":    0,
 		"message": "success",
 		"data": CreateSessionResponse{
-			SessionID:    session.ID,
-			GatewaydURL:  h.gatewaydClient.AdminURL(),
+			SessionID:     session.ID,
+			InstanceID:    instanceID,
+			GatewaydURL:   h.gatewaydClient.AdminURL(),
 			GatewaydWsURL: h.gatewaydClient.WsURL(),
-			AgentID:      gwAgentID,
+			AgentID:       gwAgentID,
 		},
+	})
+}
+
+// DeleteSession 删除指定会话及其消息。
+func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodDelete {
+		http.Error(w, `{"code":1,"message":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"code":1,"message":"missing session id"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := h.sessions.Delete(r.Context(), id); err != nil {
+		http.Error(w, `{"code":1,"message":"failed to delete session"}`, http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"code":    0,
+		"message": "success",
 	})
 }
 

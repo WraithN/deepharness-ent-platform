@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import type { RepositoryDTO, FileNodeDTO, FileContentDTO, ScannedRepositoryDTO, RepositoryDetailsDTO, BranchInfoDTO } from '@/lib/api-types';
+import { detectFrontendProject } from '@/lib/project-detector';
 import { CodeBlock } from '@/components/CodeBlock';
 
 // 文件树节点类型（与后端 FileNodeDTO 对齐，增加本地缓存的 content）。
@@ -699,7 +700,7 @@ const ReviewPanel: React.FC = () => {
         </Button>
       </div>
       <ScrollArea className="flex-1 p-4">
-        <div className="max-w-3xl mx-auto space-y-3">
+        <div className="space-y-3">
           {/* 总览 */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
             <div className="rounded-xl border border-border/50 bg-card p-3 text-center">
@@ -936,6 +937,19 @@ export const ProjectCode: React.FC = () => {
   const currentFileSystem = fileSystem[selectedRepoId] || [];
   const currentRepo = repositories.find(r => r.id === selectedRepoId);
 
+  // 根据当前仓库文件树自动检测是否为前端项目，用于控制预览模式是否展示。
+  const isFrontendProject = useMemo(
+    () => detectFrontendProject(currentFileSystem),
+    [currentFileSystem]
+  );
+
+  // 当检测到当前仓库为非前端项目时，若当前处于预览模式则自动切换到代码模式。
+  useEffect(() => {
+    if (repoType === 'dev' && isFrontendProject === false && viewMode === 'preview') {
+      setViewMode('code');
+    }
+  }, [repoType, isFrontendProject, viewMode]);
+
   // Filter file tree based on search query
   const filterFileTree = (nodes: FileNode[], query: string): FileNode[] => {
     if (!query) return nodes;
@@ -1102,7 +1116,7 @@ export const ProjectCode: React.FC = () => {
   ];
 
   return (
-    <div className="flex flex-col h-[calc(100vh-6rem)] md:h-[calc(100vh-8rem)] min-h-[500px] gap-4 max-w-7xl mx-auto w-full pb-8">
+    <div className="flex flex-col h-[calc(100vh-6rem)] md:h-[calc(100vh-8rem)] min-h-[500px] gap-4 w-full pb-8">
       {/* Top Header - Repository Selection */}
       <Card className="shrink-0 border-none claude-card">
         <CardContent className="p-4 flex flex-col gap-4">
@@ -1240,7 +1254,7 @@ export const ProjectCode: React.FC = () => {
       <div className="flex items-center w-full justify-between gap-2 self-start flex-wrap">
         <div className="flex items-center gap-1 bg-muted/50 p-1 rounded-xl">
           {tabs.map(tab => {
-            if (repoType === 'case' && tab.key === 'preview') return null;
+            if (tab.key === 'preview' && (repoType === 'case' || isFrontendProject === false)) return null;
             if (repoType === 'product' && tab.key !== 'doc') return null;
             const Icon = tab.icon;
             return (
@@ -1622,7 +1636,7 @@ export const ProjectCode: React.FC = () => {
               </Button>
             </div>
             <ScrollArea className="flex-1 p-6">
-              <div className="max-w-5xl mx-auto space-y-6">
+              <div className="space-y-6">
                 {loadingDetails ? (
                   <div className="flex items-center justify-center py-12">
                     <Loader2 className="h-8 w-8 animate-spin text-primary" />

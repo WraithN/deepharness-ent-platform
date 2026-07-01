@@ -17,6 +17,15 @@ export interface UpdateRepositoryRequest {
   sshKey?: string;
 }
 
+export interface FileContent {
+  path: string;
+  name: string;
+  content: string;
+  language: string;
+  encoding: string;
+  size: number;
+}
+
 export const repositoryApi = {
   list: (workspaceId: string) =>
     api.get<WorkspaceRepository[]>(`/v1/workspaces/${workspaceId}/repositories`),
@@ -30,4 +39,9 @@ export const repositoryApi = {
     api.delete<void>(`/v1/workspaces/${workspaceId}/repositories/${repoId}`),
   sync: (workspaceId: string, repoId: string) =>
     api.post<void>(`/v1/workspaces/${workspaceId}/repositories/${repoId}/sync`),
+  /**
+   * 获取仓库指定路径的文件内容。
+   */
+  content: (workspaceId: string, repoId: string, path: string) =>
+    api.get<FileContent>(`/v1/workspaces/${workspaceId}/repositories/${repoId}/content?path=${encodeURIComponent(path)}`),
 };
