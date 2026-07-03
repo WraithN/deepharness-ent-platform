@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui/buffer"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
@@ -19,6 +21,7 @@ type SessionHandler struct {
 	gatewaydClient   *client.GatewaydClient
 	workspaceService workspaceservice.WorkspaceService
 	cfg              config.Config
+	buffer           buffer.SSEBuffer
 }
 
 func NewSessionHandler(
@@ -27,6 +30,7 @@ func NewSessionHandler(
 	gatewaydClient *client.GatewaydClient,
 	workspaceService workspaceservice.WorkspaceService,
 	cfg config.Config,
+	buf buffer.SSEBuffer,
 ) *SessionHandler {
 	return &SessionHandler{
 		sessions:         sessions,
@@ -34,6 +38,7 @@ func NewSessionHandler(
 		gatewaydClient:   gatewaydClient,
 		workspaceService: workspaceService,
 		cfg:              cfg,
+		buffer:           buf,
 	}
 }
 
@@ -109,7 +114,11 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 根据 workspace 成员与配置根目录计算 gatewayd 工作目录，并确保目录存在。
-	workspacePath := sanitizeWorkspacePath(resolveWorkspacePath(workspaceID, h.cfg.RepositoryRoot, h.workspaceService))
+	workspacePath, err := resolveWorkspacePath(workspaceID, h.cfg.WorkspaceRoot, h.workspaceService)
+	if err != nil {
+		WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		return
+	}
 	ensureWorkspaceDir(workspacePath)
 
 	agentID := req.AgentID
@@ -173,7 +182,7 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 			SessionID:     session.ID,
 			InstanceID:    instanceID,
 			GatewaydURL:   h.gatewaydClient.AdminURL(),
-			GatewaydWsURL: h.gatewaydClient.WsURL(),
+			GatewaydWsURL: h.gatewaydClient.WsURLForSession(session.ID),
 			AgentID:       gwAgentID,
 		},
 	})
@@ -217,11 +226,83 @@ func (h *SessionHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 崩溃恢复：检查 buffer 中是否有未持久化的 run 状态（checkpoint），
+	// 若有则将其落库，防止服务器崩溃导致 assistant 消息丢失。
+	h.recoverPendingRuns(r.Context(), id)
+
 	const maxMessageHistory = 100
 	messages, err := h.messages.GetHistory(r.Context(), id, maxMessageHistory)
 	if err != nil {
 		http.Error(w, `{"code":1,"message":"failed to get messages"}`, http.StatusInternalServerError)
 		return
 	}
+	// 兼容历史数据：前端曾用 JSON.stringify 双重编码 content，导致持久化的
+	// originalText 包含字面量 \n 前缀。这里在返回前重新提取，确保前端拿到干净的原始文本。
+	for i := range messages {
+		if messages[i].Role != "user" {
+			continue
+		}
+		original := extractOriginalUserPrompt(messages[i].Content)
+		if original == "" {
+			continue
+		}
+		if messages[i].Metadata == nil {
+			messages[i].Metadata = map[string]any{}
+		}
+		messages[i].Metadata["originalText"] = original
+	}
 	json.NewEncoder(w).Encode(messages)
+}
+
+// recoverPendingRuns 检查 buffer 中的 run 级 checkpoint，
+// 将因服务器崩溃未持久化的 assistant 消息落库。
+// 每个 checkpoint 是一次 run 中累积的 contentPart 列表（JSON），
+// 包含 reasoning / text / tool-call 部件，按实际事件顺序排列。
+func (h *SessionHandler) recoverPendingRuns(ctx context.Context, sessionID string) {
+	if h.buffer == nil {
+		return
+	}
+	states, err := h.buffer.LoadPendingRunStates(ctx, sessionID)
+	if err != nil {
+		log.Printf("[SessionHandler] recover: load pending run states failed: %v", err)
+		return
+	}
+	for runID, state := range states {
+		var parts []contentPart
+		if err := json.Unmarshal(state, &parts); err != nil {
+			log.Printf("[SessionHandler] recover: unmarshal run state failed runID=%s: %v", runID, err)
+			_ = h.buffer.ClearRunState(ctx, sessionID, runID)
+			continue
+		}
+		// 从 parts 中提取纯文本作为 Message.Content
+		var textContent string
+		for _, p := range parts {
+			if p.Type == "text" {
+				textContent += p.Text
+			}
+		}
+		if len(parts) == 0 && textContent == "" {
+			_ = h.buffer.ClearRunState(ctx, sessionID, runID)
+			continue
+		}
+		metadata := map[string]any{}
+		if len(parts) > 0 {
+			metadata["contentParts"] = parts
+		}
+		msg := chat.Message{
+			ID:        uuid.New().String(),
+			SessionID: sessionID,
+			Role:      "assistant",
+			Type:      "text",
+			Content:   textContent,
+			Metadata:  metadata,
+			Timestamp: time.Now(),
+		}
+		if err := h.messages.Append(ctx, sessionID, msg); err != nil {
+			log.Printf("[SessionHandler] recover: persist run state failed runID=%s: %v", runID, err)
+			continue
+		}
+		log.Printf("[SessionHandler] recover: persisted crashed run runID=%s parts=%d", runID, len(parts))
+		_ = h.buffer.ClearRunState(ctx, sessionID, runID)
+	}
 }

@@ -137,7 +137,7 @@ start_frontend() {
         kill_port "$FRONTEND_PORT"
     fi
 
-    cd apps/web
+    cd apps/dh-frontend
     pnpm dev --port $FRONTEND_PORT > /tmp/frontend.log 2>&1 &
     local pid=$!
     PIDS+=("$pid")

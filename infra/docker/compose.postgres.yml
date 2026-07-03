@@ -21,6 +21,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ../database/identity/schema.sql:/docker-entrypoint-initdb.d/01_identity.sql:ro
+      - ../database/identity/profile.sql:/docker-entrypoint-initdb.d/01b_identity_profile.sql:ro
       - ../database/workitem/schema.sql:/docker-entrypoint-initdb.d/02_workitem.sql:ro
       - ../database/personalassistant/schema.sql:/docker-entrypoint-initdb.d/03_personalassistant.sql:ro
       - ../database/agent/schema.sql:/docker-entrypoint-initdb.d/04_agent.sql:ro

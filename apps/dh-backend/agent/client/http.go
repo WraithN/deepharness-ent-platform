@@ -266,6 +266,11 @@ func (c *GatewaydClient) transformEvent(eventType string, rawPayload json.RawMes
 	}
 }
 
+// WsURL 返回旧版全局 WebSocket 事件地址（/agents/events）。
+//
+// Deprecated: gatewayd 已废弃 /agents/events 接口，请使用 WsURLForSession
+// 获取 AG-UI 协议的按会话 WebSocket 地址 WS /sessions/{sessionId}/events。
+// 该方法仅供旧版 GatewaydClient 内部 connect() 使用。
 func (c *GatewaydClient) WsURL() string {
 	u, err := url.Parse(c.adminURL)
 	if err != nil {
@@ -276,6 +281,20 @@ func (c *GatewaydClient) WsURL() string {
 		scheme = "wss"
 	}
 	return fmt.Sprintf("%s://%s/agents/events", scheme, u.Host)
+}
+
+// WsURLForSession 返回 AG-UI 协议按会话的 WebSocket 事件地址。
+// 对应 gatewayd 文档中的 WS /sessions/{sessionId}/events。
+func (c *GatewaydClient) WsURLForSession(sessionID string) string {
+	u, err := url.Parse(c.adminURL)
+	if err != nil {
+		return fmt.Sprintf("ws://127.0.0.1:2346/sessions/%s/events", sessionID)
+	}
+	scheme := "ws"
+	if u.Scheme == "https" {
+		scheme = "wss"
+	}
+	return fmt.Sprintf("%s://%s/sessions/%s/events", scheme, u.Host, sessionID)
 }
 
 // CreateThread 在 gatewayd 上创建新 thread，返回 gatewayd 的 threadId。
@@ -328,15 +347,12 @@ func (c *GatewaydClient) AttachAgent(ctx context.Context, threadID, pluginKey, w
 	if pluginKey == "" {
 		pluginKey = c.agentID
 	}
-	if workspace == "" {
-		workspace = defaultWorkspace
-	}
 
 	body, _ := json.Marshal(map[string]any{
-		"plugin_key": pluginKey,
-		"name":       pluginKey + "-" + uuid.New().String()[:8],
-		"workspace":  workspace,
-		"force":      false,
+		"agent_key":      pluginKey,
+		"name":           pluginKey + "-" + uuid.New().String()[:8],
+		"work_directory": workspace,
+		"force":          true,
 	})
 
 	postURL := fmt.Sprintf("%s/sessions/%s/agents", c.adminURL, threadID)
@@ -370,6 +386,10 @@ func (c *GatewaydClient) AttachAgent(ctx context.Context, threadID, pluginKey, w
 // ResolveAgentID queries the gatewayd /agents API to find the actual instance ID
 // matching the configured plugin_key (c.agentID, e.g. "opencode").
 // Cached after first successful resolution.
+//
+// Deprecated: gatewayd 已废弃 GET /agents 接口。AG-UI 协议下 agent 实例通过
+// POST /sessions/{sessionId}/agents 挂载并直接返回 instance_id，无需再查询 /agents。
+// 该方法仅被旧版 SendMessage 路径使用，新代码应通过 AGUIClient.Run 发送消息。
 func (c *GatewaydClient) ResolveAgentID(ctx context.Context) (string, error) {
 	c.resolveMu.RLock()
 	if c.resolvedID != "" {
@@ -413,6 +433,11 @@ func (c *GatewaydClient) ResolveAgentID(ctx context.Context) (string, error) {
 	return agentID, nil
 }
 
+// SendMessage 通过旧版 POST /agents/{id}/message 接口发送消息，并监听
+// 旧版 WS /agents/events 事件流。
+//
+// Deprecated: gatewayd 已废弃 /agents/{id}/message 与 /agents/events 接口。
+// 新代码应使用 AGUIClient.Run，通过 POST /sessions/{sessionId}/chat 获取 SSE 事件流。
 func (c *GatewaydClient) SendMessage(ctx context.Context, session chat.Session, msg chat.Message) (<-chan SSEEvent, error) {
 	// 只有在旧版会话路径真正发送消息时，才启动 WebSocket 监听。
 	c.ensureRunning()

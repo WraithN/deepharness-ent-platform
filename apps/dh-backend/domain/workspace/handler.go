@@ -2,10 +2,12 @@ package workspace
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 )
 
 var defaultService service.WorkspaceService
@@ -46,6 +48,36 @@ func Workspaces(w http.ResponseWriter, r *http.Request) {
 	default:
 		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
 	}
+}
+
+// Mine 返回当前登录用户加入的工作空间列表及其成员关系。
+// userID 由 auth 中间件从请求上下文注入。
+func Mine(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return
+	}
+	mine, err := defaultService.ListMine(userID)
+	if err != nil {
+		handler.HandleServiceError(w, err, "workspace not found", "failed to list mine workspaces")
+		return
+	}
+
+	// 非超级管理员登录后，确保用户在各工作空间下的 projects/files 目录存在。
+	// os.MkdirAll 是幂等操作，并发安全。
+	for _, ws := range mine {
+		if err := defaultService.EnsureUserWorkspaceDirs(ws.ID, userID); err != nil {
+			log.Printf("[Workspace] ensure user dirs failed for ws=%s user=%s: %v", ws.ID, userID, err)
+		}
+	}
+
+	handler.SetJSONHeader(w)
+	json.NewEncoder(w).Encode(mine)
 }
 
 // WorkspaceByID 处理 GET /api/v1/workspaces/{id}。
@@ -310,7 +342,7 @@ func WorkspaceCICD(w http.ResponseWriter, r *http.Request) {
 
 // isValidMemberRole 校验成员角色是否合法。
 func isValidMemberRole(role string) bool {
-	return role == service.MemberRoleAdmin || role == service.MemberRoleUser
+	return role == service.MemberRoleSpaceAdmin || role == service.MemberRoleMember
 }
 
 // isValidMemberSubRole 校验成员子角色是否合法。

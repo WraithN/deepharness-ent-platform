@@ -1,0 +1,455 @@
+html {
+  font-size: 17px;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 216 33% 97%; /* #F7F9FC */
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%; /* #FFFFFF */
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 228 82% 55%; /* #2F54EB */
+    --primary-foreground: 210 40% 98%;
+    --secondary: 216 20% 95%; /* Softer secondary */
+    --secondary-foreground: 222 47% 11.2%;
+    --muted: 216 20% 95%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 216 20% 95%;
+    --accent-foreground: 222 47% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 216 20% 90%; /* Slightly softer border */
+    --input: 216 20% 90%;
+    --ring: 228 82% 55%;
+    --radius: 0.5rem; /* Smoother 8px radius */
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 228 82% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 216 33% 97%;
+    --sidebar-accent-foreground: 228 82% 55%;
+    --sidebar-border: 216 20% 90%;
+    --sidebar-ring: 228 82% 55%;
+
+    --chart-1: 228 82% 55%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+  }
+
+  .dark {
+    /* Dracula Theme */
+    --background: 231 15% 18%; /* #282A36 */
+    --foreground: 60 30% 96%; /* #F8F8F2 */
+    --card: 232 14% 31%; /* #44475A */
+    --card-foreground: 60 30% 96%;
+    --popover: 232 14% 31%;
+    --popover-foreground: 60 30% 96%;
+    --primary: 265 89% 78%; /* #BD93F9 */
+    --primary-foreground: 231 15% 18%;
+    --secondary: 232 14% 31%;
+    --secondary-foreground: 60 30% 96%;
+    --muted: 232 14% 31%;
+    --muted-foreground: 232 18% 55%; /* #6272A4 */
+    --accent: 232 14% 31%;
+    --accent-foreground: 60 30% 96%;
+    --destructive: 0 100% 67%; /* #FF5555 */
+    --destructive-foreground: 60 30% 96%;
+    --border: 232 14% 31%;
+    --input: 232 14% 31%;
+    --ring: 265 89% 78%;
+    --radius: 0.5rem;
+    --sidebar-background: 231 15% 18%;
+    --sidebar-foreground: 60 30% 96%;
+    --sidebar-primary: 265 89% 78%;
+    --sidebar-primary-foreground: 231 15% 18%;
+    --sidebar-accent: 232 14% 31%;
+    --sidebar-accent-foreground: 265 89% 78%;
+    --sidebar-border: 232 14% 31%;
+    --sidebar-ring: 265 89% 78%;
+
+    --chart-1: 265 89% 78%; /* Purple */
+    --chart-2: 135 94% 65%; /* Green */
+    --chart-3: 31 100% 71%; /* Orange */
+    --chart-4: 326 100% 74%; /* Pink */
+    --chart-5: 190 100% 82%; /* Cyan */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+  code, pre {
+    font-family: "JetBrains Mono", monospace;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-background/80 backdrop-blur-xl border border-white/20 dark:border-white/10 shadow-xl;
+  }
+
+  .soft-shadow {
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 0 3px rgba(0,0,0,0.02);
+  }
+
+  .dark .soft-shadow {
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3), 0 0 3px rgba(0,0,0,0.2);
+  }
+
+  /* Claude-style static gradient card */
+  .claude-card {
+    background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,253,0.95) 100%);
+    box-shadow: 0 2px 12px -2px rgba(59, 130, 246, 0.08), 0 0 0 1px rgba(59, 130, 246, 0.04);
+  }
+
+  .dark .claude-card {
+    background: linear-gradient(180deg, rgba(30,35,48,0.98) 0%, rgba(26,30,42,0.95) 100%);
+    box-shadow: 0 2px 12px -2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255,255,255,0.04);
+  }
+
+  /* Tech border for code blocks */
+  .tech-border {
+    border: 1px solid rgba(59, 130, 246, 0.15);
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.05), inset 0 1px 0 rgba(255,255,255,0.1);
+  }
+
+  .dark .tech-border {
+    border: 1px solid rgba(189, 147, 249, 0.2);
+    box-shadow: 0 0 20px rgba(189, 147, 249, 0.08), inset 0 1px 0 rgba(255,255,255,0.03);
+  }
+
+  /* Scroll-to-bottom button breathe animation */
+  @keyframes breathe {
+    0%, 100% {
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    }
+    50% {
+      box-shadow: 0 2px 16px hsl(var(--primary) / 0.4);
+    }
+  }
+
+  .animate-breathe {
+    animation: breathe 2s ease-in-out infinite;
+  }
+}
+
+/* ========================================
+   Markdown 预览美化样式
+   适用于 .markdown-preview 容器内的内容
+   支持 light / dark 双主题
+   ======================================== */
+@layer components {
+  .markdown-preview {
+    @apply text-sm leading-relaxed;
+  }
+
+  /* ── 标题层级 ── */
+  .markdown-preview h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    padding-bottom: 0.6rem;
+    margin-top: 1.5rem;
+    margin-bottom: 1rem;
+    border-bottom: 2px solid;
+    border-image: linear-gradient(90deg, hsl(228 82% 55%), hsl(199 89% 48%)) 1;
+    background: linear-gradient(90deg, hsl(228 82% 55%), hsl(199 89% 48%));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .markdown-preview h2 {
+    font-size: 1.375rem;
+    font-weight: 600;
+    margin-top: 1.25rem;
+    margin-bottom: 0.75rem;
+    padding-left: 0.75rem;
+    border-left: 4px solid hsl(var(--primary));
+  }
+
+  .markdown-preview h3 {
+    font-size: 1.125rem;
+    font-weight: 550;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .markdown-preview h4 {
+    font-size: 1rem;
+    font-weight: 500;
+    margin-top: 0.875rem;
+    margin-bottom: 0.5rem;
+  }
+
+  /* ── 加粗文本 ── */
+  .markdown-preview strong {
+    font-weight: 700;
+    color: hsl(var(--foreground));
+  }
+
+  /* ── 段落 ── */
+  .markdown-preview p {
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  /* ── 引用块 ── */
+  .markdown-preview blockquote {
+    @apply rounded-r-lg;
+    border-left: 4px solid hsl(var(--primary) / 0.5);
+    background: hsl(var(--muted) / 0.5);
+    padding: 0.5rem 1rem;
+    margin: 0.75rem 0;
+    color: hsl(var(--muted-foreground));
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .markdown-preview blockquote:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  }
+
+  /* ── 列表 ── */
+  .markdown-preview ul {
+    @apply list-disc pl-5 my-2 space-y-1;
+  }
+
+  .markdown-preview ol {
+    @apply list-decimal pl-5 my-2 space-y-1;
+  }
+
+  /* ── 分割线：渐变色替代纯黑线 ── */
+  .markdown-preview hr {
+    border: none;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.4), transparent);
+    margin: 1.5rem 0;
+    border-radius: 1px;
+  }
+
+  /* ── 表格美化 ── */
+  .markdown-preview table {
+    @apply w-full text-xs my-3 overflow-hidden rounded-lg;
+    border-collapse: separate;
+    border-spacing: 0;
+    box-shadow: 0 1px 8px rgba(0, 0, 0, 0.04);
+  }
+
+  .markdown-preview thead {
+    background: linear-gradient(90deg, hsl(228 82% 55%), hsl(210 80% 50%));
+    color: #fff;
+  }
+
+  .markdown-preview th {
+    @apply font-semibold px-3 py-2 text-left;
+    border: none;
+    white-space: nowrap;
+  }
+
+  .markdown-preview th:first-child {
+    @apply rounded-tl-lg;
+  }
+
+  .markdown-preview th:last-child {
+    @apply rounded-tr-lg;
+  }
+
+  .markdown-preview td {
+    @apply px-3 py-2;
+    border-bottom: 1px solid hsl(var(--border) / 0.5);
+  }
+
+  /* 奇偶行隔行变色 */
+  .markdown-preview tbody tr:nth-child(even) {
+    background: hsl(var(--muted) / 0.3);
+  }
+
+  .markdown-preview tbody tr:nth-child(odd) {
+    background: transparent;
+  }
+
+  .markdown-preview tbody tr {
+    transition: background 0.15s ease;
+  }
+
+  .markdown-preview tbody tr:hover {
+    background: hsl(var(--primary) / 0.06);
+  }
+
+  .markdown-preview tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  /* ── 行内代码 ── */
+  .markdown-preview code:not(pre code) {
+    @apply px-1.5 py-0.5 rounded text-xs font-mono;
+    background: hsl(var(--primary) / 0.08);
+    color: hsl(var(--primary));
+    border: 1px solid hsl(var(--primary) / 0.12);
+  }
+
+  /* ── 链接 ── */
+  .markdown-preview a {
+    @apply text-primary underline underline-offset-2 hover:opacity-80 transition-opacity;
+  }
+
+  /* ── 图片 ── */
+  .markdown-preview img {
+    @apply rounded-lg max-w-full my-2;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
+
+  /* ── 代码块滚动条美化 ── */
+  .markdown-preview pre {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--primary) / 0.3) transparent;
+  }
+
+  .markdown-preview pre::-webkit-scrollbar {
+    height: 5px;
+  }
+
+  .markdown-preview pre::-webkit-scrollbar-thumb {
+    background: hsl(var(--primary) / 0.25);
+    border-radius: 3px;
+  }
+
+  .markdown-preview pre::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary) / 0.4);
+  }
+}
+
+/* ── 暗色模式适配 ── */
+@layer components {
+  .dark .markdown-preview h1 {
+    border-image: linear-gradient(90deg, hsl(265 89% 78%), hsl(190 100% 82%)) 1;
+    background: linear-gradient(90deg, hsl(265 89% 78%), hsl(190 100% 82%));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .dark .markdown-preview h2 {
+    border-left-color: hsl(265 89% 78%);
+  }
+
+  .dark .markdown-preview strong {
+    color: hsl(60 30% 96%);
+  }
+
+  .dark .markdown-preview blockquote {
+    background: hsl(232 14% 31% / 0.5);
+    border-left-color: hsl(265 89% 78% / 0.5);
+  }
+
+  .dark .markdown-preview thead {
+    background: linear-gradient(90deg, hsl(265 89% 78%), hsl(190 100% 82%));
+    color: hsl(231 15% 18%);
+  }
+
+  .dark .markdown-preview tbody tr:nth-child(even) {
+    background: hsl(232 14% 31% / 0.3);
+  }
+
+  .dark .markdown-preview tbody tr:hover {
+    background: hsl(265 89% 78% / 0.08);
+  }
+
+  .dark .markdown-preview code:not(pre code) {
+    background: hsl(265 89% 78% / 0.12);
+    color: hsl(265 89% 78%);
+    border-color: hsl(265 89% 78% / 0.15);
+  }
+
+  .dark .markdown-preview hr {
+    background: linear-gradient(90deg, transparent, hsl(265 89% 78% / 0.4), transparent);
+  }
+}
+
+/* ── 树形目录结构美化 ── */
+@layer components {
+  .markdown-preview pre.tree-dir {
+    font-family: "Menlo", "Monaco", "JetBrains Mono", monospace;
+    font-size: 14px;
+    line-height: 1.8;
+    padding: 16px 20px;
+    background: #f8fafc;
+    border-radius: 12px;
+    border-left: 4px solid hsl(228 82% 55%);
+    overflow-x: auto;
+    margin: 0.75rem 0;
+    box-shadow: 0 1px 8px rgba(0, 0, 0, 0.04);
+  }
+
+  /* 每行作为 block 换行 */
+  .markdown-preview pre.tree-dir .tree-line {
+    display: block;
+    white-space: pre;
+  }
+
+  /* 连接线（├ └ │ ─）弱化为浅灰色 */
+  .markdown-preview pre.tree-dir .tree-indent {
+    color: #cbd5e1;
+  }
+
+  /* 一级模块图标放大 + 主色高亮 */
+  .markdown-preview pre.tree-dir .tree-icon {
+    font-size: 18px;
+    color: hsl(228 82% 55%);
+    margin-right: 2px;
+  }
+
+  /* 内容文字保持正常颜色 */
+  .markdown-preview pre.tree-dir .tree-text {
+    color: hsl(var(--foreground));
+  }
+
+  /* 层级缩进：每层 ┃ 渐变竖线视觉分层 */
+  .markdown-preview pre.tree-dir .tree-line .tree-indent {
+    border-image: none;
+  }
+}
+
+/* ── 树形块暗色模式适配 ── */
+@layer components {
+  .dark .markdown-preview pre.tree-dir {
+    background: hsl(231 15% 18% / 0.6);
+    border-left-color: hsl(265 89% 78%);
+    box-shadow: 0 1px 8px rgba(0, 0, 0, 0.2);
+  }
+
+  .dark .markdown-preview pre.tree-dir .tree-indent {
+    color: hsl(232 14% 45%);
+  }
+
+  .dark .markdown-preview pre.tree-dir .tree-icon {
+    color: hsl(265 89% 78%);
+  }
+
+  .dark .markdown-preview pre.tree-dir .tree-text {
+    color: hsl(60 30% 96%);
+  }
+}

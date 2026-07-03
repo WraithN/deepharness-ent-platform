@@ -1,18 +1,13 @@
 package handler
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 
 	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
-)
-
-const (
-	defaultRepositoryRoot = "/home/nan/test"
-	// maxWorkspacePathLen 与 agent_sessions.workspace_path 字段长度保持一致。
-	maxWorkspacePathLen = 500
 )
 
 // ensureWorkspaceDir 保证 gatewayd 工作目录存在；创建失败仅记录日志，不阻塞会话创建。
@@ -25,18 +20,14 @@ func ensureWorkspaceDir(path string) {
 	}
 }
 
-// sanitizeWorkspacePath 保证路径长度不超过数据库存储上限。
-func sanitizeWorkspacePath(path string) string {
-	if len(path) <= maxWorkspacePathLen {
-		return path
-	}
-	log.Printf("[sanitizeWorkspacePath] path too long (%d > %d), truncating", len(path), maxWorkspacePathLen)
-	return path[:maxWorkspacePathLen]
-}
-
 // resolveWorkspacePath 根据 workspace 成员、配置根目录拼接 gatewayd 工作目录。
 // 多成员时取 joined_at 最早的成员；无成员时回退到 "default"。
-func resolveWorkspacePath(workspaceID, repositoryRoot string, workspaceService workspaceservice.WorkspaceService) string {
+// workspaceRoot 由 config.yaml 的 workspace.root 提供，为空时返回错误。
+func resolveWorkspacePath(workspaceID, workspaceRoot string, workspaceService workspaceservice.WorkspaceService) (string, error) {
+	if workspaceRoot == "" {
+		return "", fmt.Errorf("workspace root is not configured")
+	}
+
 	userID := "default"
 
 	if workspaceService != nil && workspaceID != "" {
@@ -56,9 +47,5 @@ func resolveWorkspacePath(workspaceID, repositoryRoot string, workspaceService w
 		}
 	}
 
-	if repositoryRoot == "" {
-		repositoryRoot = defaultRepositoryRoot
-	}
-
-	return filepath.Clean(filepath.Join(repositoryRoot, workspaceID, userID))
+	return filepath.Clean(filepath.Join(workspaceRoot, workspaceID, userID)), nil
 }

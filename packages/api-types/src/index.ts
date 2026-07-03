@@ -28,7 +28,7 @@ export interface TenantDTO {
   name: string
 }
 
-export type RepoType = "dev" | "test" | "case" | "product"
+export type RepoType = "dev" | "case"
 
 export interface ProjectDTO {
   id: string

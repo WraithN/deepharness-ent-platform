@@ -27,25 +27,20 @@ const (
 type AGUIClient struct {
 	adminURL  string
 	pluginKey string
-	workspace string
 	client    *http.Client
 }
 
 // NewAGUIClient 创建 AG-UI client。
-func NewAGUIClient(adminURL, pluginKey, workspace string) *AGUIClient {
+func NewAGUIClient(adminURL, pluginKey string) *AGUIClient {
 	if adminURL == "" {
 		adminURL = defaultAGUIAdminURL
 	}
 	if pluginKey == "" {
 		pluginKey = defaultAGUIPluginKey
 	}
-	if workspace == "" {
-		workspace = defaultWorkspace
-	}
 	return &AGUIClient{
 		adminURL:  adminURL,
 		pluginKey: pluginKey,
-		workspace: workspace,
 		client: &http.Client{
 			// AttachAgent 会阻塞到 agent ready，需要较长超时。
 			Timeout: 5 * time.Minute,
@@ -95,15 +90,11 @@ func (c *AGUIClient) AttachAgent(ctx context.Context, threadID string, force boo
 // gatewayd 会阻塞直到 agent 进程 ready，调用方需保证上下文有足够超时。
 // force=true 时会强制创建新 instance；force=false 时若 session 已有 instance 则复用。
 func (c *AGUIClient) attachAgentWithKey(ctx context.Context, threadID string, force bool, pluginKey string, workspace string) error {
-	if workspace == "" {
-		workspace = c.workspace
-	}
-
 	body, _ := json.Marshal(map[string]any{
-		"plugin_key": pluginKey,
-		"name":       pluginKey + "-" + uuid.New().String()[:8],
-		"workspace":  workspace,
-		"force":      force,
+		"agent_key":      pluginKey,
+		"name":           pluginKey + "-" + uuid.New().String()[:8],
+		"work_directory": workspace,
+		"force":          force,
 	})
 
 	url := fmt.Sprintf("%s/sessions/%s/agents", c.adminURL, threadID)
@@ -163,20 +154,15 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 	}
 
 	workspace := input.Workspace
-	if workspace == "" {
-		workspace = c.workspace
-	}
 
 	// 挂载 agent；使用独立超时，避免整体 run 上下文被拉长。
 	// 若 gatewayd 因重启等原因丢失 session，自动创建新 session 并重试。
-	// 优先尝试 force=false 复用已有 instance，减少重复创建 Claude 进程带来的 ~0.9s 延迟。
+	// 每个 session 使用独立 instance，避免复用导致的"思考中"卡死问题。
 	attachCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	attachStart := time.Now()
-	if err := c.attachAgentWithKey(attachCtx, input.ThreadID, false, pluginKey, workspace); err != nil {
-		if isInstanceAlreadyExists(err) {
-			log.Printf("[AGUIClient] run=%s thread=%s reuse existing instance after %v", input.RunID, input.ThreadID, time.Since(attachStart))
-		} else if isSessionNotFound(err) {
+	if err := c.attachAgentWithKey(attachCtx, input.ThreadID, true, pluginKey, workspace); err != nil {
+		if isSessionNotFound(err) {
 			log.Printf("[AGUIClient] run=%s session %s not found, creating new thread", input.RunID, input.ThreadID)
 			newThreadID, createErr := c.CreateThread(ctx)
 			if createErr != nil {
@@ -188,15 +174,10 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 			}
 			log.Printf("[AGUIClient] run=%s created new instance after recreate in %v", input.RunID, time.Since(attachStart))
 		} else {
-			// 其他错误时回退到 force=true，尝试新建 instance（例如旧 instance 已失效）。
-			log.Printf("[AGUIClient] run=%s AttachAgent force=false failed (%v), retrying with force=true", input.RunID, err)
-			if attachErr := c.attachAgentWithKey(attachCtx, input.ThreadID, true, pluginKey, workspace); attachErr != nil {
-				return "", nil, fmt.Errorf("attach agent: %w", attachErr)
-			}
-			log.Printf("[AGUIClient] run=%s created new instance with force=true after %v", input.RunID, time.Since(attachStart))
+			return "", nil, fmt.Errorf("attach agent: %w", err)
 		}
 	} else {
-		log.Printf("[AGUIClient] run=%s created new instance (force=false) after %v", input.RunID, time.Since(attachStart))
+		log.Printf("[AGUIClient] run=%s created new instance (force=true) after %v", input.RunID, time.Since(attachStart))
 	}
 
 	if input.State == nil {
@@ -236,7 +217,8 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 		return "", nil, fmt.Errorf("marshal run input: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/sessions/%s/runs", c.adminURL, input.ThreadID)
+	// gatewayd AG-UI 协议使用 POST /sessions/{sessionId}/chat 启动 run 并返回 SSE 流。
+	url := fmt.Sprintf("%s/sessions/%s/chat", c.adminURL, input.ThreadID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return "", nil, fmt.Errorf("create run request: %w", err)
@@ -251,7 +233,7 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 	if err != nil {
 		return "", nil, fmt.Errorf("run request: %w", err)
 	}
-	log.Printf("[AGUIClient] run=%s POST /sessions/%s/runs response status=%d after %v", input.RunID, input.ThreadID, resp.StatusCode, time.Since(postStart))
+	log.Printf("[AGUIClient] run=%s POST /sessions/%s/chat response status=%d after %v", input.RunID, input.ThreadID, resp.StatusCode, time.Since(postStart))
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)

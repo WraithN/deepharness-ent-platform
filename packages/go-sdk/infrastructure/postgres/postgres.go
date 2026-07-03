@@ -42,10 +42,26 @@ type Config struct {
 
 const (
 	// 默认连接池参数。
-	defaultMaxOpenConns    = 25
-	defaultMaxIdleConns    = 5
-	defaultConnMaxLifetime = 5 * time.Minute
+	DefaultMaxOpenConns    = 25
+	DefaultMaxIdleConns    = 5
+	DefaultConnMaxLifetime = 5 * time.Minute
 )
+
+// PoolConfig 定义连接池配置参数。
+type PoolConfig struct {
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+}
+
+// DefaultPoolConfig 返回默认连接池配置。
+func DefaultPoolConfig() PoolConfig {
+	return PoolConfig{
+		MaxOpenConns:    DefaultMaxOpenConns,
+		MaxIdleConns:    DefaultMaxIdleConns,
+		ConnMaxLifetime: DefaultConnMaxLifetime,
+	}
+}
 
 // DSN 根据 Config 构造 PostgreSQL DSN 字符串（URL 形式）。
 // 默认 sslmode=disable，方便本地开发；生产环境应通过 Params 覆盖为 require/verify-full。
@@ -91,14 +107,32 @@ func DSN(cfg Config) string {
 
 // OpenDB 使用给定的 DSN 打开 PostgreSQL 连接，并配置默认连接池。
 func OpenDB(dsn string) (*sql.DB, error) {
+	return OpenDBWithPool(dsn, DefaultPoolConfig())
+}
+
+// OpenDBWithPool 使用给定的 DSN 和连接池配置打开 PostgreSQL 连接。
+func OpenDBWithPool(dsn string, pool PoolConfig) (*sql.DB, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open pgx failed: %w", err)
 	}
 
-	db.SetMaxOpenConns(defaultMaxOpenConns)
-	db.SetMaxIdleConns(defaultMaxIdleConns)
-	db.SetConnMaxLifetime(defaultConnMaxLifetime)
+	maxOpen := pool.MaxOpenConns
+	if maxOpen <= 0 {
+		maxOpen = DefaultMaxOpenConns
+	}
+	maxIdle := pool.MaxIdleConns
+	if maxIdle <= 0 {
+		maxIdle = DefaultMaxIdleConns
+	}
+	connLifetime := pool.ConnMaxLifetime
+	if connLifetime <= 0 {
+		connLifetime = DefaultConnMaxLifetime
+	}
+
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(maxIdle)
+	db.SetConnMaxLifetime(connLifetime)
 
 	if err := db.Ping(); err != nil {
 		_ = db.Close()

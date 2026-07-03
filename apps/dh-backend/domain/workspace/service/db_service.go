@@ -4,6 +4,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
@@ -12,25 +15,16 @@ import (
 	"github.com/google/uuid"
 )
 
-// 成员角色常量。
-const (
-	MemberRoleAdmin = "admin"
-	MemberRoleUser  = "user"
-
-	MemberSubRoleDeveloper = "developer"
-	MemberSubRoleTester    = "tester"
-	MemberSubRolePM        = "pm"
-	MemberSubRoleDesigner  = "designer"
-)
-
-// DBWorkspaceService 是基于 MySQL 的 WorkspaceService 实现。
+// DBWorkspaceService 是基于 PostgreSQL 的 WorkspaceService 实现。
 type DBWorkspaceService struct {
-	db *sql.DB
+	db            *sql.DB
+	workspaceRoot string
 }
 
-// NewDBWorkspaceService 创建 MySQL 实现的工作空间服务。
-func NewDBWorkspaceService(db *sql.DB) *DBWorkspaceService {
-	return &DBWorkspaceService{db: db}
+// NewDBWorkspaceService 创建 PostgreSQL 实现的工作空间服务。
+// workspaceRoot 用于在创建工作空间和用户登录时创建对应目录。
+func NewDBWorkspaceService(db *sql.DB, workspaceRoot string) *DBWorkspaceService {
+	return &DBWorkspaceService{db: db, workspaceRoot: workspaceRoot}
 }
 
 // CreateWorkspace 创建新工作空间，并将所有者加入成员表。
@@ -62,7 +56,7 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 	_, err = tx.Exec(`
 		INSERT INTO workspace_members (workspace_id, user_id, role, sub_role, joined_at)
 		VALUES ($1, $2, $3, $4, $5)
-	`, ws.ID, ownerUserID, MemberRoleAdmin, MemberSubRolePM, now)
+	`, ws.ID, ownerUserID, MemberRoleSpaceAdmin, MemberSubRoleDeveloper, now)
 	if err != nil {
 		return workspace.Workspace{}, fmt.Errorf("insert workspace member failed: %w", err)
 	}
@@ -70,7 +64,32 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 	if err := tx.Commit(); err != nil {
 		return workspace.Workspace{}, fmt.Errorf("commit failed: %w", err)
 	}
+
+	// 创建工作空间根目录 WORKSPACE_ROOT/{workspace_id}
+	if s.workspaceRoot != "" {
+		wsDir := filepath.Join(s.workspaceRoot, ws.ID)
+		if err := os.MkdirAll(wsDir, 0o755); err != nil {
+			log.Printf("[Workspace] create workspace dir %s failed: %v", wsDir, err)
+		}
+	}
+
 	return ws, nil
+}
+
+// EnsureUserWorkspaceDirs 确保用户在工作空间下的 projects 和 files 目录存在。
+// 目录结构：WORKSPACE_ROOT/{workspaceID}/{userID}/{projects,files}
+// os.MkdirAll 是幂等操作，天然并发安全。
+func (s *DBWorkspaceService) EnsureUserWorkspaceDirs(workspaceID, userID string) error {
+	if s.workspaceRoot == "" || workspaceID == "" || userID == "" {
+		return nil
+	}
+	for _, sub := range []string{"projects", "files"} {
+		dir := filepath.Join(s.workspaceRoot, workspaceID, userID, sub)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create user dir %s failed: %w", dir, err)
+		}
+	}
+	return nil
 }
 
 // GetWorkspace 按 ID 查询工作空间。
@@ -119,6 +138,38 @@ func (s *DBWorkspaceService) ListWorkspaces(tenantID string) ([]workspace.Worksp
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate workspaces failed: %w", err)
+	}
+	return result, nil
+}
+
+// ListMine 返回指定用户加入的工作空间及其成员关系。
+// 用于登录后确定当前用户的可用空间与空间内权限/职能角色。
+func (s *DBWorkspaceService) ListMine(userID string) ([]MineWorkspace, error) {
+	rows, err := s.db.Query(`
+		SELECT w.id, w.tenant_id, w.name, w.description, w.created_at, w.updated_at,
+		       m.role, COALESCE(m.sub_role, '')
+		FROM workspaces w
+		JOIN workspace_members m ON m.workspace_id = w.id
+		WHERE m.user_id = $1
+		ORDER BY w.created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list mine workspaces failed: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]MineWorkspace, 0)
+	for rows.Next() {
+		var mw MineWorkspace
+		var desc sql.NullString
+		if err := rows.Scan(&mw.ID, &mw.TenantID, &mw.Name, &desc, &mw.CreatedAt, &mw.UpdatedAt, &mw.Role, &mw.SubRole); err != nil {
+			return nil, fmt.Errorf("scan mine workspace failed: %w", err)
+		}
+		mw.Description = sqlutil.ScanNullString(desc)
+		result = append(result, mw)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate mine workspaces failed: %w", err)
 	}
 	return result, nil
 }

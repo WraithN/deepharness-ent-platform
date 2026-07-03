@@ -13,8 +13,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui/buffer"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
+	workitemservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
 	"github.com/google/uuid"
 )
 
@@ -26,19 +28,35 @@ const (
 // USER_PROMPT_MARKER 与前端 useAgUiChat 保持一致，用于从包装后的提示词中提取原始用户输入。
 const USER_PROMPT_MARKER = "__USER_PROMPT__"
 
+// contentPart 描述 assistant 消息的一个结构化内容部件，用于落库到 message.metadata，
+// 前端恢复历史时据此重建 reasoning / tool-call / text 部件。
+type contentPart struct {
+	Type       string `json:"type"`
+	Text       string `json:"text,omitempty"`
+	ToolCallID string `json:"toolCallId,omitempty"`
+	ToolName   string `json:"toolName,omitempty"`
+	ArgsText   string `json:"argsText,omitempty"`
+	Result     string `json:"result,omitempty"`
+	Done       bool   `json:"done,omitempty"`
+}
+
 // AGUIHandler 处理 AG-UI 协议的 agent run 请求。
 type AGUIHandler struct {
-	aguiClient *client.AGUIClient
-	sessions   chat.SessionStore
-	messages   chat.MessageStore
+	aguiClient  *client.AGUIClient
+	sessions    chat.SessionStore
+	messages    chat.MessageStore
+	buffer      buffer.SSEBuffer
+	workItemSvc workitemservice.WorkItemService
 }
 
 // NewAGUIHandler 创建 AG-UI handler。
-func NewAGUIHandler(adminURL, pluginKey, workspace string, sessions chat.SessionStore, messages chat.MessageStore) *AGUIHandler {
+func NewAGUIHandler(adminURL, pluginKey string, sessions chat.SessionStore, messages chat.MessageStore, buf buffer.SSEBuffer, workItemSvc workitemservice.WorkItemService) *AGUIHandler {
 	return &AGUIHandler{
-		aguiClient: client.NewAGUIClient(adminURL, pluginKey, workspace),
-		sessions:   sessions,
-		messages:   messages,
+		aguiClient:  client.NewAGUIClient(adminURL, pluginKey),
+		sessions:    sessions,
+		messages:    messages,
+		buffer:      buf,
+		workItemSvc: workItemSvc,
 	}
 }
 
@@ -91,6 +109,13 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	// 保存用户输入消息（最后一条或全部用户消息）。
 	// 使用 ON CONFLICT DO NOTHING 避免同一消息因重试或历史消息重复发送而主键冲突。
 	h.saveUserMessages(r.Context(), sessionID, input.Messages)
+
+	// 拦截斜杠指令（/prd-write、/proto-make 等），
+	// 将用户消息替换为指令专属提示词模板。
+	// 同时处理引用的任务卡片，将卡片信息注入提示词。
+	// 在 saveUserMessages 之后执行，确保数据库保存的是用户原始输入。
+	interceptCommands(input.Messages, input.Context, h.workItemSvc)
+
 	// 设置 SSE 响应头。
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -102,13 +127,15 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	// 立即刷新 SSE 响应头，让前端 fetch() 能先拿到 HTTP 头部，
+	// 避免后续 h.aguiClient.Run() 阻塞时前端一直无法进入 SSE 读取循环。
+	flusher.Flush()
 
-	// gatewayd 在 /sessions/{id}/runs 中会先发送 RUN_STARTED，
+	// gatewayd 在 /sessions/{id}/chat 中会先发送 RUN_STARTED，
 	// 这里不再重复发送，避免前端收到重复的 run 开始事件。
 
-	// 调用 gatewayd 获取 AG-UI 事件流。
-	// 实际 threadId 与 input.ThreadID 相同（由 CreateSession 在 gatewayd 创建）。
-	actualThreadID, events, err := h.aguiClient.Run(r.Context(), input)
+	// 使用 background context 调用 gatewayd，确保前端断连后 gatewayd 继续运行。
+	actualThreadID, events, err := h.aguiClient.Run(context.Background(), input)
 	if err != nil {
 		log.Printf("[AGUIHandler] run=%s run failed after %v: %v", input.RunID, time.Since(reqStart), err)
 		h.writeEvent(w, flusher, agui.RunErrorEvent(FormatGatewaydError(err), "RUN_FAILED"))
@@ -117,10 +144,13 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 
 	// 确保后端 session 记录存在（新会话在发送第一条消息前已通过 /api/v1/sessions 创建，
 	// 这里作为兜底，兼容直接调用 /api/v1/agent 的场景）。
-	if err := h.ensureSession(r.Context(), actualThreadID); err != nil {
+	if err := h.ensureSession(context.Background(), actualThreadID); err != nil {
 		log.Printf("[AGUIHandler] run=%s ensure session failed: %v", input.RunID, err)
 	}
 	sessionID = actualThreadID
+
+	// bgCtx 用于 buffer 和持久化操作，独立于 HTTP 请求生命周期。
+	bgCtx := context.Background()
 
 	finishTimer := time.NewTimer(finishWait)
 	finishTimer.Stop()
@@ -131,13 +161,91 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	pendingToolCallIDs := []string{}
 	activeTextMessageID := ""
 
-	// assistantBuffers 汇总每个 assistant 文本消息的内容，用于落库。
-	assistantBuffers := make(map[string]string)
+	// run 级累加器：一次 run 的所有部件（reasoning / text / tool-call）
+	// 按实际到达顺序累积，RUN_FINISHED 时合并为一条消息入库。
+	// 替代之前按 messageID 分条入库的方式，避免同一轮回复被拆成多条消息、
+	// 以及思考/工具调用因发生在文本消息之外而丢失的问题。
+	var runParts []contentPart
+	var runTextBuilder strings.Builder
+	var runMessageID string
 	var bufMu sync.Mutex
+
+	// writeAndBuffer 将事件写入前端 SSE 流，同时写入 buffer（若启用）。
+	writeAndBuffer := func(ev agui.Event) {
+		if h.buffer != nil {
+			h.buffer.Append(bgCtx, sessionID, ev)
+		}
+		data, err := json.Marshal(ev)
+		if err != nil {
+			log.Printf("[AGUIHandler] marshal event failed: %v", err)
+			return
+		}
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	// checkpointRun 将当前 run 级累加器序列化后保存到 buffer，
+	// 防止服务器崩溃导致未持久化的消息丢失。生产环境切换 Redis 后可跨重启恢复。
+	checkpointRun := func() {
+		if h.buffer == nil || sessionID == "" || input.RunID == "" {
+			return
+		}
+		bufMu.Lock()
+		state, err := json.Marshal(runParts)
+		bufMu.Unlock()
+		if err != nil {
+			log.Printf("[AGUIHandler] checkpoint marshal failed: %v", err)
+			return
+		}
+		if err := h.buffer.SaveRunState(bgCtx, sessionID, input.RunID, state); err != nil {
+			log.Printf("[AGUIHandler] checkpoint save failed: %v", err)
+		}
+	}
+
+	// persistRunAssistant 将一次 run 累积的所有部件合并为一条消息入库，
+	// 然后清除 buffer 中的 checkpoint。在 RUN_FINISHED / RUN_ERROR / 超时 / 断连时调用。
+	persistRunAssistant := func() {
+		bufMu.Lock()
+		parts := runParts
+		text := runTextBuilder.String()
+		msgID := runMessageID
+		runParts = nil
+		runTextBuilder.Reset()
+		runMessageID = ""
+		bufMu.Unlock()
+
+		if sessionID == "" || (len(parts) == 0 && text == "") {
+			return
+		}
+		if msgID == "" {
+			msgID = uuid.New().String()
+		}
+		metadata := map[string]any{}
+		if len(parts) > 0 {
+			metadata["contentParts"] = parts
+		}
+		msg := chat.Message{
+			ID:        msgID,
+			SessionID: sessionID,
+			Role:      "assistant",
+			Type:      "text",
+			Content:   text,
+			Metadata:  metadata,
+			Timestamp: time.Now(),
+		}
+		if err := h.messages.Append(bgCtx, sessionID, msg); err != nil {
+			log.Printf("[AGUIHandler] save assistant message failed: %v", err)
+		} else {
+			log.Printf("[AGUIHandler] saved assistant message id=%s parts=%d textLen=%d", msgID, len(parts), len(text))
+		}
+		if h.buffer != nil && sessionID != "" && input.RunID != "" {
+			_ = h.buffer.ClearRunState(bgCtx, sessionID, input.RunID)
+		}
+	}
 
 	flushPendingState := func() {
 		for _, id := range pendingToolCallIDs {
-			h.writeEvent(w, flusher, agui.Event{
+			writeAndBuffer(agui.Event{
 				Type:       agui.EventToolCallEnd,
 				ToolCallID: id,
 				Timestamp:  float64(time.Now().UnixMilli()) / 1000,
@@ -147,158 +255,354 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		activeToolCallCount = 0
 
 		if activeTextMessageID != "" {
-			h.writeEvent(w, flusher, agui.Event{
+			writeAndBuffer(agui.Event{
 				Type:      agui.EventTextMessageEnd,
 				MessageID: activeTextMessageID,
 				Timestamp: float64(time.Now().UnixMilli()) / 1000,
 			})
-			h.persistAssistantText(r.Context(), sessionID, activeTextMessageID, assistantBuffers, &bufMu)
 			activeTextMessageID = ""
 		}
 	}
 
+	completeRun := func() {
+		finishTimer.Stop()
+		maxTimer.Stop()
+		flushPendingState()
+		writeAndBuffer(agui.RunFinishedEvent(actualThreadID, input.RunID))
+		persistRunAssistant()
+		h.finalizeSession(bgCtx, sessionID, input.Messages)
+	}
+
 	firstEventSeen := false
 	firstContentSeen := false
+	frontendDone := false
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
 				log.Printf("[AGUIHandler] run=%s event stream closed, total elapsed=%v", input.RunID, time.Since(reqStart))
-				flushPendingState()
-				h.writeEvent(w, flusher, agui.RunFinishedEvent(actualThreadID, input.RunID))
-				h.finalizeSession(r.Context(), sessionID, input.Messages)
+				completeRun()
 				return
+			}
+			// 无条件缓冲所有 gatewayd 事件，供前端重连回放。
+			if h.buffer != nil {
+				h.buffer.Append(bgCtx, sessionID, ev)
 			}
 			if !firstEventSeen {
 				firstEventSeen = true
 				log.Printf("[AGUIHandler] run=%s first SSE event from gatewayd after %v: type=%s", input.RunID, time.Since(reqStart), ev.Type)
 				maxTimer.Reset(maxRunDuration)
 			}
-			switch ev.Type {
-			case agui.EventThinkingStart:
-				log.Printf("[AGUIHandler] run=%s THINKING_START after %v", input.RunID, time.Since(reqStart))
-			case agui.EventTextMessageStart:
-				log.Printf("[AGUIHandler] run=%s TEXT_MESSAGE_START (TTFT) after %v", input.RunID, time.Since(reqStart))
-				activeTextMessageID = ev.MessageID
-			case agui.EventTextMessageContent:
-				if !firstContentSeen {
-					firstContentSeen = true
-					log.Printf("[AGUIHandler] run=%s first TEXT_MESSAGE_CONTENT after %v", input.RunID, time.Since(reqStart))
-				}
-				bufMu.Lock()
-				assistantBuffers[ev.MessageID] += ev.Delta
-				bufMu.Unlock()
-			case agui.EventTextMessageEnd:
-				log.Printf("[AGUIHandler] run=%s TEXT_MESSAGE_END id=%s after %v", input.RunID, ev.MessageID, time.Since(reqStart))
-				h.persistAssistantText(r.Context(), sessionID, ev.MessageID, assistantBuffers, &bufMu)
-				activeTextMessageID = ""
-			case agui.EventToolCallStart:
-				log.Printf("[AGUIHandler] run=%s TOOL_CALL_START id=%s tool=%s after %v", input.RunID, ev.ToolCallID, ev.ToolCallName, time.Since(reqStart))
-				activeToolCallCount++
-				pendingToolCallIDs = append(pendingToolCallIDs, ev.ToolCallID)
-			case agui.EventToolCallArgs:
-				log.Printf("[AGUIHandler] run=%s TOOL_CALL_ARGS id=%s tool=%s args=%.200s after %v", input.RunID, ev.ToolCallID, ev.ToolCallName, ev.Content, time.Since(reqStart))
-				if len(pendingToolCallIDs) > 0 {
-					expectedID := pendingToolCallIDs[len(pendingToolCallIDs)-1]
-					if ev.ToolCallID != expectedID {
-						log.Printf("[AGUIHandler] run=%s rewrite TOOL_CALL_ARGS id %s -> %s", input.RunID, ev.ToolCallID, expectedID)
-						ev.ToolCallID = expectedID
-					}
-				} else {
-					log.Printf("[AGUIHandler] run=%s TOOL_CALL_ARGS id=%s but no pending tool call", input.RunID, ev.ToolCallID)
-				}
-			case agui.EventToolCallEnd:
-				log.Printf("[AGUIHandler] run=%s TOOL_CALL_END id=%s after %v", input.RunID, ev.ToolCallID, time.Since(reqStart))
-				if len(pendingToolCallIDs) > 0 {
-					expectedID := pendingToolCallIDs[0]
-					pendingToolCallIDs = pendingToolCallIDs[1:]
-					if ev.ToolCallID != expectedID {
-						log.Printf("[AGUIHandler] run=%s rewrite TOOL_CALL_END id %s -> %s", input.RunID, ev.ToolCallID, expectedID)
-						ev.ToolCallID = expectedID
-					}
-					if activeToolCallCount > 0 {
-						activeToolCallCount--
-					}
-				} else {
-					log.Printf("[AGUIHandler] run=%s ignore orphan TOOL_CALL_END id=%s", input.RunID, ev.ToolCallID)
-					continue
-				}
-			case agui.EventToolCallResult:
-				log.Printf("[AGUIHandler] run=%s TOOL_CALL_RESULT id=%s tool=%s result=%.200s after %v", input.RunID, ev.ToolCallID, ev.ToolCallName, ev.Content, time.Since(reqStart))
-				if len(pendingToolCallIDs) > 0 {
-					expectedID := pendingToolCallIDs[0]
-					pendingToolCallIDs = pendingToolCallIDs[1:]
-					if ev.ToolCallID != expectedID {
-						log.Printf("[AGUIHandler] run=%s rewrite TOOL_CALL_RESULT id %s -> %s", input.RunID, ev.ToolCallID, expectedID)
-						ev.ToolCallID = expectedID
-					}
-					h.writeEvent(w, flusher, agui.Event{
-						Type:       agui.EventToolCallEnd,
-						ToolCallID: expectedID,
-						Timestamp:  float64(time.Now().UnixMilli()) / 1000,
-					})
-					if activeToolCallCount > 0 {
-						activeToolCallCount--
-					}
-				} else {
-					log.Printf("[AGUIHandler] run=%s TOOL_CALL_RESULT id=%s but no pending tool call", input.RunID, ev.ToolCallID)
-				}
-			case agui.EventRunError:
-				log.Printf("[AGUIHandler] run=%s RUN_ERROR after %v: %s", input.RunID, time.Since(reqStart), ev.Message)
-				flushPendingState()
-				h.writeEvent(w, flusher, ev)
-				h.finalizeSession(r.Context(), sessionID, input.Messages)
-				return
+		switch ev.Type {
+		case agui.EventThinkingStart:
+			log.Printf("[AGUIHandler] run=%s THINKING_START after %v", input.RunID, time.Since(reqStart))
+		case agui.EventTextMessageStart:
+			log.Printf("[AGUIHandler] run=%s TEXT_MESSAGE_START (TTFT) after %v", input.RunID, time.Since(reqStart))
+			activeTextMessageID = ev.MessageID
+			bufMu.Lock()
+			if runMessageID == "" {
+				runMessageID = ev.MessageID
 			}
-			h.writeEvent(w, flusher, ev)
+			bufMu.Unlock()
+		case agui.EventTextMessageContent:
+			if !firstContentSeen {
+				firstContentSeen = true
+				log.Printf("[AGUIHandler] run=%s first TEXT_MESSAGE_CONTENT after %v", input.RunID, time.Since(reqStart))
+			}
+			if ev.Delta == "" {
+				break
+			}
+			bufMu.Lock()
+			if len(runParts) == 0 || runParts[len(runParts)-1].Type != "text" {
+				runParts = append(runParts, contentPart{Type: "text", Text: ev.Delta})
+			} else {
+				runParts[len(runParts)-1].Text += ev.Delta
+			}
+			runTextBuilder.WriteString(ev.Delta)
+			bufMu.Unlock()
+			checkpointRun()
+		case agui.EventTextMessageEnd:
+			log.Printf("[AGUIHandler] run=%s TEXT_MESSAGE_END id=%s after %v", input.RunID, ev.MessageID, time.Since(reqStart))
+			activeTextMessageID = ""
+		case agui.EventThinkingTextMessageContent:
+			if ev.Delta == "" {
+				break
+			}
+			bufMu.Lock()
+			if len(runParts) == 0 || runParts[len(runParts)-1].Type != "reasoning" {
+				runParts = append(runParts, contentPart{Type: "reasoning", Text: ev.Delta})
+			} else {
+				runParts[len(runParts)-1].Text += ev.Delta
+			}
+			bufMu.Unlock()
+			checkpointRun()
+		case agui.EventThinkingEnd:
+			bufMu.Lock()
+			for i := len(runParts) - 1; i >= 0; i-- {
+				if runParts[i].Type == "reasoning" {
+					runParts[i].Done = true
+					break
+				}
+			}
+			bufMu.Unlock()
+			checkpointRun()
+		case agui.EventToolCallStart:
+			log.Printf("[AGUIHandler] run=%s TOOL_CALL_START id=%s tool=%s after %v", input.RunID, ev.ToolCallID, ev.ToolCallName, time.Since(reqStart))
+			activeToolCallCount++
+			pendingToolCallIDs = append(pendingToolCallIDs, ev.ToolCallID)
+			bufMu.Lock()
+			runParts = append(runParts, contentPart{
+				Type:       "tool-call",
+				ToolCallID: ev.ToolCallID,
+				ToolName:   ev.ToolCallName,
+			})
+			bufMu.Unlock()
+			checkpointRun()
+		case agui.EventToolCallArgs:
+			log.Printf("[AGUIHandler] run=%s TOOL_CALL_ARGS id=%s tool=%s args=%.200s after %v", input.RunID, ev.ToolCallID, ev.ToolCallName, ev.Content, time.Since(reqStart))
+			if len(pendingToolCallIDs) > 0 {
+				expectedID := pendingToolCallIDs[len(pendingToolCallIDs)-1]
+				if ev.ToolCallID != expectedID {
+					log.Printf("[AGUIHandler] run=%s rewrite TOOL_CALL_ARGS id %s -> %s", input.RunID, ev.ToolCallID, expectedID)
+					ev.ToolCallID = expectedID
+				}
+			} else {
+				log.Printf("[AGUIHandler] run=%s TOOL_CALL_ARGS id=%s but no pending tool call", input.RunID, ev.ToolCallID)
+			}
+			if ev.Delta != "" {
+				bufMu.Lock()
+				for i := len(runParts) - 1; i >= 0; i-- {
+					if runParts[i].Type == "tool-call" && runParts[i].ToolCallID == ev.ToolCallID {
+						runParts[i].ArgsText += ev.Delta
+						break
+					}
+				}
+				bufMu.Unlock()
+				checkpointRun()
+			}
+		case agui.EventToolCallEnd:
+			log.Printf("[AGUIHandler] run=%s TOOL_CALL_END id=%s after %v", input.RunID, ev.ToolCallID, time.Since(reqStart))
+			if len(pendingToolCallIDs) > 0 {
+				expectedID := pendingToolCallIDs[0]
+				pendingToolCallIDs = pendingToolCallIDs[1:]
+				if ev.ToolCallID != expectedID {
+					log.Printf("[AGUIHandler] run=%s rewrite TOOL_CALL_END id %s -> %s", input.RunID, ev.ToolCallID, expectedID)
+					ev.ToolCallID = expectedID
+				}
+				if activeToolCallCount > 0 {
+					activeToolCallCount--
+				}
+			} else {
+				log.Printf("[AGUIHandler] run=%s ignore orphan TOOL_CALL_END id=%s", input.RunID, ev.ToolCallID)
+				continue
+			}
+		case agui.EventToolCallResult:
+			log.Printf("[AGUIHandler] run=%s TOOL_CALL_RESULT id=%s tool=%s result=%.200s after %v", input.RunID, ev.ToolCallID, ev.ToolCallName, ev.Content, time.Since(reqStart))
+			if len(pendingToolCallIDs) > 0 {
+				expectedID := pendingToolCallIDs[0]
+				pendingToolCallIDs = pendingToolCallIDs[1:]
+				if ev.ToolCallID != expectedID {
+					log.Printf("[AGUIHandler] run=%s rewrite TOOL_CALL_RESULT id %s -> %s", input.RunID, ev.ToolCallID, expectedID)
+					ev.ToolCallID = expectedID
+				}
+				writeAndBuffer(agui.Event{
+					Type:       agui.EventToolCallEnd,
+					ToolCallID: expectedID,
+					Timestamp:  float64(time.Now().UnixMilli()) / 1000,
+				})
+				if activeToolCallCount > 0 {
+					activeToolCallCount--
+				}
+			} else {
+				log.Printf("[AGUIHandler] run=%s TOOL_CALL_RESULT id=%s but no pending tool call", input.RunID, ev.ToolCallID)
+			}
+			if ev.ToolCallID != "" {
+				bufMu.Lock()
+				for i := len(runParts) - 1; i >= 0; i-- {
+					if runParts[i].Type == "tool-call" && runParts[i].ToolCallID == ev.ToolCallID {
+						runParts[i].Result = ev.Content
+						break
+					}
+				}
+				bufMu.Unlock()
+				checkpointRun()
+			}
+		case agui.EventRunError:
+			log.Printf("[AGUIHandler] run=%s RUN_ERROR after %v: %s", input.RunID, time.Since(reqStart), ev.Message)
+			flushPendingState()
+			writeAndBuffer(ev)
+			persistRunAssistant()
+			h.finalizeSession(bgCtx, sessionID, input.Messages)
+			return
+		}
+			writeAndBuffer(ev)
 			if activeToolCallCount == 0 {
 				finishTimer.Reset(finishWait)
 			} else {
 				finishTimer.Stop()
 			}
+		case <-r.Context().Done():
+			if frontendDone {
+				continue
+			}
+			frontendDone = true
+			log.Printf("[AGUIHandler] run=%s frontend disconnected, continuing buffering in background", input.RunID)
+
+			// 前端断连后继续从 gatewayd 读取事件并缓冲，直到 stream 结束。
+			finishTimer.Stop()
+			maxTimer.Stop()
+			for ev := range events {
+				if h.buffer != nil {
+					h.buffer.Append(bgCtx, sessionID, ev)
+				}
+				// 使用与主循环相同的 run 级累加逻辑追踪部件。
+				switch ev.Type {
+				case agui.EventTextMessageStart:
+					activeTextMessageID = ev.MessageID
+					bufMu.Lock()
+					if runMessageID == "" {
+						runMessageID = ev.MessageID
+					}
+					bufMu.Unlock()
+				case agui.EventTextMessageContent:
+					if ev.Delta == "" {
+						continue
+					}
+					bufMu.Lock()
+					if len(runParts) == 0 || runParts[len(runParts)-1].Type != "text" {
+						runParts = append(runParts, contentPart{Type: "text", Text: ev.Delta})
+					} else {
+						runParts[len(runParts)-1].Text += ev.Delta
+					}
+					runTextBuilder.WriteString(ev.Delta)
+					bufMu.Unlock()
+				case agui.EventTextMessageEnd:
+					activeTextMessageID = ""
+				case agui.EventThinkingTextMessageContent:
+					if ev.Delta == "" {
+						continue
+					}
+					bufMu.Lock()
+					if len(runParts) == 0 || runParts[len(runParts)-1].Type != "reasoning" {
+						runParts = append(runParts, contentPart{Type: "reasoning", Text: ev.Delta})
+					} else {
+						runParts[len(runParts)-1].Text += ev.Delta
+					}
+					bufMu.Unlock()
+				case agui.EventThinkingEnd:
+					bufMu.Lock()
+					for i := len(runParts) - 1; i >= 0; i-- {
+						if runParts[i].Type == "reasoning" {
+							runParts[i].Done = true
+							break
+						}
+					}
+					bufMu.Unlock()
+				case agui.EventToolCallStart:
+					activeToolCallCount++
+					pendingToolCallIDs = append(pendingToolCallIDs, ev.ToolCallID)
+					bufMu.Lock()
+					runParts = append(runParts, contentPart{
+						Type:       "tool-call",
+						ToolCallID: ev.ToolCallID,
+						ToolName:   ev.ToolCallName,
+					})
+					bufMu.Unlock()
+				case agui.EventToolCallArgs:
+					if ev.Delta != "" {
+						bufMu.Lock()
+						for i := len(runParts) - 1; i >= 0; i-- {
+							if runParts[i].Type == "tool-call" && runParts[i].ToolCallID == ev.ToolCallID {
+								runParts[i].ArgsText += ev.Delta
+								break
+							}
+						}
+						bufMu.Unlock()
+					}
+				case agui.EventToolCallEnd:
+					if len(pendingToolCallIDs) > 0 {
+						pendingToolCallIDs = pendingToolCallIDs[1:]
+						if activeToolCallCount > 0 {
+							activeToolCallCount--
+						}
+					}
+				case agui.EventToolCallResult:
+					if len(pendingToolCallIDs) > 0 {
+						pendingToolCallIDs = pendingToolCallIDs[1:]
+						if activeToolCallCount > 0 {
+							activeToolCallCount--
+						}
+					}
+					if ev.ToolCallID != "" {
+						bufMu.Lock()
+						for i := len(runParts) - 1; i >= 0; i-- {
+							if runParts[i].Type == "tool-call" && runParts[i].ToolCallID == ev.ToolCallID {
+								runParts[i].Result = ev.Content
+								break
+							}
+						}
+						bufMu.Unlock()
+					}
+				}
+			}
+			// 缓冲最终合成事件并持久化。
+			if h.buffer != nil {
+				now := float64(time.Now().UnixMilli()) / 1000
+				for _, id := range pendingToolCallIDs {
+					h.buffer.Append(bgCtx, sessionID, agui.Event{
+						Type:       agui.EventToolCallEnd,
+						ToolCallID: id,
+						Timestamp:  now,
+					})
+				}
+				h.buffer.Append(bgCtx, sessionID, agui.RunFinishedEvent(actualThreadID, input.RunID))
+			}
+			persistRunAssistant()
+			h.finalizeSession(bgCtx, sessionID, input.Messages)
+			return
 		case <-finishTimer.C:
 			log.Printf("[AGUIHandler] run=%s finish timer fired, total elapsed=%v", input.RunID, time.Since(reqStart))
 			if activeTextMessageID != "" {
 				ts := float64(time.Now().UnixMilli()) / 1000
-				h.writeEvent(w, flusher, agui.Event{
+				writeAndBuffer(agui.Event{
 					Type:      agui.EventTextMessageContent,
 					MessageID: activeTextMessageID,
 					Delta:     "\n\n（模型响应超时或中断，请检查模型配置、网络或账户余额后重试。）",
 					Timestamp: ts,
 				})
-				h.writeEvent(w, flusher, agui.Event{
+				writeAndBuffer(agui.Event{
 					Type:      agui.EventTextMessageEnd,
 					MessageID: activeTextMessageID,
 					Timestamp: ts,
 				})
-				h.persistAssistantText(r.Context(), sessionID, activeTextMessageID, assistantBuffers, &bufMu)
 				activeTextMessageID = ""
 			}
 			flushPendingState()
-			h.writeEvent(w, flusher, agui.RunFinishedEvent(actualThreadID, input.RunID))
-			h.finalizeSession(r.Context(), sessionID, input.Messages)
+			writeAndBuffer(agui.RunFinishedEvent(actualThreadID, input.RunID))
+			persistRunAssistant()
+			h.finalizeSession(bgCtx, sessionID, input.Messages)
 			return
 		case <-maxTimer.C:
 			log.Printf("[AGUIHandler] run=%s max run duration reached, total elapsed=%v", input.RunID, time.Since(reqStart))
 			if activeTextMessageID != "" {
 				ts := float64(time.Now().UnixMilli()) / 1000
-				h.writeEvent(w, flusher, agui.Event{
+				writeAndBuffer(agui.Event{
 					Type:      agui.EventTextMessageContent,
 					MessageID: activeTextMessageID,
 					Delta:     "\n\n（模型运行超过最大时长，已自动结束。）",
 					Timestamp: ts,
 				})
-				h.writeEvent(w, flusher, agui.Event{
+				writeAndBuffer(agui.Event{
 					Type:      agui.EventTextMessageEnd,
 					MessageID: activeTextMessageID,
 					Timestamp: ts,
 				})
-				h.persistAssistantText(r.Context(), sessionID, activeTextMessageID, assistantBuffers, &bufMu)
 				activeTextMessageID = ""
 			}
 			flushPendingState()
-			h.writeEvent(w, flusher, agui.RunFinishedEvent(actualThreadID, input.RunID))
-			h.finalizeSession(r.Context(), sessionID, input.Messages)
+			writeAndBuffer(agui.RunFinishedEvent(actualThreadID, input.RunID))
+			persistRunAssistant()
+			h.finalizeSession(bgCtx, sessionID, input.Messages)
 			return
 		}
 	}
@@ -381,32 +685,6 @@ func (h *AGUIHandler) saveUserMessages(ctx context.Context, sessionID string, me
 	}
 }
 
-// persistAssistantText 将 assistant 文本消息内容落库。
-func (h *AGUIHandler) persistAssistantText(ctx context.Context, sessionID, messageID string, buffers map[string]string, mu *sync.Mutex) {
-	if sessionID == "" || messageID == "" {
-		return
-	}
-	mu.Lock()
-	text := buffers[messageID]
-	delete(buffers, messageID)
-	mu.Unlock()
-	if text == "" {
-		return
-	}
-	msg := chat.Message{
-		ID:        messageID,
-		SessionID: sessionID,
-		Role:      "assistant",
-		Type:      "text",
-		Content:   text,
-		Metadata:  map[string]any{},
-		Timestamp: time.Now(),
-	}
-	if err := h.messages.Append(ctx, sessionID, msg); err != nil {
-		log.Printf("[AGUIHandler] save assistant message failed: %v", err)
-	}
-}
-
 // finalizeSession 更新会话活动时间，并根据第一条用户消息生成标题。
 func (h *AGUIHandler) finalizeSession(ctx context.Context, sessionID string, inputMessages []agui.Message) {
 	if sessionID == "" {
@@ -435,6 +713,14 @@ func (h *AGUIHandler) finalizeSession(ctx context.Context, sessionID string, inp
 
 // extractOriginalUserPrompt 从包装后的提示词模板中提取用户原始输入。
 func extractOriginalUserPrompt(text string) string {
+	// 兼容历史数据：前端曾经用 JSON.stringify 双重编码 content，导致此处收到的
+	// 文本以 " 开头且换行为字面量 \n。尝试再解码一层以还原真实内容。
+	if strings.HasPrefix(text, "\"") {
+		var decoded string
+		if err := json.Unmarshal([]byte(text), &decoded); err == nil {
+			text = decoded
+		}
+	}
 	idx := strings.Index(text, USER_PROMPT_MARKER)
 	if idx == -1 {
 		return ""
