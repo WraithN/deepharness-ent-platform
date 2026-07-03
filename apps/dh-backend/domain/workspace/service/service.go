@@ -10,6 +10,12 @@ type WorkspaceService interface {
 	CreateWorkspace(tenantID, name, description, ownerUserID string) (workspace.Workspace, error)
 	GetWorkspace(id string) (workspace.Workspace, error)
 	ListWorkspaces(tenantID string) ([]workspace.Workspace, error)
+	// ListMine 返回指定用户加入的工作空间及其成员关系（用于登录后确定当前空间与权限）。
+	ListMine(userID string) ([]MineWorkspace, error)
+	// EnsureUserWorkspaceDirs 确保用户在工作空间下的 projects 和 files 目录存在。
+	// 目录结构：WORKSPACE_ROOT/{workspaceID}/{userID}/{projects,files}
+	// os.MkdirAll 是幂等的，并发安全。
+	EnsureUserWorkspaceDirs(workspaceID, userID string) error
 
 	AddMember(workspaceID, userID, role, subRole string) error
 	ListMembers(workspaceID string) ([]workspace.Member, error)
@@ -61,3 +67,24 @@ type CICDRequest struct {
 	WebhookURL      string `json:"webhookUrl"`
 	Script          string `json:"script"`
 }
+
+// MineWorkspace 表示当前用户加入的工作空间及其成员关系。
+type MineWorkspace struct {
+	workspace.Workspace
+	Role    string `json:"role"`
+	SubRole string `json:"subRole"`
+}
+
+// 空间成员权限角色常量（决定空间内管理权限）。
+const (
+	MemberRoleSpaceAdmin = "space_admin"
+	MemberRoleMember     = "member"
+)
+
+// 职能子角色常量（决定功能可见性，仅对 member 生效收敛）。
+const (
+	MemberSubRoleDeveloper = "developer"
+	MemberSubRoleTester    = "tester"
+	MemberSubRolePM        = "pm"
+	MemberSubRoleDesigner  = "designer"
+)

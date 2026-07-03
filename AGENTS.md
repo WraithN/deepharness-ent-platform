@@ -6,7 +6,7 @@
 
 **DeepHarness Enterprise Platform** 是一个面向开发团队的多租户 AI 辅助编码平台。仓库采用 **Turborepo + pnpm workspaces + Go workspaces** 组织的 monorepo 结构，包含：
 
-- `apps/web`：React + Vite + TypeScript 前端应用（包名 `@repo/web`）。
+- `apps/dh-frontend`：React + Vite + TypeScript 前端应用（包名 `@repo/dh-frontend`）。
 - `apps/agent-runtime`：Agent 运行时（包名 `@repo/agent-runtime`），定位为外部 Rust 可执行程序（OpenCode / Claude Code 等智能体封装），当前为 Go 占位实现。
 - `apps/dh-backend`：DeepHarness 后端统一入口（包名 `@repo/dh-backend`），包含管理控制台接口、WebSocket 会话、Agent Runtime 生命周期管理，以及 identity / project / workitem / orchestrator / pr-agent / audit 等业务模块。
 - `packages/go-sdk`：共享 Go SDK，包含 DDD 领域模型和基础设施抽象。
@@ -14,7 +14,7 @@
 - `packages/api-types`：前后端共享 API TypeScript 类型。
 - `packages/config`：共享配置（tsconfig, eslint presets）。
 
-业务核心围绕"智能会话"展开，提供 Skill 市场、Prompt 市场、需求分析、智能评审、智能测试、数据大盘、空间设置等功能。详细需求说明见 `apps/web/docs/prd.md`。
+业务核心围绕"智能会话"展开，提供 Skill 市场、Prompt 市场、需求分析、智能评审、智能测试、数据大盘、空间设置等功能。详细需求说明见 `apps/dh-frontend/docs/prd.md`。
 
 ## 2. 仓库结构
 
@@ -27,7 +27,7 @@
 ├── README.md
 ├── .gitignore
 ├── apps/
-│   ├── web/                  # 前端应用
+│   ├── dh-frontend/          # 前端应用
 │   │   ├── package.json
 │   │   ├── vite.config.ts
 │   │   ├── vite.config.dev.ts
@@ -134,11 +134,11 @@
 - **Go 工作区**：`go.work` 管理所有 Go 模块
 - **Linter**：Biome 2.4.5（仅启用 lint，formatter 关闭）
 - **类型检查**：`tsc --noEmit`；lint 脚本中还使用 `tsgo`
-- **代码规则扫描**：ast-grep，规则存放在 `apps/web/.rules/`
+- **代码规则扫描**：ast-grep，规则存放在 `apps/dh-frontend/.rules/`
 
 ## 4. 代码组织约定
 
-- **前端路径别名**：`@/*` 映射到 `apps/web/src/*`
+- **前端路径别名**：`@/*` 映射到 `apps/dh-frontend/src/*`
 - **Go 模块路径**：所有模块使用 `github.com/deepharness/deepharness-ent-platform/...` 前缀
 - **Go SDK 引用**：各服务通过 `replace` 指令引用本地 `packages/go-sdk`
 - **UI 组件**：位于 `src/components/ui/`，使用 `cva` 管理变体，通过 `cn()` 合并类名
@@ -170,7 +170,7 @@ docker compose -f infra/docker/compose.postgres.yml up -d
 
 ```bash
 # 前端
-pnpm --filter @repo/web dev
+pnpm --filter @repo/dh-frontend dev
 
 # DH Backend
 pnpm --filter @repo/dh-backend dev
@@ -178,7 +178,7 @@ pnpm --filter @repo/dh-backend dev
 
 ## 6. 代码风格与检查
 
-与改造前一致，详见原 `apps/web/.rules/` 和 `biome.json`。
+与改造前一致，详见原 `apps/dh-frontend/.rules/` 和 `biome.json`。
 
 ## 7. 测试说明
 
@@ -206,7 +206,7 @@ pnpm install
 pnpm dev
 
 # 仅前端开发
-pnpm --filter @repo/web dev
+pnpm --filter @repo/dh-frontend dev
 
 # 仅 DH Backend
 pnpm --filter @repo/dh-backend dev
@@ -224,7 +224,7 @@ pnpm --filter @repo/dh-backend test
 
 ### 规则1：自动化编译与启动
 每次需求开发或缺陷修复完成后，必须自动执行编译并启动应用：
-1. 运行 `pnpm build` 构建全部应用（前端 `apps/web` + 后端各服务）
+1. 运行 `pnpm build` 构建全部应用（前端 `apps/dh-frontend` + 后端各服务）
 2. 使用 `pnpm dev` 启动开发服务器（前端 Vite dev server + 后端 Go services）
 3. 通过 `curl` 或浏览器访问确认前后端功能正常后再告知用户
 
@@ -278,7 +278,7 @@ pnpm --filter @repo/dh-backend test
   - 布尔值组合或标志位
 - **常量组织**：
   - 前端模块级常量：放在使用文件顶部或同目录 `constants.ts` 中
-  - 前端全局常量：放在 `apps/web/src/lib/constants.ts` 或 `apps/web/src/config/` 中
+  - 前端全局常量：放在 `apps/dh-frontend/src/lib/constants.ts` 或 `apps/dh-frontend/src/config/` 中
   - Go 常量：放在包级别 `const` 块或同目录 `constants.go` 中
   - 常量命名使用 UPPER_SNAKE_CASE（如 `MAX_RETRY_COUNT`、`DEFAULT_PAGE_SIZE`）
 - **例外**：
@@ -289,7 +289,7 @@ pnpm --filter @repo/dh-backend test
 ### 规则8：编译 warnings 清零
 每次需求开发或缺陷修复完成后，**必须解决所有编译器 warnings**，不允许遗留未处理的 warning 上线：
 - **Go**：运行 `go vet ./...` 于所有服务目录，确保 0 warnings
-- **TypeScript**：运行 `npx tsc --noEmit -p apps/web/tsconfig.check.json`，确保 0 errors
+- **TypeScript**：运行 `npx tsc --noEmit -p apps/dh-frontend/tsconfig.check.json`，确保 0 errors
 - 对于确实需要保留的代码（如预留的公共 API、未来的扩展点），使用显式抑制并在注释中说明理由：
   - Go：`//nolint:<linter-name> // <reason>`
   - TypeScript：`// @ts-expect-error <reason>`

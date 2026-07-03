@@ -9,3 +9,6 @@ import (
 
 // User 复用 SDK 中的用户领域模型。
 type User = identity.User
+
+// Profile 复用 SDK 中的用户个人信息模型。
+type Profile = identity.Profile

@@ -6,7 +6,9 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/repository"
+	gitrepo "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/repository"
 )
 
 const defaultErrorCode = 1
@@ -39,15 +41,20 @@ func Repositories(w http.ResponseWriter, r *http.Request) {
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
-		if req.Name == "" || req.URL == "" || req.Type == "" {
-			handler.WriteJSONError(w, http.StatusBadRequest, defaultErrorCode, "name, url and type are required")
+		if req.URL == "" || req.Type == "" {
+			handler.WriteJSONError(w, http.StatusBadRequest, defaultErrorCode, "url and type are required")
+			return
+		}
+		if !gitrepo.IsValidGitURL(req.URL) {
+			handler.WriteJSONError(w, http.StatusBadRequest, defaultErrorCode, "invalid git URL format, supported: https://, ssh://, git@host:path, git://")
 			return
 		}
 		if !isValidRepoType(req.Type) {
 			handler.WriteJSONError(w, http.StatusBadRequest, defaultErrorCode, "invalid repository type")
 			return
 		}
-		repo, err := defaultService.Create(workspaceID, req)
+		userID, _ := middleware.UserIDFromContext(r.Context())
+		repo, err := defaultService.Create(workspaceID, userID, req)
 		if err != nil {
 			handler.HandleServiceError(w, err, "workspace not found", "failed to create repository")
 			return
@@ -89,7 +96,8 @@ func RepositoryByID(w http.ResponseWriter, r *http.Request) {
 			handler.WriteJSONError(w, http.StatusBadRequest, defaultErrorCode, "invalid repository type")
 			return
 		}
-		repo, err := defaultService.Update(workspaceID, repoID, req)
+		userID, _ := middleware.UserIDFromContext(r.Context())
+		repo, err := defaultService.Update(workspaceID, repoID, userID, req)
 		if err != nil {
 			handler.HandleServiceError(w, err, "repository not found", "failed to update repository")
 			return
@@ -123,16 +131,19 @@ func SyncRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := defaultService.Sync(workspaceID, repoID); err != nil {
+	userID, _ := middleware.UserIDFromContext(r.Context())
+	if err := defaultService.Sync(workspaceID, repoID, userID); err != nil {
 		handler.HandleServiceError(w, err, "repository not found", "failed to sync repository")
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
+	w.Write([]byte(`{"status":"accepted"}`))
 }
 
 func isValidRepoType(t string) bool {
 	switch repository.RepoType(t) {
-	case repository.RepoTypeDev, repository.RepoTypeTest, repository.RepoTypeCase, repository.RepoTypeProduct:
+	case repository.RepoTypeDev, repository.RepoTypeCase:
 		return true
 	default:
 		return false
@@ -360,4 +371,55 @@ func GitStatus(w http.ResponseWriter, r *http.Request) {
 
 	handler.SetJSONHeader(w)
 	json.NewEncoder(w).Encode(map[string]string{"status": status})
+}
+
+// UserRepos 处理 GET /api/v1/workspaces/{id}/user-repos。
+// 返回工作空间下所有配置仓库在当前用户 projects 目录中的同步状态。
+// userID 由 auth 中间件从请求上下文注入。
+func UserRepos(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return
+	}
+
+	repos, err := defaultService.ListUserRepos(workspaceID, userID)
+	if err != nil {
+		handler.HandleServiceError(w, err, "failed to list user repos", "failed to list user repos")
+		return
+	}
+
+	handler.SetJSONHeader(w)
+	json.NewEncoder(w).Encode(repos)
+}
+
+// SyncUserRepo 处理 POST /api/v1/workspaces/{id}/user-repos/{repoId}/sync。
+// 将指定仓库异步克隆到当前用户的 projects 目录。
+func SyncUserRepo(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	repoID, ok := handler.PathValueOr404(w, r, "repoId")
+	if !ok {
+		return
+	}
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return
+	}
+
+	if err := defaultService.SyncUserRepo(workspaceID, repoID, userID); err != nil {
+		handler.WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	w.Write([]byte(`{"status":"accepted"}`))
 }

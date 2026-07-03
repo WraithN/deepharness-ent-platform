@@ -17,5 +17,6 @@ type WorkItemFilter struct {
 type WorkItemService interface {
 	ListWorkItems(filter WorkItemFilter) ([]object.WorkItem, error)
 	GetWorkItem(id string) (object.WorkItem, error)
+	CreateWorkItem(item object.CreateWorkItemRequest) (object.WorkItem, error)
 	UpdateWorkItemStatus(id string, status workitem.Status) (object.WorkItem, error)
 }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -9,75 +10,37 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	DEFAULT_CONFIG_FILE = "config.yaml"
+const configFileName = "config.yaml"
 
-	// Server defaults
-	DEFAULT_PORT = "8080"
-
-	// Session/Chat defaults
-	DEFAULT_SESSION_STORE         = "memory"
-	DEFAULT_MESSAGE_STORE         = "memory"
-	DEFAULT_SESSION_TIMEOUT       = 30 * time.Minute
-	DEFAULT_MAX_MESSAGES_PER_SESSION = 1000
-
-	// Broker defaults
-	DEFAULT_BROKER_TYPE = "memory"
-
-	// Gatewayd defaults
-	DEFAULT_GATEWAYD_ADMIN_URL = "http://127.0.0.1:2346"
-	DEFAULT_GATEWAYD_AGENT_ID  = "claude-code"
-
-	// AG-UI defaults
-	DEFAULT_AGUI_WORKSPACE = "/home/nan/deepharness-ent-platform"
-
-	// WebSocket defaults
-	DEFAULT_RECONNECT_HISTORY_LIMIT = 50
-	DEFAULT_WS_WRITE_TIMEOUT        = 10 * time.Second
-
-	// Database defaults
-	DEFAULT_DB_HOST     = "127.0.0.1"
-	DEFAULT_DB_PORT     = "5433"
-	DEFAULT_DB_USER     = "deepharness"
-	DEFAULT_DB_PASSWORD = "deepharness"
-	DEFAULT_DB_NAME     = "deepharness"
-
-	// Repository defaults
-	DEFAULT_REPOSITORY_ROOT = "/home/nan/test"
-
-	// Workitem external integration defaults
-	DEFAULT_WORKITEM_SYNC_INTERVAL     = 5 * time.Minute
-	DEFAULT_WORKITEM_SYNC_WORKERS      = 4
-	DEFAULT_WORKITEM_SYNC_TIMEOUT      = 30 * time.Second
-	DEFAULT_WORKITEM_WRITEBACK_ENABLED = true
-	DEFAULT_WORKITEM_WRITEBACK_WORKERS = 2
-	DEFAULT_WORKITEM_WRITEBACK_RETRY   = 3
-)
-
-// Config 保存后端运行时的所有可配置项。
+// Config 保存后端运行时的所有可配置项。所有值必须从 config.yaml 或环境变量获取。
 type Config struct {
 	Port             string
 	SessionStoreType string
 	MessageStoreType string
-	BrokerType       string
-	RedisURL         string
+	BufferStoreType  string
 	GatewaydAdminURL string
 	GatewaydAgentID  string
-	AGUIWorkspace    string
-	SessionTimeout time.Duration
-	DBHost         string
+	SessionTimeout   time.Duration
+	DBHost           string
 	DBPort           string
 	DBUser           string
 	DBPassword       string
 	DBName           string
-	RepositoryRoot   string
+	WorkspaceRoot    string
+
+	// Redis（Buffer 存储后端，可选）
+	RedisAddrs    []string
+	RedisPassword string
+	RedisDB       int
+	RedisPrefix   string
+
+	// Database connection pool
+	DBMaxOpenConns    int
+	DBMaxIdleConns    int
+	DBConnMaxLifetime time.Duration
 
 	// Chat / Message
 	MaxMessagesPerSession int
-
-	// WebSocket
-	WebSocketReconnectHistoryLimit int
-	WebSocketWriteTimeout          time.Duration
 
 	// Workitem external integration
 	WorkitemPlatformWhitelist []string
@@ -97,36 +60,33 @@ type yamlConfig struct {
 	Session struct {
 		StoreType        string `yaml:"store_type"`
 		MessageStoreType string `yaml:"message_store_type"`
+		BufferStoreType  string `yaml:"buffer_store_type"`
 		Timeout          string `yaml:"timeout"`
 		MaxMessages      int    `yaml:"max_messages"`
 	} `yaml:"session"`
-	Broker struct {
-		Type string `yaml:"type"`
-	} `yaml:"broker"`
+	Redis struct {
+		Addrs    []string `yaml:"addrs"`
+		Password string   `yaml:"password"`
+		DB       int      `yaml:"db"`
+		Prefix   string   `yaml:"prefix"`
+	} `yaml:"redis"`
 	Gatewayd struct {
 		AdminURL string `yaml:"admin_url"`
 		AgentID  string `yaml:"agent_id"`
 	} `yaml:"gatewayd"`
-	AGUI struct {
-		Workspace string `yaml:"workspace"`
-	} `yaml:"agui"`
-	Websocket struct {
-		ReconnectHistoryLimit int    `yaml:"reconnect_history_limit"`
-		WriteTimeout          string `yaml:"write_timeout"`
-	} `yaml:"websocket"`
 	Database struct {
-		Host     string `yaml:"host"`
-		Port     string `yaml:"port"`
-		User     string `yaml:"user"`
-		Password string `yaml:"password"`
-		Name     string `yaml:"name"`
+		Host            string `yaml:"host"`
+		Port            string `yaml:"port"`
+		User            string `yaml:"user"`
+		Password        string `yaml:"password"`
+		Name            string `yaml:"name"`
+		MaxOpenConns    int    `yaml:"max_open_conns"`
+		MaxIdleConns    int    `yaml:"max_idle_conns"`
+		ConnMaxLifetime string `yaml:"conn_max_lifetime"`
 	} `yaml:"database"`
-	Redis struct {
-		URL string `yaml:"url"`
-	} `yaml:"redis"`
-	Repository struct {
+	Workspace struct {
 		Root string `yaml:"root"`
-	} `yaml:"repository"`
+	} `yaml:"workspace"`
 	Workitem struct {
 		Platforms []string `yaml:"platforms"`
 		Sync      struct {
@@ -143,163 +103,152 @@ type yamlConfig struct {
 }
 
 // Load 从 config.yaml 加载配置，并以环境变量为最高优先级覆盖。
-func Load() Config {
-	cfg := Config{
-		Port:                  DEFAULT_PORT,
-		SessionStoreType:      DEFAULT_SESSION_STORE,
-		MessageStoreType:      DEFAULT_MESSAGE_STORE,
-		BrokerType:            DEFAULT_BROKER_TYPE,
-		GatewaydAdminURL:      DEFAULT_GATEWAYD_ADMIN_URL,
-		GatewaydAgentID:       DEFAULT_GATEWAYD_AGENT_ID,
-		AGUIWorkspace:         DEFAULT_AGUI_WORKSPACE,
-		SessionTimeout:        DEFAULT_SESSION_TIMEOUT,
-		DBHost:                DEFAULT_DB_HOST,
-		DBPort:                DEFAULT_DB_PORT,
-		DBUser:                DEFAULT_DB_USER,
-		DBPassword:            DEFAULT_DB_PASSWORD,
-		DBName:                DEFAULT_DB_NAME,
-		RepositoryRoot:        DEFAULT_REPOSITORY_ROOT,
-		MaxMessagesPerSession: DEFAULT_MAX_MESSAGES_PER_SESSION,
-		WebSocketReconnectHistoryLimit: DEFAULT_RECONNECT_HISTORY_LIMIT,
-		WebSocketWriteTimeout:          DEFAULT_WS_WRITE_TIMEOUT,
-		WorkitemSyncInterval:           DEFAULT_WORKITEM_SYNC_INTERVAL,
-		WorkitemSyncWorkers:            DEFAULT_WORKITEM_SYNC_WORKERS,
-		WorkitemSyncTimeout:            DEFAULT_WORKITEM_SYNC_TIMEOUT,
-		WorkitemWritebackEnabled:       DEFAULT_WORKITEM_WRITEBACK_ENABLED,
-		WorkitemWritebackWorkers:       DEFAULT_WORKITEM_WRITEBACK_WORKERS,
-		WorkitemWritebackRetry:         DEFAULT_WORKITEM_WRITEBACK_RETRY,
+// config.yaml 路径由 CONFIG_FILE 环境变量指定，默认为 "config.yaml"。
+func Load() (Config, error) {
+	cfg := Config{}
+
+	configFile := os.Getenv("CONFIG_FILE")
+	if configFile == "" {
+		configFile = configFileName
 	}
 
-	cfg = loadFromYAML(cfg)
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return cfg, fmt.Errorf("read config file %s failed: %w", configFile, err)
+	}
 
+	var yc yamlConfig
+	if err := yaml.Unmarshal(data, &yc); err != nil {
+		return cfg, fmt.Errorf("parse config file %s failed: %w", configFile, err)
+	}
+
+	// YAML → Config
+	cfg.Port = yc.Server.Port
+	cfg.SessionStoreType = yc.Session.StoreType
+	cfg.MessageStoreType = yc.Session.MessageStoreType
+	cfg.BufferStoreType = yc.Session.BufferStoreType
+	cfg.SessionTimeout = parseDurationOrZero(yc.Session.Timeout)
+	cfg.MaxMessagesPerSession = yc.Session.MaxMessages
+	cfg.GatewaydAdminURL = yc.Gatewayd.AdminURL
+	cfg.GatewaydAgentID = yc.Gatewayd.AgentID
+	cfg.DBHost = yc.Database.Host
+	cfg.DBPort = yc.Database.Port
+	cfg.DBUser = yc.Database.User
+	cfg.DBPassword = yc.Database.Password
+	cfg.DBName = yc.Database.Name
+	cfg.DBMaxOpenConns = yc.Database.MaxOpenConns
+	cfg.DBMaxIdleConns = yc.Database.MaxIdleConns
+	cfg.DBConnMaxLifetime = parseDurationOrZero(yc.Database.ConnMaxLifetime)
+	cfg.WorkspaceRoot = yc.Workspace.Root
+	cfg.RedisAddrs = yc.Redis.Addrs
+	cfg.RedisPassword = yc.Redis.Password
+	cfg.RedisDB = yc.Redis.DB
+	cfg.RedisPrefix = yc.Redis.Prefix
+	cfg.WorkitemPlatformWhitelist = yc.Workitem.Platforms
+	cfg.WorkitemSyncInterval = parseDurationOrZero(yc.Workitem.Sync.Interval)
+	cfg.WorkitemSyncWorkers = yc.Workitem.Sync.Workers
+	cfg.WorkitemSyncTimeout = parseDurationOrZero(yc.Workitem.Sync.Timeout)
+	cfg.WorkitemWritebackEnabled = yc.Workitem.Writeback.Enabled
+	cfg.WorkitemWritebackWorkers = yc.Workitem.Writeback.Workers
+	cfg.WorkitemWritebackRetry = yc.Workitem.Writeback.Retry
+
+	// 环境变量覆盖
 	cfg.Port = getEnv("PORT", cfg.Port)
 	cfg.SessionStoreType = getEnv("SESSION_STORE", cfg.SessionStoreType)
 	cfg.MessageStoreType = getEnv("MESSAGE_STORE", cfg.MessageStoreType)
-	cfg.BrokerType = getEnv("BROKER_TYPE", cfg.BrokerType)
-	if v := os.Getenv("REDIS_URL"); v != "" {
-		cfg.RedisURL = v
-	}
+	cfg.BufferStoreType = getEnv("BUFFER_STORE", cfg.BufferStoreType)
 	cfg.GatewaydAdminURL = getEnv("GATEWAYD_ADMIN_URL", cfg.GatewaydAdminURL)
 	cfg.GatewaydAgentID = getEnv("GATEWAYD_AGENT_ID", cfg.GatewaydAgentID)
-	cfg.AGUIWorkspace = getEnv("AGUI_WORKSPACE", cfg.AGUIWorkspace)
 	cfg.SessionTimeout = getDurationEnv("SESSION_TIMEOUT", cfg.SessionTimeout)
 	cfg.DBHost = getEnv("DB_HOST", cfg.DBHost)
 	cfg.DBPort = getEnv("DB_PORT", cfg.DBPort)
 	cfg.DBUser = getEnv("DB_USER", cfg.DBUser)
 	cfg.DBPassword = getEnv("DB_PASSWORD", cfg.DBPassword)
 	cfg.DBName = getEnv("DB_NAME", cfg.DBName)
-	cfg.RepositoryRoot = getEnv("REPOSITORY_ROOT", cfg.RepositoryRoot)
+	cfg.WorkspaceRoot = getEnv("WORKSPACE_ROOT", cfg.WorkspaceRoot)
+	cfg.DBMaxOpenConns = getIntEnv("DB_MAX_OPEN_CONNS", cfg.DBMaxOpenConns)
+	cfg.DBMaxIdleConns = getIntEnv("DB_MAX_IDLE_CONNS", cfg.DBMaxIdleConns)
+	cfg.DBConnMaxLifetime = getDurationEnv("DB_CONN_MAX_LIFETIME", cfg.DBConnMaxLifetime)
 	cfg.MaxMessagesPerSession = getIntEnv("MAX_MESSAGES_PER_SESSION", cfg.MaxMessagesPerSession)
-	cfg.WebSocketReconnectHistoryLimit = getIntEnv("RECONNECT_HISTORY_LIMIT", cfg.WebSocketReconnectHistoryLimit)
-	cfg.WebSocketWriteTimeout = getDurationEnv("WS_WRITE_TIMEOUT", cfg.WebSocketWriteTimeout)
 	cfg.WorkitemSyncInterval = getDurationEnv("WORKITEM_SYNC_INTERVAL", cfg.WorkitemSyncInterval)
 	cfg.WorkitemSyncWorkers = getIntEnv("WORKITEM_SYNC_WORKERS", cfg.WorkitemSyncWorkers)
 	cfg.WorkitemSyncTimeout = getDurationEnv("WORKITEM_SYNC_TIMEOUT", cfg.WorkitemSyncTimeout)
 	cfg.WorkitemWritebackEnabled = getBoolEnv("WORKITEM_WRITEBACK_ENABLED", cfg.WorkitemWritebackEnabled)
 	cfg.WorkitemWritebackWorkers = getIntEnv("WORKITEM_WRITEBACK_WORKERS", cfg.WorkitemWritebackWorkers)
 	cfg.WorkitemWritebackRetry = getIntEnv("WORKITEM_WRITEBACK_RETRY", cfg.WorkitemWritebackRetry)
+	cfg.RedisPassword = getEnv("REDIS_PASSWORD", cfg.RedisPassword)
+	cfg.RedisDB = getIntEnv("REDIS_DB", cfg.RedisDB)
+	cfg.RedisPrefix = getEnv("REDIS_PREFIX", cfg.RedisPrefix)
+	if redisAddrsEnv := getEnv("REDIS_ADDRS", ""); redisAddrsEnv != "" {
+		cfg.RedisAddrs = strings.Split(redisAddrsEnv, ",")
+	}
 
-	return cfg
+	if err := cfg.validate(); err != nil {
+		return cfg, err
+	}
+
+	return cfg, nil
 }
 
-// loadFromYAML 读取 CONFIG_FILE 或默认的 config.yaml 并覆盖默认值。
-func loadFromYAML(cfg Config) Config {
-	configFile := os.Getenv("CONFIG_FILE")
-	if configFile == "" {
-		configFile = DEFAULT_CONFIG_FILE
+// validate 检查必填配置项是否已设置。
+func (c Config) validate() error {
+	var missing []string
+	if c.Port == "" {
+		missing = append(missing, "server.port")
+	}
+	if c.SessionStoreType == "" {
+		missing = append(missing, "session.store_type")
+	}
+	if c.MessageStoreType == "" {
+		missing = append(missing, "session.message_store_type")
+	}
+	if c.SessionTimeout <= 0 {
+		missing = append(missing, "session.timeout")
+	}
+	if c.MaxMessagesPerSession <= 0 {
+		missing = append(missing, "session.max_messages")
+	}
+	if c.GatewaydAdminURL == "" {
+		missing = append(missing, "gatewayd.admin_url")
+	}
+	if c.GatewaydAgentID == "" {
+		missing = append(missing, "gatewayd.agent_id")
+	}
+	if c.DBHost == "" {
+		missing = append(missing, "database.host")
+	}
+	if c.DBPort == "" {
+		missing = append(missing, "database.port")
+	}
+	if c.DBUser == "" {
+		missing = append(missing, "database.user")
+	}
+	if c.DBName == "" {
+		missing = append(missing, "database.name")
+	}
+	if c.WorkspaceRoot == "" {
+		missing = append(missing, "workspace.root")
+	}
+	if c.DBMaxOpenConns <= 0 {
+		missing = append(missing, "database.max_open_conns")
+	}
+	if c.DBMaxIdleConns <= 0 {
+		missing = append(missing, "database.max_idle_conns")
+	}
+	if c.DBConnMaxLifetime <= 0 {
+		missing = append(missing, "database.conn_max_lifetime")
 	}
 
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		return cfg
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required config: %s", strings.Join(missing, ", "))
 	}
-
-	var yc yamlConfig
-	if err := yaml.Unmarshal(data, &yc); err != nil {
-		return cfg
-	}
-
-	if yc.Server.Port != "" {
-		cfg.Port = yc.Server.Port
-	}
-	if yc.Session.StoreType != "" {
-		cfg.SessionStoreType = yc.Session.StoreType
-	}
-	if yc.Session.MessageStoreType != "" {
-		cfg.MessageStoreType = yc.Session.MessageStoreType
-	}
-	if yc.Session.Timeout != "" {
-		cfg.SessionTimeout = parseDurationOrDefault(yc.Session.Timeout, cfg.SessionTimeout)
-	}
-	if yc.Session.MaxMessages > 0 {
-		cfg.MaxMessagesPerSession = yc.Session.MaxMessages
-	}
-	if yc.Broker.Type != "" {
-		cfg.BrokerType = yc.Broker.Type
-	}
-	if yc.Gatewayd.AdminURL != "" {
-		cfg.GatewaydAdminURL = yc.Gatewayd.AdminURL
-	}
-	if yc.Gatewayd.AgentID != "" {
-		cfg.GatewaydAgentID = yc.Gatewayd.AgentID
-	}
-	if yc.AGUI.Workspace != "" {
-		cfg.AGUIWorkspace = yc.AGUI.Workspace
-	}
-	if yc.Websocket.ReconnectHistoryLimit > 0 {
-		cfg.WebSocketReconnectHistoryLimit = yc.Websocket.ReconnectHistoryLimit
-	}
-	if yc.Websocket.WriteTimeout != "" {
-		cfg.WebSocketWriteTimeout = parseDurationOrDefault(yc.Websocket.WriteTimeout, cfg.WebSocketWriteTimeout)
-	}
-	if yc.Database.Host != "" {
-		cfg.DBHost = yc.Database.Host
-	}
-	if yc.Database.Port != "" {
-		cfg.DBPort = yc.Database.Port
-	}
-	if yc.Database.User != "" {
-		cfg.DBUser = yc.Database.User
-	}
-	if yc.Database.Password != "" {
-		cfg.DBPassword = yc.Database.Password
-	}
-	if yc.Database.Name != "" {
-		cfg.DBName = yc.Database.Name
-	}
-	if yc.Redis.URL != "" {
-		cfg.RedisURL = yc.Redis.URL
-	}
-	if yc.Repository.Root != "" {
-		cfg.RepositoryRoot = yc.Repository.Root
-	}
-	if len(yc.Workitem.Platforms) > 0 {
-		cfg.WorkitemPlatformWhitelist = yc.Workitem.Platforms
-	}
-	if yc.Workitem.Sync.Interval != "" {
-		cfg.WorkitemSyncInterval = parseDurationOrDefault(yc.Workitem.Sync.Interval, cfg.WorkitemSyncInterval)
-	}
-	if yc.Workitem.Sync.Workers > 0 {
-		cfg.WorkitemSyncWorkers = yc.Workitem.Sync.Workers
-	}
-	if yc.Workitem.Sync.Timeout != "" {
-		cfg.WorkitemSyncTimeout = parseDurationOrDefault(yc.Workitem.Sync.Timeout, cfg.WorkitemSyncTimeout)
-	}
-	cfg.WorkitemWritebackEnabled = yc.Workitem.Writeback.Enabled
-	if yc.Workitem.Writeback.Workers > 0 {
-		cfg.WorkitemWritebackWorkers = yc.Workitem.Writeback.Workers
-	}
-	if yc.Workitem.Writeback.Retry > 0 {
-		cfg.WorkitemWritebackRetry = yc.Workitem.Writeback.Retry
-	}
-
-	return cfg
+	return nil
 }
 
-func parseDurationOrDefault(v string, defaultValue time.Duration) time.Duration {
+func parseDurationOrZero(v string) time.Duration {
 	d, err := time.ParseDuration(v)
-	if err != nil || d <= 0 {
-		return defaultValue
+	if err != nil {
+		return 0
 	}
 	return d
 }
@@ -316,7 +265,7 @@ func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
 	if v == "" {
 		return defaultValue
 	}
-	return parseDurationOrDefault(v, defaultValue)
+	return parseDurationOrZero(v)
 }
 
 func getIntEnv(key string, defaultValue int) int {

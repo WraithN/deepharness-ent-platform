@@ -1,7 +1,9 @@
 -- 身份与租户 Schema（PostgreSQL 15+）
--- 说明：本文件由 MySQL 方言迁移至 PostgreSQL 方言。
+-- 说明：
 -- - ID 使用 VARCHAR(36) 存储，由应用层生成。
 -- - 时间戳使用 TIMESTAMPTZ，时区由应用层处理。
+-- - 平台角色 platform_role 取值：super_admin / tenant_admin / user。
+-- - 超级管理员归属系统租户 __system__，不绑定业务租户。
 
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -25,24 +27,32 @@ CREATE TABLE IF NOT EXISTS users (
     tenant_id VARCHAR(36) NOT NULL,
     email VARCHAR(200) UNIQUE NOT NULL,
     name VARCHAR(200) NOT NULL,
-    role VARCHAR(50) NOT NULL DEFAULT 'user',
+    platform_role VARCHAR(50) NOT NULL DEFAULT 'user',
     password_hash VARCHAR(255) NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_users_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+    CONSTRAINT fk_users_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+    CONSTRAINT chk_users_platform_role CHECK (platform_role IN ('super_admin', 'tenant_admin', 'user')),
+    CONSTRAINT chk_users_super_admin_tenant CHECK (platform_role <> 'super_admin' OR tenant_id = '__system__')
 );
 
 COMMENT ON TABLE users IS '平台用户';
+COMMENT ON COLUMN users.platform_role IS '平台角色：super_admin（超级管理员，归属系统租户）/ tenant_admin（租户管理员）/ user（普通用户）';
 COMMENT ON COLUMN users.password_hash IS '密码 bcrypt 哈希，所有种子用户默认密码 123456';
 
 CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON users (tenant_id);
 
--- 初始化租户与种子用户（密码均为 123456，使用 bcrypt 哈希）
-INSERT INTO tenants (id, name) VALUES ('t1', 'DeepHarness')
+-- 初始化系统租户（承载超级管理员）与业务租户
+INSERT INTO tenants (id, name) VALUES
+  ('__system__', '系统租户（超级管理员承载）'),
+  ('t1', 'DeepHarness')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO users (id, tenant_id, email, name, role, password_hash) VALUES
-  ('u1', 't1', 'xiaoming@deepharness.com', '开发者小明', 'admin', crypt('123456', gen_salt('bf'))),
-  ('u2', 't1', 'xiaohong@deepharness.com', '产品小红', 'user', crypt('123456', gen_salt('bf'))),
-  ('u3', 't1', 'xiaoli@deepharness.com', '设计小李', 'user', crypt('123456', gen_salt('bf'))),
-  ('u4', 't1', 'xiaogang@deepharness.com', '测试小刚', 'user', crypt('123456', gen_salt('bf')))
+-- 初始化种子用户（密码均为 123456，使用 bcrypt 哈希）
+-- u1 为超级管理员（归属 __system__）；u2~u5 为业务租户用户，各司其职。
+INSERT INTO users (id, tenant_id, email, name, platform_role, password_hash) VALUES
+  ('u1', '__system__', 'admin@deepharness.com', '管理员', 'super_admin', crypt('123456', gen_salt('bf'))),
+  ('u2', 't1', 'pm@deepharness.com', '产品小红', 'user', crypt('123456', gen_salt('bf'))),
+  ('u3', 't1', 'designer@deepharness.com', '设计小李', 'user', crypt('123456', gen_salt('bf'))),
+  ('u4', 't1', 'developer@deepharness.com', '开发小明', 'user', crypt('123456', gen_salt('bf'))),
+  ('u5', 't1', 'tester@deepharness.com', '测试小刚', 'user', crypt('123456', gen_salt('bf')))
 ON CONFLICT (id) DO NOTHING;

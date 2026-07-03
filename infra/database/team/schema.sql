@@ -90,7 +90,7 @@ ON CONFLICT (id) DO NOTHING;
 
 -- 初始化提示词数据
 INSERT INTO team_prompts (id, name, description, content, use_case, usage_count, added_to_space) VALUES
-  ('prompt-001', '编写PRD文档模板', '提供组件描述，生成带TypeScript和Tailwind的React组件', '请作为产品经理，根据以下需求生成一份结构化的PRD文档，包含：1. 背景与目标 2. 用户场景 3. 功能详情 4. 业务流程图 5. 数据埋点要求。当前需求：', '需求设计', 45000, TRUE),
+  ('prompt-001', '编写PRD文档模板', '根据需求描述生成结构化PRD文档，自动保存到 projects/prds/ 目录', '请作为产品经理，根据以下需求生成一份结构化的PRD文档。\n\n【文件保存规范】\n1. 将文档保存到 projects/prds/ 目录下（如目录不存在请创建）\n2. 文件命名格式：{需求名称}-prd.md（例如：用户登录-prd.md）\n\n【PRD 内容结构】\n1. 背景与目标\n2. 用户场景\n3. 功能详情\n4. 业务流程图\n5. 数据埋点要求\n\n当前需求：', '需求设计', 45000, TRUE),
   ('prompt-002', '竞品分析框架', '将复杂的代码段转换为易懂的自然语言解释', '请帮我对【功能模块】进行竞品分析，主要对比对象包括：... 比较维度应包含用户体验、功能完整度、商业模式等。', '需求设计', 32000, TRUE),
   ('prompt-003', 'React组件生成标准', '根据业务需求生成SQL建表语句', '请生成一个React组件，要求：使用TypeScript，TailwindCSS进行样式编写，遵循响应式设计，分离逻辑与视图，并添加适当的JSDoc注释。', '前端开发', 28000, FALSE),
   ('prompt-004', 'Go API 接口规范', '为指定函数编写单元测试', '实现一个RESTful API端点，语言为Go，使用Gin框架。要求包含参数验证、统一的错误处理封装、以及完整的Swagger注释。', '后端开发', 19000, FALSE)

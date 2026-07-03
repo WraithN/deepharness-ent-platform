@@ -22,10 +22,12 @@ import (
 
 // DBRepositoryService 是基于 PostgreSQL 的 RepositoryService 实现。
 type DBRepositoryService struct {
-	db        *sql.DB
-	gitClient *gitrepo.GitClient
-	locksMu   sync.Mutex
-	syncLocks map[string]*sync.Mutex
+	db            *sql.DB
+	gitClient     *gitrepo.GitClient
+	keyResolver   SSHKeyResolver
+	workspaceRoot string
+	locksMu       sync.Mutex
+	syncLocks     map[string]*sync.Mutex
 }
 
 func (s *DBRepositoryService) repoLock(repoID string) *sync.Mutex {
@@ -42,11 +44,15 @@ func (s *DBRepositoryService) repoLock(repoID string) *sync.Mutex {
 	return mu
 }
 
-// NewDBRepositoryService 创建 DBRepositoryService。
-func NewDBRepositoryService(db *sql.DB, root string) *DBRepositoryService {
+// NewDBRepositoryService 创建 DBRepositoryService。keyResolver 用于解析操作者的 SSH Key。
+// root 为工作空间根目录，既用于 git clone 存储，也用于用户级 projects 目录。
+func NewDBRepositoryService(db *sql.DB, root string, keyResolver SSHKeyResolver) *DBRepositoryService {
 	return &DBRepositoryService{
-		db:        db,
-		gitClient: gitrepo.NewGitClient(root),
+		db:            db,
+		gitClient:     gitrepo.NewGitClient(root),
+		keyResolver:   keyResolver,
+		workspaceRoot: root,
+		syncLocks:     make(map[string]*sync.Mutex),
 	}
 }
 
@@ -84,26 +90,32 @@ func (s *DBRepositoryService) Get(workspaceID, repoID string) (repository.Reposi
 	return scanRepository(row)
 }
 
-// Create 创建仓库并触发异步 clone。
-func (s *DBRepositoryService) Create(workspaceID string, req CreateRepositoryRequest) (repository.Repository, error) {
+// Create 创建仓库并触发异步 clone。仓库名称由 URL 解析，SSH Key 取自操作者 Profile。
+func (s *DBRepositoryService) Create(workspaceID, userID string, req CreateRepositoryRequest) (repository.Repository, error) {
 	if err := s.workspaceExists(workspaceID); err != nil {
 		return repository.Repository{}, err
 	}
 
+	name := ParseRepoName(req.URL)
 	now := time.Now().UTC()
 	r := repository.Repository{
 		ID:            uuid.New().String(),
 		WorkspaceID:   workspaceID,
-		Name:          req.Name,
+		Name:          name,
 		URL:           req.URL,
 		Type:          repository.RepoType(req.Type),
 		DefaultBranch: req.DefaultBranch,
-		SSHKey:        req.SSHKey,
-		LocalPath:     s.gitClient.DefaultLocalPath(workspaceID, req.Name),
+		LocalPath:     s.gitClient.DefaultLocalPath(workspaceID, name),
 		CloneStatus:   repository.CloneStatusPending,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
+
+	sshKey, keyErr := s.resolveSSHKey(userID)
+	if keyErr != nil {
+		log.Printf("[Repository] Create resolveSSHKey failed for user %s: %v", userID, keyErr)
+	}
+	r.SSHKey = sshKey
 
 	configStr, err := sqlutil.MarshalConfig(nil)
 	if err != nil {
@@ -113,28 +125,27 @@ func (s *DBRepositoryService) Create(workspaceID string, req CreateRepositoryReq
 	_, err = s.db.Exec(`
 		INSERT INTO repositories (id, workspace_id, name, url, type, default_branch, ssh_key, local_path, clone_status, config, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-	`, r.ID, r.WorkspaceID, r.Name, r.URL, r.Type, r.DefaultBranch, r.SSHKey, r.LocalPath, r.CloneStatus, configStr, r.CreatedAt, r.UpdatedAt)
+	`, r.ID, r.WorkspaceID, r.Name, r.URL, r.Type, r.DefaultBranch, sshKey, r.LocalPath, r.CloneStatus, configStr, r.CreatedAt, r.UpdatedAt)
 	if err != nil {
 		return repository.Repository{}, fmt.Errorf("insert repository failed: %w", err)
 	}
 
-	go s.syncRepository(r)
+	go s.syncRepository(r, sshKey)
 	return r, nil
 }
 
-// Update 更新仓库并触发同步（clone 或 pull）。
-func (s *DBRepositoryService) Update(workspaceID, repoID string, req UpdateRepositoryRequest) (repository.Repository, error) {
+// Update 更新仓库并触发同步。URL 变更时仓库名称与本地路径同步重算。
+func (s *DBRepositoryService) Update(workspaceID, repoID, userID string, req UpdateRepositoryRequest) (repository.Repository, error) {
 	existing, err := s.Get(workspaceID, repoID)
 	if err != nil {
 		return repository.Repository{}, err
 	}
 
-	if req.Name != "" {
-		existing.Name = req.Name
-		existing.LocalPath = s.gitClient.DefaultLocalPath(workspaceID, req.Name)
-	}
 	if req.URL != "" {
 		existing.URL = req.URL
+		// URL 变更时重新解析名称与本地路径
+		existing.Name = ParseRepoName(req.URL)
+		existing.LocalPath = s.gitClient.DefaultLocalPath(workspaceID, existing.Name)
 	}
 	if req.Type != "" {
 		existing.Type = repository.RepoType(req.Type)
@@ -142,20 +153,23 @@ func (s *DBRepositoryService) Update(workspaceID, repoID string, req UpdateRepos
 	if req.DefaultBranch != "" {
 		existing.DefaultBranch = req.DefaultBranch
 	}
-	if req.SSHKey != "" {
-		existing.SSHKey = req.SSHKey
+
+	sshKey, keyErr := s.resolveSSHKey(userID)
+	if keyErr != nil {
+		log.Printf("[Repository] Update resolveSSHKey failed for user %s: %v", userID, keyErr)
 	}
+	existing.SSHKey = sshKey
 
 	_, err = s.db.Exec(`
 		UPDATE repositories
 		SET name = $1, url = $2, type = $3, default_branch = $4, ssh_key = $5, local_path = $6, updated_at = $7
 		WHERE id = $8 AND workspace_id = $9
-	`, existing.Name, existing.URL, existing.Type, existing.DefaultBranch, existing.SSHKey, existing.LocalPath, time.Now().UTC(), existing.ID, existing.WorkspaceID)
+	`, existing.Name, existing.URL, existing.Type, existing.DefaultBranch, sshKey, existing.LocalPath, time.Now().UTC(), existing.ID, existing.WorkspaceID)
 	if err != nil {
 		return repository.Repository{}, fmt.Errorf("update repository failed: %w", err)
 	}
 
-	go s.syncRepository(existing)
+	go s.syncRepository(existing, sshKey)
 	return s.Get(workspaceID, repoID)
 }
 
@@ -186,18 +200,18 @@ func (s *DBRepositoryService) Delete(workspaceID, repoID string) error {
 	return nil
 }
 
-// Sync 手动触发仓库同步。
-func (s *DBRepositoryService) Sync(workspaceID, repoID string) error {
+// Sync 手动触发仓库同步，使用操作者的 SSH Key。
+func (s *DBRepositoryService) Sync(workspaceID, repoID, userID string) error {
 	r, err := s.Get(workspaceID, repoID)
 	if err != nil {
 		return err
 	}
-	go s.syncRepository(r)
+	go s.syncRepository(r, r.SSHKey)
 	return nil
 }
 
-// syncRepository 执行 clone 或 pull，并更新数据库状态。
-func (s *DBRepositoryService) syncRepository(r repository.Repository) {
+// syncRepository 执行 clone 或 pull，并更新数据库状态。sshKey 由操作者 Profile 提供。
+func (s *DBRepositoryService) syncRepository(r repository.Repository, sshKey string) {
 	mu := s.repoLock(r.ID)
 	mu.Lock()
 	defer mu.Unlock()
@@ -211,9 +225,9 @@ func (s *DBRepositoryService) syncRepository(r repository.Repository) {
 
 	var err error
 	if exists {
-		err = s.gitClient.Pull(r.LocalPath, r.SSHKey)
+		err = s.gitClient.Pull(r.LocalPath, r.URL, sshKey)
 	} else {
-		err = s.gitClient.Clone(r.URL, r.LocalPath, r.SSHKey, r.DefaultBranch)
+		err = s.gitClient.Clone(r.URL, r.LocalPath, sshKey, r.DefaultBranch, func(int) {})
 	}
 
 	if err != nil {
@@ -222,6 +236,281 @@ func (s *DBRepositoryService) syncRepository(r repository.Repository) {
 	}
 	now := time.Now().UTC()
 	s.updateStatusAndSyncTime(r.ID, repository.CloneStatusCloned, &now)
+}
+
+// isValidSSHKey 校验是否为有效的 SSH 私钥格式。
+func isValidSSHKey(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	privateKeyHeaders := []string{
+		"-----BEGIN OPENSSH PRIVATE KEY-----",
+		"-----BEGIN RSA PRIVATE KEY-----",
+		"-----BEGIN DSA PRIVATE KEY-----",
+		"-----BEGIN EC PRIVATE KEY-----",
+		"-----BEGIN PRIVATE KEY-----",
+	}
+	for _, prefix := range privateKeyHeaders {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveSSHKey 解析操作者的 SSH Key，校验格式并返回。
+func (s *DBRepositoryService) resolveSSHKey(userID string) (string, error) {
+	if s.keyResolver == nil || userID == "" {
+		return "", errors.New("密钥解析器未初始化")
+	}
+	key, err := s.keyResolver.ResolveSSHKey(userID)
+	if err != nil {
+		return "", fmt.Errorf("解析 SSH 密钥失败: %w", err)
+	}
+	if key == "" {
+		return "", errors.New("SSH 密钥未配置，请先在个人设置中添加 SSH 私钥")
+	}
+	if !isValidSSHKey(key) {
+		return "", errors.New("SSH 私钥格式无效，请确认粘贴的是完整私钥内容（以 '-----BEGIN ... PRIVATE KEY-----' 开头），而非公钥")
+	}
+	return key, nil
+}
+
+// ── 用户级仓库操作 ──
+
+// userProjectPath 构建用户 projects 目录下某个仓库的本地路径。
+// 路径格式：WORKSPACE_ROOT/{workspaceID}/{userID}/projects/{repoName}
+func (s *DBRepositoryService) userProjectPath(workspaceID, userID, repoName string) string {
+	if s.workspaceRoot == "" {
+		return ""
+	}
+	safeName := gitrepo.SanitizePathSegment(repoName)
+	return filepath.Join(s.workspaceRoot, workspaceID, userID, "projects", safeName)
+}
+
+// userSyncLockPath 构建用户仓库同步锁文件的路径。
+// 路径格式：WORKSPACE_ROOT/{workspaceID}/{userID}/projects/{repoName}.clone.lock
+func (s *DBRepositoryService) userSyncLockPath(workspaceID, userID, repoName string) string {
+	if s.workspaceRoot == "" {
+		return ""
+	}
+	safeName := gitrepo.SanitizePathSegment(repoName)
+	return filepath.Join(s.workspaceRoot, workspaceID, userID, "projects", safeName+".clone.lock")
+}
+
+// hasSyncLock 检查是否存在同步锁文件（表示正在同步中）。
+func (s *DBRepositoryService) hasSyncLock(workspaceID, userID, repoName string) bool {
+	lockPath := s.userSyncLockPath(workspaceID, userID, repoName)
+	if lockPath == "" {
+		return false
+	}
+	_, err := os.Stat(lockPath)
+	return err == nil
+}
+
+// writeSyncLock 写入同步锁文件，内容为进度百分比。
+func (s *DBRepositoryService) writeSyncLock(workspaceID, userID, repoName string, progress int) error {
+	lockPath := s.userSyncLockPath(workspaceID, userID, repoName)
+	if lockPath == "" {
+		return errors.New("workspace root is not configured")
+	}
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		log.Printf("[Repository] writeSyncLock mkdir failed for %s: %v", repoName, err)
+		return err
+	}
+	if err := os.WriteFile(lockPath, []byte(strconv.Itoa(progress)), 0o644); err != nil {
+		log.Printf("[Repository] writeSyncLock write failed for %s: %v", repoName, err)
+		return err
+	}
+	return nil
+}
+
+// deleteSyncLock 删除同步锁文件（同步完成或失败后清理）。
+func (s *DBRepositoryService) deleteSyncLock(workspaceID, userID, repoName string) {
+	lockPath := s.userSyncLockPath(workspaceID, userID, repoName)
+	if lockPath == "" {
+		return
+	}
+	if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("[Repository] deleteSyncLock failed for %s: %v", repoName, err)
+	}
+}
+
+// readSyncProgress 读取同步锁文件中的进度值，文件不存在时返回 0。
+func (s *DBRepositoryService) readSyncProgress(workspaceID, userID, repoName string) int {
+	lockPath := s.userSyncLockPath(workspaceID, userID, repoName)
+	if lockPath == "" {
+		return 0
+	}
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		return 0
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+// userSyncErrorPath 构建同步错误文件的路径。
+func (s *DBRepositoryService) userSyncErrorPath(workspaceID, userID, repoName string) string {
+	if s.workspaceRoot == "" {
+		return ""
+	}
+	safeName := gitrepo.SanitizePathSegment(repoName)
+	return filepath.Join(s.workspaceRoot, workspaceID, userID, "projects", safeName+".clone.error")
+}
+
+// writeSyncError 写入同步错误信息到 .clone.error 文件。
+func (s *DBRepositoryService) writeSyncError(workspaceID, userID, repoName, errMsg string) {
+	errPath := s.userSyncErrorPath(workspaceID, userID, repoName)
+	if errPath == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(errPath), 0o755); err != nil {
+		log.Printf("[Repository] writeSyncError mkdir failed for %s: %v", repoName, err)
+		return
+	}
+	if err := os.WriteFile(errPath, []byte(errMsg), 0o644); err != nil {
+		log.Printf("[Repository] writeSyncError write failed for %s: %v", repoName, err)
+	}
+}
+
+// readSyncError 读取同步错误文件的内容，文件不存在时返回空串。
+func (s *DBRepositoryService) readSyncError(workspaceID, userID, repoName string) string {
+	errPath := s.userSyncErrorPath(workspaceID, userID, repoName)
+	if errPath == "" {
+		return ""
+	}
+	data, err := os.ReadFile(errPath)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// deleteSyncError 删除同步错误文件（重新同步时清理）。
+func (s *DBRepositoryService) deleteSyncError(workspaceID, userID, repoName string) {
+	errPath := s.userSyncErrorPath(workspaceID, userID, repoName)
+	if errPath == "" {
+		return
+	}
+	if err := os.Remove(errPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("[Repository] deleteSyncError failed for %s: %v", repoName, err)
+	}
+}
+
+// isUserRepoSynced 检查用户 projects 目录下仓库是否已同步完成。
+// 优先检查锁文件（正在同步中返回 false），然后 fallback 到 .git 目录检查。
+func (s *DBRepositoryService) isUserRepoSynced(workspaceID, userID, repoName string) bool {
+	if s.hasSyncLock(workspaceID, userID, repoName) {
+		return false
+	}
+	p := s.userProjectPath(workspaceID, userID, repoName)
+	if p == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(p, ".git"))
+	return err == nil
+}
+
+// ListUserRepos 列出工作空间下所有配置仓库在用户 projects 目录中的同步状态。
+func (s *DBRepositoryService) ListUserRepos(workspaceID, userID string) ([]UserRepoStatus, error) {
+	repos, err := s.List(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]UserRepoStatus, 0, len(repos))
+	for _, r := range repos {
+		syncing := s.hasSyncLock(workspaceID, userID, r.Name)
+		synced := s.isUserRepoSynced(workspaceID, userID, r.Name)
+		status := UserRepoStatus{
+			RepositoryID:  r.ID,
+			Name:          r.Name,
+			URL:           r.URL,
+			Type:          string(r.Type),
+			DefaultBranch: r.DefaultBranch,
+			Synced:        synced,
+		}
+		if syncing {
+			status.SyncStatus = STATE_SYNCING
+			status.Progress = s.readSyncProgress(workspaceID, userID, r.Name)
+		} else if synced {
+			status.SyncStatus = STATE_SYNCED
+		} else if errMsg := s.readSyncError(workspaceID, userID, r.Name); errMsg != "" {
+			status.SyncStatus = STATE_FAILED
+			status.ErrorMessage = errMsg
+		}
+		result = append(result, status)
+	}
+	return result, nil
+}
+
+// SyncUserRepo 将指定仓库异步克隆到用户 projects 目录。
+// SSH Key 取自当前用户的 Profile，若未配置则返回错误提示。
+func (s *DBRepositoryService) SyncUserRepo(workspaceID, repoID, userID string) error {
+	r, err := s.Get(workspaceID, repoID)
+	if err != nil {
+		return err
+	}
+
+	// 仅 SSH URL 需要私钥；HTTPS/git:// 无需
+	sshKey := ""
+	if gitrepo.IsSSHURL(r.URL) {
+		var keyErr error
+		sshKey, keyErr = s.resolveSSHKey(userID)
+		if keyErr != nil {
+			return fmt.Errorf("SSH 密钥校验失败: %w", keyErr)
+		}
+	}
+
+	// 如果已经同步完成，直接返回
+	if s.isUserRepoSynced(workspaceID, userID, r.Name) {
+		return nil
+	}
+	// 如果正在同步中（锁文件存在），直接返回
+	if s.hasSyncLock(workspaceID, userID, r.Name) {
+		return nil
+	}
+
+	dest := s.userProjectPath(workspaceID, userID, r.Name)
+	if dest == "" {
+		return errors.New("workspace root is not configured")
+	}
+
+	// 写入锁文件，标记同步开始
+	if err := s.writeSyncLock(workspaceID, userID, r.Name, 0); err != nil {
+		log.Printf("[Repository] SyncUserRepo writeSyncLock failed for %s: %v", r.Name, err)
+		return err
+	}
+
+	go func() {
+		defer s.deleteSyncLock(workspaceID, userID, r.Name)
+
+		// 清理上次同步残留的错误信息
+		s.deleteSyncError(workspaceID, userID, r.Name)
+
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			s.writeSyncError(workspaceID, userID, r.Name, fmt.Sprintf("创建项目目录失败: %v", err))
+			log.Printf("[Repository] create user project dir %s failed: %v", dest, err)
+			return
+		}
+		if _, err := os.Stat(dest); err == nil {
+			_ = os.RemoveAll(dest)
+		}
+		if err := s.gitClient.Clone(r.URL, dest, sshKey, r.DefaultBranch, func(pct int) {
+			_ = s.writeSyncLock(workspaceID, userID, r.Name, pct)
+		}); err != nil {
+			s.writeSyncError(workspaceID, userID, r.Name, fmt.Sprintf("克隆仓库失败: %v", err))
+			log.Printf("[Repository] user repo sync failed for %s: %v", r.Name, err)
+			return
+		}
+		log.Printf("[Repository] user repo sync completed: %s -> %s", r.Name, dest)
+	}()
+
+	return nil
 }
 
 func (s *DBRepositoryService) updateStatus(id string, status repository.CloneStatus, errMsg string) {

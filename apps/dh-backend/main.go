@@ -9,17 +9,15 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
-
-	port := cfg.Port
-	if port == "" {
-		port = "8080"
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
 	}
 
 	srv := server.New(cfg)
 
-	log.Printf("DH Backend starting on port %s", port)
-	if err := http.ListenAndServe(":"+port, srv); err != nil {
+	log.Printf("DH Backend starting on port %s", cfg.Port)
+	if err := http.ListenAndServe(":"+cfg.Port, srv); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }

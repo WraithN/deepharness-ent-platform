@@ -7,22 +7,26 @@ server:
 session:
   store_type: "memory"
   message_store_type: "memory"
+  # buffer_store_type: SSE 事件和 run checkpoint 的存储后端。
+  #   memory: 内存存储（默认，不跨重启）
+  #   redis:  Redis 存储（支持单节点和 Cluster，跨重启恢复）
+  buffer_store_type: "memory"
   timeout: "30m"
   max_messages: 1000
 
-broker:
-  type: "memory"
+# Redis 配置（buffer_store_type 为 redis 时生效）
+# addrs 配置多个地址时自动使用 Cluster 模式，单个地址使用单节点模式。
+# 环境变量 REDIS_ADDRS 可用逗号分隔多个地址。
+redis:
+  addrs:
+    - "127.0.0.1:6379"
+  password: ""
+  db: 0
+  prefix: "dh"
 
 gatewayd:
   admin_url: "http://127.0.0.1:2346"
   agent_id: "claude-code"
-
-agui:
-  workspace: "/home/nan/deepharness-ent-platform"
-
-websocket:
-  reconnect_history_limit: 50
-  write_timeout: "10s"
 
 database:
   host: "127.0.0.1"
@@ -30,11 +34,11 @@ database:
   user: "deepharness"
   password: "deepharness"
   name: "deepharness"
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime: "5m"
 
-redis:
-  url: ""
-
-repository:
+workspace:
   root: "/home/nan/test"
 
 workitem:

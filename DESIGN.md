@@ -15,7 +15,7 @@
 
 ## 2. 色彩系统
 
-色彩通过 CSS 自定义属性（CSS Variables）定义于 `apps/web/src/index.css`，并在 `tailwind.config.js` 中映射为 Tailwind 颜色键。
+色彩通过 CSS 自定义属性（CSS Variables）定义于 `apps/dh-frontend/src/index.css`，并在 `tailwind.config.js` 中映射为 Tailwind 颜色键。
 
 ### 2.1 浅色主题（Light）
 
@@ -284,7 +284,7 @@
 ## 13. 文件结构
 
 ```
-apps/web/src/
+apps/dh-frontend/src/
 ├── index.css           # 主题变量 + 自定义工具类 + 滚动条
 ├── main.tsx            # 应用入口
 ├── App.tsx             # 根组件（Router + Toaster）
