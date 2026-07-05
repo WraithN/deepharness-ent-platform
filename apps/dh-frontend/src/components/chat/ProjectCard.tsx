@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { FolderGit2, GitCompareArrows, Eye, RefreshCw, Loader2, Code2 } from 'lucide-react';
+import { FolderGit2, GitCompareArrows, Eye, GitCommit, Loader2, Code2 } from 'lucide-react';
 import { projectApi, type ProjectCheckResponse } from '@/lib/project-api';
 import { repositoryApi } from '@/lib/repository-api';
 import { profileApi } from '@/lib/profile-api';
@@ -126,9 +126,12 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
 
   if (loading) {
     return (
-      <div className="flex items-center gap-3 w-full p-4 rounded-2xl border border-border/60 bg-card">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-        <span className="text-sm text-muted-foreground">正在检查工程状态...</span>
+      <div className="flex items-center gap-3 w-full p-4 rounded-2xl border border-border/60 bg-card animate-in fade-in zoom-in-95 duration-300">
+        <div className="h-10 w-10 rounded-xl bg-muted animate-pulse" />
+        <div className="flex-1 space-y-2">
+          <div className="h-4 w-1/3 bg-muted rounded animate-pulse" />
+          <div className="h-3 w-1/2 bg-muted rounded animate-pulse" />
+        </div>
       </div>
     );
   }
@@ -141,7 +144,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
   // check 失败时作为新建工程展示，仍允许查看 Diff 和预览。
   if (isNew || checkFailed) {
     return (
-      <div className="w-full p-4 rounded-2xl border border-green-500/30 bg-green-50/50 dark:bg-green-900/10 shadow-sm hover:shadow-md transition-all">
+      <div className="w-full p-4 rounded-2xl border border-green-500/30 bg-green-50/50 dark:bg-green-900/10 shadow-sm hover:shadow-md transition-all duration-300 hover:-translate-y-0.5 animate-in fade-in slide-in-from-bottom-2 duration-500">
         <div className="flex items-start gap-4">
           <div className="h-12 w-12 rounded-xl bg-green-500/15 flex items-center justify-center shrink-0">
             <FolderGit2 className="h-6 w-6 text-green-600 dark:text-green-400" />
@@ -163,7 +166,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
               <button
                 type="button"
                 onClick={handleDiff}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-300 hover:underline"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-300 hover:underline transition-transform duration-200 hover:scale-105 active:scale-95"
               >
                 <GitCompareArrows className="h-3.5 w-3.5" />
                 查看 Diff
@@ -171,7 +174,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
               <button
                 type="button"
                 onClick={handlePreview}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-300 hover:underline"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-300 hover:underline transition-transform duration-200 hover:scale-105 active:scale-95"
               >
                 <Eye className="h-3.5 w-3.5" />
                 预览页面
@@ -179,7 +182,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
               <button
                 type="button"
                 onClick={handleCode}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-300 hover:underline"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-300 hover:underline transition-transform duration-200 hover:scale-105 active:scale-95"
               >
                 <Code2 className="h-3.5 w-3.5" />
                 查看工程
@@ -188,10 +191,10 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
                 type="button"
                 onClick={handleSync}
                 disabled={syncing}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 transition-transform duration-200 hover:scale-105 active:scale-95"
               >
-                {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                同步到仓库
+                {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitCommit className="h-3.5 w-3.5" />}
+                提交
               </button>
             </div>
           </div>
@@ -202,7 +205,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
 
   // 已有工程修改：琥珀色主题
   return (
-    <div className="w-full p-4 rounded-2xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-900/10 shadow-sm hover:shadow-md transition-all">
+    <div className="w-full p-4 rounded-2xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-900/10 shadow-sm hover:shadow-md transition-all duration-300 hover:-translate-y-0.5 animate-in fade-in slide-in-from-bottom-2 duration-500">
       <div className="flex items-start gap-4">
         <div className="h-12 w-12 rounded-xl bg-amber-500/15 flex items-center justify-center shrink-0">
           <GitCompareArrows className="h-6 w-6 text-amber-600 dark:text-amber-400" />
@@ -226,7 +229,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
             <button
               type="button"
               onClick={handleDiff}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline transition-transform duration-200 hover:scale-105 active:scale-95"
             >
               <GitCompareArrows className="h-3.5 w-3.5" />
               查看 Diff
@@ -234,7 +237,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
             <button
               type="button"
               onClick={handlePreview}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline transition-transform duration-200 hover:scale-105 active:scale-95"
             >
               <Eye className="h-3.5 w-3.5" />
               预览页面
@@ -242,7 +245,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
             <button
               type="button"
               onClick={handleCode}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline transition-transform duration-200 hover:scale-105 active:scale-95"
             >
               <Code2 className="h-3.5 w-3.5" />
               查看工程
@@ -251,10 +254,10 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
               type="button"
               onClick={handleSync}
               disabled={syncing}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 transition-transform duration-200 hover:scale-105 active:scale-95"
             >
-              {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              同步到仓库
+              {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitCommit className="h-3.5 w-3.5" />}
+              提交
             </button>
           </div>
         </div>
