@@ -328,6 +328,39 @@ func (c *GatewaydClient) CreateThread(ctx context.Context) (string, error) {
 	return result.SessionID, nil
 }
 
+// SetContext 向 gatewayd 注入当前运行上下文，包括智能体类型、会话 ID、工作目录和模型。
+// 对应 desktop gatewayd 的 POST /context 接口。
+func (c *GatewaydClient) SetContext(ctx context.Context, agentType, sessionID, workspace, model string) error {
+	if sessionID == "" {
+		return fmt.Errorf("session id is required")
+	}
+	body, _ := json.Marshal(map[string]any{
+		"agent_type":     agentType,
+		"session_id":     sessionID,
+		"work_directory": workspace,
+		"model":          model,
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.adminURL+"/context", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create context request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("set context: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("set context status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
 // AdminURL returns the gatewayd HTTP admin URL.
 func (c *GatewaydClient) AdminURL() string {
 	return c.adminURL
@@ -336,6 +369,43 @@ func (c *GatewaydClient) AdminURL() string {
 // AgentID returns the configured agent plugin key.
 func (c *GatewaydClient) AgentID() string {
 	return c.agentID
+}
+
+// UpdateAgentConfigRequest 是更新 gatewayd agent 模型配置的请求体。
+type UpdateAgentConfigRequest struct {
+	Model       string   `json:"model,omitempty"`
+	ModelType   string   `json:"model_type,omitempty"`
+	BaseURL     string   `json:"base_url,omitempty"`
+	APIKey      string   `json:"api_key,omitempty"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	MaxTokens   *int     `json:"max_tokens,omitempty"`
+}
+
+// UpdateAgentConfig 向 gatewayd 推送指定 session/agent 的模型配置。
+func (c *GatewaydClient) UpdateAgentConfig(ctx context.Context, sessionID, instanceID string, req UpdateAgentConfigRequest) error {
+	if sessionID == "" || instanceID == "" {
+		return fmt.Errorf("session id and instance id are required")
+	}
+	body, _ := json.Marshal(req)
+	url := fmt.Sprintf("%s/sessions/%s/agents/%s/config", c.adminURL, sessionID, instanceID)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create update config request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("update agent config: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("update agent config status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
 }
 
 // AttachAgent 向 gatewayd 指定 thread 挂载指定插件的 agent 实例，

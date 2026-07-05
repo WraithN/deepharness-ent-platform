@@ -105,6 +105,60 @@ func (s *PostgresStore) ListSessions(ctx context.Context) ([]chat.Session, error
 	return result, rows.Err()
 }
 
+// ── 统计查询 ──
+
+// GetSessionTrend 返回最近 days 天每天的会话创建数量。
+func (s *PostgresStore) GetSessionTrend(ctx context.Context, days int) ([]chat.DateCount, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DATE(created_at) AS d, COUNT(*) AS c
+		FROM agent_sessions
+		WHERE created_at >= NOW() - make_interval(days => $1)
+		GROUP BY d
+		ORDER BY d
+	`, days)
+	if err != nil {
+		return nil, fmt.Errorf("query session trend failed: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]chat.DateCount, 0)
+	for rows.Next() {
+		var dc chat.DateCount
+		if err := rows.Scan(&dc.Date, &dc.Count); err != nil {
+			return nil, fmt.Errorf("scan date count failed: %w", err)
+		}
+		result = append(result, dc)
+	}
+	return result, rows.Err()
+}
+
+// GetSessionTrails 返回最近 limit 条会话轨迹（含消息数量）。
+func (s *PostgresStore) GetSessionTrails(ctx context.Context, limit int) ([]chat.SessionTrailInfo, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT s.id, COALESCE(s.title, ''), s.agent_type, s.created_at, s.updated_at,
+		       COUNT(m.id) AS msg_count
+		FROM agent_sessions s
+		LEFT JOIN agent_messages m ON m.session_id = s.id
+		GROUP BY s.id
+		ORDER BY s.updated_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query session trails failed: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]chat.SessionTrailInfo, 0)
+	for rows.Next() {
+		var t chat.SessionTrailInfo
+		if err := rows.Scan(&t.ID, &t.Title, &t.AgentType, &t.CreatedAt, &t.UpdatedAt, &t.MessageCount); err != nil {
+			return nil, fmt.Errorf("scan session trail failed: %w", err)
+		}
+		result = append(result, t)
+	}
+	return result, rows.Err()
+}
+
 // ── MessageStore ──
 
 func (s *PostgresStore) Append(ctx context.Context, sessionID string, msg chat.Message) error {

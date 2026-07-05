@@ -1,5 +1,5 @@
 import '@/lib/patch-assistant-ui';
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -50,20 +50,26 @@ import { fileApi } from '@/lib/file-api';
 import { teamApi } from '@/lib/team-api';
 import { workspaceApi } from '@/lib/workspace-api';
 import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
+import { agentConfigApi } from '@/lib/agent-config-api';
 import type { WorkItemDTO } from '@/lib/api-types';
-import type { Skill, Prompt, WorkspaceAgent } from '@/types';
+import type { Skill, Prompt, WorkspaceAgent, AvailableAgent } from '@/types';
 import { AssistantRuntimeProvider, type ThreadMessageLike } from '@assistant-ui/react';
 import { useAgUiChat, type SendContext } from '@/hooks/use-ag-ui-chat';
 import { ChatThread } from '@/components/chat/ChatThread';
 import { InlineFilePreview } from '@/components/chat/InlineFilePreview';
-import { ProjectPreview } from '@/components/chat/ProjectPreview';
+import { LivePreview, type PreviewMode } from '@/components/chat/LivePreview';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import type { ImperativePanelHandle } from 'react-resizable-panels';
 import { cn } from '@/lib/utils';
+import { PROTO_MAKE_PENDING_KEY } from '@/lib/constants';
 
 // ──────────────── Types ────────────────
 type RequirementStatus = 'backlog' | 'todo' | 'in-progress' | 'done';
 type DefectStatus = 'open' | 'in-progress' | 'fixed' | 'closed';
 type DefectSeverity = 'critical' | 'high' | 'medium' | 'low';
 type CaseStatus = 'draft' | 'ready' | 'passed' | 'failed' | 'blocked';
+
+type PreviewHistoryEntry = { type: 'file' | 'project'; path: string; mode?: PreviewMode };
 
 interface ReqItem {
   id: string; title: string; description: string;
@@ -152,17 +158,19 @@ const MOCK_CASES: CaseItem[] = [
 const MAX_INPUT_QUEUE = 3;
 const CHAT_SYNC_POLL_INTERVAL_MS = 2000;
 
-// 聊天指令列表（上拉菜单展示，点击后插入到输入框开头）。
-const CHAT_COMMANDS = [
-  { cmd: '/prd-write', label: '写需求', desc: '生成结构化 PRD 文档' },
-  { cmd: '/proto-make', label: '做原型', desc: '生成 UI 原型设计稿' },
-  { cmd: '/prd-research', label: '做调研', desc: '技术调研与方案选型' },
-  { cmd: '/code', label: '写代码', desc: '根据需求编写代码' },
-  { cmd: '/debug', label: '解BUG', desc: '定位并修复缺陷' },
-  { cmd: '/review', label: '代码Review', desc: '审查代码质量与规范' },
-] as const;
+/** 后端指令配置（从 /v1/commands 加载）。 */
+interface CommandConfig {
+  cmd: string;
+  label: string;
+  desc: string;
+  icon: string;
+  allowTask: boolean;
+  allowRepos: boolean;
+  requireRepos: boolean;
+  maxRepos: number;
+}
 
-// 指令 -> 图标的映射。
+// 指令 -> 图标的映射（图标为 React 组件，无法放入配置文件）。
 const COMMAND_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   '/prd-write': FileText,
   '/prd-research': Compass,
@@ -192,14 +200,13 @@ interface AgentTab {
   lastAssistantAt?: string;
 }
 
-// 可选的智能体插件。
-const AGENT_OPTIONS: { key: string; label: string }[] = [
-  { key: 'claude-code', label: 'Claude Code' },
-  { key: 'opencode', label: 'OpenCode' },
-  { key: 'codex', label: 'Codex' },
+// 可选的智能体插件，从后端 /available-agents 动态加载。
+const DEFAULT_AGENT_OPTIONS: AvailableAgent[] = [
+  { agentKey: 'claude-code', name: 'Claude Code', description: '', model: '' },
+  { agentKey: 'opencode', name: 'OpenCode', description: '', model: '' },
 ];
 
-const getAgentLabel = (key: string): string => AGENT_OPTIONS.find(o => o.key === key)?.label ?? key;
+const getAgentLabel = (key: string, options: AvailableAgent[]): string => options.find(o => o.agentKey === key)?.name ?? key;
 
 const AGENT_STATUS_COLORS: Record<AgentStatus, string> = {
   error: 'bg-red-500',
@@ -332,12 +339,14 @@ export const Chat: React.FC = () => {
   const [availablePrompts, setAvailablePrompts] = useState<Prompt[]>([]);
   const [availableAgents, setAvailableAgents] = useState<WorkspaceAgent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+  const [availableAgentOptions, setAvailableAgentOptions] = useState<AvailableAgent[]>(DEFAULT_AGENT_OPTIONS);
 
   const [agentTabs, setAgentTabs] = useState<AgentTab[]>([]);
   const [activeAgentTabId, setActiveAgentTabId] = useState<string | null>(null);
 
   const activeTab = agentTabs.find(t => t.sessionId === activeAgentTabId) ?? null;
-  const activePluginKey = activeTab?.pluginKey ?? 'claude-code';
+  const defaultPluginKey = availableAgentOptions[0]?.agentKey ?? 'claude-code';
+  const activePluginKey = activeTab?.pluginKey ?? defaultPluginKey;
 
   const { runtime, sessionId, wsConnected, messages, isRunning, sendMessage, switchSession, createSession, cancelRun, tryRestoreSession } = useAgUiChat({ agentPluginKey: activePluginKey });
 
@@ -358,8 +367,16 @@ export const Chat: React.FC = () => {
   // Inline file preview
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   // Inline project preview (takes priority over file preview)
-  const [projectPreview, setProjectPreview] = useState<{ path: string; mode: 'files' | 'diff' } | null>(null);
+  const [projectPreview, setProjectPreview] = useState<{ path: string; mode: PreviewMode } | null>(null);
   const showPreview = previewPath !== null || projectPreview !== null;
+
+  // 预览历史栈：支持前/后退导航。
+  const [previewHistory, setPreviewHistory] = useState<PreviewHistoryEntry[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const isNavigatingHistory = useRef(false);
+
+  // 可拖拽分割线的 imperative panel API。
+  const previewPanelRef = useRef<ImperativePanelHandle>(null);
 
   const handleFilePreview = useCallback(async (path: string) => {
     if (previewPath === path) {
@@ -374,17 +391,76 @@ export const Chat: React.FC = () => {
     }
     setProjectPreview(null);
     setPreviewPath(path);
+    pushPreviewHistory({ type: 'file', path });
   }, [previewPath]);
 
-  const handleProjectPreview = useCallback((path: string, isNew: boolean) => {
+  const handleProjectPreview = useCallback((path: string, mode: PreviewMode) => {
     setPreviewPath(null);
-    setProjectPreview({ path, mode: isNew ? 'files' : 'diff' });
+    setProjectPreview({ path, mode });
+    pushPreviewHistory({ type: 'project', path, mode });
   }, []);
+
+  // pushPreviewHistory 将一条预览记录推入历史栈，
+  // 截断当前位置之后的前进记录（与浏览器历史行为一致）。
+  const pushPreviewHistory = useCallback((entry: PreviewHistoryEntry) => {
+    if (isNavigatingHistory.current) {
+      isNavigatingHistory.current = false;
+      return;
+    }
+    setPreviewHistory(prev => {
+      const truncated = prev.slice(0, historyIndex + 1);
+      return [...truncated, entry];
+    });
+    setHistoryIndex(prev => prev + 1);
+  }, [historyIndex]);
+
+  // navigatePreview 在历史栈中前进或后退，恢复对应的预览状态。
+  const navigatePreview = useCallback((direction: 'back' | 'forward') => {
+    const newIndex = direction === 'back' ? historyIndex - 1 : historyIndex + 1;
+    if (newIndex < 0 || newIndex >= previewHistory.length) return;
+    const entry = previewHistory[newIndex];
+    isNavigatingHistory.current = true;
+    setHistoryIndex(newIndex);
+    if (entry.type === 'file') {
+      setProjectPreview(null);
+      setPreviewPath(entry.path);
+    } else {
+      setPreviewPath(null);
+      setProjectPreview({ path: entry.path, mode: entry.mode || 'code' });
+    }
+  }, [historyIndex, previewHistory]);
+
+  const canGoBack = historyIndex > 0;
+  const canGoForward = historyIndex < previewHistory.length - 1;
 
   const closePreview = useCallback(() => {
     setPreviewPath(null);
     setProjectPreview(null);
+    setPreviewHistory([]);
+    setHistoryIndex(-1);
   }, []);
+
+  // 预览开关时通过 imperative API 折叠/展开面板。
+  // 展开时默认恢复到 75%（预览）/ 25%（聊天）的比例。
+  useEffect(() => {
+    const panel = previewPanelRef.current;
+    if (!panel) return;
+    if (showPreview) {
+      panel.resize(75);
+    } else {
+      panel.collapse();
+    }
+  }, [showPreview]);
+
+  // Esc 关闭预览。
+  useEffect(() => {
+    if (!showPreview) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closePreview();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [showPreview, closePreview]);
 
   // 做原型：将当前预览的文档作为卡片放入输入框，并自动选择 /proto-make 指令。
   const handleProtoMake = useCallback((filePath: string, title: string) => {
@@ -399,6 +475,28 @@ export const Chat: React.FC = () => {
     toast.success('已添加文档卡片并选择 /proto-make 指令');
   }, []);
 
+  // 监听 FileView 跨标签页发来的做原型请求。
+  useEffect(() => {
+    const handler = (e: StorageEvent) => {
+      if (e.key === PROTO_MAKE_PENDING_KEY && e.newValue) {
+        try {
+          const data = JSON.parse(e.newValue) as { path: string; title: string };
+          handleProtoMake(data.path, data.title);
+        } catch { /* 忽略无效数据 */ }
+        localStorage.removeItem(PROTO_MAKE_PENDING_KEY);
+      }
+    };
+    window.addEventListener('storage', handler);
+    return () => window.removeEventListener('storage', handler);
+  }, [handleProtoMake]);
+
+  // 从后端加载指令配置（含任务/代码库约束）。
+  useEffect(() => {
+    api.get<CommandConfig[]>('/v1/commands')
+      .then(setCommandConfigs)
+      .catch(err => console.error('[Chat] load commands failed:', err));
+  }, []);
+
   // File Upload
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -408,6 +506,9 @@ export const Chat: React.FC = () => {
   const [promptMenuOpen, setPromptMenuOpen] = useState(false);
   const [taskMenuOpen, setTaskMenuOpen] = useState(false);
   const [cmdMenuOpen, setCmdMenuOpen] = useState(false);
+  const [commandConfigs, setCommandConfigs] = useState<CommandConfig[]>([]);
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [slashIndex, setSlashIndex] = useState(0);
   const [compactPlusOpen, setCompactPlusOpen] = useState(false);
   const [compactPlusSubmenu, setCompactPlusSubmenu] = useState<'repo' | 'prompt' | 'skill' | 'cmd' | null>(null);
   const [activeSkillTab, setActiveSkillTab] = useState('全部');
@@ -602,14 +703,18 @@ export const Chat: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
-    workspaceApi.listAgents(workspaceId)
-      .then(agents => {
+    Promise.all([
+      workspaceApi.listAgents(workspaceId).catch((): WorkspaceAgent[] => []),
+      agentConfigApi.listAvailableAgents(workspaceId).catch((): AvailableAgent[] => DEFAULT_AGENT_OPTIONS),
+    ])
+      .then(([agents, runtimeAgents]) => {
         if (cancelled) return;
         setAvailableAgents(agents);
         const defaultAgent = agents.find(a => a.isDefault) || agents[0];
         if (defaultAgent) {
           setSelectedAgentId(defaultAgent.id);
         }
+        setAvailableAgentOptions(runtimeAgents.length > 0 ? runtimeAgents : DEFAULT_AGENT_OPTIONS);
       })
       .catch(err => {
         if (cancelled) return;
@@ -631,10 +736,78 @@ export const Chat: React.FC = () => {
   const toggleRepo = (repo: {id: string; name: string}) => setSelectedRepos(prev => prev.find(r => r.id === repo.id) ? prev.filter(r => r.id !== repo.id) : [...prev, repo]);
   const appendSkillTag = (name: string) => { setInput(p => p.trimEnd() ? p.trimEnd() + ` #${name} ` : `#${name} `); toast.success(`已选择：${name}`); };
   // 插入指令到输入框开头（斜杠指令通常作为前缀），若已有内容则追加空格分隔。
+  // 若指令不支持代码库且当前已选代码库，提示用户并清空选择。
   const insertCommand = (cmd: string) => {
     setInput(p => p.trimEnd() ? `${cmd} ${p}` : `${cmd} `);
     setCmdMenuOpen(false);
+    const cfg = commandConfigs.find(c => c.cmd === cmd);
+    if (cfg && !cfg.allowRepos && selectedRepos.length > 0) {
+      toast.warning(`指令 ${cmd} 不支持代码库，已清空选择`);
+      setSelectedRepos([]);
+    }
     toast.success(`已插入指令：${cmd}`);
+  };
+
+  // 输入框斜杠指令：过滤后的指令列表。
+  const filteredSlashCommands = useMemo(() => {
+    if (!slashMenuOpen) return [];
+    const query = input.replace(/^\//, '').toLowerCase();
+    return commandConfigs.filter(c => c.cmd.startsWith(`/${query}`));
+  }, [slashMenuOpen, input, commandConfigs]);
+
+  // 选择斜杠菜单中的指令：替换输入框内容为 {cmd} ，保留后面的内容。
+  const selectSlashCommand = (cmd: string) => {
+    const rest = input.replace(/^\/\S*/, '');
+    setInput(`${cmd} ${rest}`.trim());
+    setSlashMenuOpen(false);
+    setSlashIndex(0);
+    const cfg = commandConfigs.find(c => c.cmd === cmd);
+    if (cfg && !cfg.allowRepos && selectedRepos.length > 0) {
+      toast.warning(`指令 ${cmd} 不支持代码库，已清空选择`);
+      setSelectedRepos([]);
+    }
+  };
+
+  // textarea onChange：检测 "/" 开头且无空格时打开斜杠菜单。
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setInput(val);
+    if (val.startsWith('/') && !val.includes(' ')) {
+      setSlashMenuOpen(true);
+      setSlashIndex(0);
+    } else {
+      setSlashMenuOpen(false);
+    }
+  };
+
+  // textarea onKeyDown：斜杠菜单打开时的键盘导航。
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashMenuOpen && filteredSlashCommands.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashIndex(i => (i + 1) % filteredSlashCommands.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashIndex(i => (i - 1 + filteredSlashCommands.length) % filteredSlashCommands.length);
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        selectSlashCommand(filteredSlashCommands[slashIndex].cmd);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSlashMenuOpen(false);
+        return;
+      }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
   };
 
   // 同步仓库到用户 projects 目录
@@ -667,9 +840,29 @@ export const Chat: React.FC = () => {
 
   const handleSend = () => {
     if (!input.trim() && !quotedCard) return;
+
+    // 检查当前指令是否支持代码库；不支持时提示用户并忽略代码库。
+    const trimmedInput = input.trim();
+    const cmdMatch = trimmedInput.match(/^(\/\S+)/);
+    const activeCmd = cmdMatch ? cmdMatch[1] : '';
+    const cmdCfg = commandConfigs.find(c => c.cmd === activeCmd);
+    let effectiveRepos = selectedRepos.length > 0 ? [...selectedRepos] : undefined;
+
+    // 指令不支持代码库时，提示并忽略。
+    if (cmdCfg && !cmdCfg.allowRepos && selectedRepos.length > 0) {
+      toast.warning(`指令 ${activeCmd} 不支持代码库，已忽略`);
+      effectiveRepos = undefined;
+    }
+
+    // 指令必须选择代码库时，拦截发送。
+    if (cmdCfg && cmdCfg.requireRepos && (!effectiveRepos || effectiveRepos.length === 0)) {
+      toast.error(`指令 ${activeCmd} 需要选择代码库`);
+      return;
+    }
+
     const context: SendContext | undefined =
-      quotedCard || selectedRepos.length > 0
-        ? { quotedCard: quotedCard ?? undefined, selectedRepos: selectedRepos.length > 0 ? [...selectedRepos] : undefined }
+      quotedCard || effectiveRepos
+        ? { quotedCard: quotedCard ?? undefined, selectedRepos: effectiveRepos }
         : undefined;
 
     const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
@@ -871,13 +1064,13 @@ export const Chat: React.FC = () => {
   useEffect(() => {
     if (initializedRef.current || agentTabs.length > 0) return;
     initializedRef.current = true;
-    const defaultKey = 'claude-code';
+    const defaultKey = availableAgentOptions[0]?.agentKey ?? 'claude-code';
     tryRestoreSession().then(savedId => {
       if (savedId) {
         const tab: AgentTab = {
           sessionId: savedId,
           pluginKey: defaultKey,
-          title: getAgentLabel(defaultKey),
+          title: getAgentLabel(defaultKey, availableAgentOptions),
           instanceId: '',
           status: 'idle',
         };
@@ -890,7 +1083,7 @@ export const Chat: React.FC = () => {
         const tab: AgentTab = {
           sessionId: result.sessionId,
           pluginKey: defaultKey,
-          title: getAgentLabel(defaultKey),
+          title: getAgentLabel(defaultKey, availableAgentOptions),
           instanceId: result.instanceId,
           status: 'idle',
         };
@@ -1021,13 +1214,13 @@ export const Chat: React.FC = () => {
       const tab: AgentTab = {
         sessionId: result.sessionId,
         pluginKey,
-        title: getAgentLabel(pluginKey),
+        title: getAgentLabel(pluginKey, availableAgentOptions),
         instanceId: result.instanceId,
         status: 'idle',
       };
       setAgentTabs(prev => [...prev, tab]);
       setActiveAgentTabId(result.sessionId);
-    }, `新增：${getAgentLabel(pluginKey)}`);
+    }, `新增：${getAgentLabel(pluginKey, availableAgentOptions)}`);
   }, [createSession, runIfIdleOrConfirm]);
 
   // Derive task counts
@@ -1119,24 +1312,64 @@ export const Chat: React.FC = () => {
     <AssistantRuntimeProvider runtime={runtime}>
       <div className="h-[calc(100vh-6rem)] md:h-[calc(100vh-4rem)] flex flex-row border-0 md:border md:border-border/50 rounded-none md:rounded-2xl overflow-hidden bg-background soft-shadow max-w-full mx-auto w-full relative">
 
-        {/* ── Inline Preview Area ── */}
-        <div
-          className={cn(
-            'h-full flex flex-col border-r border-border/50 bg-background overflow-hidden transition-all duration-500 ease-in-out',
-            showPreview ? 'w-3/4 opacity-100' : 'w-0 opacity-0'
-          )}
-        >
-          {previewPath && <InlineFilePreview path={previewPath} onClose={closePreview} onProtoMake={handleProtoMake} />}
-          {projectPreview && <ProjectPreview path={projectPreview.path} mode={projectPreview.mode} onClose={closePreview} />}
-        </div>
+        <ResizablePanelGroup direction="horizontal" className="h-full w-full">
+          {/* ── Inline Preview Area ── */}
+          <ResizablePanel
+            ref={previewPanelRef}
+            defaultSize={0}
+            minSize={20}
+            collapsible={true}
+            collapsedSize={0}
+            className={cn(
+              'h-full flex flex-col bg-background overflow-hidden',
+              !showPreview && 'pointer-events-none'
+            )}
+          >
+            {showPreview && (
+              <div className="h-full flex flex-col border-r border-border/50">
+                {/* 预览历史导航栏 */}
+                {(canGoBack || canGoForward) && (
+                  <div className="flex items-center gap-1 px-2 py-1 border-b border-border/30 bg-muted/20 shrink-0">
+                    <button
+                      onClick={() => navigatePreview('back')}
+                      disabled={!canGoBack}
+                      className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      title="后退"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => navigatePreview('forward')}
+                      disabled={!canGoForward}
+                      className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      title="前进"
+                    >
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="text-[10px] text-muted-foreground ml-1">{historyIndex + 1} / {previewHistory.length}</span>
+                  </div>
+                )}
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  {previewPath && <InlineFilePreview path={previewPath} onClose={closePreview} onProtoMake={handleProtoMake} />}
+                  {projectPreview && (
+                    <LivePreview
+                      key={projectPreview.path}
+                      projectPath={projectPreview.path}
+                      mode={projectPreview.mode}
+                      onClose={closePreview}
+                      onModeChange={(m) => setProjectPreview(prev => prev ? { ...prev, mode: m } : prev)}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+          </ResizablePanel>
 
-        {/* ── Main Chat Area ── */}
-        <div
-          className={cn(
-            'h-full flex flex-col min-w-0 bg-background relative overflow-hidden transition-all duration-500 ease-in-out',
-            showPreview ? 'w-1/4' : 'flex-1 w-full'
-          )}
-        >
+          {/* 拖拽分割线（预览关闭时隐藏但保留 DOM 结构） */}
+          <ResizableHandle withHandle className={cn(!showPreview && 'pointer-events-none opacity-0 w-0')} />
+
+          {/* ── Main Chat Area ── */}
+          <ResizablePanel defaultSize={100} minSize={25} className="h-full flex flex-col min-w-0 bg-background relative overflow-hidden">
 
         {/* Chat Header */}
         <div className="border-b border-border/50 flex flex-col shrink-0 bg-background/80 backdrop-blur-sm z-10 w-full">
@@ -1211,17 +1444,17 @@ export const Chat: React.FC = () => {
               </Button>
               {agentMenuOpen && (
                 <div className="absolute top-full right-0 mt-1 w-40 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-top-2">
-                  {AGENT_OPTIONS.map(option => (
+                  {availableAgentOptions.map(option => (
                     <div
-                      key={option.key}
+                      key={option.agentKey}
                       className="flex items-center gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-accent transition-colors"
                       onClick={() => {
-                        addAgentTab(option.key);
+                        addAgentTab(option.agentKey);
                         setAgentMenuOpen(false);
                       }}
                     >
                       <Bot className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span>{option.label}</span>
+                      <span>{option.name}</span>
                     </div>
                   ))}
                 </div>
@@ -1287,7 +1520,7 @@ export const Chat: React.FC = () => {
                               const tab: AgentTab = {
                                 sessionId: h.id,
                                 pluginKey,
-                                title: getAgentLabel(pluginKey),
+                                title: getAgentLabel(pluginKey, availableAgentOptions),
                                 instanceId: h.instanceId,
                                 status: 'idle',
                               };
@@ -1486,13 +1719,38 @@ export const Chat: React.FC = () => {
                 ))}
               </div>
             )}
+            <div className="relative">
             <Textarea
               placeholder="你想让 AI 助手做什么？ 例如：开发一个小游戏、实现一个新功能、做数据分析..."
               className={cn('w-full resize-none border-0 focus-visible:ring-0 px-5 py-4 shadow-none bg-transparent', showPreview ? 'min-h-[60px] text-sm py-3' : 'min-h-[100px] text-base')}
               value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+              onChange={handleInputChange}
+              onKeyDown={handleInputKeyDown}
             />
+            {slashMenuOpen && filteredSlashCommands.length > 0 && (
+              <div className="absolute bottom-full left-4 mb-1 w-64 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
+                {filteredSlashCommands.map((item, idx) => {
+                  const Icon = COMMAND_ICON_MAP[item.cmd] ?? Terminal;
+                  return (
+                    <div
+                      key={item.cmd}
+                      className={cn('flex items-center gap-3 px-3 py-2 cursor-pointer text-foreground transition-colors', idx === slashIndex ? 'bg-accent' : 'hover:bg-accent')}
+                      onClick={() => selectSlashCommand(item.cmd)}
+                    >
+                      <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-medium text-sm leading-none">{item.cmd}</span>
+                        <span className="text-xs text-muted-foreground mt-0.5">{item.label} · {item.desc}</span>
+                      </div>
+                      {item.requireRepos && (
+                        <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400 shrink-0">需代码库</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            </div>
             <div className="flex items-center justify-between px-3 pb-3 mt-auto">
               <div className={cn('flex items-center gap-1.5 flex-wrap', showPreview && 'gap-1')}>
                 {/* 任务 */}
@@ -1670,7 +1928,7 @@ export const Chat: React.FC = () => {
                     {/* 二级菜单：指令 */}
                     {compactPlusSubmenu === 'cmd' && (
                       <div className="absolute bottom-full left-0 mb-2 w-64 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
-                        {CHAT_COMMANDS.map(item => {
+                        {commandConfigs.map(item => {
                           const Icon = COMMAND_ICON_MAP[item.cmd] ?? Terminal;
                           return (
                             <div
@@ -1734,7 +1992,7 @@ export const Chat: React.FC = () => {
                       </Button>
                       {cmdMenuOpen && (
                         <div className="absolute bottom-full left-0 mb-2 w-64 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
-                          {CHAT_COMMANDS.map(item => {
+                          {commandConfigs.map(item => {
                             const Icon = COMMAND_ICON_MAP[item.cmd] ?? Terminal;
                             return (
                               <div
@@ -2239,9 +2497,10 @@ export const Chat: React.FC = () => {
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
-        </AlertDialog>
+         </AlertDialog>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
-    </div>
     </AssistantRuntimeProvider>
   );
 };

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -28,6 +29,7 @@ type DBRepositoryService struct {
 	workspaceRoot string
 	locksMu       sync.Mutex
 	syncLocks     map[string]*sync.Mutex
+	branchCache   BranchCache
 }
 
 func (s *DBRepositoryService) repoLock(repoID string) *sync.Mutex {
@@ -53,7 +55,13 @@ func NewDBRepositoryService(db *sql.DB, root string, keyResolver SSHKeyResolver)
 		keyResolver:   keyResolver,
 		workspaceRoot: root,
 		syncLocks:     make(map[string]*sync.Mutex),
+		branchCache:   NewMemoryBranchCache(),
 	}
+}
+
+// SetBranchCache 注入分支缓存实现（Redis 或内存）。
+func (s *DBRepositoryService) SetBranchCache(cache BranchCache) {
+	s.branchCache = cache
 }
 
 // List 列出工作空间下所有仓库。
@@ -1143,7 +1151,37 @@ func (s *DBRepositoryService) GetFileContent(workspaceID, repoID, branch, path s
 }
 
 // GetBranches 获取仓库分支列表。
+// GetBranches 返回仓库分支列表。优先从缓存读取（不触发 git fetch），
+// 缓存未命中时执行 git fetch 并缓存结果。
 func (s *DBRepositoryService) GetBranches(workspaceID, repoID string) ([]BranchInfo, error) {
+	// 优先从缓存读取，避免每次页面加载都触发 git fetch。
+	if s.branchCache != nil {
+		if branches, ok := s.branchCache.Get(context.Background(), repoID); ok {
+			return branches, nil
+		}
+	}
+	return s.fetchAndCacheBranches(workspaceID, repoID)
+}
+
+// RefreshBranches 强制从 git 远端刷新分支列表并更新缓存。
+func (s *DBRepositoryService) RefreshBranches(workspaceID, repoID string) ([]BranchInfo, error) {
+	return s.fetchAndCacheBranches(workspaceID, repoID)
+}
+
+// fetchAndCacheBranches 执行 git fetch + branch 解析，并将结果写入缓存。
+func (s *DBRepositoryService) fetchAndCacheBranches(workspaceID, repoID string) ([]BranchInfo, error) {
+	branches, err := s.fetchBranchesFromGit(workspaceID, repoID)
+	if err != nil {
+		return nil, err
+	}
+	if s.branchCache != nil {
+		_ = s.branchCache.Set(context.Background(), repoID, branches)
+	}
+	return branches, nil
+}
+
+// fetchBranchesFromGit 执行 git fetch origin 并解析分支列表。
+func (s *DBRepositoryService) fetchBranchesFromGit(workspaceID, repoID string) ([]BranchInfo, error) {
 	repo, err := s.Get(workspaceID, repoID)
 	if err != nil {
 		return nil, err

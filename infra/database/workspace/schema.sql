@@ -379,3 +379,73 @@ CREATE TRIGGER trigger_workspace_cicd_updated_at
 BEFORE UPDATE ON workspace_cicd
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
+
+-- 平台级智能体类型目录：超管可在此开启/关闭各智能体在全平台的可用范围。
+CREATE TABLE IF NOT EXISTS platform_agent_types (
+    agent_key VARCHAR(50) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    builtin BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE platform_agent_types IS '平台级智能体类型目录';
+COMMENT ON COLUMN platform_agent_types.agent_key IS '智能体标识（如 opencode / claude-code / codex）';
+COMMENT ON COLUMN platform_agent_types.name IS '显示名称';
+COMMENT ON COLUMN platform_agent_types.description IS '智能体描述';
+COMMENT ON COLUMN platform_agent_types.enabled IS '是否在全平台可用';
+COMMENT ON COLUMN platform_agent_types.builtin IS '是否为系统内置（不可删除）';
+COMMENT ON COLUMN platform_agent_types.created_at IS '创建时间';
+COMMENT ON COLUMN platform_agent_types.updated_at IS '更新时间';
+
+DROP TRIGGER IF EXISTS trigger_platform_agent_types_updated_at ON platform_agent_types;
+CREATE TRIGGER trigger_platform_agent_types_updated_at
+BEFORE UPDATE ON platform_agent_types
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
+
+-- 空间级智能体运行时配置：空间管理员为每个可用智能体配置模型与高级参数。
+CREATE TABLE IF NOT EXISTS workspace_agent_configs (
+    id VARCHAR(36) PRIMARY KEY,
+    workspace_id VARCHAR(36) NOT NULL,
+    agent_key VARCHAR(50) NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    model VARCHAR(100),
+    model_source VARCHAR(20) DEFAULT 'builtin',
+    base_url VARCHAR(500),
+    api_key VARCHAR(500),
+    temperature NUMERIC(3,2),
+    max_tokens INTEGER,
+    context_window INTEGER,
+    advanced_config JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(workspace_id, agent_key)
+);
+
+COMMENT ON TABLE workspace_agent_configs IS '空间级智能体运行时配置';
+COMMENT ON COLUMN workspace_agent_configs.id IS '配置 ID';
+COMMENT ON COLUMN workspace_agent_configs.workspace_id IS '所属空间 ID';
+COMMENT ON COLUMN workspace_agent_configs.agent_key IS '智能体标识';
+COMMENT ON COLUMN workspace_agent_configs.enabled IS '是否在当前空间启用';
+COMMENT ON COLUMN workspace_agent_configs.model IS '模型名称';
+COMMENT ON COLUMN workspace_agent_configs.model_source IS '模型来源：builtin 内置 / custom 自定义';
+COMMENT ON COLUMN workspace_agent_configs.base_url IS '自定义模型服务地址';
+COMMENT ON COLUMN workspace_agent_configs.api_key IS '自定义模型 API Key';
+COMMENT ON COLUMN workspace_agent_configs.temperature IS '采样温度';
+COMMENT ON COLUMN workspace_agent_configs.max_tokens IS '最大生成 token 数';
+COMMENT ON COLUMN workspace_agent_configs.context_window IS '上下文窗口大小';
+COMMENT ON COLUMN workspace_agent_configs.advanced_config IS '高级配置 JSON';
+COMMENT ON COLUMN workspace_agent_configs.created_at IS '创建时间';
+COMMENT ON COLUMN workspace_agent_configs.updated_at IS '更新时间';
+
+CREATE INDEX IF NOT EXISTS idx_workspace_agent_configs_workspace ON workspace_agent_configs (workspace_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_agent_configs_workspace_key ON workspace_agent_configs (workspace_id, agent_key);
+
+DROP TRIGGER IF EXISTS trigger_workspace_agent_configs_updated_at ON workspace_agent_configs;
+CREATE TRIGGER trigger_workspace_agent_configs_updated_at
+BEFORE UPDATE ON workspace_agent_configs
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();

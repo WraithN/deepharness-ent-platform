@@ -11,17 +11,20 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/service"
 	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	"github.com/google/uuid"
 )
 
 type SessionHandler struct {
-	sessions         chat.SessionStore
-	messages         chat.MessageStore
-	gatewaydClient   *client.GatewaydClient
-	workspaceService workspaceservice.WorkspaceService
-	cfg              config.Config
-	buffer           buffer.SSEBuffer
+	sessions           chat.SessionStore
+	messages           chat.MessageStore
+	gatewaydClient     *client.GatewaydClient
+	workspaceService   workspaceservice.WorkspaceService
+	agentConfigService service.AgentConfigService
+	cfg                config.Config
+	buffer             buffer.SSEBuffer
 }
 
 func NewSessionHandler(
@@ -29,16 +32,18 @@ func NewSessionHandler(
 	messages chat.MessageStore,
 	gatewaydClient *client.GatewaydClient,
 	workspaceService workspaceservice.WorkspaceService,
+	agentConfigService service.AgentConfigService,
 	cfg config.Config,
 	buf buffer.SSEBuffer,
 ) *SessionHandler {
 	return &SessionHandler{
-		sessions:         sessions,
-		messages:         messages,
-		gatewaydClient:   gatewaydClient,
-		workspaceService: workspaceService,
-		cfg:              cfg,
-		buffer:           buf,
+		sessions:           sessions,
+		messages:           messages,
+		gatewaydClient:     gatewaydClient,
+		workspaceService:   workspaceService,
+		agentConfigService: agentConfigService,
+		cfg:                cfg,
+		buffer:             buf,
 	}
 }
 
@@ -130,16 +135,68 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		agentType = "chat"
 	}
 
+	// 校验前端指定的插件 key 是否在当前空间可用。
+	pluginKey := req.resolvePluginKey()
+	if pluginKey != "" && h.agentConfigService != nil {
+		available, availErr := h.agentConfigService.ListAvailableAgents(workspaceID)
+		if availErr != nil {
+			log.Printf("[CreateSession] failed to list available agents: %v", availErr)
+		} else if !isAgentAvailable(pluginKey, available) {
+			WriteJSONError(w, http.StatusForbidden, 1, "agent not available in this workspace")
+			return
+		}
+	}
+
+	// 查询当前智能体配置，用于同步给 gatewayd。
+	model := req.Model
+	var cfg agent.WorkspaceAgentConfig
+	var cfgErr error
+	if h.agentConfigService != nil && pluginKey != "" {
+		cfg, cfgErr = h.agentConfigService.GetWorkspaceConfig(workspaceID, pluginKey)
+		if cfgErr == nil && model == "" && cfg.Model != "" {
+			model = cfg.Model
+		}
+	}
+
+	// 向 gatewayd 注入上下文（agent_type / model / workspace），
+	// 使 gatewayd 审计与后续 LLM 路由能感知当前会话使用的智能体与模型。
+	if pluginKey != "" {
+		if ctxErr := h.gatewaydClient.SetContext(r.Context(), pluginKey, threadID, workspacePath, model); ctxErr != nil {
+			log.Printf("[CreateSession] SetContext failed: %v", ctxErr)
+		}
+	}
+
 	// 根据前端指定的插件 key，在 gatewayd 上挂载对应 agent 实例，
 	// 并获取 instance_id 作为智能体唯一标识返回给前端。
 	// 将计算好的 workspacePath 传给 gatewayd，保证该会话下 agent 使用固定工作目录。
 	instanceID := ""
-	pluginKey := req.resolvePluginKey()
 	if pluginKey != "" {
 		if id, attachErr := h.gatewaydClient.AttachAgent(r.Context(), threadID, pluginKey, workspacePath); attachErr == nil {
 			instanceID = id
 		} else {
 			log.Printf("[CreateSession] AttachAgent failed: %v", attachErr)
+		}
+	}
+
+	// 把 workspace 级别的模型配置同步到 gatewayd，使运行时能感知租户自定义的
+	// 模型、base_url、api_key、temperature、max_tokens 等参数。
+	if instanceID != "" {
+		if cfgErr == nil {
+			updateReq := client.UpdateAgentConfigRequest{
+				Model:     cfg.Model,
+				ModelType: cfg.ModelSource,
+				BaseURL:   cfg.BaseURL,
+				APIKey:    cfg.APIKey,
+			}
+			if cfg.Temperature != nil {
+				updateReq.Temperature = cfg.Temperature
+			}
+			if cfg.AdvancedConfig != nil && cfg.AdvancedConfig.MaxTokens != nil {
+				updateReq.MaxTokens = cfg.AdvancedConfig.MaxTokens
+			}
+			if syncErr := h.gatewaydClient.UpdateAgentConfig(r.Context(), threadID, instanceID, updateReq); syncErr != nil {
+				log.Printf("[CreateSession] UpdateAgentConfig failed: %v", syncErr)
+			}
 		}
 	}
 
@@ -189,6 +246,16 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteSession 删除指定会话及其消息。
+// isAgentAvailable 检查 pluginKey 是否在可用智能体列表中。
+func isAgentAvailable(pluginKey string, available []agent.AvailableAgent) bool {
+	for _, a := range available {
+		if a.AgentKey == pluginKey {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodDelete {

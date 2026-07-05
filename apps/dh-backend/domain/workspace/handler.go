@@ -5,22 +5,58 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
+	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
+	service "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/identity"
 )
 
-var defaultService service.WorkspaceService
+var (
+	defaultService     service.WorkspaceService
+	defaultUserService identityservice.UserService
+)
 
 // Init 注入 WorkspaceService 实现（MySQL 或 mock）。
 func Init(svc service.WorkspaceService) {
 	defaultService = svc
 }
 
+// InitUserService 注入 UserService，用于校验超级管理员权限。
+func InitUserService(svc identityservice.UserService) {
+	defaultUserService = svc
+}
+
+// requireSuperAdmin 校验当前请求用户是否为超级管理员。
+func requireSuperAdmin(w http.ResponseWriter, r *http.Request) bool {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return false
+	}
+	if defaultUserService == nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "user service not initialized")
+		return false
+	}
+	user, err := defaultUserService.GetByID(userID)
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "failed to authenticate user")
+		return false
+	}
+	if user.PlatformRole != identity.PlatformRoleSuperAdmin {
+		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		return false
+	}
+	return true
+}
+
 // Workspaces 处理 GET /api/v1/workspaces 与 POST /api/v1/workspaces。
 func Workspaces(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if !requireSuperAdmin(w, r) {
+			return
+		}
 		workspaces, err := defaultService.ListWorkspaces(r.URL.Query().Get("tenantId"))
 		if err != nil {
 			handler.HandleServiceError(w, err, "workspace not found", "failed to list workspaces")
@@ -29,6 +65,9 @@ func Workspaces(w http.ResponseWriter, r *http.Request) {
 		handler.SetJSONHeader(w)
 		json.NewEncoder(w).Encode(workspaces)
 	case http.MethodPost:
+		if !requireSuperAdmin(w, r) {
+			return
+		}
 		var req createWorkspaceRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
@@ -80,7 +119,7 @@ func Mine(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(mine)
 }
 
-// WorkspaceByID 处理 GET /api/v1/workspaces/{id}。
+// WorkspaceByID 处理 GET /api/v1/workspaces/{id}、PUT 更新与 DELETE 删除。
 func WorkspaceByID(w http.ResponseWriter, r *http.Request) {
 	id, ok := handler.PathValueOr404(w, r, "id")
 	if !ok {
@@ -96,6 +135,34 @@ func WorkspaceByID(w http.ResponseWriter, r *http.Request) {
 		}
 		handler.SetJSONHeader(w)
 		json.NewEncoder(w).Encode(ws)
+	case http.MethodPut:
+		if !requireSuperAdmin(w, r) {
+			return
+		}
+		var req updateWorkspaceRequest
+		if !handler.DecodeJSONBody(w, r, &req) {
+			return
+		}
+		if req.Name == "" {
+			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
+			return
+		}
+		ws, err := defaultService.UpdateWorkspace(id, req.Name, req.Description)
+		if err != nil {
+			handler.HandleServiceError(w, err, "workspace not found", "failed to update workspace")
+			return
+		}
+		handler.SetJSONHeader(w)
+		json.NewEncoder(w).Encode(ws)
+	case http.MethodDelete:
+		if !requireSuperAdmin(w, r) {
+			return
+		}
+		if err := defaultService.DeleteWorkspace(id); err != nil {
+			handler.HandleServiceError(w, err, "workspace not found", "failed to delete workspace")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
 	}
@@ -360,6 +427,11 @@ type createWorkspaceRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	OwnerUserID string `json:"ownerUserId"`
+}
+
+type updateWorkspaceRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 type addMemberRequest struct {

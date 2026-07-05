@@ -384,6 +384,9 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       if (context.quotedCard) {
         contextItems.push({ name: 'quotedCard', value: context.quotedCard });
       }
+      if (context.selectedRepos && context.selectedRepos.length > 0) {
+        contextItems.push({ name: 'selectedRepos', value: context.selectedRepos });
+      }
 
       const runInput = {
         threadId: currentSessionId,

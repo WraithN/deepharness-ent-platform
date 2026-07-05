@@ -206,6 +206,26 @@ func RepositoryBranches(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(branches)
 }
 
+// RefreshBranches 强制从 git 远端刷新仓库分支列表并更新缓存。
+func RefreshBranches(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	repoID, ok := handler.PathValueOr404(w, r, "repoId")
+	if !ok {
+		return
+	}
+
+	branches, err := defaultService.RefreshBranches(workspaceID, repoID)
+	if err != nil {
+		handler.HandleServiceError(w, err, "repository not found", "failed to refresh branches")
+		return
+	}
+	handler.SetJSONHeader(w)
+	json.NewEncoder(w).Encode(branches)
+}
+
 // RepositoryFileTree 获取仓库文件树。
 func RepositoryFileTree(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := handler.PathValueOr404(w, r, "id")

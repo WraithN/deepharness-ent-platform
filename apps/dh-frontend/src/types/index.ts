@@ -129,6 +129,49 @@ export interface WorkspaceAgent {
   updatedAt: string;
 }
 
+export interface AgentType {
+  key: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  builtin: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdvancedAgentConfig {
+  maxTokens?: number;
+  contextWindow?: number;
+  topP?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  extra?: Record<string, unknown>;
+}
+
+export interface WorkspaceAgentConfig {
+  id: string;
+  workspaceId: string;
+  agentKey: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  model: string;
+  modelSource: 'builtin' | 'custom';
+  baseUrl: string;
+  apiKey: string;
+  temperature?: number;
+  advancedConfig?: AdvancedAgentConfig;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AvailableAgent {
+  agentKey: string;
+  name: string;
+  description: string;
+  model: string;
+}
+
 export interface WorkspaceRepository {
   id: string;
   workspaceId: string;

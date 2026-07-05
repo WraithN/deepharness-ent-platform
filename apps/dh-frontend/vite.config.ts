@@ -22,6 +22,9 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    chunkSizeWarningLimit: 3000,
+  },
   server: {
     port: 8888,
     proxy: {

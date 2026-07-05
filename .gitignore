@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+.dist-test
 output
 *.local
 package-lock.json
@@ -42,6 +43,8 @@ tasks
 *.dylib
 *.test
 *.out
+apps/dh-backend/dh-backend
+apps/agent-stub/agent-stub
 go.work
 
 # Zone.Identifier (WSL)

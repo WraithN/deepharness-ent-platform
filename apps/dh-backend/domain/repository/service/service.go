@@ -30,6 +30,7 @@ type RepositoryService interface {
 	GitCommit(workspaceID, repoID, message string) (string, error)
 	GitStatus(workspaceID, repoID string) (string, error)
 	GetBranches(workspaceID, repoID string) ([]BranchInfo, error)
+	RefreshBranches(workspaceID, repoID string) ([]BranchInfo, error)
 	SwitchBranch(workspaceID, repoID, branchName string) error
 
 	// 用户级仓库操作 —— 将工作空间配置的仓库同步到用户自己的 projects 目录下。

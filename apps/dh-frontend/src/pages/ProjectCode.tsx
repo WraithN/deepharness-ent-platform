@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
 import type { RepositoryDTO, FileNodeDTO, FileContentDTO, ScannedRepositoryDTO, RepositoryDetailsDTO, BranchInfoDTO } from '@/lib/api-types';
+import { LivePreview, type PreviewMode } from '@/components/chat/LivePreview';
 import { detectFrontendProject } from '@/lib/project-detector';
 import { CodeBlock } from '@/components/CodeBlock';
 import { useAuth } from '@/contexts/AuthContext';
@@ -784,6 +785,7 @@ export const ProjectCode: React.FC = () => {
   // Branches
   const [branches, setBranches] = useState<BranchInfoDTO[]>([]);
   const [loadingBranches, setLoadingBranches] = useState(false);
+  const [refreshingBranches, setRefreshingBranches] = useState(false);
   const [switchingBranch, setSwitchingBranch] = useState(false);
 
   // Tabs management
@@ -795,6 +797,7 @@ export const ProjectCode: React.FC = () => {
 
   // View mode tabs
   const [viewMode, setViewMode] = useState<'code' | 'graph' | 'review' | 'doc' | 'preview' | 'details'>('code');
+  const [livePreviewMode, setLivePreviewMode] = useState<PreviewMode>('diff');
 
   // Code view mode for file viewer
   const [codeViewMode, setCodeViewMode] = useState<'code' | 'preview' | 'blame'>('code');
@@ -906,23 +909,40 @@ export const ProjectCode: React.FC = () => {
     }
   };
 
-  // 加载仓库分支列表
+  // 加载仓库分支列表：先从缓存读取（快速显示），同时异步刷新（获取最新分支）。
   const loadBranches = async (repoId: string) => {
     if (!repoId) return;
     setLoadingBranches(true);
     try {
-      const branchList = await api.get<BranchInfoDTO[]>(
+      // 第一步：从缓存读取分支（后端不触发 git fetch，毫秒级响应）。
+      const cached = await api.get<BranchInfoDTO[]>(
         `/v1/workspaces/${workspaceId}/repositories/${repoId}/branches`
       );
-      setBranches(branchList);
-      if (branchList.length > 0 && !selectedBranch) {
-        const current = branchList.find(b => b.isCurrent) || branchList[0];
+      setBranches(cached);
+      if (cached.length > 0 && !selectedBranch) {
+        const current = cached.find(b => b.isCurrent) || cached[0];
         setSelectedBranch(current.name);
       }
     } catch {
       toast.error('加载分支列表失败');
     } finally {
       setLoadingBranches(false);
+    }
+
+    // 第二步：异步从 git 远端刷新分支（触发 git fetch），刷新完成前按钮显示旋转动效。
+    setRefreshingBranches(true);
+    try {
+      const fresh = await repositoryApi.refreshBranches(workspaceId, repoId);
+      setBranches(fresh);
+      if (fresh.length > 0 && !selectedBranch) {
+        const current = fresh.find(b => b.isCurrent) || fresh[0];
+        setSelectedBranch(current.name);
+      }
+    } catch {
+      // 刷新失败时静默处理，已展示缓存数据。
+      console.error('[ProjectCode] refresh branches failed');
+    } finally {
+      setRefreshingBranches(false);
     }
   };
 
@@ -947,16 +967,7 @@ export const ProjectCode: React.FC = () => {
         setSelectedRepoId(first.id);
         setSelectedBranch(first.defaultBranch ?? '');
         setRepoType(first.type as 'dev' | 'case');
-
-        // Load branches for the selected repo
-        const branchList = await api.get<BranchInfoDTO[]>(
-          `/v1/workspaces/${workspaceId}/repositories/${first.id}/branches`
-        );
-        setBranches(branchList);
-        if (branchList.length > 0) {
-          const current = branchList.find(b => b.isCurrent) || branchList[0];
-          setSelectedBranch(current.name);
-        }
+        loadBranches(first.id);
       }
 
       toast.success(`扫描完成，共 ${repos.length} 个仓库`);
@@ -1301,6 +1312,16 @@ export const ProjectCode: React.FC = () => {
                 </SelectContent>
               </Select>
               {switchingBranch && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9"
+                onClick={() => selectedRepoId && loadBranches(selectedRepoId)}
+                disabled={refreshingBranches || loadingBranches}
+                title="刷新分支"
+              >
+                {refreshingBranches ? <RefreshCw className="h-4 w-4 animate-spin text-primary" /> : <RefreshCw className="h-4 w-4" />}
+              </Button>
             </div>
 
             <Button
@@ -1730,7 +1751,13 @@ export const ProjectCode: React.FC = () => {
               </div>
             </div>
             <div className="flex-1 overflow-hidden">
-              <PreviewPanel repoId={selectedRepoId} branch={selectedBranch} repoName={currentRepo?.name || ''} repoUrl={currentRepo?.url || ''} />
+              {currentRepo?.localPath ? (
+                <LivePreview projectPath={currentRepo.localPath} mode={livePreviewMode} onModeChange={setLivePreviewMode} />
+              ) : (
+                <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                  仓库尚未克隆，无法预览
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -4,12 +4,39 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import { mockDashboardStats } from '@/mock/data';
 import { api } from '@/lib/api';
-import type { UserDTO, AgentSessionDTO } from '@/lib/api-types';
-import { GitCommit, MessageSquare, CheckSquare, Clock, Box, Code2, ListTodo, Bot, User, Wand2, FileText, BarChart3, LineChart as LineChartIcon, PieChart as PieChartIcon } from 'lucide-react';
+import type { UserDTO } from '@/lib/api-types';
+import { MessageSquare, CheckSquare, Clock, Box, Code2, ListTodo, Wand2, FileText, BarChart3, LineChart as LineChartIcon, PieChart as PieChartIcon } from 'lucide-react';
 import { toast } from 'sonner';
+
+/** /v1/stats/summary 响应类型。 */
+interface SummaryResponse {
+  thisWeek: number;
+  lastWeek: number;
+  deltaPercent: number;
+}
+
+/** /v1/stats/trend 响应类型。 */
+interface TrendResponse {
+  data: { date: string; count: number }[];
+}
+
+/** /v1/stats/trails 响应类型。 */
+interface TrailsResponse {
+  data: SessionTrailDTO[];
+}
+
+/** 会话轨迹 DTO（来自后端 agent_sessions + agent_messages JOIN）。 */
+interface SessionTrailDTO {
+  id: string;
+  title: string;
+  agentType: string;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
 
 interface SessionTrail {
   id: string;
@@ -18,6 +45,42 @@ interface SessionTrail {
   title: string;
   type: string;
   duration: string;
+  messageCount: number;
+}
+
+/** 将 ISO 时间戳转为相对时间描述（如"10分钟前"）。 */
+function formatRelativeTime(iso: string): string {
+  const now = Date.now();
+  const t = new Date(iso).getTime();
+  const diff = Math.max(0, now - t);
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return '刚刚';
+  if (minutes < 60) return `${minutes}分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}小时前`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return '昨天';
+  if (days < 7) return `${days}天前`;
+  return new Date(iso).toLocaleDateString('zh-CN');
+}
+
+/** 将创建时间到更新时间的间隔转为可读时长（如"15分钟"）。 */
+function formatDuration(createdISO: string, updatedISO: string): string {
+  const diff = new Date(updatedISO).getTime() - new Date(createdISO).getTime();
+  if (diff < 0) return '—';
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return '<1分钟';
+  if (minutes < 60) return `${minutes}分钟`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return mins > 0 ? `${hours}小时${mins}分钟` : `${hours}小时`;
+}
+
+/** 将 YYYY-MM-DD 或 ISO 日期转为"X月X日"格式用于图表显示。 */
+function formatDateShort(date: string): string {
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return date;
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
 export const Dashboard: React.FC = () => {
@@ -25,32 +88,48 @@ export const Dashboard: React.FC = () => {
   const [sessionPage, setSessionPage] = useState(1);
   const [users, setUsers] = useState<UserDTO[]>([]);
   const [sessionTrails, setSessionTrails] = useState<SessionTrail[]>([]);
+  const [sessionTrend, setSessionTrend] = useState<{ date: string; count: number }[]>([]);
+  const [summary, setSummary] = useState<SummaryResponse>({ thisWeek: 0, lastWeek: 0, deltaPercent: 0 });
   const sessionPageSize = 5;
   const totalSessionPages = Math.ceil(sessionTrails.length / sessionPageSize);
   const paginatedSessions = sessionTrails.slice((sessionPage - 1) * sessionPageSize, sessionPage * sessionPageSize);
 
   useEffect(() => {
     api.get<UserDTO[]>('/v1/identity/users').then(setUsers).catch(() => {});
-    api.get<AgentSessionDTO[]>('/v1/orchestrator/sessions')
-      .then(sessions => {
-        const times = ['10分钟前', '1小时前', '3小时前', '昨天 15:30', '昨天 11:15'];
-        const durations = ['15分钟', '45分钟', '30分钟', '1小时20分钟', '25分钟'];
-        const types = ['ui', 'requirement', 'code', 'code', 'requirement'];
-        const mapped: SessionTrail[] = sessions.map((s, i) => ({
+
+    // 统计卡片：本周会话数 + 较上周变化。
+    api.get<SummaryResponse>('/v1/stats/summary')
+      .then(setSummary)
+      .catch(err => console.error('[Dashboard] fetch summary failed:', err));
+
+    // AI 会话趋势：最近 7 天每天的会话数。
+    api.get<TrendResponse>('/v1/stats/trend')
+      .then(data => {
+        setSessionTrend(data.data.map(d => ({ date: formatDateShort(d.date), count: d.count })));
+      })
+      .catch(err => console.error('[Dashboard] fetch trend failed:', err));
+
+    // 成员会话轨迹：最近的会话记录。
+    api.get<TrailsResponse>('/v1/stats/trails')
+      .then(data => {
+        const mapped: SessionTrail[] = data.data.map(s => ({
           id: s.id,
-          user: { id: `u${(i % 4) + 1}`, tenantId: 't1', email: '', name: ['开发者小明', '产品小红', '设计小李', '测试小刚'][i % 4], platformRole: 'user', createdAt: '' },
-          time: times[i % times.length],
-          title: s.title,
-          type: types[i % types.length],
-          duration: durations[i % durations.length],
+          user: { id: '', tenantId: 't1', email: '', name: '未知用户', platformRole: 'user', createdAt: '' },
+          time: formatRelativeTime(s.updatedAt),
+          title: s.title || '未命名会话',
+          type: s.agentType || 'code',
+          duration: formatDuration(s.createdAt, s.updatedAt),
+          messageCount: s.messageCount,
         }));
         setSessionTrails(mapped);
       })
-      .catch(() => {});
+      .catch(err => {
+        console.error('[Dashboard] fetch trails failed:', err);
+        toast.error('加载会话轨迹失败');
+      });
   }, []);
 
   const totalCommits = mockDashboardStats.codeCommits.reduce((acc, curr) => acc + curr.count, 0);
-  const totalSessions = mockDashboardStats.sessions.reduce((acc, curr) => acc + curr.count, 0);
   const totalReqs = mockDashboardStats.requirementsCompleted.reduce((acc, curr) => acc + curr.count, 0);
 
   return (
@@ -66,15 +145,19 @@ export const Dashboard: React.FC = () => {
             <p className="text-xs text-muted-foreground mt-1">+12% 较上周</p>
           </CardContent>
         </Card>
-        
+
         <Card className="soft-shadow border border-border/50">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">近7天会话数量</CardTitle>
             <LineChartIcon className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalSessions} 次</div>
-            <p className="text-xs text-muted-foreground mt-1">+24% 较上周</p>
+            <div className="text-2xl font-bold">{summary.thisWeek} 次</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {summary.deltaPercent > 0 && `+${summary.deltaPercent}% 较上周`}
+              {summary.deltaPercent < 0 && `${summary.deltaPercent}% 较上周`}
+              {summary.deltaPercent === 0 && `${summary.lastWeek} 次上周`}
+            </p>
           </CardContent>
         </Card>
 
@@ -104,13 +187,13 @@ export const Dashboard: React.FC = () => {
                   <XAxis dataKey="date" tick={{ fontSize: 13 }} tickLine={false} axisLine={false} />
                   <YAxis tick={{ fontSize: 13 }} tickLine={false} axisLine={false} />
                   <Tooltip />
-                  <Line 
-                    type="monotone" 
-                    dataKey="count" 
-                    stroke="hsl(var(--primary))" 
+                  <Line
+                    type="monotone"
+                    dataKey="count"
+                    stroke="hsl(var(--primary))"
                     strokeWidth={2}
-                    dot={{ r: 4 }} 
-                    activeDot={{ r: 6 }} 
+                    dot={{ r: 4 }}
+                    activeDot={{ r: 6 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -126,7 +209,7 @@ export const Dashboard: React.FC = () => {
           <CardContent className="flex-1 min-h-[300px]">
             <div className="w-full h-full min-w-0 overflow-hidden">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={mockDashboardStats.sessions}>
+                <BarChart data={sessionTrend.length > 0 ? sessionTrend : mockDashboardStats.sessions}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="date" tick={{ fontSize: 13 }} tickLine={false} axisLine={false} />
                   <YAxis tick={{ fontSize: 13 }} tickLine={false} axisLine={false} />
@@ -150,50 +233,63 @@ export const Dashboard: React.FC = () => {
                     <TableHead>成员</TableHead>
                     <TableHead>会话主题</TableHead>
                     <TableHead>类型</TableHead>
+                    <TableHead>消息数</TableHead>
                     <TableHead>会话时长</TableHead>
                     <TableHead className="text-right">时间</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {paginatedSessions.map((trail) => (
-                    <TableRow 
-                      key={trail.id} 
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => setSelectedUserSession(trail)}
-                    >
-                      <TableCell className="whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium text-xs">
-                            {trail.user.name.charAt(0)}
-                          </div>
-                          <span className="text-sm font-medium">{trail.user.name}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {trail.title}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {trail.type === 'ui' && <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200"><Box className="w-3 h-3 mr-1"/> UI设计</Badge>}
-                        {trail.type === 'code' && <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200"><Code2 className="w-3 h-3 mr-1"/> 代码编写</Badge>}
-                        {trail.type === 'requirement' && <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200"><ListTodo className="w-3 h-3 mr-1"/> 需求分析</Badge>}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-muted-foreground">
-                        {trail.duration}
-                      </TableCell>
-                      <TableCell className="text-right whitespace-nowrap text-muted-foreground">
-                        <div className="flex items-center justify-end gap-1">
-                          <Clock className="w-3 h-3" />
-                          {trail.time}
-                        </div>
+                  {paginatedSessions.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                        暂无会话记录
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    paginatedSessions.map((trail) => (
+                      <TableRow
+                        key={trail.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => setSelectedUserSession(trail)}
+                      >
+                        <TableCell className="whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium text-xs">
+                              {trail.user.name.charAt(0)}
+                            </div>
+                            <span className="text-sm font-medium">{trail.user.name}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {trail.title}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {trail.type === 'ui' && <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200"><Box className="w-3 h-3 mr-1"/> UI设计</Badge>}
+                          {trail.type === 'code' && <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200"><Code2 className="w-3 h-3 mr-1"/> 代码编写</Badge>}
+                          {trail.type === 'requirement' && <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200"><ListTodo className="w-3 h-3 mr-1"/> 需求分析</Badge>}
+                          {(trail.type !== 'ui' && trail.type !== 'code' && trail.type !== 'requirement') && <Badge variant="outline"><MessageSquare className="w-3 h-3 mr-1"/> 会话</Badge>}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-muted-foreground">
+                          {trail.messageCount} 条
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-muted-foreground">
+                          {trail.duration}
+                        </TableCell>
+                        <TableCell className="text-right whitespace-nowrap text-muted-foreground">
+                          <div className="flex items-center justify-end gap-1">
+                            <Clock className="w-3 h-3" />
+                            {trail.time}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </div>
             <div className="flex items-center justify-between px-4 py-3 border-t border-border/50">
               <span className="text-xs text-muted-foreground">
-                共 {sessionTrails.length} 条记录，第 {sessionPage}/{totalSessionPages} 页
+                共 {sessionTrails.length} 条记录，第 {sessionPage}/{totalSessionPages || 1} 页
               </span>
               <div className="flex items-center gap-1">
                 <Button
@@ -246,7 +342,7 @@ export const Dashboard: React.FC = () => {
                       <div className="min-w-0">
                         <div className="truncate">{selectedUserSession.user.name} 的会话轨迹</div>
                         <div className="text-sm font-normal text-muted-foreground mt-1 truncate">
-                          会话时长: {selectedUserSession.duration} · {selectedUserSession.time}
+                          会话时长: {selectedUserSession.duration} · {selectedUserSession.time} · {selectedUserSession.messageCount} 条消息
                         </div>
                       </div>
                     </SheetTitle>
@@ -266,95 +362,20 @@ export const Dashboard: React.FC = () => {
                   </SheetDescription>
                 </SheetHeader>
               </div>
-              
+
               <div className="flex-1 p-6 bg-muted/5">
                 <h3 className="font-semibold mb-6 flex items-center">
                   <MessageSquare className="h-5 w-5 mr-2 text-primary" />
                   会话主题：{selectedUserSession.title}
                 </h3>
-                
+
                 <div className="space-y-6 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-border before:to-transparent">
-                  {/* Mock Activity Feed Items */}
-                  <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
-                    <div className="flex items-center justify-center w-10 h-10 rounded-full border-4 border-background bg-primary text-primary-foreground shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 soft-shadow">
-                      <User className="h-4 w-4" />
-                    </div>
-                    <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-4 rounded-xl border border-border/50 bg-card soft-shadow">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-semibold text-sm">用户提问</span>
-                        <span className="text-xs text-muted-foreground">10:00 AM</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        帮我实现一个登录页面的UI设计，需要包含账号密码输入框和第三方登录按钮。
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
-                    <div className="flex items-center justify-center w-10 h-10 rounded-full border-4 border-background bg-secondary text-secondary-foreground shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 soft-shadow">
-                      <Bot className="h-4 w-4" />
-                    </div>
-                    <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-4 rounded-xl border border-border/50 bg-card soft-shadow">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-semibold text-sm">AI 助手响应</span>
-                        <span className="text-xs text-muted-foreground">10:01 AM</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground mb-3">
-                        好的，我将为您设计登录页面。已经生成了基础结构的UI代码，请查看右侧预览面板。
-                      </p>
-                      <div className="p-3 bg-muted/50 rounded-lg flex items-center gap-3 border">
-                        <Box className="h-5 w-5 text-blue-500" />
-                        <div>
-                          <p className="text-sm font-medium">Login_Page_Design.tsx</p>
-                          <p className="text-xs text-muted-foreground">UI设计文件</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
-                    <div className="flex items-center justify-center w-10 h-10 rounded-full border-4 border-background bg-primary text-primary-foreground shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 soft-shadow">
-                      <User className="h-4 w-4" />
-                    </div>
-                    <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-4 rounded-xl border border-border/50 bg-card soft-shadow">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-semibold text-sm">用户修改需求</span>
-                        <span className="text-xs text-muted-foreground">10:05 AM</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        主色调希望能改成深蓝色（#1890ff），并且添加一个"记住我"的选项。
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
-                    <div className="flex items-center justify-center w-10 h-10 rounded-full border-4 border-background bg-secondary text-secondary-foreground shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 soft-shadow">
-                      <Bot className="h-4 w-4" />
-                    </div>
-                    <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-4 rounded-xl border border-border/50 bg-card soft-shadow">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-semibold text-sm">AI 助手更新</span>
-                        <span className="text-xs text-muted-foreground">10:06 AM</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground mb-3">
-                        没问题，我已经将按钮、高亮链接的主色调更新为了深蓝色（#1890ff），并在密码框下方添加了"记住我"勾选框。
-                      </p>
-                      <div className="p-3 bg-muted/50 rounded-lg flex items-center gap-3 border">
-                        <Box className="h-5 w-5 text-blue-500" />
-                        <div>
-                          <p className="text-sm font-medium">Login_Page_Design_v2.tsx</p>
-                          <p className="text-xs text-muted-foreground">UI设计文件 (已更新)</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  
                   <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
                     <div className="flex items-center justify-center w-10 h-10 rounded-full border-4 border-background bg-green-500 text-white shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 shadow">
                       <CheckSquare className="h-4 w-4" />
                     </div>
                     <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-4 rounded-xl border bg-card shadow-sm flex justify-center">
-                      <span className="text-sm font-medium text-green-600 dark:text-green-500">会话结束 (历时 {selectedUserSession.duration})</span>
+                      <span className="text-sm font-medium text-green-600 dark:text-green-500">会话记录 (历时 {selectedUserSession.duration}，共 {selectedUserSession.messageCount} 条消息)</span>
                     </div>
                   </div>
                 </div>

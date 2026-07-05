@@ -3,6 +3,7 @@ package sqlutil
 import (
 	"database/sql"
 	"encoding/json"
+	"time"
 )
 
 // NullString 将空字符串转换为数据库 NULL。
@@ -40,4 +41,12 @@ func UnmarshalConfig(ns sql.NullString) (any, error) {
 		return nil, err
 	}
 	return v, nil
+}
+
+// ScanNullTime 读取 Nullable 时间字段，NULL 时返回零值。
+func ScanNullTime(ns sql.NullTime) time.Time {
+	if ns.Valid {
+		return ns.Time
+	}
+	return time.Time{}
 }

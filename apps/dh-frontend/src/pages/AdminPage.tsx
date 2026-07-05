@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -11,11 +11,15 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, Plus, Save, Power, CheckCircle2, XCircle } from 'lucide-react';
-import MultiSelect from '@/components/ui/multi-select';
+import { Search, Plus, Save, Power, Bot, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { agentConfigApi } from '@/lib/agent-config-api';
+import { workspaceApi } from '@/lib/workspace-api';
+import { useAuth } from '@/contexts/AuthContext';
+import { formatDateTime } from '@/lib/utils';
+import type { AgentType, Workspace } from '@/types';
 
-// 修复：移除未定义的 Checkbox 引用，改用 MultiSelect + Switch
+// 空间管理已对接真实 API，不再使用 mock 数据
 export const AdminPage: React.FC = () => {
   const location = useLocation();
   const [configTab, setConfigTab] = useState('agents');
@@ -32,33 +36,139 @@ export const AdminPage: React.FC = () => {
 
   const isConfig = location.pathname === '/admin/config';
 
-  const [spaces, setSpaces] = useState([
-    { id: 1, name: '前端空间', admins: 'admin1@company.com, admin2@company.com', agentIds: [1], customAgent: true, customCicd: false },
-    { id: 2, name: '后端空间', admins: 'backend_admin@company.com', agentIds: [2], customAgent: true, customCicd: true },
-  ]);
+  const { user } = useAuth();
 
-  const [agents, setAgents] = useState([
-    { id: 1, name: '默认 Claude', type: 'claudecode', model: 'claude-3-5-sonnet', baseUrl: 'https://api.anthropic.com', apiKey: 'sk-ant-...', temperature: 0.7, prompt: '你是一个专业的全栈工程师，擅长 React, TypeScript 和 Node.js。', useCache: true },
-    { id: 2, name: '内部 OpenCode', type: 'opencode', model: 'opencode-v2', baseUrl: 'https://api.internal.com', apiKey: 'sk-...', temperature: 0.2, prompt: '', useCache: true },
-  ]);
+  const [spaces, setSpaces] = useState<Workspace[]>([]);
+  const [spacesLoading, setSpacesLoading] = useState(false);
 
-  const [editAgentOpen, setEditAgentOpen] = useState(false);
-  const [editingAgent, setEditingAgent] = useState<any>(null);
+  const [newSpaceOpen, setNewSpaceOpen] = useState(false);
+  const [newSpaceName, setNewSpaceName] = useState('');
+  const [newSpaceDescription, setNewSpaceDescription] = useState('');
+
+  const [editSpaceOpen, setEditSpaceOpen] = useState(false);
+  const [editingSpace, setEditingSpace] = useState<Workspace | null>(null);
+  const [editSpaceName, setEditSpaceName] = useState('');
+  const [editSpaceDescription, setEditSpaceDescription] = useState('');
+
+  const [deleteSpaceOpen, setDeleteSpaceOpen] = useState(false);
+  const [deletingSpace, setDeletingSpace] = useState<Workspace | null>(null);
+
+  const loadSpaces = async () => {
+    setSpacesLoading(true);
+    try {
+      const list = await workspaceApi.list('');
+      setSpaces(list);
+    } catch {
+      toast.error('加载工作空间列表失败');
+    } finally {
+      setSpacesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (location.pathname === '/admin/spaces') {
+      loadSpaces();
+    }
+  }, [location.pathname]);
+
+  const openEditSpace = (space: Workspace) => {
+    setEditingSpace(space);
+    setEditSpaceName(space.name);
+    setEditSpaceDescription(space.description || '');
+    setEditSpaceOpen(true);
+  };
+
+  const openDeleteSpace = (space: Workspace) => {
+    setDeletingSpace(space);
+    setDeleteSpaceOpen(true);
+  };
+
+  const handleCreateSpace = async () => {
+    if (!newSpaceName.trim()) {
+      toast.error('空间名称不能为空');
+      return;
+    }
+    if (!user) {
+      toast.error('未登录');
+      return;
+    }
+    try {
+      await workspaceApi.create({
+        tenantId: user.tenantId,
+        name: newSpaceName.trim(),
+        description: newSpaceDescription.trim(),
+        ownerUserId: user.id,
+      });
+      toast.success('新增空间成功');
+      setNewSpaceOpen(false);
+      setNewSpaceName('');
+      setNewSpaceDescription('');
+      await loadSpaces();
+    } catch {
+      toast.error('新增空间失败');
+    }
+  };
+
+  const handleUpdateSpace = async () => {
+    if (!editingSpace) return;
+    if (!editSpaceName.trim()) {
+      toast.error('空间名称不能为空');
+      return;
+    }
+    try {
+      await workspaceApi.update(editingSpace.id, {
+        name: editSpaceName.trim(),
+        description: editSpaceDescription.trim(),
+      });
+      toast.success('编辑空间成功');
+      setEditSpaceOpen(false);
+      setEditingSpace(null);
+      await loadSpaces();
+    } catch {
+      toast.error('编辑空间失败');
+    }
+  };
+
+  const handleDeleteSpace = async () => {
+    if (!deletingSpace) return;
+    try {
+      await workspaceApi.delete(deletingSpace.id);
+      toast.success('删除空间成功');
+      setDeleteSpaceOpen(false);
+      setDeletingSpace(null);
+      await loadSpaces();
+    } catch {
+      toast.error('删除空间失败');
+    }
+  };
+
+  const [agentTypes, setAgentTypes] = useState<AgentType[]>([]);
+  const [agentTypesLoading, setAgentTypesLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isConfig) return;
+    setAgentTypesLoading(true);
+    agentConfigApi.listAgentTypes()
+      .then(setAgentTypes)
+      .catch(() => toast.error('加载智能体类型失败'))
+      .finally(() => setAgentTypesLoading(false));
+  }, [isConfig]);
+
+  const toggleAgentType = async (key: string, enabled: boolean) => {
+    try {
+      const updated = await agentConfigApi.updateAgentType(key, enabled);
+      setAgentTypes(prev => prev.map(at => at.key === key ? updated : at));
+      toast.success(`${updated.name} 已${enabled ? '启用' : '禁用'}`);
+    } catch {
+      toast.error('更新智能体状态失败');
+    }
+  };
 
   const [skills, setSkills] = useState([
     { id: 1, name: '多模态理解', type: '模型类', status: 'published' },
     { id: 2, name: '微信支付', type: '工具类', status: 'reviewing' },
     { id: 3, name: '汇率转换', type: '工具类', status: 'disabled' },
   ]);
-
-  const [newSpaceOpen, setNewSpaceOpen] = useState(false);
-  const [editSpaceOpen, setEditSpaceOpen] = useState(false);
-  const [editingSpace, setEditingSpace] = useState<any>(null);
-
-  const openEditSpace = (space: any) => {
-    setEditingSpace(space);
-    setEditSpaceOpen(true);
-  };
 
   return (
     <div className="space-y-6 pb-12">
@@ -79,61 +189,67 @@ export const AdminPage: React.FC = () => {
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
                     <Label>空间名称</Label>
-                    <Input placeholder="输入空间名称" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>管理员 (多个用逗号分隔)</Label>
-                    <Input placeholder="admin1@test.com, admin2@test.com" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>使用的智能体</Label>
-                    <MultiSelect
-                      options={agents.map(a => ({ value: String(a.id), label: a.name }))}
-                      defaultSelected={['1']}
-                      onChange={(selected) => console.log('Selected agents:', selected)}
+                    <Input
+                      placeholder="输入空间名称"
+                      value={newSpaceName}
+                      onChange={e => setNewSpaceName(e.target.value)}
                     />
                   </div>
-                  <div className="flex items-center justify-between pt-2">
-                    <Label htmlFor="new-custom-agent" className="cursor-pointer">允许设置自定义智能体</Label>
-                    <Switch id="new-custom-agent" defaultChecked />
-                  </div>
-                  <div className="flex items-center justify-between pt-2">
-                    <Label htmlFor="new-custom-cicd" className="cursor-pointer">允许设置自定义CICD</Label>
-                    <Switch id="new-custom-cicd" />
+                  <div className="space-y-2">
+                    <Label>空间描述</Label>
+                    <Textarea
+                      placeholder="输入空间描述"
+                      value={newSpaceDescription}
+                      onChange={e => setNewSpaceDescription(e.target.value)}
+                    />
                   </div>
                 </div>
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" onClick={() => setNewSpaceOpen(false)}>取消</Button>
-                  <Button onClick={() => { toast.success('新增空间成功'); setNewSpaceOpen(false); }}>保存</Button>
+                  <Button onClick={handleCreateSpace}>保存</Button>
                 </div>
               </DialogContent>
             </Dialog>
           </CardHeader>
           <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>空间名称</TableHead>
-                  <TableHead>管理员</TableHead>
-                  <TableHead>自定义智能体</TableHead>
-                  <TableHead>自定义CICD</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {spaces.map(s => (
-                  <TableRow key={s.id}>
-                    <TableCell className="font-medium">{s.name}</TableCell>
-                    <TableCell>{s.admins}</TableCell>
-                    <TableCell>{s.customAgent ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-muted-foreground" />}</TableCell>
-                    <TableCell>{s.customCicd ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-muted-foreground" />}</TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" onClick={() => openEditSpace(s)}>编辑</Button>
-                    </TableCell>
+            {spacesLoading ? (
+              <div className="p-6 text-center text-sm text-muted-foreground">加载中...</div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>空间名称</TableHead>
+                    <TableHead>描述</TableHead>
+                    <TableHead>租户</TableHead>
+                    <TableHead>创建时间</TableHead>
+                    <TableHead className="text-right">操作</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {spaces.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                        暂无工作空间
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {spaces.map(s => (
+                    <TableRow key={s.id}>
+                      <TableCell className="font-medium">{s.name}</TableCell>
+                      <TableCell className="max-w-[200px] truncate">{s.description || '-'}</TableCell>
+                      <TableCell>{s.tenantId}</TableCell>
+                      <TableCell>{formatDateTime(s.createdAt)}</TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="sm" onClick={() => openEditSpace(s)}>编辑</Button>
+                        <Button variant="ghost" size="sm" className="text-destructive" onClick={() => openDeleteSpace(s)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
 
           <Dialog open={editSpaceOpen} onOpenChange={setEditSpaceOpen}>
@@ -145,33 +261,38 @@ export const AdminPage: React.FC = () => {
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
                     <Label>空间名称</Label>
-                    <Input defaultValue={editingSpace.name} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>管理员 (多个用逗号分隔)</Label>
-                    <Input defaultValue={editingSpace.admins} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>使用的智能体</Label>
-                    <MultiSelect
-                      options={agents.map(a => ({ value: String(a.id), label: a.name }))}
-                      defaultSelected={editingSpace.agentIds?.map(String) ?? []}
-                      onChange={(selected) => console.log('Selected agents:', selected)}
+                    <Input
+                      value={editSpaceName}
+                      onChange={e => setEditSpaceName(e.target.value)}
                     />
                   </div>
-                  <div className="flex items-center justify-between pt-2">
-                    <Label htmlFor="edit-custom-agent" className="cursor-pointer">允许设置自定义智能体</Label>
-                    <Switch id="edit-custom-agent" defaultChecked={editingSpace.customAgent} />
-                  </div>
-                  <div className="flex items-center justify-between pt-2">
-                    <Label htmlFor="edit-custom-cicd" className="cursor-pointer">允许设置自定义CICD</Label>
-                    <Switch id="edit-custom-cicd" defaultChecked={editingSpace.customCicd} />
+                  <div className="space-y-2">
+                    <Label>空间描述</Label>
+                    <Textarea
+                      value={editSpaceDescription}
+                      onChange={e => setEditSpaceDescription(e.target.value)}
+                    />
                   </div>
                 </div>
               )}
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setEditSpaceOpen(false)}>取消</Button>
-                <Button onClick={() => { toast.success('编辑空间成功'); setEditSpaceOpen(false); }}>保存</Button>
+                <Button onClick={handleUpdateSpace}>保存</Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={deleteSpaceOpen} onOpenChange={setDeleteSpaceOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>删除工作空间</DialogTitle>
+              </DialogHeader>
+              <p className="text-sm text-muted-foreground py-2">
+                确定要删除工作空间 <span className="font-medium text-foreground">{deletingSpace?.name}</span> 吗？删除后不可恢复。
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setDeleteSpaceOpen(false)}>取消</Button>
+                <Button variant="destructive" onClick={handleDeleteSpace}>删除</Button>
               </div>
             </DialogContent>
           </Dialog>
@@ -301,88 +422,53 @@ export const AdminPage: React.FC = () => {
           
           <TabsContent value="agents" className="pt-4">
             <Card className="soft-shadow border-none">
-              <CardHeader className="flex flex-row items-center justify-between pb-2 border-b">
-                <CardTitle className="text-base">智能体配置</CardTitle>
-                <Dialog open={editAgentOpen} onOpenChange={setEditAgentOpen}>
-                  <DialogTrigger asChild>
-                    <Button onClick={() => setEditingAgent(null)}><Plus className="h-4 w-4 mr-2"/>新增智能体</Button>
-                  </DialogTrigger>
-                  <DialogContent className="sm:max-w-lg">
-                    <DialogHeader>
-                      <DialogTitle>{editingAgent ? '编辑智能体' : '新增智能体'}</DialogTitle>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto px-1">
-                      <div className="space-y-2">
-                        <Label>智能体名称</Label>
-                        <Input defaultValue={editingAgent?.name || ''} placeholder="例如: 默认 Claude" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>智能体类型</Label>
-                        <Select defaultValue={editingAgent?.type || 'claudecode'}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="选择类型" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="claudecode">ClaudeCode</SelectItem>
-                            <SelectItem value="opencode">OpenCode</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>默认模型</Label>
-                        <Input defaultValue={editingAgent?.model || ''} placeholder="例如: claude-3-5-sonnet" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Base URL</Label>
-                        <Input defaultValue={editingAgent?.baseUrl || ''} placeholder="https://api.anthropic.com" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>API Key</Label>
-                        <Input defaultValue={editingAgent?.apiKey || ''} type="password" placeholder="sk-..." />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Temperature (0.0 - 2.0)</Label>
-                        <Input defaultValue={editingAgent?.temperature ?? 0.7} type="number" step="0.1" min="0" max="2" />
-                      </div>
-                    </div>
-                    <div className="flex justify-end gap-2">
-                      <Button variant="outline" onClick={() => setEditAgentOpen(false)}>取消</Button>
-                      <Button onClick={() => { toast.success(editingAgent ? '编辑智能体成功' : '新增智能体成功'); setEditAgentOpen(false); }}>保存</Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
+              <CardHeader className="pb-2 border-b">
+                <div className="flex items-center gap-2">
+                  <Bot className="h-5 w-5 text-primary" />
+                  <CardTitle className="text-base">智能体范围配置</CardTitle>
+                </div>
+                <CardDescription>控制平台内各智能体是否可供租户使用。</CardDescription>
               </CardHeader>
               <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>名称</TableHead>
-                      <TableHead>类型</TableHead>
-                      <TableHead>默认模型</TableHead>
-                      <TableHead>Base URL</TableHead>
-                      <TableHead>Temperature</TableHead>
-                      <TableHead className="text-right">操作</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {agents.map(a => (
-                      <TableRow key={a.id}>
-                        <TableCell className="font-medium">{a.name}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className={a.type === 'claudecode' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}>
-                            {a.type}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{a.model}</TableCell>
-                        <TableCell className="max-w-[150px] truncate">{a.baseUrl}</TableCell>
-                        <TableCell>{a.temperature}</TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="sm" onClick={() => { setEditingAgent(a); setEditAgentOpen(true); }}>编辑</Button>
-                        </TableCell>
+                {agentTypesLoading ? (
+                  <p className="py-8 text-center text-muted-foreground">加载中...</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>智能体</TableHead>
+                        <TableHead>标识</TableHead>
+                        <TableHead>描述</TableHead>
+                        <TableHead>状态</TableHead>
+                        <TableHead className="text-right">操作</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {agentTypes.map(at => (
+                        <TableRow key={at.key}>
+                          <TableCell className="font-medium">{at.name}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{at.key}</Badge>
+                          </TableCell>
+                          <TableCell className="max-w-[300px] truncate text-muted-foreground">{at.description}</TableCell>
+                          <TableCell>
+                            {at.enabled ? (
+                              <Badge className="bg-green-100 text-green-700 hover:bg-green-100">已启用</Badge>
+                            ) : (
+                              <Badge variant="secondary">已禁用</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Switch
+                              checked={at.enabled}
+                              onCheckedChange={(checked) => toggleAgentType(at.key, checked)}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

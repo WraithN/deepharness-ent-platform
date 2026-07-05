@@ -1,6 +1,7 @@
 go 1.25.0
 
 use (
+	./apps/agent-stub
 	./apps/dh-backend
 	./packages/go-sdk
 )

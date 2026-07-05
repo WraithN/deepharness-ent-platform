@@ -29,6 +29,10 @@ export const routes: RouteObject[] = [
     element: <RequireAuth><Profile /></RequireAuth>,
   },
   {
+    path: "/file-view",
+    element: <RequireAuth><FileView /></RequireAuth>,
+  },
+  {
     path: "/admin",
     element: <RequireSuperAdmin><AdminLayout /></RequireSuperAdmin>,
     children: [
@@ -56,7 +60,6 @@ export const routes: RouteObject[] = [
       { path: "testing", element: <SmartTest /> },
       { path: "personal-assistant", element: <PersonalAssistantPage /> },
       { path: "personal-assistant/chat/:id", element: <PersonalAssistantChat /> },
-      { path: "file-view", element: <FileView /> },
       { path: "settings", element: <PermissionRoute perm="canViewSettings"><Settings /></PermissionRoute> },
       { path: "*", element: <Navigate to="/chat" replace /> },
     ],

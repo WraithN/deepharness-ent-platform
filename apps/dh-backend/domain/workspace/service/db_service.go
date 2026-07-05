@@ -142,6 +142,60 @@ func (s *DBWorkspaceService) ListWorkspaces(tenantID string) ([]workspace.Worksp
 	return result, nil
 }
 
+// UpdateWorkspace 更新工作空间名称与描述。
+func (s *DBWorkspaceService) UpdateWorkspace(id, name, description string) (workspace.Workspace, error) {
+	if id == "" {
+		return workspace.Workspace{}, errors.New("workspace id is required")
+	}
+	if name == "" {
+		return workspace.Workspace{}, errors.New("name is required")
+	}
+
+	res, err := s.db.Exec(`
+		UPDATE workspaces
+		SET name = $1, description = $2, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $3
+	`, name, sqlutil.NullString(description), id)
+	if err != nil {
+		return workspace.Workspace{}, fmt.Errorf("update workspace failed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return workspace.Workspace{}, fmt.Errorf("get rows affected failed: %w", err)
+	}
+	if n == 0 {
+		return workspace.Workspace{}, errors.New("workspace not found")
+	}
+	return s.GetWorkspace(id)
+}
+
+// DeleteWorkspace 删除工作空间及其成员关系。
+func (s *DBWorkspaceService) DeleteWorkspace(id string) error {
+	if id == "" {
+		return errors.New("workspace id is required")
+	}
+	if err := s.workspaceExists(id); err != nil {
+		return err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM workspace_members WHERE workspace_id = $1`, id); err != nil {
+		return fmt.Errorf("delete workspace members failed: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM workspaces WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("delete workspace failed: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit failed: %w", err)
+	}
+	return nil
+}
+
 // ListMine 返回指定用户加入的工作空间及其成员关系。
 // 用于登录后确定当前用户的可用空间与空间内权限/职能角色。
 func (s *DBWorkspaceService) ListMine(userID string) ([]MineWorkspace, error) {

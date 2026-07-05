@@ -18,7 +18,7 @@ interface AssistantMessageProps {
   onArtifactClick?: () => void;
   onRegenerate?: () => void;
   onFilePreview?: (path: string) => void;
-  onProjectPreview?: (path: string, isNew: boolean) => void;
+  onProjectPreview?: (path: string, mode: 'diff' | 'code' | 'preview') => void;
 }
 
 export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview }) => {

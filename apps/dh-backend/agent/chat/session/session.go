@@ -77,3 +77,61 @@ func (s *SessionStore) ListSessions(ctx context.Context) ([]chat.Session, error)
 	}
 	return result, nil
 }
+
+// GetSessionTrend 内存实现：按日期分组统计会话数量。
+func (s *SessionStore) GetSessionTrend(ctx context.Context, days int) ([]chat.DateCount, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	cutoff := time.Now().AddDate(0, 0, -days)
+	counts := make(map[string]int)
+	for _, sess := range s.sessions {
+		if sess.CreatedAt.Before(cutoff) {
+			continue
+		}
+		date := sess.CreatedAt.Format("2006-01-02")
+		counts[date]++
+	}
+
+	result := make([]chat.DateCount, 0, len(counts))
+	for date, count := range counts {
+		result = append(result, chat.DateCount{Date: date, Count: count})
+	}
+	return result, nil
+}
+
+// GetSessionTrails 内存实现：返回最近的会话轨迹（不含消息数量）。
+func (s *SessionStore) GetSessionTrails(ctx context.Context, limit int) ([]chat.SessionTrailInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	all := make([]chat.Session, 0, len(s.sessions))
+	for _, sess := range s.sessions {
+		all = append(all, sess)
+	}
+
+	// 按更新时间倒序排序。
+	for i := 0; i < len(all)-1; i++ {
+		for j := i + 1; j < len(all); j++ {
+			if all[j].UpdatedAt.After(all[i].UpdatedAt) {
+				all[i], all[j] = all[j], all[i]
+			}
+		}
+	}
+
+	if limit > len(all) {
+		limit = len(all)
+	}
+	result := make([]chat.SessionTrailInfo, 0, limit)
+	for i := 0; i < limit; i++ {
+		sess := all[i]
+		result = append(result, chat.SessionTrailInfo{
+			ID:        sess.ID,
+			Title:     sess.Title,
+			AgentType: sess.AgentType,
+			CreatedAt: sess.CreatedAt,
+			UpdatedAt: sess.UpdatedAt,
+		})
+	}
+	return result, nil
+}
