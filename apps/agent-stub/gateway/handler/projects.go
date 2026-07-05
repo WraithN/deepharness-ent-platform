@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -19,6 +20,10 @@ const (
 	gitInitCommitMessage = "Initial commit by DeepHarness AI"
 	// gitSyncCommitMessage 是同步工程到仓库时的默认提交消息。
 	gitSyncCommitMessage = "Sync project by DeepHarness AI"
+	// defaultRemoteName 是推送到远程仓库时使用的默认 remote 名称。
+	defaultRemoteName = "origin"
+	// sshStrictOptions 是 git ssh 命令的安全选项，禁用主机密钥检查（开发环境）。
+	sshStrictOptions = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes"
 	// maxDiffOutputLen 限制 diff 输出最大长度，防止超大 diff 导致响应过大。
 	maxDiffOutputLen = 512 * 1024 // 512KB
 	// maxDiffFileSize 限制单个文件 diff 内容的最大字节数，超过则跳过该文件。
@@ -61,9 +66,13 @@ type FileDiffEntry struct {
 
 // ProjectSyncRequest 同步工程请求。
 type ProjectSyncRequest struct {
-	Path        string `json:"path"`
-	WorkspaceID string `json:"workspaceId"`
-	CommitMsg   string `json:"commitMsg,omitempty"`
+	Path         string `json:"path"`
+	WorkspaceID  string `json:"workspaceId"`
+	CommitMsg    string `json:"commitMsg,omitempty"`
+	RemoteURL    string `json:"remoteUrl,omitempty"`
+	RemoteBranch string `json:"remoteBranch,omitempty"`
+	SSHKey       string `json:"sshKey,omitempty"`
+	RemoteName   string `json:"remoteName,omitempty"`
 }
 
 // ──────────────── 路径校验 ────────────────
@@ -170,6 +179,104 @@ func commitAllChanges(dir, message string) error {
 			return nil
 		}
 		return fmt.Errorf("git commit failed: %w", err)
+	}
+	return nil
+}
+
+// isSSHURL 判断 Git URL 是否使用 SSH 协议（支持 ssh:// 与 git@host:path 两种形式）。
+func isSSHURL(rawURL string) bool {
+	return strings.HasPrefix(rawURL, "ssh://") || (strings.Contains(rawURL, "@") && strings.Contains(rawURL, ":"))
+}
+
+// ensureGitRemote 确保本地仓库存在指定名称的 remote，若 URL 不一致则更新。
+func ensureGitRemote(dir, remoteName, remoteURL string) error {
+	// 先检查该 remote 是否已存在。
+	_, err := projectGitExec(dir, "remote", "get-url", remoteName)
+	if err != nil {
+		// remote 不存在，直接添加。
+		if _, err := projectGitExec(dir, "remote", "add", remoteName, remoteURL); err != nil {
+			return fmt.Errorf("git remote add failed: %w", err)
+		}
+		return nil
+	}
+	// remote 已存在，更新 URL 避免配置变更后不同步。
+	if _, err := projectGitExec(dir, "remote", "set-url", remoteName, remoteURL); err != nil {
+		return fmt.Errorf("git remote set-url failed: %w", err)
+	}
+	return nil
+}
+
+// currentGitBranch 获取当前仓库所在分支，detached HEAD 或新初始化仓库可能返回空字符串。
+func currentGitBranch(dir string) (string, error) {
+	out, err := projectGitExec(dir, "branch", "--show-current")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// ensureLocalBranch 确保本地存在并签出目标分支。
+// 若当前已在目标分支则跳过；若目标分支已存在则签出；否则将当前分支重命名为目标分支。
+func ensureLocalBranch(dir, branch string) error {
+	if branch == "" {
+		return nil
+	}
+	current, err := currentGitBranch(dir)
+	if err != nil {
+		return fmt.Errorf("detect current branch failed: %w", err)
+	}
+	if current == branch {
+		return nil
+	}
+	// 检查目标分支是否已存在。
+	_, err = projectGitExec(dir, "rev-parse", "--verify", branch)
+	if err == nil {
+		if _, err := projectGitExec(dir, "checkout", branch); err != nil {
+			return fmt.Errorf("checkout branch %s failed: %w", branch, err)
+		}
+		return nil
+	}
+	// 不存在则重命名当前分支。
+	if _, err := projectGitExec(dir, "branch", "-M", branch); err != nil {
+		return fmt.Errorf("rename branch to %s failed: %w", branch, err)
+	}
+	return nil
+}
+
+// pushToRemote 将当前分支推送到远程仓库。
+// 当提供了 SSH 私钥且远程为 SSH 协议时，会写入临时密钥文件并配置 GIT_SSH_COMMAND。
+func pushToRemote(dir, remoteName, remoteURL, branch, sshKey string) error {
+	if remoteName == "" {
+		remoteName = defaultRemoteName
+	}
+	if branch == "" {
+		return errors.New("branch is required for push")
+	}
+
+	cmd := exec.Command("git", "push", "-u", remoteName, branch)
+	cmd.Dir = dir
+
+	useSSHKey := sshKey != "" && isSSHURL(remoteURL)
+	if useSSHKey {
+		keyFile, err := os.CreateTemp("", "git-ssh-key-*.pem")
+		if err != nil {
+			return fmt.Errorf("create temp ssh key file failed: %w", err)
+		}
+		keyPath := keyFile.Name()
+		// 立即关闭文件句柄，避免 Windows 占用；后续用 WriteFile 重新写入。
+		_ = keyFile.Close()
+		defer os.Remove(keyPath)
+
+		if err := os.WriteFile(keyPath, []byte(sshKey), 0600); err != nil {
+			return fmt.Errorf("write ssh key file failed: %w", err)
+		}
+
+		cmd.Env = append(os.Environ(), fmt.Sprintf("GIT_SSH_COMMAND=ssh -i %s %s", keyPath, sshStrictOptions))
+	}
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git push failed: %w (output: %s)", err, string(out))
 	}
 	return nil
 }
@@ -605,7 +712,43 @@ func ProjectSync(w http.ResponseWriter, r *http.Request) {
 		headHash = ""
 	}
 
-	log.Printf("[Projects] sync success: %s, workspace=%s, commit=%s", absPath, req.WorkspaceID, strings.TrimSpace(headHash))
+	pushed := false
+	message := "项目已同步，Git 仓库已更新"
+
+	// 若请求携带远程仓库信息，则设置 remote 并推送。
+	if req.RemoteURL != "" {
+		remoteName := req.RemoteName
+		if remoteName == "" {
+			remoteName = defaultRemoteName
+		}
+		if err := ensureGitRemote(absPath, remoteName, req.RemoteURL); err != nil {
+			WriteJSONError(w, http.StatusInternalServerError, 1, fmt.Sprintf("failed to configure remote: %v", err))
+			return
+		}
+
+		branch := req.RemoteBranch
+		if branch == "" {
+			// 未指定分支时优先使用当前分支，兜底使用 main。
+			if current, err := currentGitBranch(absPath); err == nil && current != "" {
+				branch = current
+			} else {
+				branch = "main"
+			}
+		}
+		if err := ensureLocalBranch(absPath, branch); err != nil {
+			WriteJSONError(w, http.StatusInternalServerError, 1, fmt.Sprintf("failed to prepare branch: %v", err))
+			return
+		}
+
+		if err := pushToRemote(absPath, remoteName, req.RemoteURL, branch, req.SSHKey); err != nil {
+			WriteJSONError(w, http.StatusInternalServerError, 1, fmt.Sprintf("failed to push: %v", err))
+			return
+		}
+		pushed = true
+		message = "项目已同步并推送至远程仓库"
+	}
+
+	log.Printf("[Projects] sync success: %s, workspace=%s, commit=%s, pushed=%v", absPath, req.WorkspaceID, strings.TrimSpace(headHash), pushed)
 
 	SetJSONHeader(w)
 	json.NewEncoder(w).Encode(map[string]any{
@@ -613,6 +756,7 @@ func ProjectSync(w http.ResponseWriter, r *http.Request) {
 		"path":        absPath,
 		"projectName": filepath.Base(absPath),
 		"commitHash":  strings.TrimSpace(headHash),
-		"message":     "项目已同步，Git 仓库已更新",
+		"pushed":      pushed,
+		"message":     message,
 	})
 }

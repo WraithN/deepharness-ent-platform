@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { FolderGit2, GitCompareArrows, Eye, RefreshCw, Loader2, Code2 } from 'lucide-react';
 import { projectApi, type ProjectCheckResponse } from '@/lib/project-api';
+import { repositoryApi } from '@/lib/repository-api';
+import { profileApi } from '@/lib/profile-api';
+import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { PreviewMode } from '@/components/chat/LivePreview';
+import type { WorkspaceRepository } from '@/types';
 
 interface ProjectCardProps {
   /** 工程根目录的绝对路径 */
@@ -26,6 +30,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
   const [loading, setLoading] = useState(true);
   const [checkFailed, setCheckFailed] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [workspaceRepos, setWorkspaceRepos] = useState<WorkspaceRepository[]>([]);
+  const [profileSSHKey, setProfileSSHKey] = useState<string>('');
+
+  const { membership } = useAuth();
+  const workspaceId = membership?.workspaceId ?? '';
 
   useEffect(() => {
     let cancelled = false;
@@ -50,10 +59,50 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
     };
   }, [path]);
 
+  // 预加载当前工作空间的仓库配置与用户 SSH Key，用于同步时匹配远程仓库。
+  useEffect(() => {
+    if (!workspaceId) return;
+    let cancelled = false;
+    repositoryApi
+      .list(workspaceId)
+      .then((repos) => {
+        if (!cancelled) setWorkspaceRepos(repos);
+      })
+      .catch((err) => {
+        console.error('[ProjectCard] failed to load workspace repos:', err);
+      });
+    profileApi
+      .get()
+      .then((profile) => {
+        if (!cancelled) setProfileSSHKey(profile.sshKey || '');
+      })
+      .catch((err) => {
+        console.error('[ProjectCard] failed to load user profile:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
   const handleSync = async () => {
+    if (!workspaceId) {
+      toast.error('未选择工作空间，无法同步到远程仓库');
+      return;
+    }
+
     setSyncing(true);
     try {
-      const result = await projectApi.sync({ path });
+      const projectName = checkResult?.projectName || path.split('/').pop() || path;
+      const matchedRepo = workspaceRepos.find((repo) => repo.name === projectName);
+
+      const syncReq: Parameters<typeof projectApi.sync>[0] = { path, workspaceId };
+      if (matchedRepo) {
+        syncReq.remoteUrl = matchedRepo.url;
+        syncReq.remoteBranch = matchedRepo.defaultBranch || 'main';
+        syncReq.sshKey = matchedRepo.sshKey || profileSSHKey;
+      }
+
+      const result = await projectApi.sync(syncReq);
       toast.success(result.message || '项目已同步到仓库');
     } catch (err) {
       console.error('[ProjectCard] sync failed:', err);

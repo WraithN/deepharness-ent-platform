@@ -37,6 +37,10 @@ export interface ProjectSyncRequest {
   path: string;
   workspaceId?: string;
   commitMsg?: string;
+  remoteUrl?: string;
+  remoteBranch?: string;
+  sshKey?: string;
+  remoteName?: string;
 }
 
 /** 同步工程响应 */
@@ -46,6 +50,7 @@ export interface ProjectSyncResponse {
   projectName: string;
   commitHash: string;
   message: string;
+  pushed?: boolean;
 }
 
 export const projectApi = {
