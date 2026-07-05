@@ -19,6 +19,15 @@ func ScanNullString(ns sql.NullString) string {
 	return ns.String
 }
 
+// ScanNullStringPtr 读取 Nullable 字符串字段，为空时返回 nil。
+func ScanNullStringPtr(ns sql.NullString) *string {
+	if !ns.Valid {
+		return nil
+	}
+	s := ns.String
+	return &s
+}
+
 // MarshalConfig 将任意对象序列化为 JSON 字符串，nil 时返回 NULL。
 func MarshalConfig(v any) (sql.NullString, error) {
 	if v == nil {

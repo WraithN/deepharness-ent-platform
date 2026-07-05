@@ -4,146 +4,233 @@ import (
 	"encoding/json"
 	"net/http"
 
+	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/identity"
 )
 
-var defaultService service.TeamService
+var (
+	defaultService     service.TeamService
+	defaultUserService identityservice.UserService
+)
 
 // Init 注入 TeamService 实现（MySQL 或 mock）。
 func Init(svc service.TeamService) {
 	defaultService = svc
 }
 
+// InitUserService 注入 UserService，用于角色校验。
+func InitUserService(svc identityservice.UserService) {
+	defaultUserService = svc
+}
+
+// currentUser 返回当前请求的用户 ID、是否为超级管理员以及是否已认证。
+func currentUser(r *http.Request) (userID string, isSuperAdmin bool, ok bool) {
+	userID, ok = middleware.UserIDFromContext(r.Context())
+	if !ok {
+		return "", false, false
+	}
+	if defaultUserService == nil {
+		return userID, false, true
+	}
+	user, err := defaultUserService.GetByID(userID)
+	if err != nil {
+		return userID, false, true
+	}
+	return userID, user.PlatformRole == identity.PlatformRoleSuperAdmin, true
+}
+
+// requireAuth 要求请求必须携带有效用户 ID。
+func requireAuth(w http.ResponseWriter, r *http.Request) (string, bool) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return "", false
+	}
+	return userID, true
+}
+
 // Skills 处理 GET /api/v1/team/skills 与 POST /api/v1/team/skills。
 func Skills(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	handler.SetJSONHeader(w)
 
 	switch r.Method {
 	case http.MethodGet:
 		skills, err := defaultService.ListSkills()
 		if err != nil {
-			http.Error(w, `{"code":1,"message":"failed to list skills"}`, http.StatusInternalServerError)
+			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list skills")
 			return
 		}
 		json.NewEncoder(w).Encode(skills)
 	case http.MethodPost:
 		var req service.CreateSkillRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"code":1,"message":"invalid request body"}`, http.StatusBadRequest)
+		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
 		if req.Name == "" {
-			http.Error(w, `{"code":1,"message":"name is required"}`, http.StatusBadRequest)
+			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
 			return
 		}
 		skill, err := defaultService.CreateSkill(req)
 		if err != nil {
-			http.Error(w, `{"code":1,"message":"failed to create skill"}`, http.StatusInternalServerError)
+			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to create skill")
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(skill)
 	default:
-		http.Error(w, `{"code":1,"message":"method not allowed"}`, http.StatusMethodNotAllowed)
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
 	}
 }
 
 // SkillByID 处理 PATCH /api/v1/team/skills/{id} 与 DELETE /api/v1/team/skills/{id}。
 func SkillByID(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	id := r.PathValue("id")
-	if id == "" {
-		http.Error(w, `{"code":1,"message":"missing skill id"}`, http.StatusBadRequest)
+	handler.SetJSONHeader(w)
+	id, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
 		return
 	}
 
 	switch r.Method {
 	case http.MethodPatch:
 		var req service.UpdateSkillRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"code":1,"message":"invalid request body"}`, http.StatusBadRequest)
+		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
 		skill, err := defaultService.UpdateSkill(id, req)
 		if err != nil {
-			http.Error(w, `{"code":1,"message":"failed to update skill"}`, http.StatusInternalServerError)
+			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to update skill")
 			return
 		}
 		json.NewEncoder(w).Encode(skill)
 	case http.MethodDelete:
 		if err := defaultService.DeleteSkill(id); err != nil {
-			http.Error(w, `{"code":1,"message":"failed to delete skill"}`, http.StatusInternalServerError)
+			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to delete skill")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		http.Error(w, `{"code":1,"message":"method not allowed"}`, http.StatusMethodNotAllowed)
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
 	}
 }
 
 // Prompts 处理 GET /api/v1/team/prompts 与 POST /api/v1/team/prompts。
 func Prompts(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	handler.SetJSONHeader(w)
 
 	switch r.Method {
 	case http.MethodGet:
-		prompts, err := defaultService.ListPrompts()
+		userID, isSuperAdmin, ok := currentUser(r)
+		if !ok {
+			handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+			return
+		}
+		prompts, err := defaultService.ListPromptsVisibleTo(userID, isSuperAdmin)
 		if err != nil {
-			http.Error(w, `{"code":1,"message":"failed to list prompts"}`, http.StatusInternalServerError)
+			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list prompts")
 			return
 		}
 		json.NewEncoder(w).Encode(prompts)
 	case http.MethodPost:
+		userID, ok := requireAuth(w, r)
+		if !ok {
+			return
+		}
 		var req service.CreatePromptRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"code":1,"message":"invalid request body"}`, http.StatusBadRequest)
+		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
 		if req.Name == "" || req.Content == "" {
-			http.Error(w, `{"code":1,"message":"name and content are required"}`, http.StatusBadRequest)
+			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name and content are required")
 			return
 		}
-		prompt, err := defaultService.CreatePrompt(req)
+		prompt, err := defaultService.CreatePrompt(req, userID)
 		if err != nil {
-			http.Error(w, `{"code":1,"message":"failed to create prompt"}`, http.StatusInternalServerError)
+			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to create prompt")
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(prompt)
 	default:
-		http.Error(w, `{"code":1,"message":"method not allowed"}`, http.StatusMethodNotAllowed)
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
 	}
 }
 
 // PromptByID 处理 PATCH /api/v1/team/prompts/{id} 与 DELETE /api/v1/team/prompts/{id}。
 func PromptByID(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	id := r.PathValue("id")
-	if id == "" {
-		http.Error(w, `{"code":1,"message":"missing prompt id"}`, http.StatusBadRequest)
+	handler.SetJSONHeader(w)
+	id, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
 		return
 	}
 
 	switch r.Method {
 	case http.MethodPatch:
-		var req service.UpdatePromptRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"code":1,"message":"invalid request body"}`, http.StatusBadRequest)
+		userID, isSuperAdmin, authOk := currentUser(r)
+		if !authOk {
+			handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
 			return
 		}
-		prompt, err := defaultService.UpdatePrompt(id, req)
+		var req service.UpdatePromptRequest
+		if !handler.DecodeJSONBody(w, r, &req) {
+			return
+		}
+		prompt, err := defaultService.UpdatePrompt(id, req, userID, isSuperAdmin)
 		if err != nil {
-			http.Error(w, `{"code":1,"message":"failed to update prompt"}`, http.StatusInternalServerError)
+			handler.HandleServiceError(w, err, "prompt not found", "failed to update prompt")
 			return
 		}
 		json.NewEncoder(w).Encode(prompt)
 	case http.MethodDelete:
-		if err := defaultService.DeletePrompt(id); err != nil {
-			http.Error(w, `{"code":1,"message":"failed to delete prompt"}`, http.StatusInternalServerError)
+		userID, isSuperAdmin, authOk := currentUser(r)
+		if !authOk {
+			handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+			return
+		}
+		if err := defaultService.DeletePrompt(id, userID, isSuperAdmin); err != nil {
+			handler.HandleServiceError(w, err, "prompt not found", "failed to delete prompt")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		http.Error(w, `{"code":1,"message":"method not allowed"}`, http.StatusMethodNotAllowed)
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
 	}
+}
+
+// ReviewPrompt 处理 POST /api/v1/team/prompts/{id}/review。
+func ReviewPrompt(w http.ResponseWriter, r *http.Request) {
+	handler.SetJSONHeader(w)
+	id, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+
+	_, isSuperAdmin, authOk := currentUser(r)
+	if !authOk {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return
+	}
+	if !isSuperAdmin {
+		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		return
+	}
+
+	var req service.ReviewPromptRequest
+	if !handler.DecodeJSONBody(w, r, &req) {
+		return
+	}
+	userID, _ := middleware.UserIDFromContext(r.Context())
+	prompt, err := defaultService.ReviewPrompt(id, req.Action, userID)
+	if err != nil {
+		handler.HandleServiceError(w, err, "prompt not found", "failed to review prompt")
+		return
+	}
+	json.NewEncoder(w).Encode(prompt)
 }

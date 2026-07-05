@@ -30,14 +30,46 @@ export interface Skill {
   phase?: string;
 }
 
+export type PromptStatus = 'pending_review' | 'on_shelf' | 'off_shelf' | 'rejected';
+
 export interface Prompt {
   id: string;
   name: string;
   description: string;
   useCase: string;
   usageCount: number;
-  addedToSpace: boolean;
+  addedToSpace?: boolean;
   content?: string;
+  status?: PromptStatus;
+  createdBy?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PromptCategory {
+  id: string;
+  workspaceId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspacePrompt {
+  id: string;
+  workspaceId: string;
+  libraryPromptId?: string;
+  categories: PromptCategory[];
+  name: string;
+  description: string;
+  content: string;
+  useCase: string;
+  usageCount: number;
+  isCustom: boolean;
+  addedToSpace: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type RequirementStatus = 'backlog' | 'todo' | 'in-progress' | 'done';
