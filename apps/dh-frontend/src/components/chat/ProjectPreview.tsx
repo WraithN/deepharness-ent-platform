@@ -32,8 +32,8 @@ export const ProjectPreview: React.FC<ProjectPreviewProps> = ({ path, mode, onCl
   const projectName = path.split('/').pop() || path;
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 bg-card shrink-0">
+    <div className="flex flex-col h-full bg-background animate-in fade-in duration-300">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 bg-card shrink-0 animate-in fade-in slide-in-from-top-2 duration-300">
         <div className="flex items-center gap-2 min-w-0">
           <Folder className="h-4 w-4 text-primary shrink-0" />
           <h3 className="text-sm font-medium truncate" title={path}>
@@ -111,7 +111,7 @@ const FileTreePane: React.FC<{ path: string }> = ({ path }) => {
 
   return (
     <div className="flex h-full">
-      <div className="w-64 shrink-0 border-r border-border/50 overflow-auto p-2 bg-card/50">
+      <div className="w-64 shrink-0 border-r border-border/50 overflow-auto p-2 bg-card/50 animate-in fade-in duration-500">
         {tree.length === 0 ? (
           <p className="text-xs text-muted-foreground p-2">工程目录为空</p>
         ) : (
@@ -134,7 +134,7 @@ const FileTreePane: React.FC<{ path: string }> = ({ path }) => {
                 key={tab.path}
                 onClick={() => setSelectedFile(tab)}
                 className={cn(
-                  'flex items-center gap-1.5 px-3 py-2 text-xs whitespace-nowrap border-b-2 transition-colors',
+                  'flex items-center gap-1.5 px-3 py-2 text-xs whitespace-nowrap border-b-2 transition-all duration-200 hover:bg-accent/50',
                   selectedFile?.path === tab.path
                     ? 'border-primary text-foreground bg-background'
                     : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -193,22 +193,22 @@ const FileTreeNode: React.FC<{
     <div className="w-full">
       <div
         className={cn(
-          'flex items-center gap-1.5 py-1.5 px-2 cursor-pointer hover:bg-accent hover:text-accent-foreground text-sm rounded-md transition-colors',
-          isSelected && 'bg-primary/10 text-primary font-medium'
+          'group flex items-center gap-1.5 py-1.5 px-2 cursor-pointer hover:bg-accent hover:text-accent-foreground text-sm rounded-md transition-all duration-200 hover:translate-x-1',
+          isSelected && 'bg-primary/10 text-primary font-medium border-l-2 border-primary'
         )}
         style={{ paddingLeft: `${paddingLeft}px` }}
         onClick={handleClick}
       >
         {isFolder ? (
-          isOpen ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+          <ChevronRight className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-200', isOpen && 'rotate-90')} />
         ) : (
           <span className="w-3 shrink-0" />
         )}
-        <span className={cn('shrink-0', color)}>{icon}</span>
+        <span className={cn('shrink-0 transition-transform duration-200 group-hover:scale-110', color)}>{icon}</span>
         <span className="truncate">{node.name}</span>
       </div>
       {isFolder && isOpen && node.children && node.children.length > 0 && (
-        <div>
+        <div className="animate-in fade-in slide-in-from-left-2 duration-200">
           {node.children.map((child) => (
             <FileTreeNode
               key={child.path}
@@ -276,7 +276,7 @@ const FileContentViewer: React.FC<{
     : `\`\`\`${content.language || ''}\n${content.content}\n\`\`\``;
 
   return (
-    <div className="p-4">
+    <div className="p-4 animate-in fade-in zoom-in-95 duration-300">
       <MarkdownView content={displayContent} collapsible={false} />
     </div>
   );
