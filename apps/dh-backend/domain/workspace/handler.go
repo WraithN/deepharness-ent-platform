@@ -22,7 +22,7 @@ func Init(svc service.WorkspaceService) {
 	defaultService = svc
 }
 
-// InitUserService 注入 UserService，用于校验超级管理员权限。
+// InitUserService 注入 UserService，用于工作空间相关权限校验。
 func InitUserService(svc identityservice.UserService) {
 	defaultUserService = svc
 }

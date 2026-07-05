@@ -53,8 +53,13 @@ CREATE TABLE IF NOT EXISTS team_prompts (
     use_case VARCHAR(100) NOT NULL DEFAULT '通用',
     usage_count INT NOT NULL DEFAULT 0,
     added_to_space BOOLEAN NOT NULL DEFAULT FALSE,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending_review',
+    created_by VARCHAR(36),
+    reviewed_by VARCHAR(36),
+    reviewed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_team_prompts_status CHECK (status IN ('pending_review', 'on_shelf', 'off_shelf', 'rejected'))
 );
 
 COMMENT ON TABLE team_prompts IS '团队提示词';
@@ -64,9 +69,15 @@ COMMENT ON COLUMN team_prompts.content IS '提示词内容（插入输入框时�
 COMMENT ON COLUMN team_prompts.use_case IS '使用场景分类';
 COMMENT ON COLUMN team_prompts.usage_count IS '使用次数';
 COMMENT ON COLUMN team_prompts.added_to_space IS '是否已添加到空间常用列表';
+COMMENT ON COLUMN team_prompts.status IS '提示词状态：pending_review/on_shelf/off_shelf/rejected';
+COMMENT ON COLUMN team_prompts.created_by IS '创建人 user id';
+COMMENT ON COLUMN team_prompts.reviewed_by IS '审核人 user id';
+COMMENT ON COLUMN team_prompts.reviewed_at IS '审核时间';
 
 CREATE INDEX IF NOT EXISTS idx_use_case ON team_prompts (use_case);
 CREATE INDEX IF NOT EXISTS idx_added_to_space ON team_prompts (added_to_space);
+CREATE INDEX IF NOT EXISTS idx_team_prompts_status ON team_prompts (status);
+CREATE INDEX IF NOT EXISTS idx_team_prompts_created_by ON team_prompts (created_by);
 
 DROP TRIGGER IF EXISTS trigger_team_prompts_updated_at ON team_prompts;
 CREATE TRIGGER trigger_team_prompts_updated_at

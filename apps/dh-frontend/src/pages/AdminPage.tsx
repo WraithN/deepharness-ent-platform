@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -15,9 +15,10 @@ import { Search, Plus, Save, Power, Bot, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { agentConfigApi } from '@/lib/agent-config-api';
 import { workspaceApi } from '@/lib/workspace-api';
+import { teamApi } from '@/lib/team-api';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatDateTime } from '@/lib/utils';
-import type { AgentType, Workspace } from '@/types';
+import type { AgentType, Workspace, Prompt, PromptStatus } from '@/types';
 
 // 空间管理已对接真实 API，不再使用 mock 数据
 export const AdminPage: React.FC = () => {
@@ -170,6 +171,35 @@ export const AdminPage: React.FC = () => {
     { id: 3, name: '汇率转换', type: '工具类', status: 'disabled' },
   ]);
 
+  const [prompts, setPrompts] = useState<Prompt[]>([]);
+  const [promptSearchTerm, setPromptSearchTerm] = useState('');
+  const [promptStatusFilter, setPromptStatusFilter] = useState<PromptStatus | 'all'>('all');
+
+  const loadPrompts = useCallback(async () => {
+    try {
+      const list = await teamApi.listPrompts();
+      setPrompts(list);
+    } catch (err) {
+      console.error('Failed to load prompts:', err);
+      toast.error('加载提示词失败');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (location.pathname === '/admin/prompts') {
+      loadPrompts();
+    }
+  }, [location.pathname, loadPrompts]);
+
+  const handleReviewPrompt = async (id: string, action: 'approve' | 'reject' | 'unshelf') => {
+    try {
+      await teamApi.reviewPrompt(id, action);
+      toast.success('审核操作已生效');
+      loadPrompts();
+    } catch {
+      toast.error('审核操作失败');
+    }
+  };
   return (
     <div className="space-y-6 pb-12">
       {location.pathname === '/admin/spaces' && (
@@ -299,38 +329,90 @@ export const AdminPage: React.FC = () => {
         </Card>
       )}
 
-      {(location.pathname === '/admin/skills' || location.pathname === '/admin/prompts') && (
+      {location.pathname === '/admin/prompts' && (
         <Card className="soft-shadow border-none">
           <CardHeader className="flex flex-row items-center justify-between pb-2 border-b">
             <div>
-              <CardTitle className="text-base">{getTitle()}列表</CardTitle>
+              <CardTitle className="text-base">提示词列表</CardTitle>
             </div>
             <div className="flex gap-2">
               <div className="relative">
                 <Search className="h-4 w-4 absolute left-2 top-2.5 text-muted-foreground" />
-                <Input placeholder="搜索名称..." className="pl-8 w-[150px] sm:w-[200px]" />
+                <Input
+                  placeholder="搜索名称..."
+                  className="pl-8 w-[150px] sm:w-[200px]"
+                  value={promptSearchTerm}
+                  onChange={(e) => setPromptSearchTerm(e.target.value)}
+                />
               </div>
-              <Select defaultValue="all">
+              <Select value={promptStatusFilter} onValueChange={(v) => setPromptStatusFilter(v as PromptStatus | 'all')}>
                 <SelectTrigger className="w-[120px] h-9">
                   <SelectValue placeholder="所有状态" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">所有状态</SelectItem>
-                  <SelectItem value="published">已上架</SelectItem>
-                  <SelectItem value="reviewing">待审核</SelectItem>
-                  <SelectItem value="disabled">已禁用</SelectItem>
+                  <SelectItem value="on_shelf">已上架</SelectItem>
+                  <SelectItem value="pending_review">审核中</SelectItem>
+                  <SelectItem value="off_shelf">已下架</SelectItem>
+                  <SelectItem value="rejected">已拒绝</SelectItem>
                 </SelectContent>
               </Select>
-              <Select defaultValue="all">
-                <SelectTrigger className="w-[120px] h-9">
-                  <SelectValue placeholder="所有类型" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">所有类型</SelectItem>
-                  <SelectItem value="model">模型类</SelectItem>
-                  <SelectItem value="tool">工具类</SelectItem>
-                </SelectContent>
-              </Select>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>名称</TableHead>
+                  <TableHead>场景</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {prompts
+                  .filter(p => promptStatusFilter === 'all' || p.status === promptStatusFilter)
+                  .filter(p =>
+                    p.name.toLowerCase().includes(promptSearchTerm.toLowerCase()) ||
+                    (p.description || '').toLowerCase().includes(promptSearchTerm.toLowerCase())
+                  )
+                  .map(p => {
+                    const status = p.status || 'on_shelf';
+                    return (
+                      <TableRow key={p.id}>
+                        <TableCell className="font-medium">{p.name}</TableCell>
+                        <TableCell>{p.useCase}</TableCell>
+                        <TableCell>
+                          {status === 'on_shelf' && <Badge className="bg-green-100 text-green-700 hover:bg-green-100">已上架</Badge>}
+                          {status === 'pending_review' && <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">审核中</Badge>}
+                          {status === 'off_shelf' && <Badge className="bg-muted text-muted-foreground hover:bg-muted">已下架</Badge>}
+                          {status === 'rejected' && <Badge className="bg-red-100 text-red-700 hover:bg-red-100">已拒绝</Badge>}
+                        </TableCell>
+                        <TableCell className="text-right space-x-2">
+                          {status === 'pending_review' && (
+                            <Button variant="outline" size="sm" onClick={() => handleReviewPrompt(p.id, 'approve')}>通过审核</Button>
+                          )}
+                          {status === 'on_shelf' && (
+                            <Button variant="outline" size="sm" onClick={() => handleReviewPrompt(p.id, 'unshelf')}>下架</Button>
+                          )}
+                          {(status === 'off_shelf' || status === 'rejected') && (
+                            <Button variant="outline" size="sm" onClick={() => handleReviewPrompt(p.id, 'approve')}>重新上架</Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {location.pathname === '/admin/skills' && (
+        <Card className="soft-shadow border-none">
+          <CardHeader className="flex flex-row items-center justify-between pb-2 border-b">
+            <div>
+              <CardTitle className="text-base">技能列表</CardTitle>
             </div>
           </CardHeader>
           <CardContent className="p-0">

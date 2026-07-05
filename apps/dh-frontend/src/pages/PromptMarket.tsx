@@ -1,84 +1,129 @@
-import React, { useState, useEffect } from 'react';
-import { Search, Copy, CheckCircle, Plus, Sparkles, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Search, Copy, CheckCircle, Plus, Sparkles, Loader2, Eye, EyeOff, XCircle, Check } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { teamApi } from '@/lib/team-api';
+import { workspaceApi } from '@/lib/workspace-api';
 import { toast } from 'sonner';
-import type { Prompt } from '@/types';
+import type { Prompt, PromptStatus } from '@/types';
+import { useAuth } from '@/contexts/AuthContext';
+import { PLATFORM_ROLE, SPACE_ROLE } from '@/lib/role-constants';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 
 const CATEGORIES = ['全部', '研发', '测试', '产品', '设计'];
 
+const PROMPT_STATUS_LABEL: Record<PromptStatus, string> = {
+  pending_review: '审核中',
+  on_shelf: '已上架',
+  off_shelf: '已下架',
+  rejected: '已拒绝',
+};
+
+const PROMPT_STATUS_VARIANT: Record<PromptStatus, 'secondary' | 'default' | 'outline' | 'destructive'> = {
+  pending_review: 'secondary',
+  on_shelf: 'default',
+  off_shelf: 'outline',
+  rejected: 'destructive',
+};
+
 export const PromptMarket: React.FC = () => {
+  const { user, membership } = useAuth();
+  const isTenantAdmin = user?.platformRole === PLATFORM_ROLE.TENANT_ADMIN || user?.platformRole === PLATFORM_ROLE.SUPER_ADMIN;
+  const isSuperAdmin = user?.platformRole === PLATFORM_ROLE.SUPER_ADMIN;
+  const isSpaceAdmin = membership?.spaceRole === SPACE_ROLE.SPACE_ADMIN;
+  const canAddToWorkspace = isTenantAdmin || isSpaceAdmin;
+  const currentWorkspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('全部');
   const [prompts, setPrompts] = useState<Prompt[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    teamApi.listPrompts()
-      .then(setPrompts)
-      .catch(err => {
-        console.error('Failed to load prompts:', err);
-        toast.error('加载提示词失败');
-      });
-  }, []);
-
-  // AI Create state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createPrompt, setCreatePrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
 
+  const loadPrompts = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = await teamApi.listPrompts();
+      setPrompts(list);
+    } catch (err) {
+      console.error('Failed to load prompts:', err);
+      toast.error('加载提示词失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPrompts();
+  }, [loadPrompts]);
+
   const filteredPrompts = prompts.filter(prompt => {
-    const matchSearch = prompt.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    const matchSearch = prompt.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                        prompt.description.toLowerCase().includes(searchTerm.toLowerCase());
-    
+
     const matchCategory = selectedCategory === '全部' || prompt.useCase === selectedCategory || (
         (selectedCategory === '研发' && ['代码审查', '代码生成', 'Code'].includes(prompt.useCase)) ||
         (selectedCategory === '测试' && ['测试编写', 'Testing'].includes(prompt.useCase)) ||
         (selectedCategory === '产品' && ['需求分析', 'Product'].includes(prompt.useCase)) ||
         (selectedCategory === '设计' && ['UI优化', 'Design'].includes(prompt.useCase))
     );
-    
+
     return matchSearch && (selectedCategory === '全部' || prompt.useCase.includes(selectedCategory) || matchCategory);
   });
-
-  const handleAdd = (id: string) => {
-    teamApi.updatePromptAdded(id, true)
-      .then(() => {
-        setPrompts(prompts.map(p => p.id === id ? { ...p, addedToSpace: true } : p));
-        toast.success('提示词已添加到空间常用列表');
-      })
-      .catch(() => toast.error('添加失败'));
-  };
 
   const handleCopy = (content: string) => {
     navigator.clipboard.writeText(content).then(() => toast.success('提示词内容已复制到剪贴板'));
   };
 
-  const handleCreatePrompt = () => {
+  const handleAddToWorkspace = async (prompt: Prompt) => {
+    if (!prompt.id) return;
+    try {
+      await workspaceApi.addPrompt(currentWorkspaceId, prompt.id);
+      setPrompts(prompts.map(p => p.id === prompt.id ? { ...p, addedToSpace: true } : p));
+      toast.success('提示词已添加到当前空间');
+    } catch {
+      toast.error('添加失败');
+    }
+  };
+
+  const handleReview = async (id: string, action: 'approve' | 'reject' | 'unshelf') => {
+    try {
+      await teamApi.reviewPrompt(id, action);
+      toast.success('审核操作已生效');
+      loadPrompts();
+    } catch {
+      toast.error('审核操作失败');
+    }
+  };
+
+  const handleCreatePrompt = async () => {
     if (!createPrompt.trim()) {
       toast.error('请输入提示词描述');
       return;
     }
     setIsGenerating(true);
-    teamApi.createPrompt({
-      name: createPrompt.trim().slice(0, 30) || 'AI 生成自定义提示词',
-      description: createPrompt.trim(),
-      content: createPrompt.trim(),
-      useCase: selectedCategory !== '全部' ? selectedCategory : '研发',
-    }).then(prompt => {
+    try {
+      const prompt = await teamApi.createPrompt({
+        name: createPrompt.trim().slice(0, 30) || 'AI 生成自定义提示词',
+        description: createPrompt.trim(),
+        content: createPrompt.trim(),
+        useCase: selectedCategory !== '全部' ? selectedCategory : '研发',
+      });
       setPrompts([prompt, ...prompts]);
       setIsGenerating(false);
       setIsCreateOpen(false);
       setCreatePrompt('');
-      toast.success('自定义提示词生成成功并已添加');
-    }).catch(() => {
+      toast.success('自定义提示词已提交审核，仅你和超管可见');
+    } catch {
       setIsGenerating(false);
       toast.error('提示词生成失败');
-    });
+    }
   };
 
   return (
@@ -121,7 +166,7 @@ export const PromptMarket: React.FC = () => {
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>取消</Button>
                 <Button onClick={handleCreatePrompt} disabled={isGenerating}>
-                  {isGenerating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> 生成中...</> : '生成并添加'}
+                  {isGenerating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> 生成中...</> : '提交审核'}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -142,53 +187,89 @@ export const PromptMarket: React.FC = () => {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        {filteredPrompts.map(prompt => (
-          <Card key={prompt.id} className="flex flex-col h-full soft-shadow border border-border/50 hover:border-primary/20 transition-colors">
-            <CardHeader>
-              <div className="flex justify-between items-start mb-2">
-                <Badge variant="secondary">{prompt.useCase}</Badge>
-                {prompt.addedToSpace && (
-                  <Badge variant="outline" className="text-primary border-primary">
-                    <CheckCircle className="mr-1 h-3 w-3" /> 已添加
-                  </Badge>
-                )}
-              </div>
-              <CardTitle className="line-clamp-1">{prompt.name}</CardTitle>
-              <CardDescription className="line-clamp-2 min-h-[2.5rem]">
-                {prompt.description}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex-1">
-              <div className="text-sm text-muted-foreground bg-muted/30 p-2 rounded-md">
-                使用次数: {(prompt.usageCount / 1000).toFixed(1)}k
-              </div>
-            </CardContent>
-            <CardFooter className="shrink-0 pt-0 gap-2">
-              <Button 
-                variant="outline" 
-                className="flex-1"
-                onClick={() => handleCopy(prompt.content || prompt.description)}
-              >
-                <Copy className="mr-2 h-4 w-4" /> 复制
-              </Button>
-              <Button 
-                variant={prompt.addedToSpace ? "secondary" : "default"} 
-                className="flex-1"
-                disabled={prompt.addedToSpace}
-                onClick={() => handleAdd(prompt.id)}
-              >
-                {prompt.addedToSpace ? '已添加' : '添加到空间'}
-              </Button>
-            </CardFooter>
-          </Card>
-        ))}
-        {filteredPrompts.length === 0 && (
-          <div className="col-span-full py-12 text-center text-muted-foreground">
-            没有找到匹配的提示词
-          </div>
-        )}
-      </div>
+      {loading ? (
+        <div className="py-12 text-center text-muted-foreground">加载中...</div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          {filteredPrompts.map(prompt => {
+            const status = prompt.status || 'on_shelf';
+            const isOwner = user?.id === prompt.createdBy;
+            const showReviewActions = isSuperAdmin && (status === 'pending_review' || status === 'on_shelf' || status === 'off_shelf' || status === 'rejected');
+            const canEdit = isOwner && (status === 'pending_review' || status === 'rejected');
+
+            return (
+              <Card key={prompt.id} className="flex flex-col h-full soft-shadow border border-border/50 hover:border-primary/20 transition-colors">
+                <CardHeader>
+                  <div className="flex justify-between items-start mb-2 gap-2">
+                    <Badge variant="secondary">{prompt.useCase}</Badge>
+                    <Badge variant={PROMPT_STATUS_VARIANT[status]}>
+                      {PROMPT_STATUS_LABEL[status]}
+                    </Badge>
+                  </div>
+                  <CardTitle className="line-clamp-1">{prompt.name}</CardTitle>
+                  <CardDescription className="line-clamp-2 min-h-[2.5rem]">
+                    {prompt.description}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex-1">
+                  <div className="text-sm text-muted-foreground bg-muted/30 p-2 rounded-md">
+                    使用次数: {(prompt.usageCount / 1000).toFixed(1)}k
+                  </div>
+                </CardContent>
+                <CardFooter className="shrink-0 pt-0 gap-2 flex-wrap">
+                  <Button 
+                    variant="outline" 
+                    className="flex-1"
+                    onClick={() => handleCopy(prompt.content || prompt.description)}
+                  >
+                    <Copy className="mr-2 h-4 w-4" /> 复制
+                  </Button>
+                  {canAddToWorkspace && status === 'on_shelf' && (
+                    <Button 
+                      variant={prompt.addedToSpace ? "secondary" : "default"} 
+                      className="flex-1"
+                      disabled={prompt.addedToSpace}
+                      onClick={() => handleAddToWorkspace(prompt)}
+                    >
+                      {prompt.addedToSpace ? '已添加' : '添加到空间'}
+                    </Button>
+                  )}
+                  {showReviewActions && status === 'pending_review' && (
+                    <>
+                      <Button variant="default" size="sm" onClick={() => handleReview(prompt.id, 'approve')}>
+                        <Check className="mr-1 h-3 w-3" /> 通过
+                      </Button>
+                      <Button variant="destructive" size="sm" onClick={() => handleReview(prompt.id, 'reject')}>
+                        <XCircle className="mr-1 h-3 w-3" /> 拒绝
+                      </Button>
+                    </>
+                  )}
+                  {showReviewActions && status === 'on_shelf' && (
+                    <Button variant="outline" size="sm" onClick={() => handleReview(prompt.id, 'unshelf')}>
+                      <EyeOff className="mr-1 h-3 w-3" /> 下架
+                    </Button>
+                  )}
+                  {showReviewActions && (status === 'off_shelf' || status === 'rejected') && (
+                    <Button variant="outline" size="sm" onClick={() => handleReview(prompt.id, 'approve')}>
+                      <Eye className="mr-1 h-3 w-3" /> 重新上架
+                    </Button>
+                  )}
+                  {canEdit && (
+                    <Button variant="ghost" size="sm" onClick={() => toast.info('编辑功能请在个人中心或 Admin 后台操作')}>
+                      编辑
+                    </Button>
+                  )}
+                </CardFooter>
+              </Card>
+            );
+          })}
+          {filteredPrompts.length === 0 && (
+            <div className="col-span-full py-12 text-center text-muted-foreground">
+              没有找到匹配的提示词
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

@@ -20,11 +20,11 @@ import { workspaceApi } from '@/lib/workspace-api';
 import { repositoryApi } from '@/lib/repository-api';
 import { agentConfigApi } from '@/lib/agent-config-api';
 import { toast } from 'sonner';
-import type { Skill, Prompt, Workspace, WorkspaceMember, WorkitemProject, WorkspaceStandard, WorkspaceCICD, WorkspaceRepository, SettingsConfig, WorkspaceAgentConfig, AvailableAgent } from '@/types';
+import type { Skill, Prompt, WorkspacePrompt, PromptCategory, Workspace, WorkspaceMember, WorkitemProject, WorkspaceStandard, WorkspaceCICD, WorkspaceRepository, SettingsConfig, WorkspaceAgentConfig } from '@/types';
 import { useSearchParams } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useAuth } from '@/contexts/AuthContext';
-import { SPACE_ROLE, SUB_ROLE, getSubRoleLabel } from '@/lib/role-constants';
+import { PLATFORM_ROLE, SPACE_ROLE, SUB_ROLE, getSubRoleLabel } from '@/lib/role-constants';
 import { formatDateTime } from '@/lib/utils';
 
 // 工作空间设置的初始空配置，真实数据由 useEffect 从 workspaceApi 加载填充。
@@ -50,6 +50,12 @@ const BUILTIN_MODELS: Record<string, string[]> = {
   'cursor-agent': ['gpt-4o', 'deepseek-v3'],
   'codex': ['gpt-4o', 'gpt-4-turbo'],
 };
+
+// 未分类提示词的默认展示名称
+const UNCATEGORIZED_NAME = '未分类';
+
+// 空间提示词每页数量
+const PROMPT_PAGE_SIZE = 8;
 
 interface AgentConfigCardProps {
   config: WorkspaceAgentConfig;
@@ -236,7 +242,7 @@ export const Settings: React.FC = () => {
 
   const { canEditSettings } = usePermissions();
   const isReadOnly = !canEditSettings;
-  const { membership } = useAuth();
+  const { user, membership } = useAuth();
   const workspaceId = membership?.workspaceId ?? '';
 
   useEffect(() => {
@@ -247,9 +253,17 @@ export const Settings: React.FC = () => {
   const [settings, setSettings] = useState<SettingsConfig>(DEFAULT_SETTINGS);
   const [searchTerm, setSearchTerm] = useState('');
   const [promptSearchTerm, setPromptSearchTerm] = useState('');
+  const [promptCategories, setPromptCategories] = useState<PromptCategory[]>([]);
+  const [selectedPromptCategory, setSelectedPromptCategory] = useState<string>('全部');
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [promptPage, setPromptPage] = useState(1);
+  const [promptDetailOpen, setPromptDetailOpen] = useState(false);
+  const [selectedPrompt, setSelectedPrompt] = useState<WorkspacePrompt | null>(null);
 
   const [skills, setSkills] = useState<Skill[]>([]);
-  const [prompts, setPrompts] = useState<Prompt[]>([]);
+  const [prompts, setPrompts] = useState<WorkspacePrompt[]>([]);
+  const [marketPrompts, setMarketPrompts] = useState<Prompt[]>([]);
+  const [marketPromptsLoading, setMarketPromptsLoading] = useState(false);
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([]);
@@ -265,19 +279,60 @@ export const Settings: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([teamApi.listSkills(), teamApi.listPrompts()])
-      .then(([loadedSkills, loadedPrompts]) => {
+    teamApi.listSkills()
+      .then(loadedSkills => {
         if (cancelled) return;
         setSkills(loadedSkills);
-        setPrompts(loadedPrompts);
       })
       .catch(err => {
         if (cancelled) return;
-        console.error('Failed to load team skills/prompts:', err);
-        toast.error('加载团队技能/提示词失败');
+        console.error('Failed to load team skills:', err);
+        toast.error('加载团队技能失败');
       });
     return () => { cancelled = true; };
   }, []);
+
+  const loadWorkspacePrompts = async (wsId: string) => {
+    try {
+      const loadedPrompts = await workspaceApi.listPrompts(wsId);
+      setPrompts(loadedPrompts);
+    } catch (err) {
+      console.error('Failed to load workspace prompts:', err);
+      toast.error('加载空间提示词失败');
+    }
+  };
+
+  const loadPromptCategories = async (wsId: string) => {
+    try {
+      const loadedCategories = await workspaceApi.listPromptCategories(wsId);
+      setPromptCategories(loadedCategories);
+    } catch (err) {
+      console.error('Failed to load prompt categories:', err);
+      toast.error('加载提示词分类失败');
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    Promise.all([
+      workspaceApi.listPrompts(wsId),
+      workspaceApi.listPromptCategories(wsId),
+    ]).then(([loadedPrompts, loadedCategories]) => {
+      if (cancelled) return;
+      setPrompts(loadedPrompts);
+      setPromptCategories(loadedCategories);
+    }).catch(err => {
+      if (cancelled) return;
+      console.error('Failed to load workspace prompts or categories:', err);
+      toast.error('加载空间提示词失败');
+    });
+    return () => { cancelled = true; };
+  }, [membership?.workspaceId]);
+
+  useEffect(() => {
+    setPromptPage(1);
+  }, [promptSearchTerm, selectedPromptCategory]);
 
   useEffect(() => {
     let cancelled = false;
@@ -349,17 +404,16 @@ export const Settings: React.FC = () => {
   const [createSkillPrompt, setCreateSkillPrompt] = useState('');
   const [isGeneratingSkill, setIsGeneratingSkill] = useState(false);
 
-  const [createPromptOpen, setCreatePromptOpen] = useState(false);
-  const [createPromptDesc, setCreatePromptDesc] = useState('');
-  const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
+  const isTenantAdmin = user?.platformRole === PLATFORM_ROLE.TENANT_ADMIN || user?.platformRole === PLATFORM_ROLE.SUPER_ADMIN;
+  const isSpaceAdmin = membership?.spaceRole === SPACE_ROLE.SPACE_ADMIN;
+  const canManageWorkspacePrompts = isTenantAdmin || isSpaceAdmin;
 
   const [promptMarketOpen, setPromptMarketOpen] = useState(false);
   const [promptMarketSearch, setPromptMarketSearch] = useState('');
   const [promptMarketCategory, setPromptMarketCategory] = useState('全部');
-  const [selectedPromptIds, setSelectedPromptIds] = useState<string[]>([]);
 
   const skillCategories = ['全部', ...Array.from(new Set(skills.map(s => s.category)))];
-  const promptCategories = ['全部', ...Array.from(new Set(prompts.map(p => p.useCase)))];
+  const marketPromptCategories = ['全部', ...Array.from(new Set(marketPrompts.map(p => p.useCase)))];
 
   const filteredSkills = skills.filter(s => {
     const matchSearch = s.name.toLowerCase().includes(skillSearch.toLowerCase()) || s.description.toLowerCase().includes(skillSearch.toLowerCase());
@@ -367,7 +421,125 @@ export const Settings: React.FC = () => {
     return matchSearch && matchCategory;
   });
 
-  const filteredPromptsMarket = prompts.filter(p => {
+  const openPromptMarket = async () => {
+    setPromptMarketOpen(true);
+    setMarketPromptsLoading(true);
+    try {
+      const list = await teamApi.listPrompts();
+      const existingIds = new Set(prompts.map(p => p.libraryPromptId).filter(Boolean));
+      setMarketPrompts(list.filter(p => p.status === 'on_shelf' && !existingIds.has(p.id)));
+    } catch (err) {
+      console.error('Failed to load market prompts:', err);
+      toast.error('加载提示词市场失败');
+    } finally {
+      setMarketPromptsLoading(false);
+    }
+  };
+
+  const handleAddMarketPrompt = async (promptId: string) => {
+    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    try {
+      const added = await workspaceApi.addPrompt(wsId, promptId);
+      setPrompts(prev => [added, ...prev]);
+      setMarketPrompts(prev => prev.filter(p => p.id !== promptId));
+      toast.success('已添加到空间');
+    } catch {
+      toast.error('添加失败');
+    }
+  };
+
+  const handleRemoveWorkspacePrompt = async (promptId: string) => {
+    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    try {
+      await workspaceApi.removePrompt(wsId, promptId);
+      setPrompts(prev => prev.filter(p => p.id !== promptId));
+      toast.success('已移除');
+    } catch {
+      toast.error('移除失败');
+    }
+  };
+
+  const handleUpdatePromptCategories = async (promptId: string, categoryIds: string[]) => {
+    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    try {
+      const updated = await workspaceApi.updatePromptCategories(wsId, promptId, categoryIds);
+      setPrompts(prev => prev.map(p => p.id === promptId ? updated : p));
+      if (selectedPrompt?.id === promptId) {
+        setSelectedPrompt(updated);
+      }
+      toast.success('分类已更新');
+    } catch {
+      toast.error('更新分类失败');
+    }
+  };
+
+  const openPromptDetail = (prompt: WorkspacePrompt) => {
+    setSelectedPrompt(prompt);
+    setPromptDetailOpen(true);
+  };
+
+  const closePromptDetail = () => {
+    setPromptDetailOpen(false);
+    setSelectedPrompt(null);
+  };
+
+  const handleCreateCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name) {
+      toast.error('请输入分类名称');
+      return;
+    }
+    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    try {
+      const created = await workspaceApi.createPromptCategory(wsId, name);
+      setPromptCategories(prev => [...prev, created]);
+      setNewCategoryName('');
+      toast.success('分类已添加');
+    } catch {
+      toast.error('添加分类失败，可能已存在');
+    }
+  };
+
+  const handleDeleteCategory = async (categoryId: string) => {
+    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    try {
+      await workspaceApi.deletePromptCategory(wsId, categoryId);
+      setPromptCategories(prev => prev.filter(c => c.id !== categoryId));
+      if (selectedPromptCategory === categoryId) {
+        setSelectedPromptCategory('全部');
+      }
+      toast.success('分类已删除');
+    } catch {
+      toast.error('删除分类失败，可能该分类下仍有提示词');
+    }
+  };
+
+  // 空间提示词按分类筛选与分页
+  const promptCategoryFilterOptions = [
+    { id: 'all', name: '全部' },
+    ...promptCategories.map(c => ({ id: c.id, name: c.name })),
+    { id: 'uncategorized', name: UNCATEGORIZED_NAME },
+  ];
+
+  const filteredWorkspacePrompts = prompts.filter(p => {
+    const matchSearch = p.name.toLowerCase().includes(promptSearchTerm.toLowerCase()) ||
+                        p.content.toLowerCase().includes(promptSearchTerm.toLowerCase());
+    const categoryNames = p.categories.map(c => c.name);
+    const hasCategory = categoryNames.length > 0;
+    const matchCategory = selectedPromptCategory === '全部' ||
+                          (selectedPromptCategory === UNCATEGORIZED_NAME
+                            ? !hasCategory
+                            : categoryNames.includes(selectedPromptCategory));
+    return matchSearch && matchCategory;
+  });
+
+  const promptTotalPages = Math.max(1, Math.ceil(filteredWorkspacePrompts.length / PROMPT_PAGE_SIZE));
+  const paginatedPrompts = filteredWorkspacePrompts.slice(
+    (promptPage - 1) * PROMPT_PAGE_SIZE,
+    promptPage * PROMPT_PAGE_SIZE
+  );
+
+  const filteredPromptsMarket = marketPrompts.filter(p => {
     const matchSearch = p.name.toLowerCase().includes(promptMarketSearch.toLowerCase()) || p.description.toLowerCase().includes(promptMarketSearch.toLowerCase());
     const matchCategory = promptMarketCategory === '全部' || p.useCase === promptMarketCategory;
     return matchSearch && matchCategory;
@@ -867,67 +1039,183 @@ export const Settings: React.FC = () => {
                     onChange={(e) => setPromptSearchTerm(e.target.value)}
                   />
                 </div>
-                <Button size="sm" variant="outline" onClick={() => { setCreatePromptDesc(''); setCreatePromptOpen(true); }}><Wand2 className="w-4 h-4 mr-2" />创建提示词</Button>
-                <Button size="sm" onClick={() => { setPromptMarketSearch(''); setPromptMarketCategory('全部'); setSelectedPromptIds([]); setPromptMarketOpen(true); }}><Plus className="w-4 h-4 mr-2" />添加提示词</Button>
+                {canManageWorkspacePrompts && (
+                  <Button size="sm" onClick={() => { openPromptMarket(); }}><Plus className="w-4 h-4 mr-2" />添加提示词</Button>
+                )}
               </div>
             </CardHeader>
             <CardContent>
-              <div className="space-y-8">
-                {prompts
-                  .filter(p => p.name.toLowerCase().includes(promptSearchTerm.toLowerCase()) || (p.content || '').toLowerCase().includes(promptSearchTerm.toLowerCase()))
-                  .reduce<{useCase: string; items: Prompt[]}[]>((groups, p) => {
-                    const group = groups.find(g => g.useCase === p.useCase);
-                    if (group) {
-                      group.items.push(p);
-                    } else {
-                      groups.push({ useCase: p.useCase, items: [p] });
-                    }
-                    return groups;
-                  }, [])
-                  .map(group => (
-                    <div key={group.useCase} className="space-y-3">
-                      <h3 className="text-sm font-semibold text-muted-foreground border-b border-border/50 pb-2">{group.useCase}</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {group.items.map((prompt) => (
-                          <Card key={prompt.id} className="bg-muted/10 border-border/50 border-dashed hover:border-primary/50 transition-colors group">
-                            <CardContent className="p-4 flex flex-col h-full">
-                              <div className="flex items-start justify-between mb-2">
-                                <h4 className="font-medium text-sm flex items-center">
-                                  <FileText className="h-4 w-4 mr-2 text-primary" />
-                                  {prompt.name}
-                                </h4>
-                                <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-primary/10 hover:text-primary" onClick={() => {
-                                    navigator.clipboard.writeText(prompt.content || prompt.description).then(() => toast.success('内容已复制到剪贴板'));
-                                  }}>
-                                    <Copy className="h-3.5 w-3.5" />
-                                  </Button>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => {
-                                    teamApi.deletePrompt(prompt.id).then(() => {
-                                      setPrompts(prev => prev.filter(p => p.id !== prompt.id));
-                                      toast.success('已删除');
-                                    }).catch(() => toast.error('删除失败'));
-                                  }}>
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </Button>
-                                </div>
-                              </div>
-                              <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed flex-1">
-                                {prompt.content || prompt.description}
-                              </p>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    </div>
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {promptCategoryFilterOptions.map(option => (
+                    <Button
+                      key={option.id}
+                      variant={selectedPromptCategory === option.name ? 'default' : 'outline'}
+                      className="rounded-full h-8 px-3 whitespace-nowrap"
+                      onClick={() => setSelectedPromptCategory(option.name)}
+                    >
+                      {option.name}
+                      {option.id !== 'all' && option.id !== 'uncategorized' && canManageWorkspacePrompts && (
+                        <span
+                          className="ml-1.5 inline-flex items-center justify-center rounded-full hover:bg-destructive/20 hover:text-destructive p-0.5"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteCategory(option.id);
+                          }}
+                        >
+                          <X className="h-3 w-3" />
+                        </span>
+                      )}
+                    </Button>
                   ))}
-                {prompts.filter(p => p.name.toLowerCase().includes(promptSearchTerm.toLowerCase()) || (p.content || '').toLowerCase().includes(promptSearchTerm.toLowerCase())).length === 0 && (
-                  <div className="text-center py-12 text-muted-foreground">未找到匹配的提示词</div>
+                  {canManageWorkspacePrompts && (
+                    <div className="flex items-center gap-2 ml-auto">
+                      <Input
+                        placeholder="新分类名称"
+                        className="h-8 w-[140px]"
+                        value={newCategoryName}
+                        onChange={(e) => setNewCategoryName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCategory(); }}
+                      />
+                      <Button size="sm" className="h-8 px-3" onClick={handleCreateCategory}>
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {paginatedPrompts.map((prompt) => (
+                    <Card
+                      key={prompt.id}
+                      className="bg-muted/10 border-border/50 border-dashed hover:border-primary/50 transition-colors group cursor-pointer flex flex-col h-full"
+                      onClick={() => openPromptDetail(prompt)}
+                    >
+                      <CardContent className="p-4 flex flex-col h-full">
+                        <div className="flex items-start justify-between mb-2 gap-2">
+                          <h4 className="font-medium text-sm flex items-center min-w-0">
+                            <FileText className="h-4 w-4 mr-2 text-primary shrink-0" />
+                            <span className="line-clamp-1">{prompt.name}</span>
+                          </h4>
+                          <div
+                            className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-primary/10 hover:text-primary" onClick={() => {
+                              navigator.clipboard.writeText(prompt.content).then(() => toast.success('内容已复制到剪贴板'));
+                            }}>
+                              <Copy className="h-3.5 w-3.5" />
+                            </Button>
+                            {canManageWorkspacePrompts && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => handleRemoveWorkspacePrompt(prompt.id)}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {prompt.categories.length > 0 ? prompt.categories.map(c => (
+                            <Badge key={c.id} variant="outline" className="text-xs h-6">{c.name}</Badge>
+                          )) : (
+                            <Badge variant="outline" className="text-xs h-6">{UNCATEGORIZED_NAME}</Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed flex-1">
+                          {prompt.content}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                  {paginatedPrompts.length === 0 && (
+                    <div className="col-span-full text-center py-12 text-muted-foreground">未找到匹配的提示词</div>
+                  )}
+                </div>
+
+                {filteredWorkspacePrompts.length > PROMPT_PAGE_SIZE && (
+                  <div className="flex items-center justify-between pt-2">
+                    <span className="text-sm text-muted-foreground">
+                      共 {filteredWorkspacePrompts.length} 条，第 {promptPage} / {promptTotalPages} 页
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={promptPage <= 1}
+                        onClick={() => setPromptPage(p => Math.max(1, p - 1))}
+                      >
+                        上一页
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={promptPage >= promptTotalPages}
+                        onClick={() => setPromptPage(p => Math.min(promptTotalPages, p + 1))}
+                      >
+                        下一页
+                      </Button>
+                    </div>
+                  </div>
                 )}
               </div>
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* 提示词详情弹窗 -- 查看完整内容并管理分类 */}
+        <Dialog open={promptDetailOpen} onOpenChange={(open) => { if (!open) closePromptDetail(); }}>
+          <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+            {selectedPrompt && (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <FileText className="h-5 w-5 text-primary" />
+                    <span className="line-clamp-1">{selectedPrompt.name}</span>
+                  </DialogTitle>
+                </DialogHeader>
+                <div className="flex-1 overflow-y-auto space-y-4 py-2 pr-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm text-muted-foreground">分类：</span>
+                    {canManageWorkspacePrompts ? (
+                      <div className="min-w-[200px] flex-1">
+                        <MultiSelect
+                          options={promptCategories.map(c => ({ value: c.id, label: c.name }))}
+                          value={selectedPrompt.categories.map(c => c.id)}
+                          onChange={(values) => handleUpdatePromptCategories(selectedPrompt.id, values)}
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        {selectedPrompt.categories.length > 0 ? selectedPrompt.categories.map(c => (
+                          <Badge key={c.id} variant="outline" className="text-xs h-6">{c.name}</Badge>
+                        )) : (
+                          <Badge variant="outline" className="text-xs h-6">{UNCATEGORIZED_NAME}</Badge>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  {selectedPrompt.description && (
+                    <p className="text-sm text-muted-foreground">{selectedPrompt.description}</p>
+                  )}
+                  <div className="relative">
+                    <Textarea
+                      value={selectedPrompt.content}
+                      readOnly
+                      className="min-h-[240px] resize-none font-mono text-sm"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-2 border-t shrink-0">
+                  <Button variant="outline" onClick={() => {
+                    navigator.clipboard.writeText(selectedPrompt.content).then(() => toast.success('内容已复制到剪贴板'));
+                  }}>
+                    <Copy className="h-4 w-4 mr-2" /> 复制
+                  </Button>
+                  <Button variant="outline" onClick={closePromptDetail}>关闭</Button>
+                </div>
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
 
         <TabsContent value="agent">
           <Card className="soft-shadow border-none">
@@ -1243,61 +1531,7 @@ export const Settings: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* 创建提示词弹窗 */}
-      <Dialog open={createPromptOpen} onOpenChange={setCreatePromptOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>AI 创建自定义提示词</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <p className="text-sm text-muted-foreground">
-              输入您需要的场景和目标，AI 将帮您编写结构化的高质量提示词。
-            </p>
-            <div className="space-y-2">
-              <Label>提示词描述</Label>
-              <Textarea
-                className="min-h-[120px] resize-none"
-                placeholder="例如：我需要一个用于审查 React 组件代码质量和可访问性的提示词..."
-                value={createPromptDesc}
-                onChange={(e) => setCreatePromptDesc(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setCreatePromptOpen(false)}>取消</Button>
-            <Button
-              onClick={() => {
-                if (!createPromptDesc.trim()) {
-                  toast.error('请输入提示词描述');
-                  return;
-                }
-                setIsGeneratingPrompt(true);
-                const name = createPromptDesc.trim().slice(0, 20) || 'AI 生成自定义提示词';
-                teamApi.createPrompt({
-                  name,
-                  description: createPromptDesc.trim(),
-                  content: createPromptDesc.trim(),
-                  useCase: promptMarketCategory !== '全部' ? promptMarketCategory : '通用',
-                }).then(prompt => {
-                  setPrompts(prev => [prompt, ...prev]);
-                  setIsGeneratingPrompt(false);
-                  toast.success('自定义提示词生成成功并已添加');
-                  setCreatePromptOpen(false);
-                  setCreatePromptDesc('');
-                }).catch(() => {
-                  setIsGeneratingPrompt(false);
-                  toast.error('提示词生成失败');
-                });
-              }}
-              disabled={isGeneratingPrompt}
-            >
-              {isGeneratingPrompt ? '生成中...' : '生成提示词'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* 提示词市场弹窗 */}
+      {/* 提示词市场弹窗 -- 用于从市场添加已上架提示词到当前空间 */}
       <Dialog open={promptMarketOpen} onOpenChange={setPromptMarketOpen}>
         <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-hidden flex flex-col">
           <DialogHeader>
@@ -1319,25 +1553,22 @@ export const Settings: React.FC = () => {
                   <SelectValue placeholder="分类" />
                 </SelectTrigger>
                 <SelectContent>
-                  {promptCategories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {marketPromptCategories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-              {filteredPromptsMarket.length === 0 && (
-                <div className="text-center py-8 text-sm text-muted-foreground">未找到匹配的提示词</div>
+              {marketPromptsLoading && (
+                <div className="text-center py-8 text-sm text-muted-foreground">加载中...</div>
               )}
-              {filteredPromptsMarket.map(prompt => (
+              {!marketPromptsLoading && filteredPromptsMarket.length === 0 && (
+                <div className="text-center py-8 text-sm text-muted-foreground">未找到可添加的提示词</div>
+              )}
+              {!marketPromptsLoading && filteredPromptsMarket.map(prompt => (
                 <div
                   key={prompt.id}
-                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedPromptIds.includes(prompt.id) ? 'border-primary bg-primary/5' : 'border-border/50 hover:border-primary/30 hover:bg-muted/30'}`}
-                  onClick={() => {
-                    setSelectedPromptIds(prev =>
-                      prev.includes(prompt.id) ? prev.filter(id => id !== prompt.id) : [...prev, prompt.id]
-                    );
-                  }}
+                  className="flex items-start gap-3 p-3 rounded-lg border border-border/50 hover:border-primary/30 hover:bg-muted/30 transition-colors"
                 >
-                  <Checkbox checked={selectedPromptIds.includes(prompt.id)} className="mt-0.5 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-sm">{prompt.name}</span>
@@ -1348,37 +1579,17 @@ export const Settings: React.FC = () => {
                       <span className="flex items-center gap-0.5"><Download className="h-3 w-3" /> {prompt.usageCount.toLocaleString()} 次使用</span>
                     </div>
                   </div>
+                  <Button size="sm" onClick={() => handleAddMarketPrompt(prompt.id)}>添加</Button>
                 </div>
               ))}
             </div>
-            
+
             <div className="flex items-center justify-between pt-2 border-t text-sm shrink-0">
               <span className="text-muted-foreground">共 {filteredPromptsMarket.length} 条</span>
-              <div className="flex items-center gap-1">
-                <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => {}} disabled><ChevronLeft className="h-4 w-4" /></Button>
-                <div className="h-8 flex items-center justify-center px-3 border border-border/50 rounded-md bg-muted/30">1</div>
-                <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => {}} disabled><ChevronRight className="h-4 w-4" /></Button>
-              </div>
             </div>
-
           </div>
           <div className="flex justify-end gap-2 pt-2 border-t shrink-0">
-            <Button variant="outline" onClick={() => setPromptMarketOpen(false)}>取消</Button>
-            <Button
-              disabled={selectedPromptIds.length === 0}
-              onClick={() => {
-                Promise.all(selectedPromptIds.map(id => teamApi.updatePromptAdded(id, true)))
-                  .then(() => {
-                    setPrompts(prev => prev.map(p => selectedPromptIds.includes(p.id) ? { ...p, addedToSpace: true } : p));
-                    toast.success(`已将 ${selectedPromptIds.length} 个提示词添加到空间常用列表`);
-                    setPromptMarketOpen(false);
-                    setSelectedPromptIds([]);
-                  })
-                  .catch(() => toast.error('添加提示词失败'));
-              }}
-            >
-              添加 ({selectedPromptIds.length})
-            </Button>
+            <Button variant="outline" onClick={() => setPromptMarketOpen(false)}>关闭</Button>
           </div>
         </DialogContent>
       </Dialog>
