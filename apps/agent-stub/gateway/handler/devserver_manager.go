@@ -20,7 +20,7 @@ const (
 	previewPortStart      = 4000
 	previewPortEnd        = 4100
 	previewTimeoutMinutes = 30
-	previewStartTimeout   = 10 * time.Second
+	previewStartTimeout   = 30 * time.Second
 )
 
 // devServer 记录单个 dev server 的运行状态。
@@ -83,6 +83,16 @@ func (m *DevServerManager) Start(projectPath string) (int, error) {
 	port, err := m.allocatePort()
 	if err != nil {
 		return 0, err
+	}
+
+	// 如果 node_modules 不存在，先安装依赖，否则 npm run dev 会找不到框架 CLI。
+	nodeModulesPath := filepath.Join(projectPath, "node_modules")
+	if _, err := os.Stat(nodeModulesPath); os.IsNotExist(err) {
+		log.Printf("[Preview] node_modules not found, installing dependencies for %s", projectPath)
+		if err := installDependencies(projectPath); err != nil {
+			delete(m.portUsed, port)
+			return 0, fmt.Errorf("dependency installation failed: %w", err)
+		}
 	}
 
 	// 根据框架类型构建启动参数。
@@ -160,6 +170,41 @@ func buildDevServerArgs(projectPath string, port int) []string {
 		args = append(args, "--host", "0.0.0.0")
 	}
 	return args
+}
+
+// packageManager 根据锁文件判断项目使用的包管理器。
+// 默认返回 npm；存在 pnpm-lock.yaml 返回 pnpm，存在 yarn.lock 返回 yarn。
+func packageManager(projectPath string) string {
+	if _, err := os.Stat(filepath.Join(projectPath, "pnpm-lock.yaml")); err == nil {
+		return "pnpm"
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, "yarn.lock")); err == nil {
+		return "yarn"
+	}
+	return "npm"
+}
+
+// installDependencies 为项目安装依赖。
+// 使用项目对应的包管理器执行 install，确保 dev server 启动时 CLI 可用。
+func installDependencies(projectPath string) error {
+	pm := packageManager(projectPath)
+	var args []string
+	switch pm {
+	case "pnpm":
+		args = []string{"install"}
+	case "yarn":
+		args = []string{"install"}
+	default:
+		args = []string{"install"}
+	}
+
+	cmd := exec.Command(pm, args...)
+	cmd.Dir = projectPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s install failed: %w (output: %s)", pm, err, string(out))
+	}
+	return nil
 }
 
 // detectDevFramework 通过 package.json 依赖检测前端框架类型。
