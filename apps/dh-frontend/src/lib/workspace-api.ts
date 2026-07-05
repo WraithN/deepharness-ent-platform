@@ -6,6 +6,8 @@ import type {
   WorkspaceStandard,
   WorkspaceCICD,
   WorkspaceAgent,
+  WorkspacePrompt,
+  PromptCategory,
 } from '@/types';
 
 export const workspaceApi = {
@@ -37,4 +39,18 @@ export const workspaceApi = {
   getCICD: (workspaceId: string) => api.get<WorkspaceCICD>(`/v1/workspaces/${workspaceId}/cicd`),
   saveCICD: (workspaceId: string, req: Partial<WorkspaceCICD>) =>
     api.post<WorkspaceCICD>(`/v1/workspaces/${workspaceId}/cicd`, req),
+
+  listPrompts: (workspaceId: string) => api.get<WorkspacePrompt[]>(`/v1/workspaces/${workspaceId}/prompts`),
+  addPrompt: (workspaceId: string, libraryPromptId: string) =>
+    api.post<WorkspacePrompt>(`/v1/workspaces/${workspaceId}/prompts`, { libraryPromptId }),
+  removePrompt: (workspaceId: string, promptId: string) =>
+    api.delete<void>(`/v1/workspaces/${workspaceId}/prompts/${promptId}`),
+  updatePromptCategories: (workspaceId: string, promptId: string, categoryIds: string[]) =>
+    api.patch<WorkspacePrompt>(`/v1/workspaces/${workspaceId}/prompts/${promptId}`, { categoryIds }),
+
+  listPromptCategories: (workspaceId: string) => api.get<PromptCategory[]>(`/v1/workspaces/${workspaceId}/prompt-categories`),
+  createPromptCategory: (workspaceId: string, name: string) =>
+    api.post<PromptCategory>(`/v1/workspaces/${workspaceId}/prompt-categories`, { name }),
+  deletePromptCategory: (workspaceId: string, categoryId: string) =>
+    api.delete<void>(`/v1/workspaces/${workspaceId}/prompt-categories/${categoryId}`),
 };

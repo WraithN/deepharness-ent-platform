@@ -5,16 +5,25 @@ import (
 	"log"
 	"net/http"
 
+	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 )
 
-var defaultService service.WorkspaceService
+var (
+	defaultService     service.WorkspaceService
+	defaultUserService identityservice.UserService
+)
 
 // Init 注入 WorkspaceService 实现（MySQL 或 mock）。
 func Init(svc service.WorkspaceService) {
 	defaultService = svc
+}
+
+// InitUserService 注入 UserService，用于工作空间相关权限校验。
+func InitUserService(svc identityservice.UserService) {
+	defaultUserService = svc
 }
 
 // Workspaces 处理 GET /api/v1/workspaces 与 POST /api/v1/workspaces。

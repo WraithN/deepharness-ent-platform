@@ -302,7 +302,7 @@ COMMENT ON COLUMN workspace_prompts.library_prompt_id IS '关联提示词库 ID�
 COMMENT ON COLUMN workspace_prompts.name IS '提示词名称';
 COMMENT ON COLUMN workspace_prompts.description IS '提示词描述';
 COMMENT ON COLUMN workspace_prompts.content IS '提示词内容';
-COMMENT ON COLUMN workspace_prompts.use_case IS '使用场景分类';
+COMMENT ON COLUMN workspace_prompts.use_case IS '使用场景分类（历史字段）';
 COMMENT ON COLUMN workspace_prompts.usage_count IS '使用次数';
 COMMENT ON COLUMN workspace_prompts.is_custom IS '是否为自定义提示词';
 COMMENT ON COLUMN workspace_prompts.added_to_space IS '是否已添加到空间常用列表';
@@ -316,6 +316,44 @@ CREATE INDEX IF NOT EXISTS idx_workspace_prompts_added ON workspace_prompts (wor
 DROP TRIGGER IF EXISTS trigger_workspace_prompts_updated_at ON workspace_prompts;
 CREATE TRIGGER trigger_workspace_prompts_updated_at
 BEFORE UPDATE ON workspace_prompts
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TABLE IF NOT EXISTS workspace_prompt_category_links (
+    prompt_id VARCHAR(36) NOT NULL,
+    category_id VARCHAR(36) NOT NULL,
+    PRIMARY KEY (prompt_id, category_id)
+);
+
+COMMENT ON TABLE workspace_prompt_category_links IS '空间提示词与分类的多对多关联表';
+COMMENT ON COLUMN workspace_prompt_category_links.prompt_id IS '空间提示词 ID';
+COMMENT ON COLUMN workspace_prompt_category_links.category_id IS '分类 ID';
+
+CREATE INDEX IF NOT EXISTS idx_workspace_prompt_category_links_category_id
+    ON workspace_prompt_category_links (category_id);
+
+CREATE TABLE IF NOT EXISTS workspace_prompt_categories (
+    id VARCHAR(36) PRIMARY KEY,
+    workspace_id VARCHAR(36) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE workspace_prompt_categories IS '空间提示词分类（每个空间独立管理）';
+COMMENT ON COLUMN workspace_prompt_categories.id IS '分类 ID';
+COMMENT ON COLUMN workspace_prompt_categories.workspace_id IS '所属空间 ID';
+COMMENT ON COLUMN workspace_prompt_categories.name IS '分类名称';
+COMMENT ON COLUMN workspace_prompt_categories.created_at IS '创建时间';
+COMMENT ON COLUMN workspace_prompt_categories.updated_at IS '更新时间';
+
+CREATE INDEX IF NOT EXISTS idx_workspace_prompt_categories_workspace_id
+    ON workspace_prompt_categories (workspace_id);
+
+DROP TRIGGER IF EXISTS trigger_workspace_prompt_categories_updated_at
+    ON workspace_prompt_categories;
+CREATE TRIGGER trigger_workspace_prompt_categories_updated_at
+BEFORE UPDATE ON workspace_prompt_categories
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 

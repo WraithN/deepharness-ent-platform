@@ -31,5 +31,9 @@ export const teamApi = {
   createPrompt: (req: CreatePromptRequest) => api.post<Prompt>('/v1/team/prompts', req),
   updatePromptAdded: (id: string, addedToSpace: boolean) =>
     api.patch<Prompt>(`/v1/team/prompts/${id}`, { addedToSpace }),
+  updatePrompt: (id: string, req: Partial<CreatePromptRequest>) =>
+    api.patch<Prompt>(`/v1/team/prompts/${id}`, req),
   deletePrompt: (id: string) => api.delete<void>(`/v1/team/prompts/${id}`),
+  reviewPrompt: (id: string, action: 'approve' | 'reject' | 'unshelf') =>
+    api.post<Prompt>(`/v1/team/prompts/${id}/review`, { action }),
 };
