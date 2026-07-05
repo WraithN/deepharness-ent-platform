@@ -48,15 +48,16 @@ func New(cfg config.Config) http.Handler {
 	// Business logic layer
 	agentClient := client.NewGatewaydClient(cfg.GatewaydAdminURL, cfg.GatewaydAgentID)
 
-	initIdentityService(db)
+	userService := initIdentityService(db)
 	initPersonalAssistantService(db)
 	workItemSvc := initWorkItemService(db)
 	initReviewService(db)
 	initEventService(db)
 	initOrchestratorService(db)
-	workspaceService := initWorkspaceService(db, cfg.WorkspaceRoot)
+	workspaceService := initWorkspaceService(db, cfg.WorkspaceRoot, userService)
+	initWorkspacePromptService(db)
 	initRepositoryService(db, cfg.WorkspaceRoot)
-	initTeamService(db)
+	initTeamService(db, userService)
 
 	// Handlers
 	// 根据 buffer_store_type 配置选择 SSE buffer 后端：memory（默认）或 redis。
@@ -154,6 +155,10 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/workspaces/{id}/standards", workspace.WorkspaceStandards)
 	mux.HandleFunc("/api/v1/workspaces/{id}/standards/{standardId}", workspace.WorkspaceStandardByID)
 	mux.HandleFunc("/api/v1/workspaces/{id}/cicd", workspace.WorkspaceCICD)
+	mux.Handle("/api/v1/workspaces/{id}/prompts", middleware.Auth(http.HandlerFunc(workspace.Prompts)))
+	mux.Handle("/api/v1/workspaces/{id}/prompts/{promptId}", middleware.Auth(http.HandlerFunc(workspace.PromptByID)))
+	mux.Handle("/api/v1/workspaces/{id}/prompt-categories", middleware.Auth(http.HandlerFunc(workspace.PromptCategories)))
+	mux.Handle("/api/v1/workspaces/{id}/prompt-categories/{categoryId}", middleware.Auth(http.HandlerFunc(workspace.PromptCategoryByID)))
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories", repository.Repositories)
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/scan", repository.ScanRepositories)
 	// 用户级仓库操作（需登录态，userID 由 auth 中间件注入）
@@ -173,8 +178,9 @@ func New(cfg config.Config) http.Handler {
 	// Team skills / prompts
 	mux.HandleFunc("/api/v1/team/skills", team.Skills)
 	mux.HandleFunc("/api/v1/team/skills/{id}", team.SkillByID)
-	mux.HandleFunc("/api/v1/team/prompts", team.Prompts)
-	mux.HandleFunc("/api/v1/team/prompts/{id}", team.PromptByID)
+	mux.Handle("/api/v1/team/prompts", middleware.Auth(http.HandlerFunc(team.Prompts)))
+	mux.Handle("/api/v1/team/prompts/{id}", middleware.Auth(http.HandlerFunc(team.PromptByID)))
+	mux.Handle("/api/v1/team/prompts/{id}/review", middleware.Auth(http.HandlerFunc(team.ReviewPrompt)))
 
 	// Apply middleware
 	return middleware.Logger(middleware.CORS(mux))
@@ -204,9 +210,11 @@ func initDB(cfg config.Config) *sql.DB {
 	return db
 }
 
-func initIdentityService(db *sql.DB) {
+func initIdentityService(db *sql.DB) identityservice.UserService {
 	log.Println("[Identity] using postgres storage")
-	identity.Init(identityservice.NewDBUserService(db))
+	svc := identityservice.NewDBUserService(db)
+	identity.Init(svc)
+	return svc
 }
 
 func initPersonalAssistantService(db *sql.DB) {
@@ -236,16 +244,25 @@ func initOrchestratorService(db *sql.DB) {
 	orchestrator.Init(orchestratorservice.NewDBSessionService(db))
 }
 
-func initWorkspaceService(db *sql.DB, workspaceRoot string) workspaceservice.WorkspaceService {
+func initWorkspaceService(db *sql.DB, workspaceRoot string, userService identityservice.UserService) workspaceservice.WorkspaceService {
 	log.Printf("[Workspace] using postgres storage, workspaceRoot=%s", workspaceRoot)
 	svc := workspaceservice.NewDBWorkspaceService(db, workspaceRoot)
 	workspace.Init(svc)
+	workspace.InitUserService(userService)
 	return svc
 }
 
-func initTeamService(db *sql.DB) {
+func initTeamService(db *sql.DB, userService identityservice.UserService) {
 	log.Println("[Team] using postgres storage")
-	team.Init(teamservice.NewDBTeamService(db))
+	svc := teamservice.NewDBTeamService(db)
+	team.Init(svc)
+	team.InitUserService(userService)
+}
+
+func initWorkspacePromptService(db *sql.DB) {
+	log.Println("[WorkspacePrompt] using postgres storage")
+	svc := workspaceservice.NewDBWorkspacePromptService(db)
+	workspace.InitPromptService(svc)
 }
 
 func initRepositoryService(db *sql.DB, root string) {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/google/uuid"
 )
 
@@ -26,17 +27,31 @@ type Skill struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
+// PromptStatus 表示提示词在市场中的生命周期状态。
+type PromptStatus string
+
+const (
+	PromptStatusPendingReview PromptStatus = "pending_review"
+	PromptStatusOnShelf       PromptStatus = "on_shelf"
+	PromptStatusOffShelf      PromptStatus = "off_shelf"
+	PromptStatusRejected      PromptStatus = "rejected"
+)
+
 // Prompt 表示团队提示词，与 team_prompts 表对应。
 type Prompt struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description"`
-	Content      string    `json:"content"`
-	UseCase      string    `json:"useCase"`
-	UsageCount   int       `json:"usageCount"`
-	AddedToSpace bool      `json:"addedToSpace"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID           string       `json:"id"`
+	Name         string       `json:"name"`
+	Description  string       `json:"description"`
+	Content      string       `json:"content"`
+	UseCase      string       `json:"useCase"`
+	UsageCount   int          `json:"usageCount"`
+	AddedToSpace bool         `json:"addedToSpace"`
+	Status       PromptStatus `json:"status"`
+	CreatedBy    string       `json:"createdBy,omitempty"`
+	ReviewedBy   string       `json:"reviewedBy,omitempty"`
+	ReviewedAt   *time.Time   `json:"reviewedAt,omitempty"`
+	CreatedAt    time.Time    `json:"createdAt"`
+	UpdatedAt    time.Time    `json:"updatedAt"`
 }
 
 // CreateSkillRequest 创建技能请求。
@@ -63,9 +78,17 @@ type UpdateSkillRequest struct {
 	Installed *bool `json:"installed"`
 }
 
-// UpdatePromptRequest 更新提示词请求（仅支持切换 addedToSpace 状态）。
+// UpdatePromptRequest 更新提示词请求。
 type UpdatePromptRequest struct {
-	AddedToSpace *bool `json:"addedToSpace"`
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Content     *string `json:"content,omitempty"`
+	UseCase     *string `json:"useCase,omitempty"`
+}
+
+// ReviewPromptRequest 审核提示词请求。
+type ReviewPromptRequest struct {
+	Action string `json:"action"` // approve | reject | unshelf
 }
 
 // TeamService 定义团队技能/提示词服务接口。
@@ -75,10 +98,12 @@ type TeamService interface {
 	UpdateSkill(id string, req UpdateSkillRequest) (Skill, error)
 	DeleteSkill(id string) error
 
-	ListPrompts() ([]Prompt, error)
-	CreatePrompt(req CreatePromptRequest) (Prompt, error)
-	UpdatePrompt(id string, req UpdatePromptRequest) (Prompt, error)
-	DeletePrompt(id string) error
+	ListPromptsVisibleTo(userID string, isSuperAdmin bool) ([]Prompt, error)
+	CreatePrompt(req CreatePromptRequest, createdBy string) (Prompt, error)
+	UpdatePrompt(id string, req UpdatePromptRequest, userID string, isSuperAdmin bool) (Prompt, error)
+	DeletePrompt(id string, userID string, isSuperAdmin bool) error
+	ReviewPrompt(id string, action string, reviewerID string) (Prompt, error)
+	GetPrompt(id string) (Prompt, error)
 }
 
 // DBTeamService 是基于 MySQL 的 TeamService 实现。
@@ -197,13 +222,29 @@ func (s *DBTeamService) getSkill(id string) (Skill, error) {
 	return sk, nil
 }
 
-// ListPrompts 返回全部团队提示词。
-func (s *DBTeamService) ListPrompts() ([]Prompt, error) {
-	rows, err := s.db.Query(`
-		SELECT id, name, description, content, use_case, usage_count, added_to_space, created_at, updated_at
-		FROM team_prompts
-		ORDER BY created_at DESC
-	`)
+// ListPromptsVisibleTo 返回指定用户可见的提示词。
+// 规则：on_shelf 全员可见；pending_review/rejected 仅创建人和超管可见；off_shelf 仅超管可见。
+func (s *DBTeamService) ListPromptsVisibleTo(userID string, isSuperAdmin bool) ([]Prompt, error) {
+	var rows *sql.Rows
+	var err error
+
+	if isSuperAdmin {
+		rows, err = s.db.Query(`
+			SELECT id, name, description, content, use_case, usage_count, added_to_space,
+			       status, created_by, reviewed_by, reviewed_at, created_at, updated_at
+			FROM team_prompts
+			ORDER BY created_at DESC
+		`)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT id, name, description, content, use_case, usage_count, added_to_space,
+			       status, created_by, reviewed_by, reviewed_at, created_at, updated_at
+			FROM team_prompts
+			WHERE status = $1
+			   OR (status IN ($2, $3) AND created_by = $4)
+			ORDER BY created_at DESC
+		`, PromptStatusOnShelf, PromptStatusPendingReview, PromptStatusRejected, userID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("list prompts failed: %w", err)
 	}
@@ -212,17 +253,25 @@ func (s *DBTeamService) ListPrompts() ([]Prompt, error) {
 	result := make([]Prompt, 0)
 	for rows.Next() {
 		var p Prompt
-		err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Content, &p.UseCase, &p.UsageCount, &p.AddedToSpace, &p.CreatedAt, &p.UpdatedAt)
+		var reviewedAt sql.NullTime
+		var createdBy, reviewedBy sql.NullString
+		err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Content, &p.UseCase, &p.UsageCount, &p.AddedToSpace,
+			&p.Status, &createdBy, &reviewedBy, &reviewedAt, &p.CreatedAt, &p.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("scan prompt failed: %w", err)
+		}
+		p.CreatedBy = sqlutil.ScanNullString(createdBy)
+		p.ReviewedBy = sqlutil.ScanNullString(reviewedBy)
+		if reviewedAt.Valid {
+			p.ReviewedAt = &reviewedAt.Time
 		}
 		result = append(result, p)
 	}
 	return result, rows.Err()
 }
 
-// CreatePrompt 创建新提示词。
-func (s *DBTeamService) CreatePrompt(req CreatePromptRequest) (Prompt, error) {
+// CreatePrompt 创建新提示词，默认进入审核中状态。
+func (s *DBTeamService) CreatePrompt(req CreatePromptRequest, createdBy string) (Prompt, error) {
 	now := time.Now().UTC()
 	prompt := Prompt{
 		ID:           uuid.New().String(),
@@ -232,41 +281,74 @@ func (s *DBTeamService) CreatePrompt(req CreatePromptRequest) (Prompt, error) {
 		UseCase:      req.UseCase,
 		UsageCount:   0,
 		AddedToSpace: true,
+		Status:       PromptStatusPendingReview,
+		CreatedBy:    createdBy,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
 
 	_, err := s.db.Exec(`
-		INSERT INTO team_prompts (id, name, description, content, use_case, usage_count, added_to_space, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, prompt.ID, prompt.Name, prompt.Description, prompt.Content, prompt.UseCase, prompt.UsageCount, prompt.AddedToSpace, prompt.CreatedAt, prompt.UpdatedAt)
+		INSERT INTO team_prompts (id, name, description, content, use_case, usage_count, added_to_space,
+		                         status, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, prompt.ID, prompt.Name, prompt.Description, prompt.Content, prompt.UseCase, prompt.UsageCount, prompt.AddedToSpace,
+		prompt.Status, prompt.CreatedBy, prompt.CreatedAt, prompt.UpdatedAt)
 	if err != nil {
 		return Prompt{}, fmt.Errorf("insert prompt failed: %w", err)
 	}
 	return prompt, nil
 }
 
-// UpdatePrompt 更新提示词状态。
-func (s *DBTeamService) UpdatePrompt(id string, req UpdatePromptRequest) (Prompt, error) {
+// UpdatePrompt 允许创建人修改 pending/rejected 状态的提示词，超管可修改任意。
+func (s *DBTeamService) UpdatePrompt(id string, req UpdatePromptRequest, userID string, isSuperAdmin bool) (Prompt, error) {
 	prompt, err := s.getPrompt(id)
 	if err != nil {
 		return Prompt{}, err
 	}
-	if req.AddedToSpace != nil {
-		prompt.AddedToSpace = *req.AddedToSpace
+	if !isSuperAdmin && prompt.CreatedBy != userID {
+		return Prompt{}, errors.New("forbidden: not the creator")
+	}
+	if !isSuperAdmin && prompt.Status != PromptStatusPendingReview && prompt.Status != PromptStatusRejected {
+		return Prompt{}, errors.New("forbidden: can only edit pending or rejected prompts")
+	}
+
+	if req.Name != nil {
+		prompt.Name = *req.Name
+	}
+	if req.Description != nil {
+		prompt.Description = *req.Description
+	}
+	if req.Content != nil {
+		prompt.Content = *req.Content
+	}
+	if req.UseCase != nil {
+		prompt.UseCase = *req.UseCase
 	}
 
 	_, err = s.db.Exec(`
-		UPDATE team_prompts SET added_to_space = $1, updated_at = $2 WHERE id = $3
-	`, prompt.AddedToSpace, time.Now().UTC(), id)
+		UPDATE team_prompts
+		SET name = $1, description = $2, content = $3, use_case = $4, updated_at = $5
+		WHERE id = $6
+	`, prompt.Name, prompt.Description, prompt.Content, prompt.UseCase, time.Now().UTC(), id)
 	if err != nil {
 		return Prompt{}, fmt.Errorf("update prompt failed: %w", err)
 	}
-	return prompt, nil
+	return s.getPrompt(id)
 }
 
-// DeletePrompt 删除提示词。
-func (s *DBTeamService) DeletePrompt(id string) error {
+// DeletePrompt 删除提示词，权限规则同 UpdatePrompt。
+func (s *DBTeamService) DeletePrompt(id string, userID string, isSuperAdmin bool) error {
+	prompt, err := s.getPrompt(id)
+	if err != nil {
+		return err
+	}
+	if !isSuperAdmin && prompt.CreatedBy != userID {
+		return errors.New("forbidden: not the creator")
+	}
+	if !isSuperAdmin && prompt.Status != PromptStatusPendingReview && prompt.Status != PromptStatusRejected {
+		return errors.New("forbidden: can only delete pending or rejected prompts")
+	}
+
 	res, err := s.db.Exec(`DELETE FROM team_prompts WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete prompt failed: %w", err)
@@ -278,17 +360,65 @@ func (s *DBTeamService) DeletePrompt(id string) error {
 	return nil
 }
 
+// ReviewPrompt 超级管理员审核提示词。
+func (s *DBTeamService) ReviewPrompt(id string, action string, reviewerID string) (Prompt, error) {
+	prompt, err := s.getPrompt(id)
+	if err != nil {
+		return Prompt{}, err
+	}
+
+	now := time.Now().UTC()
+	var status PromptStatus
+	switch action {
+	case "approve":
+		status = PromptStatusOnShelf
+	case "reject":
+		status = PromptStatusRejected
+	case "unshelf":
+		if prompt.Status != PromptStatusOnShelf {
+			return Prompt{}, errors.New("prompt is not on shelf")
+		}
+		status = PromptStatusOffShelf
+	default:
+		return Prompt{}, errors.New("invalid review action")
+	}
+
+	_, err = s.db.Exec(`
+		UPDATE team_prompts
+		SET status = $1, reviewed_by = $2, reviewed_at = $3, updated_at = $4
+		WHERE id = $5
+	`, status, reviewerID, now, now, id)
+	if err != nil {
+		return Prompt{}, fmt.Errorf("review prompt failed: %w", err)
+	}
+	return s.getPrompt(id)
+}
+
+// GetPrompt 按 ID 查询提示词。
+func (s *DBTeamService) GetPrompt(id string) (Prompt, error) {
+	return s.getPrompt(id)
+}
+
 func (s *DBTeamService) getPrompt(id string) (Prompt, error) {
 	var p Prompt
+	var reviewedAt sql.NullTime
+	var createdBy, reviewedBy sql.NullString
 	err := s.db.QueryRow(`
-		SELECT id, name, description, content, use_case, usage_count, added_to_space, created_at, updated_at
+		SELECT id, name, description, content, use_case, usage_count, added_to_space,
+		       status, created_by, reviewed_by, reviewed_at, created_at, updated_at
 		FROM team_prompts WHERE id = $1
-	`, id).Scan(&p.ID, &p.Name, &p.Description, &p.Content, &p.UseCase, &p.UsageCount, &p.AddedToSpace, &p.CreatedAt, &p.UpdatedAt)
+	`, id).Scan(&p.ID, &p.Name, &p.Description, &p.Content, &p.UseCase, &p.UsageCount, &p.AddedToSpace,
+		&p.Status, &createdBy, &reviewedBy, &reviewedAt, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Prompt{}, errors.New("prompt not found")
 	}
 	if err != nil {
 		return Prompt{}, fmt.Errorf("get prompt failed: %w", err)
+	}
+	p.CreatedBy = sqlutil.ScanNullString(createdBy)
+	p.ReviewedBy = sqlutil.ScanNullString(reviewedBy)
+	if reviewedAt.Valid {
+		p.ReviewedAt = &reviewedAt.Time
 	}
 	return p, nil
 }

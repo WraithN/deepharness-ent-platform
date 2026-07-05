@@ -51,7 +51,7 @@ import { teamApi } from '@/lib/team-api';
 import { workspaceApi } from '@/lib/workspace-api';
 import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
 import type { WorkItemDTO } from '@/lib/api-types';
-import type { Skill, Prompt, WorkspaceAgent } from '@/types';
+import type { Skill, WorkspacePrompt, WorkspaceAgent } from '@/types';
 import { AssistantRuntimeProvider, type ThreadMessageLike } from '@assistant-ui/react';
 import { useAgUiChat, type SendContext } from '@/hooks/use-ag-ui-chat';
 import { ChatThread } from '@/components/chat/ChatThread';
@@ -329,7 +329,7 @@ export const Chat: React.FC = () => {
   const [userRepoStatuses, setUserRepoStatuses] = useState<UserRepoStatus[]>([]);
   const [syncingRepoId, setSyncingRepoId] = useState<string | null>(null);
   const [availableSkills, setAvailableSkills] = useState<Skill[]>([]);
-  const [availablePrompts, setAvailablePrompts] = useState<Prompt[]>([]);
+  const [availablePrompts, setAvailablePrompts] = useState<WorkspacePrompt[]>([]);
   const [availableAgents, setAvailableAgents] = useState<WorkspaceAgent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
 
@@ -586,7 +586,11 @@ export const Chat: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([teamApi.listSkills(), teamApi.listPrompts()])
+    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    Promise.all([
+      teamApi.listSkills(),
+      workspaceApi.listPrompts(workspaceId).catch((): WorkspacePrompt[] => []),
+    ])
       .then(([loadedSkills, loadedPrompts]) => {
         if (cancelled) return;
         setAvailableSkills(loadedSkills);
