@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { X, FileText, Pencil, LayoutTemplate, Trash2, Send, Loader2 } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { X, FileText, Pencil, LayoutTemplate, Trash2, Send, Loader2, ExternalLink, List, MoreHorizontal, Archive, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
@@ -7,18 +7,45 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { MarkdownView } from '@/components/chat/MarkdownView';
 import { fileApi, type FileContent } from '@/lib/file-api';
 import { api } from '@/lib/api';
 import type { WorkItemDTO, UserDTO } from '@/lib/api-types';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+
+interface TocItem {
+  level: number;
+  text: string;
+}
 
 interface InlineFilePreviewProps {
   path: string;
   onClose: () => void;
   /** 做原型：将当前文档作为卡片放入输入框并自动选择 /proto-make */
   onProtoMake?: (path: string, title: string) => void;
+}
+
+/** 从 markdown 内容中提取 h1-h4 标题，用于生成文档大纲。 */
+function extractToc(md: string): TocItem[] {
+  const lines = md.split('\n');
+  const items: TocItem[] = [];
+  for (const line of lines) {
+    const match = line.match(/^(#{1,4})\s+(.+)$/);
+    if (match) {
+      items.push({ level: match[1].length, text: match[2].trim() });
+    }
+  }
+  return items;
+}
+
+/** 在新标签页打开文件查看页面。 */
+function openFileViewPage(path: string) {
+  const params = new URLSearchParams();
+  params.set('path', path);
+  window.open(`/file-view?${params.toString()}`, '_blank', 'noopener,noreferrer');
 }
 
 /**
@@ -64,6 +91,10 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
   // 受理人列表（从用户接口加载）。
   const [assignees, setAssignees] = useState<UserDTO[]>([]);
 
+  // TOC 大纲显示/隐藏。
+  const [showToc, setShowToc] = useState(true);
+  const contentScrollRef = useRef<HTMLDivElement>(null);
+
   const displayContent = useMemo(() => {
     if (!fileContent) return '';
     if (isMarkdownFile(fileContent.path)) {
@@ -72,6 +103,25 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
     const lang = fileContent.language || '';
     return `\`\`\`${lang}\n${fileContent.content}\n\`\`\``;
   }, [fileContent]);
+
+  const isMarkdown = isMarkdownFile(path);
+
+  // 提取 markdown 标题作为文档大纲。
+  const tocItems = useMemo(() => {
+    if (!isMarkdown || !displayContent) return [];
+    return extractToc(displayContent);
+  }, [displayContent, isMarkdown]);
+
+  // 点击 TOC 项时滚动到对应的 heading 元素。
+  const handleTocClick = (index: number) => {
+    const container = contentScrollRef.current;
+    if (!container) return;
+    const headings = container.querySelectorAll('h1, h2, h3, h4');
+    const target = headings[index];
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
 
   const loadFile = async (targetPath: string) => {
     setLoading(true);
@@ -102,7 +152,6 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
 
   const fileName = fileContent?.name || path.split('/').pop() || path;
   const displayTitle = buildDisplayTitle(fileName);
-  const isMarkdown = isMarkdownFile(path);
 
   // 提需求：提交到后端创建 requirement workitem。
   const handleSubmitRequirement = async () => {
@@ -152,6 +201,17 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
     }
   };
 
+  // 存档：保存到飞书知识库。
+  const handleArchive = async () => {
+    try {
+      const res = await fileApi.saveToFeishu(path);
+      toast.success(res.message || '已存档到飞书知识库');
+    } catch (e) {
+      console.error('[InlineFilePreview] archive failed:', e);
+      toast.error('存档失败');
+    }
+  };
+
   // 作废：删除文件。
   const handleDelete = async () => {
     setDeleting(true);
@@ -179,10 +239,12 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
           </h3>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
-          {/* 提需求 */}
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setReqDialogOpen(true)} title="提需求" disabled={loading || !!error}>
-            <Send className="h-4 w-4" />
-          </Button>
+          {/* 文档大纲切换（仅 markdown 且有标题时显示） */}
+          {isMarkdown && tocItems.length > 0 && !editing && (
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowToc(v => !v)} title="文档大纲">
+              <List className={cn('h-4 w-4', showToc && 'text-primary')} />
+            </Button>
+          )}
           {/* 编辑 */}
           {editing ? (
             <>
@@ -198,22 +260,64 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
               <Pencil className="h-4 w-4" />
             </Button>
           )}
-          {/* 做原型 */}
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onProtoMake?.(path, displayTitle)} title="做原型" disabled={loading || !!error}>
-            <LayoutTemplate className="h-4 w-4" />
+          {/* 新页面打开 */}
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openFileViewPage(path)} title="在新页面打开" disabled={loading || !!error}>
+            <ExternalLink className="h-4 w-4" />
           </Button>
-          {/* 作废 */}
-          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setDeleteDialogOpen(true)} title="作废" disabled={loading || !!error}>
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          {/* 更多操作：提需求、做原型、作废 */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8" title="更多" disabled={loading || !!error}>
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setReqDialogOpen(true)}>
+                <Send className="h-4 w-4 mr-2" />提需求
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onProtoMake?.(path, displayTitle)}>
+                <LayoutTemplate className="h-4 w-4 mr-2" />做原型
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleArchive}>
+                <Archive className="h-4 w-4 mr-2" />存档
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => window.open(fileApi.downloadUrl(path), '_blank')}>
+                <Download className="h-4 w-4 mr-2" />下载
+              </DropdownMenuItem>
+              <DropdownMenuItem className="text-destructive" onClick={() => setDeleteDialogOpen(true)}>
+                <Trash2 className="h-4 w-4 mr-2" />作废
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* 关闭预览 */}
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClose} title="关闭预览">
             <X className="h-4 w-4" />
           </Button>
         </div>
       </div>
 
-      {/* 内容区域 */}
-      <div className="flex-1 overflow-auto p-4">
+      {/* 内容区域：左侧 TOC 大纲 + 右侧文档内容 */}
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        {/* 文档大纲侧边栏 */}
+        {showToc && isMarkdown && tocItems.length > 0 && !editing && !loading && !error && (
+          <div className="w-48 shrink-0 border-r border-border/40 bg-muted/20 overflow-y-auto py-2 px-1">
+            <div className="text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wide px-2 py-1 mb-1">大纲</div>
+            {tocItems.map((item, idx) => (
+              <button
+                key={idx}
+                onClick={() => handleTocClick(idx)}
+                className="block w-full text-left text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded px-2 py-1 truncate transition-colors"
+                style={{ paddingLeft: `${0.5 + (item.level - 1) * 0.75}rem` }}
+                title={item.text}
+              >
+                {item.text}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 文档内容 */}
+        <div ref={contentScrollRef} className="flex-1 overflow-auto p-4">
         {loading && (
           <p className="text-sm text-muted-foreground">正在加载文件内容...</p>
         )}
@@ -234,6 +338,7 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
             </div>
           )
         )}
+      </div>
       </div>
 
       {/* 提需求弹窗 */}

@@ -1,0 +1,179 @@
+# 聊天指令配置文件
+# 每个指令定义以下字段：
+#   cmd         - 指令名称（以 / 开头）
+#   label       - 显示名称（前端菜单展示）
+#   desc        - 描述说明
+#   icon        - 图标名称（对应 lucide-react 图标）
+#   allowTask   - 是否支持引用任务卡片（最多1个）
+#   allowRepos  - 是否支持代码库
+#   requireRepos - 是否必须选择代码库才能发送
+#   maxRepos    - 最大代码库数量（0-2）
+#   template    - 提示词模板，{ARGS} 占位符运行时替换为用户输入
+#
+# 扩展方式：在此文件中追加新的指令配置即可，无需修改代码。
+
+commands:
+  - cmd: "/prd-write"
+    label: "写需求"
+    desc: "生成结构化 PRD 文档"
+    icon: "FileText"
+    allowTask: true
+    allowRepos: false
+    requireRepos: false
+    maxRepos: 0
+    template: |
+      你是一位资深产品经理。请根据以下需求描述，生成一份结构化的 PRD（产品需求文档）。
+
+      【文件输出要求】
+      1. 将 PRD 文档写入 projects/products-jobs/prd/ 目录下（如目录不存在请先创建）。
+      2. 文件命名格式：{需求名称}-prd.md（例如：用户登录-prd.md）。需求名称从用户输入中提取关键词，使用中文或英文均可。
+      3. 文档使用 Markdown 格式编写。
+
+      【PRD 内容结构】
+      1. 背景与目标
+      2. 用户场景
+      3. 功能详情
+      4. 业务流程图（使用 Mermaid 语法）
+      5. 数据埋点要求
+
+      【输出标记】
+      文档写入完成后，在回复末尾必须用以下格式标记文件路径（每行一个）：
+      [[FILE:绝对路径/到/projects/products-jobs/prd/需求名称-prd.md]]
+      注意：路径必须是绝对路径。
+
+      【用户需求】
+      {ARGS}
+
+  - cmd: "/prd-research"
+    label: "做调研"
+    desc: "技术调研与方案选型"
+    icon: "Compass"
+    allowTask: true
+    allowRepos: false
+    requireRepos: false
+    maxRepos: 0
+    template: |
+      你是一位资深技术分析师。请根据以下主题，进行深入的技术调研并生成一份结构化的调研报告。
+
+      【文件输出要求】
+      1. 将调研文档写入 projects/products-jobs/research/ 目录下（如目录不存在请先创建）。
+      2. 文件命名格式：{调研主题}-research.md（例如：微服务选型-research.md）。
+      3. 文档使用 Markdown 格式编写。
+
+      【调研报告内容结构】
+      1. 调研背景与目标
+      2. 现状分析
+      3. 方案对比（使用表格对比优劣）
+      4. 推荐方案及理由
+      5. 风险与注意事项
+      6. 参考资料
+
+      【输出标记】
+      文档写入完成后，在回复末尾必须用以下格式标记文件路径（每行一个）：
+      [[FILE:绝对路径/到/projects/products-jobs/research/调研主题-research.md]]
+      注意：路径必须是绝对路径。
+
+      【调研主题】
+      {ARGS}
+
+  - cmd: "/proto-make"
+    label: "做原型"
+    desc: "生成 UI 原型设计稿"
+    icon: "LayoutTemplate"
+    allowTask: true
+    allowRepos: true
+    requireRepos: false
+    maxRepos: 2
+    template: |
+      你是一位全栈工程师。请根据以下需求，生成一个可运行的前端+后端工程原型。
+
+      【工程输出要求】
+      1. 将工程创建在 projects/ 目录下，工程目录名使用需求关键词的英文命名（如 projects/user-login/）。
+      2. 前端使用 React + TypeScript + Tailwind CSS。
+      3. 后端使用 Node.js（Express 或 Fastify）。
+      4. 工程结构示例：
+         projects/{工程名}/
+         ├── frontend/    # React 前端
+         │   ├── src/
+         │   ├── package.json
+         │   └── vite.config.ts
+         └── backend/     # Node.js 后端
+             ├── src/
+             └── package.json
+      5. 前端和后端都必须有完整的 package.json，确保可以 npm install && npm run dev 启动。
+
+      【输出标记】
+      工程创建完成后，在回复末尾必须用以下格式标记工程路径（每行一个）：
+      [[PROJECT:绝对路径/到/projects/工程名]]
+      注意：路径必须是绝对路径。
+
+      【需求描述】
+      {ARGS}
+
+  - cmd: "/code"
+    label: "写代码"
+    desc: "根据需求编写代码"
+    icon: "Code2"
+    allowTask: true
+    allowRepos: true
+    requireRepos: true
+    maxRepos: 2
+    template: |
+      你是一位资深工程师。请根据以下需求编写代码。
+
+      【代码输出要求】
+      1. 将代码写入 projects/ 目录下对应的工程中。
+      2. 遵循该工程现有的代码风格和目录结构。
+      3. 代码需包含必要的错误处理和注释。
+
+      【输出标记】
+      - 如果创建了整个工程，使用 [[PROJECT:绝对路径]] 标记。
+      - 如果只是创建或修改单个文件，使用 [[FILE:绝对路径]] 标记。
+
+      【需求描述】
+      {ARGS}
+
+  - cmd: "/debug"
+    label: "解BUG"
+    desc: "定位并修复缺陷"
+    icon: "Bug"
+    allowTask: true
+    allowRepos: true
+    requireRepos: false
+    maxRepos: 2
+    template: |
+      你是一位资深工程师。请根据以下缺陷描述，定位并修复问题。
+
+      【调试要求】
+      1. 先分析可能的根因，再给出修复方案。
+      2. 修改代码时直接使用工具写入文件，不要只给出建议。
+      3. 修复完成后简要说明修改了哪些文件、修改原因。
+
+      【输出标记】
+      - 如果修改了整个工程中的多个文件，使用 [[PROJECT:绝对路径]] 标记工程根目录。
+      - 如果只修改了单个文件，使用 [[FILE:绝对路径]] 标记。
+
+      【缺陷描述】
+      {ARGS}
+
+  - cmd: "/review"
+    label: "代码Review"
+    desc: "审查代码质量与规范"
+    icon: "CheckCircle"
+    allowTask: true
+    allowRepos: true
+    requireRepos: true
+    maxRepos: 2
+    template: |
+      你是一位资深代码审查专家。请对以下代码或工程进行 Code Review。
+
+      【审查要求】
+      1. 从代码质量、安全性、性能、可维护性四个维度进行审查。
+      2. 对每个问题给出严重程度（严重/警告/建议）和具体修改建议。
+      3. 审查结果以 Markdown 格式输出。
+
+      【输出标记】
+      如果审查过程中修改了代码，使用 [[FILE:绝对路径]] 或 [[PROJECT:绝对路径]] 标记修改的文件/工程。
+
+      【审查目标】
+      {ARGS}

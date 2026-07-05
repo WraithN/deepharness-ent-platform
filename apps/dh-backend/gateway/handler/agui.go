@@ -108,15 +108,9 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 
 	// 保存用户输入消息（最后一条或全部用户消息）。
 	// 使用 ON CONFLICT DO NOTHING 避免同一消息因重试或历史消息重复发送而主键冲突。
-	h.saveUserMessages(r.Context(), sessionID, input.Messages)
+	h.saveUserMessages(r.Context(), sessionID, input.Messages, input.Context)
 
-	// 拦截斜杠指令（/prd-write、/proto-make 等），
-	// 将用户消息替换为指令专属提示词模板。
-	// 同时处理引用的任务卡片，将卡片信息注入提示词。
-	// 在 saveUserMessages 之后执行，确保数据库保存的是用户原始输入。
-	interceptCommands(input.Messages, input.Context, h.workItemSvc)
-
-	// 设置 SSE 响应头。
+	// 设置 SSE 响应头（提前设置，意图识别的闲聊回复也需要 SSE）。
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -127,9 +121,36 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	// 立即刷新 SSE 响应头，让前端 fetch() 能先拿到 HTTP 头部，
-	// 避免后续 h.aguiClient.Run() 阻塞时前端一直无法进入 SSE 读取循环。
+	// 立即刷新 SSE 响应头，让前端 fetch() 能先拿到 HTTP 头部。
 	flusher.Flush()
+
+	// 拦截斜杠指令（/prd-write、/proto-make 等），
+	// 将用户消息替换为指令专属提示词模板。
+	// 同时处理引用的任务卡片，将卡片信息注入提示词。
+	// 在 saveUserMessages 之后执行，确保数据库保存的是用户原始输入。
+	commandApplied := interceptCommands(input.Messages, input.Context, h.workItemSvc)
+
+	// 意图识别：用户未输入斜杠指令时，先调用 LLM 判断是闲聊还是任务意图。
+	// 闲聊 → 直接返回 LLM 回复，不走正常 agent run。
+	// 任务意图 → 映射到对应指令模板，再走正常 agent run。
+	if !commandApplied {
+		userInput := extractLastUserText(input.Messages)
+		if userInput != "" {
+			intentResult, err := recognizeIntent(r.Context(), h.aguiClient, userInput)
+			if err != nil {
+				log.Printf("[AGUIHandler] intent recognition failed, fallback to normal run: %v", err)
+			} else if intentResult != nil {
+				if intentResult.IsChat {
+					// 闲聊：直接流式返回回复，不走 agent run。
+					h.streamChatResponse(r, w, flusher, intentResult.Response, sessionID, input.RunID)
+					return
+				}
+				// 任务意图：应用指令模板到用户消息。
+				applyIntentCommand(input.Messages, intentResult.Command, userInput)
+				log.Printf("[AGUIHandler] intent mapped to command: %s", intentResult.Command)
+			}
+		}
+	}
 
 	// gatewayd 在 /sessions/{id}/chat 中会先发送 RUN_STARTED，
 	// 这里不再重复发送，避免前端收到重复的 run 开始事件。
@@ -640,12 +661,18 @@ func (h *AGUIHandler) ensureSession(ctx context.Context, sessionID string) error
 }
 
 // saveUserMessages 将用户输入消息持久化到数据库，并在第一条用户消息到达时生成会话标题。
-func (h *AGUIHandler) saveUserMessages(ctx context.Context, sessionID string, messages []agui.Message) {
+// ctxItems 携带前端发送的上下文数据（quotedCard、selectedRepos），写入消息 metadata 以便历史恢复。
+func (h *AGUIHandler) saveUserMessages(ctx context.Context, sessionID string, messages []agui.Message, ctxItems []agui.ContextItem) {
 	if sessionID == "" {
 		log.Printf("[AGUIHandler] saveUserMessages skipped: empty sessionID, count=%d", len(messages))
 		return
 	}
 	log.Printf("[AGUIHandler] saveUserMessages session=%s count=%d", sessionID, len(messages))
+
+	// 从上下文项中提取 quotedCard 和 selectedRepos，持久化到用户消息 metadata。
+	quotedCardRaw := extractContextItemRaw(ctxItems, "quotedCard")
+	selectedReposRaw := extractContextItemRaw(ctxItems, "selectedRepos")
+
 	for _, m := range messages {
 		content := m.ContentText()
 		metadata := map[string]any{}
@@ -653,6 +680,19 @@ func (h *AGUIHandler) saveUserMessages(ctx context.Context, sessionID string, me
 			original := extractOriginalUserPrompt(content)
 			if original != "" && original != content {
 				metadata["originalText"] = original
+			}
+			// 持久化引用卡片和代码库，以便历史会话恢复。
+			if quotedCardRaw != nil {
+				var card any
+				if json.Unmarshal(quotedCardRaw, &card) == nil {
+					metadata["quotedCard"] = card
+				}
+			}
+			if selectedReposRaw != nil {
+				var repos any
+				if json.Unmarshal(selectedReposRaw, &repos) == nil {
+					metadata["selectedRepos"] = repos
+				}
 			}
 		}
 		msg := chat.Message{
@@ -744,4 +784,94 @@ func deriveSessionTitle(text string) string {
 		return text
 	}
 	return string([]rune(text)[:30]) + "..."
+}
+
+// extractContextItemRaw 从上下文项列表中按名称查找并返回原始 JSON 值。
+func extractContextItemRaw(items []agui.ContextItem, name string) json.RawMessage {
+	for _, item := range items {
+		if item.Name == name {
+			return item.Value
+		}
+	}
+	return nil
+}
+
+// extractLastUserText 从消息列表中提取最后一条用户消息的纯文本。
+// 用于意图识别时获取用户的原始输入。
+func extractLastUserText(messages []agui.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != agui.RoleUser {
+			continue
+		}
+		rawText := messages[i].ContentText()
+		original := extractOriginalUserPrompt(rawText)
+		if original != "" {
+			return original
+		}
+		return rawText
+	}
+	return ""
+}
+
+// streamChatResponse 将闲聊回复以 AG-UI SSE 事件格式流式发送给前端。
+// 生成完整的 TEXT_MESSAGE_START → TEXT_MESSAGE_CONTENT → TEXT_MESSAGE_END → RUN_FINISHED 事件序列。
+func (h *AGUIHandler) streamChatResponse(r *http.Request, w http.ResponseWriter, flusher http.Flusher, response, sessionID, runID string) {
+	messageID := generateMessageID()
+
+	// 构建并发送事件序列。
+	events := []agui.Event{
+		{Type: agui.EventTextMessageStart, MessageID: messageID, Role: "assistant", ThreadID: sessionID, RunID: runID},
+	}
+
+	// 将回复按行分段发送，模拟流式输出效果。
+	lines := strings.Split(response, "\n")
+	for _, line := range lines {
+		events = append(events, agui.Event{
+			Type:      agui.EventTextMessageContent,
+			MessageID: messageID,
+			Delta:     line + "\n",
+			ThreadID:  sessionID,
+			RunID:     runID,
+		})
+	}
+
+	events = append(events,
+		agui.Event{Type: agui.EventTextMessageEnd, MessageID: messageID, ThreadID: sessionID, RunID: runID},
+		agui.Event{Type: agui.EventRunFinished, ThreadID: sessionID, RunID: runID},
+	)
+
+	// 逐个写入 SSE 并缓冲。
+	for _, ev := range events {
+		data, err := json.Marshal(ev)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+
+		// 缓冲事件供前端重连时回放。
+		if h.buffer != nil {
+			_ = h.buffer.Append(r.Context(), sessionID, ev)
+		}
+	}
+
+	// 持久化助手消息。
+	assistantMsg := chat.Message{
+		ID:        messageID,
+		SessionID: sessionID,
+		Role:      "assistant",
+		Type:      "text",
+		Content:   response,
+		Timestamp: time.Now(),
+	}
+	if h.messages != nil {
+		_ = h.messages.Append(r.Context(), sessionID, assistantMsg)
+	}
+
+	log.Printf("[AGUIHandler] chat response streamed: session=%s run=%s len=%d", sessionID, runID, len(response))
+}
+
+// generateMessageID 生成消息 ID。
+func generateMessageID() string {
+	return "msg-" + uuid.New().String()[:8]
 }

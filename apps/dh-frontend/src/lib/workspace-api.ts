@@ -13,6 +13,8 @@ export const workspaceApi = {
   create: (req: { tenantId: string; name: string; description?: string; ownerUserId: string }) =>
     api.post<Workspace>('/v1/workspaces', req),
   get: (id: string) => api.get<Workspace>(`/v1/workspaces/${id}`),
+  update: (id: string, req: Partial<Workspace>) => api.put<Workspace>(`/v1/workspaces/${id}`, req),
+  delete: (id: string) => api.delete<void>(`/v1/workspaces/${id}`),
 
   members: (workspaceId: string) => api.get<WorkspaceMember[]>(`/v1/workspaces/${workspaceId}/members`),
   addMember: (workspaceId: string, req: { userId: string; role: string; subRole?: string }) =>

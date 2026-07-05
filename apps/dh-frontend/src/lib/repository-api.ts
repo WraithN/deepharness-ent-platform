@@ -1,5 +1,6 @@
 import { api } from './api';
 import type { WorkspaceRepository } from '@/types';
+import type { BranchInfoDTO } from './api-types';
 
 export interface CreateRepositoryRequest {
   url: string;
@@ -61,4 +62,10 @@ export const repositoryApi = {
    */
   syncUserRepo: (workspaceId: string, repoId: string) =>
     api.post<void>(`/v1/workspaces/${workspaceId}/user-repos/${repoId}/sync`),
+  /**
+   * 强制从 git 远端刷新仓库分支列表并更新缓存。
+   * 与 branches 接口不同，此接口始终触发 git fetch。
+   */
+  refreshBranches: (workspaceId: string, repoId: string) =>
+    api.post<BranchInfoDTO[]>(`/v1/workspaces/${workspaceId}/repositories/${repoId}/branches/refresh`),
 };

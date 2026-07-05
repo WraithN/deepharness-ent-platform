@@ -7,17 +7,20 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Save, UserPlus, Search, MoreHorizontal, Shield, Settings2, User as UserIcon, Puzzle, FileText, Trash2, Plus, Code2, Copy, CheckCircle, UploadCloud, Box, ListTodo, Camera, UserCircle, SlidersHorizontal, Wand2, Star, Download, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Save, UserPlus, Search, MoreHorizontal, Shield, Settings2, User as UserIcon, Puzzle, FileText, Trash2, Plus, Code2, Copy, CheckCircle, UploadCloud, Box, ListTodo, Camera, UserCircle, SlidersHorizontal, Wand2, Star, Download, X, ChevronLeft, ChevronRight, Bot, ChevronDown } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import MultiSelect from '@/components/ui/multi-select';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { teamApi } from '@/lib/team-api';
 import { workspaceApi } from '@/lib/workspace-api';
 import { repositoryApi } from '@/lib/repository-api';
+import { agentConfigApi } from '@/lib/agent-config-api';
 import { toast } from 'sonner';
-import type { Skill, Prompt, Workspace, WorkspaceMember, WorkitemProject, WorkspaceStandard, WorkspaceCICD, WorkspaceRepository, SettingsConfig } from '@/types';
+import type { Skill, Prompt, Workspace, WorkspaceMember, WorkitemProject, WorkspaceStandard, WorkspaceCICD, WorkspaceRepository, SettingsConfig, WorkspaceAgentConfig, AvailableAgent } from '@/types';
 import { useSearchParams } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useAuth } from '@/contexts/AuthContext';
@@ -40,6 +43,191 @@ const DEFAULT_SETTINGS: SettingsConfig = {
 
 // 尚未入库的本地仓库行 ID 前缀，保存时据此调用 create 而非 update。
 const LOCAL_REPO_ID_PREFIX = 'local-';
+
+const BUILTIN_MODELS: Record<string, string[]> = {
+  'opencode': ['gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+  'claude-code': ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
+  'cursor-agent': ['gpt-4o', 'deepseek-v3'],
+  'codex': ['gpt-4o', 'gpt-4-turbo'],
+};
+
+interface AgentConfigCardProps {
+  config: WorkspaceAgentConfig;
+  readOnly: boolean;
+  onChange: (config: WorkspaceAgentConfig) => void;
+}
+
+const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, onChange }) => {
+  const builtinModels = BUILTIN_MODELS[config.agentKey] ?? BUILTIN_MODELS['opencode'];
+
+  const updateField = <K extends keyof WorkspaceAgentConfig>(field: K, value: WorkspaceAgentConfig[K]) => {
+    onChange({ ...config, [field]: value });
+  };
+
+  const updateAdvanced = (field: keyof NonNullable<WorkspaceAgentConfig['advancedConfig']>, value: number | undefined) => {
+    const next: WorkspaceAgentConfig = {
+      ...config,
+      advancedConfig: {
+        ...config.advancedConfig,
+        [field]: value,
+      },
+    };
+    onChange(next);
+  };
+
+  return (
+    <Card className="border border-border/50 bg-card">
+      <CardContent className="p-4 space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Bot className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <h4 className="font-medium text-sm">{config.name}</h4>
+              <p className="text-xs text-muted-foreground">{config.description}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">{config.enabled ? '已启用' : '已禁用'}</span>
+            <Switch
+              disabled={readOnly}
+              checked={config.enabled}
+              onCheckedChange={checked => updateField('enabled', checked)}
+            />
+          </div>
+        </div>
+
+        {config.enabled && (
+          <div className="space-y-4 pt-2 border-t border-border/50">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label className="text-sm">使用自定义模型</Label>
+                <p className="text-xs text-muted-foreground">开启后可配置自己的模型服务地址</p>
+              </div>
+              <Checkbox
+                disabled={readOnly}
+                checked={config.modelSource === 'custom'}
+                onCheckedChange={checked => updateField('modelSource', checked ? 'custom' : 'builtin')}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">{config.modelSource === 'custom' ? '模型名称' : '选择模型'}</Label>
+                {config.modelSource === 'custom' ? (
+                  <Input
+                    disabled={readOnly}
+                    placeholder="例如: custom-model-v1"
+                    value={config.model}
+                    onChange={e => updateField('model', e.target.value)}
+                  />
+                ) : (
+                  <Select
+                    disabled={readOnly}
+                    value={config.model}
+                    onValueChange={val => updateField('model', val)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="选择内置模型" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {builtinModels.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">温度 (Temperature)</Label>
+                <Input
+                  disabled={readOnly}
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="2"
+                  value={config.temperature ?? ''}
+                  onChange={e => updateField('temperature', e.target.value ? parseFloat(e.target.value) : undefined)}
+                />
+              </div>
+            </div>
+
+            {config.modelSource === 'custom' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Base URL</Label>
+                  <Input
+                    disabled={readOnly}
+                    placeholder="https://api.example.com/v1"
+                    value={config.baseUrl}
+                    onChange={e => updateField('baseUrl', e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">API Key</Label>
+                  <Input
+                    disabled={readOnly}
+                    type="password"
+                    placeholder="sk-..."
+                    value={config.apiKey}
+                    onChange={e => updateField('apiKey', e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+
+            <Collapsible>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="p-0 h-auto text-xs text-muted-foreground hover:text-foreground">
+                  <ChevronDown className="h-3 w-3 mr-1" /> 高级配置
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-4 pt-2">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">最大 Token 数</Label>
+                    <Input
+                      disabled={readOnly}
+                      type="number"
+                      min="1"
+                      placeholder="例如: 4096"
+                      value={config.advancedConfig?.maxTokens ?? ''}
+                      onChange={e => updateAdvanced('maxTokens', e.target.value ? parseInt(e.target.value, 10) : undefined)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">上下文窗口</Label>
+                    <Input
+                      disabled={readOnly}
+                      type="number"
+                      min="1"
+                      placeholder="例如: 128000"
+                      value={config.advancedConfig?.contextWindow ?? ''}
+                      onChange={e => updateAdvanced('contextWindow', e.target.value ? parseInt(e.target.value, 10) : undefined)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">Top P</Label>
+                    <Input
+                      disabled={readOnly}
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="1"
+                      placeholder="例如: 1.0"
+                      value={config.advancedConfig?.topP ?? ''}
+                      onChange={e => updateAdvanced('topP', e.target.value ? parseFloat(e.target.value) : undefined)}
+                    />
+                  </div>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
 
 export const Settings: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -72,6 +260,9 @@ export const Settings: React.FC = () => {
   const [cicdWebhook, setCicdWebhook] = useState('');
   const [cicdScript, setCicdScript] = useState('npm run build\nnpm run test\nnpm run deploy');
 
+  const [agentConfigs, setAgentConfigs] = useState<WorkspaceAgentConfig[]>([]);
+  const [agentConfigsLoading, setAgentConfigsLoading] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     Promise.all([teamApi.listSkills(), teamApi.listPrompts()])
@@ -91,13 +282,30 @@ export const Settings: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    setAgentConfigsLoading(true);
+    agentConfigApi.listWorkspaceConfigs(workspaceId)
+      .then(configs => {
+        if (cancelled) return;
+        setAgentConfigs(configs);
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.error('Failed to load agent configs:', err);
+        toast.error('加载智能体配置失败');
+      })
+      .finally(() => setAgentConfigsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
     Promise.all([
-      workspaceApi.get(workspaceId).catch(() => null),
-      workspaceApi.members(workspaceId).catch(() => []),
-      workspaceApi.getWorkitemProject(workspaceId).catch(() => null),
-      workspaceApi.listStandards(workspaceId).catch(() => []),
-      workspaceApi.getCICD(workspaceId).catch(() => null),
-      repositoryApi.list(workspaceId).catch(() => []),
+      workspaceApi.get(workspaceId).catch((): Workspace | null => null),
+      workspaceApi.members(workspaceId).catch((): WorkspaceMember[] => []),
+      workspaceApi.getWorkitemProject(workspaceId).catch((): WorkitemProject | null => null),
+      workspaceApi.listStandards(workspaceId).catch((): WorkspaceStandard[] => []),
+      workspaceApi.getCICD(workspaceId).catch((): WorkspaceCICD | null => null),
+      repositoryApi.list(workspaceId).catch((): WorkspaceRepository[] => []),
     ]).then(([ws, mems, wp, stds, cicdCfg, repos]) => {
       if (cancelled) return;
       setWorkspace(ws);
@@ -209,6 +417,25 @@ export const Settings: React.FC = () => {
 
   const handleSave = () => {
     toast.success('设置已保存');
+  };
+
+  const handleSaveAgentConfigs = async () => {
+    const wsId = workspace?.id || 'ws-default';
+    try {
+      await Promise.all(agentConfigs.map(cfg => agentConfigApi.saveWorkspaceConfig(wsId, {
+        agentKey: cfg.agentKey,
+        enabled: cfg.enabled,
+        model: cfg.model,
+        modelSource: cfg.modelSource,
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        temperature: cfg.temperature,
+        advancedConfig: cfg.advancedConfig,
+      })));
+      toast.success('智能体配置已保存');
+    } catch {
+      toast.error('保存智能体配置失败');
+    }
   };
 
   const handleSaveWorkitem = async () => {
@@ -705,143 +932,29 @@ export const Settings: React.FC = () => {
         <TabsContent value="agent">
           <Card className="soft-shadow border-none">
             <CardHeader>
-              <CardTitle>智能体设置</CardTitle>
-              <CardDescription>配置空间专属 AI 助手的引擎及模型参数。</CardDescription>
+              <CardTitle>智能体配置</CardTitle>
+              <CardDescription>为当前空间启用并配置各智能体的模型与高级参数。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="space-y-2">
-                <Label>智能体类型</Label>
-                <Select
-                  disabled={isReadOnly}
-                  value={settings.agentConfig.agentName}
-                  onValueChange={(val: 'opencode' | 'claude code') => setSettings({
-                    ...settings, 
-                    agentConfig: { ...settings.agentConfig, agentName: val }
-                  })}
-                >
-                  <SelectTrigger className="w-full md:w-[300px]">
-                    <SelectValue placeholder="选择智能体" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="opencode">OpenCode</SelectItem>
-                    <SelectItem value="claude code">Claude Code</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-4">
-                <div className="flex items-center justify-between border border-border/50 rounded-lg p-4 bg-muted/10">
-                  <div className="space-y-0.5">
-                    <Label className="text-base font-medium">使用自定义模型</Label>
-                    <p className="text-sm text-muted-foreground">开启后可配置您自己的模型服务地址和名称</p>
-                  </div>
-                  <Checkbox 
-                    disabled={isReadOnly}
-                    checked={settings.agentConfig.modelSource === 'custom'}
-                    onCheckedChange={(checked) => setSettings({
-                      ...settings,
-                      agentConfig: { ...settings.agentConfig, modelSource: checked ? 'custom' : 'builtin' }
-                    })}
+              {agentConfigsLoading ? (
+                <p className="text-center py-8 text-muted-foreground">加载中...</p>
+              ) : agentConfigs.length === 0 ? (
+                <p className="text-center py-8 text-muted-foreground">暂无可用智能体，请联系超管开启平台智能体范围。</p>
+              ) : (
+                agentConfigs.map(cfg => (
+                  <AgentConfigCard
+                    key={cfg.agentKey}
+                    config={cfg}
+                    readOnly={isReadOnly}
+                    onChange={next => setAgentConfigs(prev => prev.map(c => c.agentKey === next.agentKey ? next : c))}
                   />
-                </div>
+                ))
+              )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-muted-foreground text-xs">{settings.agentConfig.modelSource === 'builtin' ? '选择模型' : '模型名称'}</Label>
-                    {settings.agentConfig.modelSource === 'builtin' ? (
-                      <Select
-                        disabled={isReadOnly}
-                        value={settings.agentConfig.model}
-                        onValueChange={val => setSettings({
-                          ...settings, 
-                          agentConfig: {...settings.agentConfig, model: val}
-                        })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="选择内置模型" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {settings.agentConfig.agentName === 'claude code' ? (
-                            <>
-                              <SelectItem value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</SelectItem>
-                              <SelectItem value="claude-3-opus-20240229">Claude 3 Opus</SelectItem>
-                              <SelectItem value="claude-3-haiku-20240307">Claude 3 Haiku</SelectItem>
-                            </>
-                          ) : (
-                            <>
-                              <SelectItem value="gpt-4o">GPT-4o</SelectItem>
-                              <SelectItem value="gpt-4-turbo">GPT-4 Turbo</SelectItem>
-                              <SelectItem value="gpt-3.5-turbo">GPT-3.5 Turbo</SelectItem>
-                            </>
-                          )}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Input 
-                        disabled={isReadOnly}
-                        placeholder="例如: custom-model-v1"
-                        value={settings.agentConfig.model}
-                        onChange={e => setSettings({
-                          ...settings, 
-                          agentConfig: {...settings.agentConfig, model: e.target.value}
-                        })}
-                      />
-                    )}
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label className="text-muted-foreground text-xs">API Key</Label>
-                    <Input 
-                      disabled={isReadOnly}
-                      type="password"
-                      placeholder="输入 API Key"
-                      value={settings.agentConfig.apiKey || ''}
-                      onChange={e => setSettings({
-                        ...settings, 
-                        agentConfig: {...settings.agentConfig, apiKey: e.target.value}
-                      })}
-                    />
-                  </div>
-                </div>
-
-                {settings.agentConfig.modelSource === 'custom' && (
-                  <div className="space-y-2 pt-2">
-                    <Label className="text-muted-foreground text-xs">Base URL</Label>
-                    <Input 
-                      disabled={isReadOnly}
-                      placeholder="https://api.example.com/v1"
-                      value={settings.agentConfig.baseUrl || ''}
-                      onChange={e => setSettings({
-                        ...settings, 
-                        agentConfig: {...settings.agentConfig, baseUrl: e.target.value}
-                      })}
-                    />
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2 pt-2">
-                <Label>生成温度 (Temperature)</Label>
-                <div className="flex items-center gap-4">
-                  <Input 
-                    disabled={isReadOnly}
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    max="1"
-                    className="w-32"
-                    value={settings.agentConfig.temperature}
-                    onChange={e => setSettings({
-                      ...settings, 
-                      agentConfig: {...settings.agentConfig, temperature: parseFloat(e.target.value)}
-                    })}
-                  />
-                  <span className="text-sm text-muted-foreground">数值越大生成内容越具随机性，范围 0.0 - 1.0</span>
-                </div>
-              </div>
-
-              {!isReadOnly && (
-                <Button onClick={handleSave} className="mt-6"><Save className="mr-2 h-4 w-4" /> 保存配置</Button>
+              {!isReadOnly && agentConfigs.length > 0 && (
+                <Button onClick={handleSaveAgentConfigs} className="mt-6">
+                  <Save className="mr-2 h-4 w-4" /> 保存智能体配置
+                </Button>
               )}
             </CardContent>
           </Card>

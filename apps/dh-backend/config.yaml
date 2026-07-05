@@ -41,6 +41,11 @@ database:
 workspace:
   root: "/home/nan/test"
 
+# agent-stub 服务地址（部署在 WORKSPACE_ROOT 所在服务器上）
+# dh-backend 将文件/工程/预览相关请求代理到此地址
+agent_stub:
+  url: "http://127.0.0.1:8090"
+
 workitem:
   platforms:
     - meego

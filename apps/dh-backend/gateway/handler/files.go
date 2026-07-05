@@ -31,6 +31,16 @@ func SetAllowedRoots(roots []string) {
 	allowedRoots = roots
 }
 
+// AddAllowedRoot 动态添加一个允许访问的根目录（如预览项目路径）。
+func AddAllowedRoot(root string) {
+	for _, r := range allowedRoots {
+		if r == root {
+			return
+		}
+	}
+	allowedRoots = append(allowedRoots, root)
+}
+
 // isPathAllowed 检查 absPath 是否在允许访问的根目录范围内。
 func isPathAllowed(absPath string) bool {
 	allRoots := make([]string, 0, len(allowedRoots)+1)

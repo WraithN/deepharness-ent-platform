@@ -32,8 +32,29 @@ export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, o
   return (
     <div className="flex gap-3 justify-end">
       <div className="flex flex-col max-w-[calc(100%-2.75rem)] min-w-0 items-end">
+        <div className="flex flex-col gap-2 w-fit max-w-full bg-primary text-primary-foreground rounded-2xl rounded-tr-sm shadow-sm">
+          {textPart?.text && (
+            <div className="px-3 py-2 text-xs sm:text-sm">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  code({ inline, className, children, ...props }: any) {
+                    const match = /language-(\w+)/.exec(className || '');
+                    const codeString = String(children).replace(/\n$/, '');
+                    if (!inline && match) {
+                      return <pre className="bg-primary-foreground/10 rounded p-2 text-xs overflow-x-auto"><code>{codeString}</code></pre>;
+                    }
+                    return <code className="bg-primary-foreground/20 px-1.5 py-0.5 rounded text-xs font-mono" {...props}>{children}</code>;
+                  },
+                }}
+              >
+                {textPart.text}
+              </ReactMarkdown>
+            </div>
+          )}
+        </div>
         {(quotedCard || (selectedRepos && selectedRepos.length > 0)) && (
-          <div className="mb-2 flex flex-wrap gap-2 w-full justify-end">
+          <div className="mt-2 flex flex-wrap gap-2 justify-end">
             {quotedCard && (
               <div
                 className="flex items-center gap-2 w-56 px-3 py-2 rounded-xl border border-primary/20 bg-primary/10 cursor-pointer hover:bg-primary/20 transition-colors"
@@ -65,27 +86,6 @@ export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, o
             ))}
           </div>
         )}
-        <div className="flex flex-col gap-2 w-fit max-w-full bg-primary text-primary-foreground rounded-2xl rounded-tr-sm shadow-sm">
-          {textPart?.text && (
-            <div className="px-3 py-2 text-xs sm:text-sm">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  code({ inline, className, children, ...props }: any) {
-                    const match = /language-(\w+)/.exec(className || '');
-                    const codeString = String(children).replace(/\n$/, '');
-                    if (!inline && match) {
-                      return <pre className="bg-primary-foreground/10 rounded p-2 text-xs overflow-x-auto"><code>{codeString}</code></pre>;
-                    }
-                    return <code className="bg-primary-foreground/20 px-1.5 py-0.5 rounded text-xs font-mono" {...props}>{children}</code>;
-                  },
-                }}
-              >
-                {textPart.text}
-              </ReactMarkdown>
-            </div>
-          )}
-        </div>
         {textPart?.text && (
           <div className="flex items-center gap-1 mt-1.5">
             <span className="text-[10px] text-muted-foreground/50 px-1">{formatTime(message.createdAt)}</span>

@@ -1,31 +1,36 @@
 import React, { useEffect, useState } from 'react';
-import { FolderGit2, GitCompareArrows, Eye, RefreshCw, Loader2, CheckCircle2, FileCode2 } from 'lucide-react';
+import { FolderGit2, GitCompareArrows, Eye, RefreshCw, Loader2, Code2 } from 'lucide-react';
 import { projectApi, type ProjectCheckResponse } from '@/lib/project-api';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import type { PreviewMode } from '@/components/chat/LivePreview';
 
 interface ProjectCardProps {
   /** 工程根目录的绝对路径 */
   path: string;
-  /** 点击预览按钮时的回调 */
-  onPreview?: (path: string, isNew: boolean) => void;
+  /** 点击按钮时的回调，传递预览模式 */
+  onPreview?: (path: string, mode: PreviewMode) => void;
 }
 
 /**
  * 工程卡片组件。
  *
- * 根据 projectApi.check 结果区分两种展示形态：
- * - 新建工程（绿色）：显示文件数、预览工程按钮、同步到仓库按钮
- * - 已有工程修改（琥珀色）：显示查看 diff 按钮
+ * 所有工程都显示"查看 Diff"按钮（通过 git diff 对比 master/main）；
+ * 前端工程额外显示"预览"按钮（启动 dev server）。
+ * 根据工程状态区分两种展示形态：
+ * - 新建工程（绿色）
+ * - 已有工程修改（琥珀色）
  */
 export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => {
   const [checkResult, setCheckResult] = useState<ProjectCheckResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [checkFailed, setCheckFailed] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setCheckFailed(false);
     projectApi
       .check(path)
       .then((result) => {
@@ -34,6 +39,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
       .catch((err) => {
         if (!cancelled) {
           console.error('[ProjectCard] check failed:', err);
+          setCheckFailed(true);
         }
       })
       .finally(() => {
@@ -57,10 +63,16 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
     }
   };
 
+  const handleDiff = () => {
+    onPreview?.(path, 'diff');
+  };
+
   const handlePreview = () => {
-    if (onPreview && checkResult) {
-      onPreview(path, checkResult.isNew);
-    }
+    onPreview?.(path, 'preview');
+  };
+
+  const handleCode = () => {
+    onPreview?.(path, 'code');
   };
 
   if (loading) {
@@ -77,8 +89,8 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
   const hasDiff = checkResult?.hasDiff ?? false;
   const fileCount = checkResult?.fileCount ?? 0;
 
-  // 新建工程：绿色主题
-  if (isNew) {
+  // check 失败时作为新建工程展示，仍允许查看 Diff 和预览。
+  if (isNew || checkFailed) {
     return (
       <div className="w-full p-4 rounded-2xl border border-green-500/30 bg-green-50/50 dark:bg-green-900/10 shadow-sm hover:shadow-md transition-all">
         <div className="flex items-start gap-4">
@@ -101,11 +113,27 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
             <div className="flex items-center gap-3 mt-3">
               <button
                 type="button"
+                onClick={handleDiff}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-300 hover:underline"
+              >
+                <GitCompareArrows className="h-3.5 w-3.5" />
+                查看 Diff
+              </button>
+              <button
+                type="button"
                 onClick={handlePreview}
                 className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-300 hover:underline"
               >
                 <Eye className="h-3.5 w-3.5" />
-                预览工程
+                预览页面
+              </button>
+              <button
+                type="button"
+                onClick={handleCode}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-300 hover:underline"
+              >
+                <Code2 className="h-3.5 w-3.5" />
+                查看工程
               </button>
               <button
                 type="button"
@@ -146,25 +174,30 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
             {fileCount > 0 ? `${fileCount} 个文件` : ''}
           </p>
           <div className="flex items-center gap-3 mt-3">
-            {hasDiff ? (
-              <button
-                type="button"
-                onClick={handlePreview}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline"
-              >
-                <GitCompareArrows className="h-3.5 w-3.5" />
-                查看 Diff
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handlePreview}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:underline"
-              >
-                <Eye className="h-3.5 w-3.5" />
-                预览工程
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleDiff}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline"
+            >
+              <GitCompareArrows className="h-3.5 w-3.5" />
+              查看 Diff
+            </button>
+            <button
+              type="button"
+              onClick={handlePreview}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline"
+            >
+              <Eye className="h-3.5 w-3.5" />
+              预览页面
+            </button>
+            <button
+              type="button"
+              onClick={handleCode}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline"
+            >
+              <Code2 className="h-3.5 w-3.5" />
+              查看工程
+            </button>
             <button
               type="button"
               onClick={handleSync}

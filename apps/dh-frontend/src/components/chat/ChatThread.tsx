@@ -11,7 +11,7 @@ interface ChatThreadProps {
   onEditMessage?: (text: string) => void;
   onRegenerate?: () => void;
   onFilePreview?: (path: string) => void;
-  onProjectPreview?: (path: string, isNew: boolean) => void;
+  onProjectPreview?: (path: string, mode: 'diff' | 'code' | 'preview') => void;
 }
 
 /**

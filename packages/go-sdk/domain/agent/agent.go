@@ -38,3 +38,50 @@ type Message struct {
 	Metadata  any       `json:"metadata,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
+
+// AgentType 表示平台级智能体类型元数据。
+type AgentType struct {
+	Key         string    `json:"key"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Enabled     bool      `json:"enabled"`
+	Builtin     bool      `json:"builtin"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// AdvancedAgentConfig 表示智能体高级配置参数。
+type AdvancedAgentConfig struct {
+	MaxTokens     *int    `json:"maxTokens,omitempty"`
+	ContextWindow *int    `json:"contextWindow,omitempty"`
+	TopP          *float64 `json:"topP,omitempty"`
+	FrequencyPenalty *float64 `json:"frequencyPenalty,omitempty"`
+	PresencePenalty  *float64 `json:"presencePenalty,omitempty"`
+	Extra         map[string]any `json:"extra,omitempty"`
+}
+
+// WorkspaceAgentConfig 表示空间级智能体运行时配置。
+type WorkspaceAgentConfig struct {
+	ID              string              `json:"id"`
+	WorkspaceID     string              `json:"workspaceId"`
+	AgentKey        string              `json:"agentKey"`
+	Name            string              `json:"name"`
+	Description     string              `json:"description"`
+	Enabled         bool                `json:"enabled"`
+	Model           string              `json:"model"`
+	ModelSource     string              `json:"modelSource"`
+	BaseURL         string              `json:"baseUrl"`
+	APIKey          string              `json:"apiKey"`
+	Temperature     *float64            `json:"temperature,omitempty"`
+	AdvancedConfig  *AdvancedAgentConfig `json:"advancedConfig,omitempty"`
+	CreatedAt       time.Time           `json:"createdAt"`
+	UpdatedAt       time.Time           `json:"updatedAt"`
+}
+
+// AvailableAgent 表示前端智能体选择器中展示的智能体项。
+type AvailableAgent struct {
+	AgentKey    string  `json:"agentKey"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	Model       string  `json:"model"`
+}

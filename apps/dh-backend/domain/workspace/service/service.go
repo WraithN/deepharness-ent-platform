@@ -9,6 +9,8 @@ import (
 type WorkspaceService interface {
 	CreateWorkspace(tenantID, name, description, ownerUserID string) (workspace.Workspace, error)
 	GetWorkspace(id string) (workspace.Workspace, error)
+	UpdateWorkspace(id, name, description string) (workspace.Workspace, error)
+	DeleteWorkspace(id string) error
 	ListWorkspaces(tenantID string) ([]workspace.Workspace, error)
 	// ListMine 返回指定用户加入的工作空间及其成员关系（用于登录后确定当前空间与权限）。
 	ListMine(userID string) ([]MineWorkspace, error)

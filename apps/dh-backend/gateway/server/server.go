@@ -14,6 +14,8 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/orchestrator"
 	orchestratorservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/orchestrator/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig"
+	agentconfigservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit"
 	auditservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity"
@@ -33,7 +35,10 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 	sdkpostgres "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/postgres"
+	"github.com/redis/go-redis/v9"
 )
+
+var defaultAgentConfigService agentconfigservice.AgentConfigService
 
 func New(cfg config.Config) http.Handler {
 	mux := http.NewServeMux()
@@ -48,14 +53,16 @@ func New(cfg config.Config) http.Handler {
 	// Business logic layer
 	agentClient := client.NewGatewaydClient(cfg.GatewaydAdminURL, cfg.GatewaydAgentID)
 
-	initIdentityService(db)
+	userService := identityservice.NewDBUserService(db)
+	identity.Init(userService)
 	initPersonalAssistantService(db)
 	workItemSvc := initWorkItemService(db)
 	initReviewService(db)
 	initEventService(db)
 	initOrchestratorService(db)
-	workspaceService := initWorkspaceService(db, cfg.WorkspaceRoot)
-	initRepositoryService(db, cfg.WorkspaceRoot)
+	workspaceService := initWorkspaceService(db, cfg.WorkspaceRoot, userService)
+	initAgentConfigService(db)
+	initRepositoryService(db, cfg)
 	initTeamService(db)
 
 	// Handlers
@@ -74,12 +81,16 @@ func New(cfg config.Config) http.Handler {
 		sseBuffer = memory.New()
 		log.Printf("[Server] using in-memory SSE buffer")
 	}
-	sessionHandler := handler.NewSessionHandler(sessions, messages, agentClient, workspaceService, cfg, sseBuffer)
+	sessionHandler := handler.NewSessionHandler(sessions, messages, agentClient, workspaceService, defaultAgentConfigService, cfg, sseBuffer)
+	// 为 agentconfig 模块注入会话存储与 gatewayd 客户端，用于配置保存后向运行时同步。
+	agentconfig.InitRuntimeSync(sessions, agentClient)
 	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, sessions, messages, sseBuffer, workItemSvc)
 	sseReplayHandler := handler.NewSSEReplayHandler(sseBuffer)
-	handler.SetFilesRoot(cfg.WorkspaceRoot)
-	// 允许文件 API 访问 workspaceRoot 下的路径（agent 在此目录下创建文件）
-	handler.SetAllowedRoots([]string{cfg.WorkspaceRoot})
+	statsHandler := handler.NewStatsHandler(sessions)
+
+	// agent-stub 反向代理：将文件/工程/预览请求转发到 agent-stub 服务。
+	// agent-stub 部署在 WORKSPACE_ROOT 所在服务器上，直接操作文件系统和 git。
+	stubProxy := handler.NewStubProxy(cfg.AgentStubURL)
 
 	// Routes
 	mux.HandleFunc("/health", handler.HealthCheck)
@@ -90,28 +101,10 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/sessions/{id}/sse", sseReplayHandler.ServeSSE)
 	mux.HandleFunc("/api/v1/hello", handler.Hello)
 
-	// 文件读取/写入/删除/下载/版本查询/保存
-	mux.HandleFunc("/api/v1/files/content", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			handler.FileContent(w, r)
-		case http.MethodPut, http.MethodPost:
-			handler.FileWrite(w, r)
-		case http.MethodDelete:
-			handler.FileDelete(w, r)
-		default:
-			handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
-		}
-	})
-	mux.HandleFunc("/api/v1/files/download", handler.FileDownload)
-	mux.HandleFunc("/api/v1/files/versions", handler.FileVersions)
-	mux.HandleFunc("/api/v1/files/save-to-feishu", handler.SaveToFeishu)
-
-	// 工程项目管理（AI 创建/修改的工程预览与同步）
-	mux.HandleFunc("/api/v1/projects/tree", handler.ProjectTree)
-	mux.HandleFunc("/api/v1/projects/diff", handler.ProjectDiff)
-	mux.HandleFunc("/api/v1/projects/check", handler.ProjectCheck)
-	mux.HandleFunc("/api/v1/projects/sync", handler.ProjectSync)
+	// 文件/工程/预览 → 代理到 agent-stub
+	mux.HandleFunc("/api/v1/files/", stubProxy.ServeHTTP)
+	mux.HandleFunc("/api/v1/projects/", stubProxy.ServeHTTP)
+	mux.HandleFunc("/api/v1/preview/", stubProxy.ServeHTTP)
 
 	// Internal business modules
 	mux.HandleFunc("/api/v1/identity/users", identity.Users)
@@ -133,6 +126,10 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/review/review", pragent.Reviews)
 	mux.HandleFunc("/api/v1/audit/events", audit.Events)
 	mux.HandleFunc("/api/v1/orchestrator/sessions", orchestrator.Sessions)
+	mux.HandleFunc("/api/v1/stats/summary", statsHandler.Summary)
+	mux.HandleFunc("/api/v1/stats/trend", statsHandler.Trend)
+	mux.HandleFunc("/api/v1/stats/trails", statsHandler.Trails)
+	mux.HandleFunc("/api/v1/commands", handler.CommandsHandler)
 
 	// Personal assistant module
 	mux.HandleFunc("/api/v1/personal-assistants", personalassistant.Assistants)
@@ -145,12 +142,17 @@ func New(cfg config.Config) http.Handler {
 	// Workspace module
 	// /workspaces/mine 需登录态，需在 /workspaces/{id} 之前注册以避免路径冲突。
 	mux.Handle("/api/v1/workspaces/mine", middleware.Auth(http.HandlerFunc(workspace.Mine)))
-	mux.HandleFunc("/api/v1/workspaces", workspace.Workspaces)
-	mux.HandleFunc("/api/v1/workspaces/{id}", workspace.WorkspaceByID)
+	mux.Handle("/api/v1/workspaces", middleware.Auth(http.HandlerFunc(workspace.Workspaces)))
+	mux.Handle("/api/v1/workspaces/{id}", middleware.Auth(http.HandlerFunc(workspace.WorkspaceByID)))
 	mux.HandleFunc("/api/v1/workspaces/{id}/members", workspace.Members)
 	mux.HandleFunc("/api/v1/workspaces/{id}/members/{userId}", workspace.MemberByID)
 	mux.HandleFunc("/api/v1/workspaces/{id}/workitem-project", workspace.WorkitemProject)
+	mux.HandleFunc("/api/v1/agent-types", agentconfig.AgentTypes)
+	mux.HandleFunc("/api/v1/agent-types/{key}", agentconfig.AgentTypeByKey)
 	mux.HandleFunc("/api/v1/workspaces/{id}/agents", workspace.WorkspaceAgents)
+	mux.HandleFunc("/api/v1/workspaces/{id}/agent-configs", agentconfig.WorkspaceAgentConfigs)
+	mux.HandleFunc("/api/v1/workspaces/{id}/agent-configs/{key}", agentconfig.WorkspaceAgentConfigByKey)
+	mux.HandleFunc("/api/v1/workspaces/{id}/available-agents", agentconfig.AvailableAgents)
 	mux.HandleFunc("/api/v1/workspaces/{id}/standards", workspace.WorkspaceStandards)
 	mux.HandleFunc("/api/v1/workspaces/{id}/standards/{standardId}", workspace.WorkspaceStandardByID)
 	mux.HandleFunc("/api/v1/workspaces/{id}/cicd", workspace.WorkspaceCICD)
@@ -163,6 +165,7 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/sync", repository.SyncRepository)
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/details", repository.RepositoryDetails)
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/branches", repository.RepositoryBranches)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/branches/refresh", repository.RefreshBranches)
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/switch-branch", repository.SwitchBranch)
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/tree", repository.RepositoryFileTree)
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/content", repository.RepositoryFileContent)
@@ -236,11 +239,18 @@ func initOrchestratorService(db *sql.DB) {
 	orchestrator.Init(orchestratorservice.NewDBSessionService(db))
 }
 
-func initWorkspaceService(db *sql.DB, workspaceRoot string) workspaceservice.WorkspaceService {
+func initWorkspaceService(db *sql.DB, workspaceRoot string, userService identityservice.UserService) workspaceservice.WorkspaceService {
 	log.Printf("[Workspace] using postgres storage, workspaceRoot=%s", workspaceRoot)
 	svc := workspaceservice.NewDBWorkspaceService(db, workspaceRoot)
 	workspace.Init(svc)
+	workspace.InitUserService(userService)
 	return svc
+}
+
+func initAgentConfigService(db *sql.DB) {
+	log.Println("[AgentConfig] using postgres storage")
+	defaultAgentConfigService = agentconfigservice.NewDBAgentConfigService(db)
+	agentconfig.Init(defaultAgentConfigService)
 }
 
 func initTeamService(db *sql.DB) {
@@ -248,9 +258,33 @@ func initTeamService(db *sql.DB) {
 	team.Init(teamservice.NewDBTeamService(db))
 }
 
-func initRepositoryService(db *sql.DB, root string) {
+func initRepositoryService(db *sql.DB, cfg config.Config) {
+	root := cfg.WorkspaceRoot
 	log.Printf("[Repository] using postgres storage with git clone, root=%s", root)
-	repository.Init(repositoryservice.NewDBRepositoryService(db, root, &dbSSHKeyResolver{db: db}))
+	svc := repositoryservice.NewDBRepositoryService(db, root, &dbSSHKeyResolver{db: db})
+
+	// 根据 buffer_store_type 选择分支缓存后端：redis（分布式）或 memory（开发环境）。
+	if cfg.BufferStoreType == "redis" && len(cfg.RedisAddrs) > 0 {
+		var redisClient redis.UniversalClient
+		if len(cfg.RedisAddrs) == 1 {
+			redisClient = redis.NewClient(&redis.Options{
+				Addr:     cfg.RedisAddrs[0],
+				Password: cfg.RedisPassword,
+				DB:       cfg.RedisDB,
+			})
+		} else {
+			redisClient = redis.NewClusterClient(&redis.ClusterOptions{
+				Addrs:    cfg.RedisAddrs,
+				Password: cfg.RedisPassword,
+			})
+		}
+		svc.SetBranchCache(repositoryservice.NewRedisBranchCache(redisClient))
+		log.Printf("[Repository] branch cache: redis, addrs=%v", cfg.RedisAddrs)
+	} else {
+		log.Printf("[Repository] branch cache: memory (dev mode)")
+	}
+
+	repository.Init(svc)
 }
 
 // dbSSHKeyResolver 从 user_profiles 表解析用户 SSH Key，供仓库克隆/拉取使用。
