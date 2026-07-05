@@ -194,7 +194,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
                 className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 transition-transform duration-200 hover:scale-105 active:scale-95"
               >
                 {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitCommit className="h-3.5 w-3.5" />}
-                提交
+                提交修改
               </button>
             </div>
           </div>
@@ -257,7 +257,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
               className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 transition-transform duration-200 hover:scale-105 active:scale-95"
             >
               {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitCommit className="h-3.5 w-3.5" />}
-              提交
+              提交修改
             </button>
           </div>
         </div>
