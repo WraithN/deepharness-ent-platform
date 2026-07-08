@@ -11,7 +11,7 @@ import { SmartReview } from "@/pages/SmartReview";
 import { SmartTest } from "@/pages/SmartTest";
 import { Settings } from "@/pages/Settings";
 import { Requirements } from "@/pages/Requirements";
-import { ProjectCode } from "@/pages/ProjectCode";
+import { PersonalSpace } from "@/pages/PersonalSpace";
 import { PersonalAssistantPage } from "@/pages/PersonalAssistantPage";
 import { PersonalAssistantChat } from "@/pages/PersonalAssistantChat";
 import { FileView } from "@/pages/FileView";
@@ -38,7 +38,7 @@ export const routes: RouteObject[] = [
     children: [
       { index: true, element: <Navigate to="/admin/dashboard" replace /> },
       { path: "dashboard", element: <AdminDashboard /> },
-      { path: "spaces", element: <AdminPage /> },
+      { path: "tenants", element: <AdminPage /> },
       { path: "skills", element: <AdminPage /> },
       { path: "prompts", element: <AdminPage /> },
       { path: "config", element: <AdminPage /> },
@@ -51,7 +51,8 @@ export const routes: RouteObject[] = [
       { index: true, element: <Navigate to="/chat" replace /> },
       { path: "chat", element: <Chat /> },
       { path: "requirements", element: <Requirements /> },
-      { path: "code", element: <PermissionRoute perm="canViewCode"><ProjectCode /></PermissionRoute> },
+      { path: "personal-space", element: <PermissionRoute perm="canViewCode"><PersonalSpace /></PermissionRoute> },
+      { path: "code", element: <Navigate to="/personal-space" replace /> },
       { path: "prd", element: <PrdView /> },
       { path: "dashboard", element: <PermissionRoute perm="canViewDashboard"><Dashboard /></PermissionRoute> },
       { path: "market/skills", element: <SkillMarket /> },

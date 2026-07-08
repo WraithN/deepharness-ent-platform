@@ -36,6 +36,7 @@ export interface WorkItemDTO {
   status: WorkItemStatus;
   priority: WorkItemPriority;
   assigneeId: string;
+  assigneeName: string;
   reporter: string;
   source: WorkItemSource;
   externalId: string;
@@ -92,6 +93,25 @@ export interface FileContentDTO {
   size: number;
 }
 
+export interface CommitterStatDTO {
+  name: string;
+  email: string;
+  commits: number;
+}
+
+export interface DailyCommitDTO {
+  date: string;
+  count: number;
+}
+
+export interface LanguageStatDTO {
+  name: string;
+  files: number;
+  bytes: number;
+  percentage: number;
+  color: string;
+}
+
 export interface RepositoryDetailsDTO {
   repository: RepositoryDTO;
   commitStats: CommitStatsDTO;
@@ -100,6 +120,10 @@ export interface RepositoryDetailsDTO {
   fileCount: number;
   sizeBytes: number;
   language: string;
+  effectiveLinesOfCode: number;
+  committerStats: CommitterStatDTO[];
+  weeklyCommits: DailyCommitDTO[];
+  languageStats: LanguageStatDTO[];
 }
 
 // ── User ──
@@ -118,6 +142,7 @@ export interface UserDTO {
 // 当前用户加入的工作空间及其成员关系（GET /api/v1/workspaces/mine）
 export interface MineWorkspaceDTO {
   id: string;
+  displayId: string;
   tenantId: string;
   name: string;
   description?: string;
@@ -211,6 +236,7 @@ export interface ReviewResultDTO {
 export interface AgentSessionDTO {
   id: string;
   title: string;
+  agentId: string;
   agentType: string;
   model: string;
   status: string;

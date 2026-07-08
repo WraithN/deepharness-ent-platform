@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/google/uuid"
 )
@@ -91,19 +92,104 @@ type ReviewPromptRequest struct {
 	Action string `json:"action"` // approve | reject | unshelf
 }
 
+// SkillCategory 表示技能分类。
+type SkillCategory struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Builtin   bool      `json:"builtin"`
+	SortOrder int       `json:"sortOrder"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// PromptCategory 表示提示词分类。
+type PromptCategory struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Builtin   bool      `json:"builtin"`
+	SortOrder int       `json:"sortOrder"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// CreateSkillCategoryRequest 创建技能分类请求。
+type CreateSkillCategoryRequest struct {
+	Name string `json:"name"`
+}
+
+// CreatePromptCategoryRequest 创建提示词分类请求。
+type CreatePromptCategoryRequest struct {
+	Name string `json:"name"`
+}
+
+// CategoryDistribution 表示单个分类的分布数据。
+type CategoryDistribution struct {
+	Category string `json:"category"`
+	Count    int    `json:"count"`
+}
+
+// StatusDistribution 表示状态分布数据。
+type StatusDistribution struct {
+	Status string `json:"status"`
+	Count  int    `json:"count"`
+}
+
+// TopSkill 表示下载量最高的技能。
+type TopSkill struct {
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Category  string  `json:"category"`
+	Downloads int     `json:"downloads"`
+	Rating    float64 `json:"rating"`
+}
+
+// TopPrompt 表示使用次数最高的提示词。
+type TopPrompt struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	UseCase    string `json:"useCase"`
+	UsageCount int    `json:"usageCount"`
+}
+
+// SkillStats 表示技能大盘数据。
+type SkillStats struct {
+	Total               int                    `json:"total"`
+	InstalledCount      int                    `json:"installedCount"`
+	CategoryDistribution []CategoryDistribution `json:"categoryDistribution"`
+	TopSkills           []TopSkill             `json:"topSkills"`
+}
+
+// PromptStats 表示提示词大盘数据。
+type PromptStats struct {
+	Total                int                    `json:"total"`
+	OnShelfCount         int                    `json:"onShelfCount"`
+	CategoryDistribution []CategoryDistribution `json:"categoryDistribution"`
+	StatusDistribution   []StatusDistribution   `json:"statusDistribution"`
+	TopPrompts           []TopPrompt            `json:"topPrompts"`
+}
+
 // TeamService 定义团队技能/提示词服务接口。
 type TeamService interface {
-	ListSkills() ([]Skill, error)
+	ListSkills(page, pageSize int) (common.PaginatedList[Skill], error)
 	CreateSkill(req CreateSkillRequest) (Skill, error)
 	UpdateSkill(id string, req UpdateSkillRequest) (Skill, error)
 	DeleteSkill(id string) error
+	ListSkillCategories() ([]SkillCategory, error)
+	CreateSkillCategory(req CreateSkillCategoryRequest) (SkillCategory, error)
+	DeleteSkillCategory(id string) error
 
-	ListPromptsVisibleTo(userID string, isSuperAdmin bool) ([]Prompt, error)
+	ListPromptsVisibleTo(userID string, isSuperAdmin bool, page, pageSize int) (common.PaginatedList[Prompt], error)
 	CreatePrompt(req CreatePromptRequest, createdBy string) (Prompt, error)
 	UpdatePrompt(id string, req UpdatePromptRequest, userID string, isSuperAdmin bool) (Prompt, error)
 	DeletePrompt(id string, userID string, isSuperAdmin bool) error
 	ReviewPrompt(id string, action string, reviewerID string) (Prompt, error)
 	GetPrompt(id string) (Prompt, error)
+	ListPromptCategories() ([]PromptCategory, error)
+	CreatePromptCategory(req CreatePromptCategoryRequest) (PromptCategory, error)
+	DeletePromptCategory(id string) error
+
+	GetSkillStats() (SkillStats, error)
+	GetPromptStats() (PromptStats, error)
 }
 
 // DBTeamService 是基于 MySQL 的 TeamService 实现。
@@ -116,15 +202,24 @@ func NewDBTeamService(db *sql.DB) *DBTeamService {
 	return &DBTeamService{db: db}
 }
 
-// ListSkills 返回全部团队技能。
-func (s *DBTeamService) ListSkills() ([]Skill, error) {
+// ListSkills 返回团队技能列表，支持服务端分页。
+func (s *DBTeamService) ListSkills(page, pageSize int) (common.PaginatedList[Skill], error) {
+	page = common.NormalizePage(page)
+	pageSize = common.NormalizePageSize(pageSize, 10, 100)
+
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM team_skills`).Scan(&total); err != nil {
+		return common.PaginatedList[Skill]{}, fmt.Errorf("count skills failed: %w", err)
+	}
+
 	rows, err := s.db.Query(`
 		SELECT id, name, description, category, tags, downloads, rating, installed, icon, phase, created_at, updated_at
 		FROM team_skills
 		ORDER BY created_at DESC
-	`)
+		LIMIT $1 OFFSET $2
+	`, pageSize, common.Offset(page, pageSize))
 	if err != nil {
-		return nil, fmt.Errorf("list skills failed: %w", err)
+		return common.PaginatedList[Skill]{}, fmt.Errorf("list skills failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -132,14 +227,22 @@ func (s *DBTeamService) ListSkills() ([]Skill, error) {
 	for rows.Next() {
 		var sk Skill
 		var tags sql.NullString
-		err := rows.Scan(&sk.ID, &sk.Name, &sk.Description, &sk.Category, &tags, &sk.Downloads, &sk.Rating, &sk.Installed, &sk.Icon, &sk.Phase, &sk.CreatedAt, &sk.UpdatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("scan skill failed: %w", err)
+		if err := rows.Scan(&sk.ID, &sk.Name, &sk.Description, &sk.Category, &tags, &sk.Downloads, &sk.Rating, &sk.Installed, &sk.Icon, &sk.Phase, &sk.CreatedAt, &sk.UpdatedAt); err != nil {
+			return common.PaginatedList[Skill]{}, fmt.Errorf("scan skill failed: %w", err)
 		}
 		sk.Tags = parseTags(tags)
 		result = append(result, sk)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return common.PaginatedList[Skill]{}, fmt.Errorf("iterate skills failed: %w", err)
+	}
+
+	return common.PaginatedList[Skill]{
+		List:     result,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
 }
 
 // CreateSkill 创建新技能。
@@ -222,19 +325,36 @@ func (s *DBTeamService) getSkill(id string) (Skill, error) {
 	return sk, nil
 }
 
-// ListPromptsVisibleTo 返回指定用户可见的提示词。
+// ListPromptsVisibleTo 返回指定用户可见的提示词，支持服务端分页。
 // 规则：on_shelf 全员可见；pending_review/rejected 仅创建人和超管可见；off_shelf 仅超管可见。
-func (s *DBTeamService) ListPromptsVisibleTo(userID string, isSuperAdmin bool) ([]Prompt, error) {
+func (s *DBTeamService) ListPromptsVisibleTo(userID string, isSuperAdmin bool, page, pageSize int) (common.PaginatedList[Prompt], error) {
+	page = common.NormalizePage(page)
+	pageSize = common.NormalizePageSize(pageSize, 10, 100)
+
+	var total int
+	if isSuperAdmin {
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM team_prompts`).Scan(&total); err != nil {
+			return common.PaginatedList[Prompt]{}, fmt.Errorf("count prompts failed: %w", err)
+		}
+	} else {
+		if err := s.db.QueryRow(`
+			SELECT COUNT(*) FROM team_prompts
+			WHERE status = $1 OR (status IN ($2, $3) AND created_by = $4)
+		`, PromptStatusOnShelf, PromptStatusPendingReview, PromptStatusRejected, userID).Scan(&total); err != nil {
+			return common.PaginatedList[Prompt]{}, fmt.Errorf("count prompts failed: %w", err)
+		}
+	}
+
 	var rows *sql.Rows
 	var err error
-
 	if isSuperAdmin {
 		rows, err = s.db.Query(`
 			SELECT id, name, description, content, use_case, usage_count, added_to_space,
 			       status, created_by, reviewed_by, reviewed_at, created_at, updated_at
 			FROM team_prompts
 			ORDER BY created_at DESC
-		`)
+			LIMIT $1 OFFSET $2
+		`, pageSize, common.Offset(page, pageSize))
 	} else {
 		rows, err = s.db.Query(`
 			SELECT id, name, description, content, use_case, usage_count, added_to_space,
@@ -243,10 +363,11 @@ func (s *DBTeamService) ListPromptsVisibleTo(userID string, isSuperAdmin bool) (
 			WHERE status = $1
 			   OR (status IN ($2, $3) AND created_by = $4)
 			ORDER BY created_at DESC
-		`, PromptStatusOnShelf, PromptStatusPendingReview, PromptStatusRejected, userID)
+			LIMIT $5 OFFSET $6
+		`, PromptStatusOnShelf, PromptStatusPendingReview, PromptStatusRejected, userID, pageSize, common.Offset(page, pageSize))
 	}
 	if err != nil {
-		return nil, fmt.Errorf("list prompts failed: %w", err)
+		return common.PaginatedList[Prompt]{}, fmt.Errorf("list prompts failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -255,10 +376,9 @@ func (s *DBTeamService) ListPromptsVisibleTo(userID string, isSuperAdmin bool) (
 		var p Prompt
 		var reviewedAt sql.NullTime
 		var createdBy, reviewedBy sql.NullString
-		err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Content, &p.UseCase, &p.UsageCount, &p.AddedToSpace,
-			&p.Status, &createdBy, &reviewedBy, &reviewedAt, &p.CreatedAt, &p.UpdatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("scan prompt failed: %w", err)
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Content, &p.UseCase, &p.UsageCount, &p.AddedToSpace,
+			&p.Status, &createdBy, &reviewedBy, &reviewedAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return common.PaginatedList[Prompt]{}, fmt.Errorf("scan prompt failed: %w", err)
 		}
 		p.CreatedBy = sqlutil.ScanNullString(createdBy)
 		p.ReviewedBy = sqlutil.ScanNullString(reviewedBy)
@@ -267,7 +387,16 @@ func (s *DBTeamService) ListPromptsVisibleTo(userID string, isSuperAdmin bool) (
 		}
 		result = append(result, p)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return common.PaginatedList[Prompt]{}, fmt.Errorf("iterate prompts failed: %w", err)
+	}
+
+	return common.PaginatedList[Prompt]{
+		List:     result,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
 }
 
 // CreatePrompt 创建新提示词，默认进入审核中状态。
@@ -465,4 +594,273 @@ func defaultPhase(phase string) string {
 		return "代码开发"
 	}
 	return phase
+}
+
+// ListSkillCategories 返回所有技能分类，按排序权重和创建时间排序。
+func (s *DBTeamService) ListSkillCategories() ([]SkillCategory, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, builtin, sort_order, created_at, updated_at
+		FROM team_skill_categories
+		ORDER BY sort_order ASC, created_at ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list skill categories failed: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]SkillCategory, 0)
+	for rows.Next() {
+		var c SkillCategory
+		if err := rows.Scan(&c.ID, &c.Name, &c.Builtin, &c.SortOrder, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan skill category failed: %w", err)
+		}
+		result = append(result, c)
+	}
+	return result, rows.Err()
+}
+
+// CreateSkillCategory 创建新技能分类。
+func (s *DBTeamService) CreateSkillCategory(req CreateSkillCategoryRequest) (SkillCategory, error) {
+	if strings.TrimSpace(req.Name) == "" {
+		return SkillCategory{}, errors.New("name is required")
+	}
+	now := time.Now().UTC()
+	category := SkillCategory{
+		ID:        uuid.New().String(),
+		Name:      strings.TrimSpace(req.Name),
+		Builtin:   false,
+		SortOrder: 0,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO team_skill_categories (id, name, builtin, sort_order, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, category.ID, category.Name, category.Builtin, category.SortOrder, category.CreatedAt, category.UpdatedAt)
+	if err != nil {
+		return SkillCategory{}, fmt.Errorf("insert skill category failed: %w", err)
+	}
+	return category, nil
+}
+
+// DeleteSkillCategory 删除技能分类，内置分类不可删除。
+func (s *DBTeamService) DeleteSkillCategory(id string) error {
+	var builtin bool
+	err := s.db.QueryRow(`SELECT builtin FROM team_skill_categories WHERE id = $1`, id).Scan(&builtin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("skill category not found")
+	}
+	if err != nil {
+		return fmt.Errorf("get skill category failed: %w", err)
+	}
+	if builtin {
+		return errors.New("cannot delete builtin category")
+	}
+	if _, err := s.db.Exec(`DELETE FROM team_skill_categories WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("delete skill category failed: %w", err)
+	}
+	return nil
+}
+
+// ListPromptCategories 返回所有提示词分类，按排序权重和创建时间排序。
+func (s *DBTeamService) ListPromptCategories() ([]PromptCategory, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, builtin, sort_order, created_at, updated_at
+		FROM team_prompt_categories
+		ORDER BY sort_order ASC, created_at ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list prompt categories failed: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]PromptCategory, 0)
+	for rows.Next() {
+		var c PromptCategory
+		if err := rows.Scan(&c.ID, &c.Name, &c.Builtin, &c.SortOrder, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan prompt category failed: %w", err)
+		}
+		result = append(result, c)
+	}
+	return result, rows.Err()
+}
+
+// CreatePromptCategory 创建新提示词分类。
+func (s *DBTeamService) CreatePromptCategory(req CreatePromptCategoryRequest) (PromptCategory, error) {
+	if strings.TrimSpace(req.Name) == "" {
+		return PromptCategory{}, errors.New("name is required")
+	}
+	now := time.Now().UTC()
+	category := PromptCategory{
+		ID:        uuid.New().String(),
+		Name:      strings.TrimSpace(req.Name),
+		Builtin:   false,
+		SortOrder: 0,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO team_prompt_categories (id, name, builtin, sort_order, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, category.ID, category.Name, category.Builtin, category.SortOrder, category.CreatedAt, category.UpdatedAt)
+	if err != nil {
+		return PromptCategory{}, fmt.Errorf("insert prompt category failed: %w", err)
+	}
+	return category, nil
+}
+
+// DeletePromptCategory 删除提示词分类，内置分类不可删除。
+func (s *DBTeamService) DeletePromptCategory(id string) error {
+	var builtin bool
+	err := s.db.QueryRow(`SELECT builtin FROM team_prompt_categories WHERE id = $1`, id).Scan(&builtin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("prompt category not found")
+	}
+	if err != nil {
+		return fmt.Errorf("get prompt category failed: %w", err)
+	}
+	if builtin {
+		return errors.New("cannot delete builtin category")
+	}
+	if _, err := s.db.Exec(`DELETE FROM team_prompt_categories WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("delete prompt category failed: %w", err)
+	}
+	return nil
+}
+
+// GetSkillStats 返回技能大盘统计数据。
+func (s *DBTeamService) GetSkillStats() (SkillStats, error) {
+	stats := SkillStats{
+		CategoryDistribution: make([]CategoryDistribution, 0),
+		TopSkills:            make([]TopSkill, 0),
+	}
+
+	if err := s.db.QueryRow(`SELECT COUNT(*), COUNT(*) FILTER (WHERE installed = TRUE) FROM team_skills`).Scan(&stats.Total, &stats.InstalledCount); err != nil {
+		return SkillStats{}, fmt.Errorf("count skill stats failed: %w", err)
+	}
+
+	rows, err := s.db.Query(`
+		SELECT category, COUNT(*) AS count
+		FROM team_skills
+		GROUP BY category
+		ORDER BY count DESC
+	`)
+	if err != nil {
+		return SkillStats{}, fmt.Errorf("list skill category distribution failed: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var d CategoryDistribution
+		if err := rows.Scan(&d.Category, &d.Count); err != nil {
+			return SkillStats{}, fmt.Errorf("scan skill category distribution failed: %w", err)
+		}
+		stats.CategoryDistribution = append(stats.CategoryDistribution, d)
+	}
+	if err := rows.Err(); err != nil {
+		return SkillStats{}, fmt.Errorf("iterate skill category distribution failed: %w", err)
+	}
+
+	topRows, err := s.db.Query(`
+		SELECT id, name, category, downloads, rating
+		FROM team_skills
+		ORDER BY downloads DESC
+		LIMIT 10
+	`)
+	if err != nil {
+		return SkillStats{}, fmt.Errorf("list top skills failed: %w", err)
+	}
+	defer topRows.Close()
+	for topRows.Next() {
+		var t TopSkill
+		if err := topRows.Scan(&t.ID, &t.Name, &t.Category, &t.Downloads, &t.Rating); err != nil {
+			return SkillStats{}, fmt.Errorf("scan top skill failed: %w", err)
+		}
+		stats.TopSkills = append(stats.TopSkills, t)
+	}
+	if err := topRows.Err(); err != nil {
+		return SkillStats{}, fmt.Errorf("iterate top skills failed: %w", err)
+	}
+
+	return stats, nil
+}
+
+// GetPromptStats 返回提示词大盘统计数据。
+func (s *DBTeamService) GetPromptStats() (PromptStats, error) {
+	stats := PromptStats{
+		CategoryDistribution: make([]CategoryDistribution, 0),
+		StatusDistribution:   make([]StatusDistribution, 0),
+		TopPrompts:           make([]TopPrompt, 0),
+	}
+
+	if err := s.db.QueryRow(`
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE status = $1)
+		FROM team_prompts
+	`, PromptStatusOnShelf).Scan(&stats.Total, &stats.OnShelfCount); err != nil {
+		return PromptStats{}, fmt.Errorf("count prompt stats failed: %w", err)
+	}
+
+	catRows, err := s.db.Query(`
+		SELECT use_case, COUNT(*) AS count
+		FROM team_prompts
+		GROUP BY use_case
+		ORDER BY count DESC
+	`)
+	if err != nil {
+		return PromptStats{}, fmt.Errorf("list prompt category distribution failed: %w", err)
+	}
+	defer catRows.Close()
+	for catRows.Next() {
+		var d CategoryDistribution
+		if err := catRows.Scan(&d.Category, &d.Count); err != nil {
+			return PromptStats{}, fmt.Errorf("scan prompt category distribution failed: %w", err)
+		}
+		stats.CategoryDistribution = append(stats.CategoryDistribution, d)
+	}
+	if err := catRows.Err(); err != nil {
+		return PromptStats{}, fmt.Errorf("iterate prompt category distribution failed: %w", err)
+	}
+
+	statusRows, err := s.db.Query(`
+		SELECT status, COUNT(*) AS count
+		FROM team_prompts
+		GROUP BY status
+		ORDER BY count DESC
+	`)
+	if err != nil {
+		return PromptStats{}, fmt.Errorf("list prompt status distribution failed: %w", err)
+	}
+	defer statusRows.Close()
+	for statusRows.Next() {
+		var d StatusDistribution
+		if err := statusRows.Scan(&d.Status, &d.Count); err != nil {
+			return PromptStats{}, fmt.Errorf("scan prompt status distribution failed: %w", err)
+		}
+		stats.StatusDistribution = append(stats.StatusDistribution, d)
+	}
+	if err := statusRows.Err(); err != nil {
+		return PromptStats{}, fmt.Errorf("iterate prompt status distribution failed: %w", err)
+	}
+
+	topRows, err := s.db.Query(`
+		SELECT id, name, use_case, usage_count
+		FROM team_prompts
+		ORDER BY usage_count DESC
+		LIMIT 10
+	`)
+	if err != nil {
+		return PromptStats{}, fmt.Errorf("list top prompts failed: %w", err)
+	}
+	defer topRows.Close()
+	for topRows.Next() {
+		var t TopPrompt
+		if err := topRows.Scan(&t.ID, &t.Name, &t.UseCase, &t.UsageCount); err != nil {
+			return PromptStats{}, fmt.Errorf("scan top prompt failed: %w", err)
+		}
+		stats.TopPrompts = append(stats.TopPrompts, t)
+	}
+	if err := topRows.Err(); err != nil {
+		return PromptStats{}, fmt.Errorf("iterate top prompts failed: %w", err)
+	}
+
+	return stats, nil
 }

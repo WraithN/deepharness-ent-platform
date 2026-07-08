@@ -4,20 +4,21 @@ import "time"
 
 // WorkItem 统一工作项（需求/缺陷/用例）
 type WorkItem struct {
-	ID          string    `json:"id"`
-	TenantID    string    `json:"tenantId"`
-	ProjectID   string    `json:"projectId"`
-	Type        Type      `json:"type"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Status      Status    `json:"status"`
-	Priority    Priority  `json:"priority"`
-	AssigneeID  string    `json:"assigneeId"`
-	Reporter    string    `json:"reporter"`
-	Source      Source    `json:"source"`
-	ExternalID  string    `json:"externalId"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID           string    `json:"id"`
+	TenantID     string    `json:"tenantId"`
+	ProjectID    string    `json:"projectId"`
+	Type         Type      `json:"type"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Status       Status    `json:"status"`
+	Priority     Priority  `json:"priority"`
+	AssigneeID   string    `json:"assigneeId"`
+	AssigneeName string    `json:"assigneeName"`
+	Reporter     string    `json:"reporter"`
+	Source       Source    `json:"source"`
+	ExternalID   string    `json:"externalId"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // Type 工作项类型

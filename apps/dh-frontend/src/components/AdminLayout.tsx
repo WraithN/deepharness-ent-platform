@@ -22,7 +22,7 @@ import { toast } from 'sonner';
 
 const adminNavItems = [
   { path: '/admin/dashboard', label: '数据大盘', icon: LayoutDashboard },
-  { path: '/admin/spaces', label: '空间管理', icon: SettingsIcon },
+  { path: '/admin/tenants', label: '租户管理', icon: SettingsIcon },
   { path: '/admin/skills', label: '技能管理', icon: Puzzle },
   { path: '/admin/prompts', label: '提示词管理', icon: MessageSquareQuote },
   { path: '/admin/config', label: '全局配置', icon: FileText },
@@ -66,7 +66,7 @@ export const AdminLayout: React.FC = () => {
           </div>
           <span className="text-xs text-muted-foreground truncate">
             {location.pathname === '/admin/dashboard' && '查看平台全局统计数据与资源消耗'}
-            {location.pathname === '/admin/spaces' && '管理所有的工作空间和对应权限'}
+            {location.pathname === '/admin/tenants' && '管理所有租户、智能体策略与租户管理员'}
             {location.pathname === '/admin/skills' && '审核、上架或禁用系统内的技能'}
             {location.pathname === '/admin/prompts' && '审核、上架或禁用系统内的提示词'}
             {location.pathname === '/admin/config' && '管理全局的研发规范、智能体与CICD配置'}
@@ -151,7 +151,7 @@ export const AdminLayout: React.FC = () => {
               </h1>
               <p className="text-sm text-muted-foreground truncate mt-1">
                 {location.pathname === '/admin/dashboard' && '查看平台全局统计数据与资源消耗'}
-                {location.pathname === '/admin/spaces' && '管理所有的工作空间和对应权限'}
+                {location.pathname === '/admin/tenants' && '管理所有租户、智能体策略与租户管理员'}
                 {location.pathname === '/admin/skills' && '审核、上架或禁用系统内的技能'}
                 {location.pathname === '/admin/prompts' && '审核、上架或禁用系统内的提示词'}
                 {location.pathname === '/admin/config' && '管理全局的研发规范、智能体与CICD配置'}

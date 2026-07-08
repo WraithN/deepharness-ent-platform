@@ -4,6 +4,7 @@ import type { MessageState } from '@assistant-ui/react';
 import { AssistantMessage } from './AssistantMessage';
 import { UserMessage } from './UserMessage';
 import { formatDateLabel, isSameDay } from '@/lib/utils';
+import type { PreviewMode } from './LivePreview';
 
 interface ChatThreadProps {
   openDetail: (type: 'req' | 'defect' | 'case', id: string) => void;
@@ -11,7 +12,7 @@ interface ChatThreadProps {
   onEditMessage?: (text: string) => void;
   onRegenerate?: () => void;
   onFilePreview?: (path: string) => void;
-  onProjectPreview?: (path: string, mode: 'diff' | 'code' | 'preview') => void;
+  onProjectPreview?: (path: string, mode: PreviewMode) => void;
 }
 
 /**

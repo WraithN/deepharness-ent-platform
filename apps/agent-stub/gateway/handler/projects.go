@@ -16,10 +16,13 @@ import (
 // ──────────────── 常量 ────────────────
 
 const (
+	// aicodingMarker 是 AI Coding 平台协助生成代码的 Git 提交标记。
+	// 所有由本平台触发的 git commit 均会带上该标记，便于在 git 历史中识别 AI 辅助提交。
+	aicodingMarker = "[AICoding]"
 	// gitInitCommitMessage 是新工程初始化 git 仓库时的提交消息。
-	gitInitCommitMessage = "Initial commit by DeepHarness AI"
+	gitInitCommitMessage = "Initial commit by DeepHarness AI " + aicodingMarker
 	// gitSyncCommitMessage 是同步工程到仓库时的默认提交消息。
-	gitSyncCommitMessage = "Sync project by DeepHarness AI"
+	gitSyncCommitMessage = "Sync project by DeepHarness AI " + aicodingMarker
 	// defaultRemoteName 是推送到远程仓库时使用的默认 remote 名称。
 	defaultRemoteName = "origin"
 	// sshStrictOptions 是 git ssh 命令的安全选项，禁用主机密钥检查（开发环境）。
@@ -166,10 +169,14 @@ func initGitRepo(dir string) error {
 }
 
 // commitAllChanges 提交工程目录中的所有更改。
+// 提交消息会自动追加 AICoding 平台标记，确保 AI 辅助生成的代码在 git 历史中可识别。
 func commitAllChanges(dir, message string) error {
 	msg := message
 	if msg == "" {
 		msg = gitSyncCommitMessage
+	}
+	if !strings.Contains(msg, aicodingMarker) {
+		msg = strings.TrimSpace(msg) + " " + aicodingMarker
 	}
 	if _, err := projectGitExec(dir, "add", "."); err != nil {
 		return fmt.Errorf("git add failed: %w", err)

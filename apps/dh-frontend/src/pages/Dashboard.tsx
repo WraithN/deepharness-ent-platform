@@ -90,6 +90,7 @@ export const Dashboard: React.FC = () => {
   const [sessionTrails, setSessionTrails] = useState<SessionTrail[]>([]);
   const [sessionTrend, setSessionTrend] = useState<{ date: string; count: number }[]>([]);
   const [summary, setSummary] = useState<SummaryResponse>({ thisWeek: 0, lastWeek: 0, deltaPercent: 0 });
+  const [codeCommitTrend, setCodeCommitTrend] = useState<{ date: string; count: number }[]>([]);
   const sessionPageSize = 5;
   const totalSessionPages = Math.ceil(sessionTrails.length / sessionPageSize);
   const paginatedSessions = sessionTrails.slice((sessionPage - 1) * sessionPageSize, sessionPage * sessionPageSize);
@@ -109,12 +110,19 @@ export const Dashboard: React.FC = () => {
       })
       .catch(err => console.error('[Dashboard] fetch trend failed:', err));
 
+    // 代码提交趋势：扫描工作空间 git 仓库，统计最近 7 天每天的提交数量。
+    api.get<TrendResponse>('/v1/stats/commits')
+      .then(data => {
+        setCodeCommitTrend(data.data.map(d => ({ date: formatDateShort(d.date), count: d.count })));
+      })
+      .catch(err => console.error('[Dashboard] fetch commit trend failed:', err));
+
     // 成员会话轨迹：最近的会话记录。
     api.get<TrailsResponse>('/v1/stats/trails')
       .then(data => {
         const mapped: SessionTrail[] = data.data.map(s => ({
           id: s.id,
-          user: { id: '', tenantId: 't1', email: '', name: '未知用户', platformRole: 'user', createdAt: '' },
+          user: { id: '', tenantId: '', email: '', name: '未知用户', platformRole: 'user', createdAt: '' },
           time: formatRelativeTime(s.updatedAt),
           title: s.title || '未命名会话',
           type: s.agentType || 'code',
@@ -129,7 +137,7 @@ export const Dashboard: React.FC = () => {
       });
   }, []);
 
-  const totalCommits = mockDashboardStats.codeCommits.reduce((acc, curr) => acc + curr.count, 0);
+  const totalCommits = codeCommitTrend.reduce((acc, curr) => acc + curr.count, 0);
   const totalReqs = mockDashboardStats.requirementsCompleted.reduce((acc, curr) => acc + curr.count, 0);
 
   return (
@@ -182,7 +190,7 @@ export const Dashboard: React.FC = () => {
           <CardContent className="flex-1 min-h-[300px]">
             <div className="w-full h-full min-w-0 overflow-hidden">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={mockDashboardStats.codeCommits}>
+                <LineChart data={codeCommitTrend.length > 0 ? codeCommitTrend : mockDashboardStats.codeCommits}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="date" tick={{ fontSize: 13 }} tickLine={false} axisLine={false} />
                   <YAxis tick={{ fontSize: 13 }} tickLine={false} axisLine={false} />

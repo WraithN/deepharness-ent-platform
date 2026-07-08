@@ -20,8 +20,11 @@ import (
 	auditservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity"
 	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant"
 	paservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc"
+	productdocservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent"
 	pragentservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository"
@@ -59,10 +62,11 @@ func New(cfg config.Config) http.Handler {
 	initReviewService(db)
 	initEventService(db)
 	initOrchestratorService(db)
-	workspaceService := initWorkspaceService(db, cfg.WorkspaceRoot, userService)
-	initAgentConfigService(db)
+	workspaceService := initWorkspaceService(db, cfg.WorkspaceRoot, userService, cfg.CodingAgents)
+	initAgentConfigService(db, cfg.CodingAgents, cfg.CodingAgentModels)
 	initWorkspacePromptService(db)
 	initRepositoryService(db, cfg)
+	initProductDocService(db)
 	initTeamService(db, userService)
 
 	// Handlers
@@ -86,7 +90,7 @@ func New(cfg config.Config) http.Handler {
 	agentconfig.InitRuntimeSync(sessions, agentClient)
 	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, sessions, messages, sseBuffer, workItemSvc)
 	sseReplayHandler := handler.NewSSEReplayHandler(sseBuffer)
-	statsHandler := handler.NewStatsHandler(sessions)
+	statsHandler := handler.NewStatsHandler(sessions, cfg.WorkspaceRoot)
 
 	// agent-stub 反向代理：将文件/工程/预览请求转发到 agent-stub 服务。
 	// agent-stub 部署在 WORKSPACE_ROOT 所在服务器上，直接操作文件系统和 git。
@@ -120,6 +124,13 @@ func New(cfg config.Config) http.Handler {
 		}
 	})))
 	mux.HandleFunc("/api/v1/identity/login", identity.Login)
+
+	// 租户管理（仅超级管理员）
+	mux.Handle("/api/v1/tenants", middleware.Auth(http.HandlerFunc(identity.Tenants)))
+	mux.Handle("/api/v1/tenants/{id}", middleware.Auth(http.HandlerFunc(identity.TenantByID)))
+	mux.Handle("/api/v1/tenants/{id}/members", middleware.Auth(http.HandlerFunc(identity.TenantMembers)))
+	mux.Handle("/api/v1/tenants/{id}/members/{userId}", middleware.Auth(http.HandlerFunc(identity.TenantMemberByID)))
+
 	mux.HandleFunc("/api/v1/workitems", workitem.WorkItems)
 	mux.HandleFunc("/api/v1/workitems/{id}", workitem.WorkItemByID)
 	mux.HandleFunc("/api/v1/workitems/{id}/status", workitem.UpdateWorkItemStatus)
@@ -128,6 +139,7 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/orchestrator/sessions", orchestrator.Sessions)
 	mux.HandleFunc("/api/v1/stats/summary", statsHandler.Summary)
 	mux.HandleFunc("/api/v1/stats/trend", statsHandler.Trend)
+	mux.HandleFunc("/api/v1/stats/commits", statsHandler.CodeCommits)
 	mux.HandleFunc("/api/v1/stats/trails", statsHandler.Trails)
 	mux.HandleFunc("/api/v1/commands", handler.CommandsHandler)
 
@@ -144,15 +156,16 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/workspaces/mine", middleware.Auth(http.HandlerFunc(workspace.Mine)))
 	mux.Handle("/api/v1/workspaces", middleware.Auth(http.HandlerFunc(workspace.Workspaces)))
 	mux.Handle("/api/v1/workspaces/{id}", middleware.Auth(http.HandlerFunc(workspace.WorkspaceByID)))
-	mux.HandleFunc("/api/v1/workspaces/{id}/members", workspace.Members)
-	mux.HandleFunc("/api/v1/workspaces/{id}/members/{userId}", workspace.MemberByID)
+	mux.Handle("/api/v1/workspaces/{id}/members", middleware.Auth(http.HandlerFunc(workspace.Members)))
+	mux.Handle("/api/v1/workspaces/{id}/members/{userId}", middleware.Auth(http.HandlerFunc(workspace.MemberByID)))
 	mux.HandleFunc("/api/v1/workspaces/{id}/workitem-project", workspace.WorkitemProject)
-	mux.HandleFunc("/api/v1/agent-types", agentconfig.AgentTypes)
-	mux.HandleFunc("/api/v1/agent-types/{key}", agentconfig.AgentTypeByKey)
+	mux.Handle("/api/v1/agent-types", middleware.Auth(http.HandlerFunc(agentconfig.AgentTypes)))
+	mux.Handle("/api/v1/agent-types/{key}", middleware.Auth(http.HandlerFunc(agentconfig.AgentTypeByKey)))
+	mux.Handle("/api/v1/agent-models", middleware.Auth(http.HandlerFunc(agentconfig.AgentModels)))
 	mux.HandleFunc("/api/v1/workspaces/{id}/agents", workspace.WorkspaceAgents)
-	mux.HandleFunc("/api/v1/workspaces/{id}/agent-configs", agentconfig.WorkspaceAgentConfigs)
-	mux.HandleFunc("/api/v1/workspaces/{id}/agent-configs/{key}", agentconfig.WorkspaceAgentConfigByKey)
-	mux.HandleFunc("/api/v1/workspaces/{id}/available-agents", agentconfig.AvailableAgents)
+	mux.Handle("/api/v1/workspaces/{id}/agent-configs", middleware.Auth(http.HandlerFunc(agentconfig.WorkspaceAgentConfigs)))
+	mux.Handle("/api/v1/workspaces/{id}/agent-configs/{key}", middleware.Auth(http.HandlerFunc(agentconfig.WorkspaceAgentConfigByKey)))
+	mux.Handle("/api/v1/workspaces/{id}/available-agents", middleware.Auth(http.HandlerFunc(agentconfig.AvailableAgents)))
 	mux.HandleFunc("/api/v1/workspaces/{id}/standards", workspace.WorkspaceStandards)
 	mux.HandleFunc("/api/v1/workspaces/{id}/standards/{standardId}", workspace.WorkspaceStandardByID)
 	mux.HandleFunc("/api/v1/workspaces/{id}/cicd", workspace.WorkspaceCICD)
@@ -177,12 +190,25 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/commit", repository.GitCommit)
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/status", repository.GitStatus)
 
+	// Product doc module
+	mux.HandleFunc("/api/v1/workspaces/{id}/product-docs", productdoc.ProductDocs)
+	mux.HandleFunc("/api/v1/workspaces/{id}/product-docs/{docId}", productdoc.ProductDocByID)
+	mux.HandleFunc("/api/v1/workspaces/{id}/product-docs/{docId}/versions", productdoc.ProductDocVersions)
+	mux.HandleFunc("/api/v1/workspaces/{id}/product-docs/{docId}/publish", productdoc.PublishProductDoc)
+
 	// Team skills / prompts
 	mux.HandleFunc("/api/v1/team/skills", team.Skills)
 	mux.HandleFunc("/api/v1/team/skills/{id}", team.SkillByID)
+	mux.Handle("/api/v1/team/skill-categories", middleware.Auth(http.HandlerFunc(team.SkillCategories)))
+	mux.Handle("/api/v1/team/skill-categories/{id}", middleware.Auth(http.HandlerFunc(team.SkillCategoryByID)))
+
 	mux.Handle("/api/v1/team/prompts", middleware.Auth(http.HandlerFunc(team.Prompts)))
 	mux.Handle("/api/v1/team/prompts/{id}", middleware.Auth(http.HandlerFunc(team.PromptByID)))
 	mux.Handle("/api/v1/team/prompts/{id}/review", middleware.Auth(http.HandlerFunc(team.ReviewPrompt)))
+	mux.Handle("/api/v1/team/prompt-categories", middleware.Auth(http.HandlerFunc(team.PromptCategories)))
+	mux.Handle("/api/v1/team/prompt-categories/{id}", middleware.Auth(http.HandlerFunc(team.PromptCategoryByID)))
+	mux.Handle("/api/v1/team/skills/stats", middleware.Auth(http.HandlerFunc(team.SkillStats)))
+	mux.Handle("/api/v1/team/prompts/stats", middleware.Auth(http.HandlerFunc(team.PromptStats)))
 
 	// Apply middleware
 	return middleware.Logger(middleware.CORS(mux))
@@ -246,17 +272,35 @@ func initOrchestratorService(db *sql.DB) {
 	orchestrator.Init(orchestratorservice.NewDBSessionService(db))
 }
 
-func initWorkspaceService(db *sql.DB, workspaceRoot string, userService identityservice.UserService) workspaceservice.WorkspaceService {
+func initWorkspaceService(db *sql.DB, workspaceRoot string, userService identityservice.UserService, codingAgents []config.CodingAgentDefinition) workspaceservice.WorkspaceService {
 	log.Printf("[Workspace] using postgres storage, workspaceRoot=%s", workspaceRoot)
 	svc := workspaceservice.NewDBWorkspaceService(db, workspaceRoot)
 	workspace.Init(svc)
 	workspace.InitUserService(userService)
+	keys := make([]string, 0, len(codingAgents))
+	for _, a := range codingAgents {
+		keys = append(keys, a.Key)
+	}
+	workspace.SetAllowedAgentKeys(keys)
 	return svc
 }
 
-func initAgentConfigService(db *sql.DB) {
+func initAgentConfigService(db *sql.DB, codingAgents []config.CodingAgentDefinition, models []string) {
 	log.Println("[AgentConfig] using postgres storage")
-	defaultAgentConfigService = agentconfigservice.NewDBAgentConfigService(db)
+	agents := make([]agent.AgentType, 0, len(codingAgents))
+	for _, a := range codingAgents {
+		agents = append(agents, agent.AgentType{
+			Key:         a.Key,
+			Name:        a.Name,
+			Description: a.Description,
+			Enabled:     true,
+			Builtin:     true,
+		})
+	}
+	defaultAgentConfigService = agentconfigservice.NewDBAgentConfigService(db, agentconfigservice.AgentGlobalConfig{
+		Agents: agents,
+		Models: models,
+	})
 	agentconfig.Init(defaultAgentConfigService)
 }
 
@@ -271,6 +315,11 @@ func initWorkspacePromptService(db *sql.DB) {
 	log.Println("[WorkspacePrompt] using postgres storage")
 	svc := workspaceservice.NewDBWorkspacePromptService(db)
 	workspace.InitPromptService(svc)
+}
+
+func initProductDocService(db *sql.DB) {
+	log.Println("[ProductDoc] using postgres storage")
+	productdoc.Init(productdocservice.NewDBProductDocService(db))
 }
 
 func initRepositoryService(db *sql.DB, cfg config.Config) {

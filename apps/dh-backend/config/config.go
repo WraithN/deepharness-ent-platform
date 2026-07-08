@@ -53,6 +53,18 @@ type Config struct {
 	WorkitemWritebackEnabled  bool
 	WorkitemWritebackWorkers  int
 	WorkitemWritebackRetry    int
+
+	// CodingAgents 平台支持的 coding agent 白名单。
+	CodingAgents []CodingAgentDefinition
+	// CodingAgentModels 平台支持的模型池。
+	CodingAgentModels []string
+}
+
+// CodingAgentDefinition 表示全局配置中一个 coding agent 的定义。
+type CodingAgentDefinition struct {
+	Key         string
+	Name        string
+	Description string
 }
 
 // yamlConfig 与 config.yaml 的分层结构对应。
@@ -106,6 +118,14 @@ type yamlConfig struct {
 			Retry   int  `yaml:"retry"`
 		} `yaml:"writeback"`
 	} `yaml:"workitem"`
+	CodingAgents struct {
+		Agents []struct {
+			Key         string `yaml:"key"`
+			Name        string `yaml:"name"`
+			Description string `yaml:"description"`
+		} `yaml:"agents"`
+		Models []string `yaml:"models"`
+	} `yaml:"coding_agents"`
 }
 
 // Load 从 config.yaml 加载配置，并以环境变量为最高优先级覆盖。
@@ -158,6 +178,15 @@ func Load() (Config, error) {
 	cfg.WorkitemWritebackEnabled = yc.Workitem.Writeback.Enabled
 	cfg.WorkitemWritebackWorkers = yc.Workitem.Writeback.Workers
 	cfg.WorkitemWritebackRetry = yc.Workitem.Writeback.Retry
+
+	for _, a := range yc.CodingAgents.Agents {
+		cfg.CodingAgents = append(cfg.CodingAgents, CodingAgentDefinition{
+			Key:         a.Key,
+			Name:        a.Name,
+			Description: a.Description,
+		})
+	}
+	cfg.CodingAgentModels = yc.CodingAgents.Models
 
 	// 环境变量覆盖
 	cfg.Port = getEnv("PORT", cfg.Port)

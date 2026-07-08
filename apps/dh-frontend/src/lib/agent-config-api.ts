@@ -13,6 +13,7 @@ export interface SaveWorkspaceAgentConfigRequest {
     maxTokens?: number;
     contextWindow?: number;
     topP?: number;
+    topK?: number;
     frequencyPenalty?: number;
     presencePenalty?: number;
     extra?: Record<string, unknown>;
@@ -24,6 +25,8 @@ export const agentConfigApi = {
 
   updateAgentType: (key: string, enabled: boolean) =>
     api.put<AgentType>(`/v1/agent-types/${key}`, { enabled }),
+
+  listGlobalModels: () => api.get<string[]>('/v1/agent-models'),
 
   listWorkspaceConfigs: (workspaceId: string) =>
     api.get<WorkspaceAgentConfig[]>(`/v1/workspaces/${workspaceId}/agent-configs`),

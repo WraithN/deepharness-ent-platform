@@ -60,8 +60,8 @@ const SPACE_ROLE_LABELS: Record<SpaceRole, string> = {
 
 const SUB_ROLE_LABELS: Record<SubRole, string> = {
   [SUB_ROLE.PM]: '产品经理',
-  [SUB_ROLE.DESIGNER]: '设计师',
-  [SUB_ROLE.DEVELOPER]: '开发者',
+  [SUB_ROLE.DESIGNER]: 'UI设计师',
+  [SUB_ROLE.DEVELOPER]: '开发人员',
   [SUB_ROLE.TESTER]: '测试人员',
 };
 

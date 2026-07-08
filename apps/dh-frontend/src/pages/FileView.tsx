@@ -150,7 +150,7 @@ export const FileView: React.FC = () => {
     setSubmitting(true);
     try {
       await api.post<WorkItemDTO>('/v1/workitems', {
-        tenantId: 't1', projectId: 'p1', type: 'requirement',
+        tenantId: currentUser?.tenantId || '', projectId: 'p1', type: 'requirement',
         title: displayTitle, description: fileContent?.content || '',
         status: 'backlog', priority: 'medium', assigneeId: reqAssignee, source: 'internal',
       });

@@ -2,12 +2,45 @@ package service
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/object"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/identity"
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// TenantPolicy 表示超管为租户设置的智能体策略。
+type TenantPolicy struct {
+	AgentConfigLocked   bool                                   `json:"agentConfigLocked"`
+	LockedAgentKeys     []string                               `json:"lockedAgentKeys"`
+	AllowedAgentKeys    []string                               `json:"allowedAgentKeys"`
+	DefaultAgentConfigs map[string]AgentConfigSnapshot         `json:"defaultAgentConfigs"`
+}
+
+// AgentConfigSnapshot 表示超管为某个 agent 预设的默认配置快照。
+type AgentConfigSnapshot struct {
+	Enabled        bool                       `json:"enabled"`
+	Model          string                     `json:"model"`
+	ModelSource    string                     `json:"modelSource"`
+	BaseURL        string                     `json:"baseUrl"`
+	APIKey         string                     `json:"apiKey"`
+	Temperature    *float64                   `json:"temperature,omitempty"`
+	AdvancedConfig *agent.AdvancedAgentConfig `json:"advancedConfig,omitempty"`
+}
+
+// TenantMember 表示租户下的成员信息。
+type TenantMember struct {
+	ID           string               `json:"id"`
+	Name         string               `json:"name"`
+	Email        string               `json:"email"`
+	PlatformRole identity.PlatformRole `json:"platformRole"`
+}
 
 // UserService 定义用户/租户模块的服务接口。
 type UserService interface {
@@ -17,6 +50,14 @@ type UserService interface {
 	VerifyPassword(email, password string) (object.User, error)
 	GetProfile(userID string) (object.Profile, error)
 	SaveProfile(userID, name, avatarURL, description, sshKey string) (object.Profile, error)
+
+	ListTenants() ([]identity.Tenant, error)
+	GetTenant(id string) (identity.Tenant, error)
+	CreateTenant(name string, policy TenantPolicy) (identity.Tenant, error)
+	UpdateTenant(id, name string, policy TenantPolicy) (identity.Tenant, error)
+	DeleteTenant(id string) error
+	ListTenantMembers(tenantID string) ([]TenantMember, error)
+	SetTenantAdmin(tenantID, userID string, isAdmin bool) error
 }
 
 // DBUserService 是基于 PostgreSQL 的 UserService 实现。
@@ -145,5 +186,169 @@ func (s *DBUserService) SaveProfile(userID, name, avatarURL, description, sshKey
 		return object.Profile{}, fmt.Errorf("save profile failed: %w", err)
 	}
 	return p, nil
+}
+
+// ── 租户管理 ──
+
+const systemTenantID = "__system__"
+
+func scanTenant(row interface {
+	Scan(dest ...any) error
+}) (identity.Tenant, error) {
+	var t identity.Tenant
+	var lockedKeys, allowedKeys pq.StringArray
+	var defaultConfigs []byte
+	var displayID sql.NullString
+	err := row.Scan(&t.ID, &displayID, &t.Name, &t.AgentConfigLocked, &lockedKeys, &allowedKeys, &defaultConfigs, &t.CreatedAt)
+	if err != nil {
+		return identity.Tenant{}, err
+	}
+	t.DisplayID = displayID.String
+	t.LockedAgentKeys = []string(lockedKeys)
+	t.AllowedAgentKeys = []string(allowedKeys)
+	if len(defaultConfigs) > 0 {
+		t.DefaultAgentConfigs = json.RawMessage(defaultConfigs)
+	}
+	return t, nil
+}
+
+func (s *DBUserService) ListTenants() ([]identity.Tenant, error) {
+	rows, err := s.db.Query(`
+		SELECT id, display_id, name, agent_config_locked, locked_agent_keys, allowed_agent_keys, default_agent_configs, created_at
+		FROM tenants WHERE id <> $1 ORDER BY created_at
+	`, systemTenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list tenants failed: %w", err)
+	}
+	defer rows.Close()
+	result := make([]identity.Tenant, 0)
+	for rows.Next() {
+		t, err := scanTenant(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan tenant failed: %w", err)
+		}
+		result = append(result, t)
+	}
+	return result, rows.Err()
+}
+
+func (s *DBUserService) GetTenant(id string) (identity.Tenant, error) {
+	t, err := scanTenant(s.db.QueryRow(`
+		SELECT id, display_id, name, agent_config_locked, locked_agent_keys, allowed_agent_keys, default_agent_configs, created_at
+		FROM tenants WHERE id = $1
+	`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return identity.Tenant{}, errors.New("tenant not found")
+	}
+	if err != nil {
+		return identity.Tenant{}, fmt.Errorf("get tenant failed: %w", err)
+	}
+	return t, nil
+}
+
+func (s *DBUserService) CreateTenant(name string, policy TenantPolicy) (identity.Tenant, error) {
+	if name == "" {
+		return identity.Tenant{}, errors.New("tenant name is required")
+	}
+	defaultConfigsJSON, err := json.Marshal(policy.DefaultAgentConfigs)
+	if err != nil {
+		return identity.Tenant{}, fmt.Errorf("marshal default agent configs failed: %w", err)
+	}
+	id := generateID()
+	// 从序列生成 display_id（自增数字）
+	var displayID string
+	err = s.db.QueryRow(`SELECT nextval('tenant_display_id_seq')::text`).Scan(&displayID)
+	if err != nil {
+		return identity.Tenant{}, fmt.Errorf("generate tenant display_id failed: %w", err)
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO tenants (id, display_id, name, agent_config_locked, locked_agent_keys, allowed_agent_keys, default_agent_configs)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, id, displayID, name, policy.AgentConfigLocked, pq.Array(policy.LockedAgentKeys), pq.Array(policy.AllowedAgentKeys), defaultConfigsJSON)
+	if err != nil {
+		return identity.Tenant{}, fmt.Errorf("create tenant failed: %w", err)
+	}
+	return s.GetTenant(id)
+}
+
+func (s *DBUserService) UpdateTenant(id, name string, policy TenantPolicy) (identity.Tenant, error) {
+	if id == "" {
+		return identity.Tenant{}, errors.New("tenant id is required")
+	}
+	if id == systemTenantID {
+		return identity.Tenant{}, errors.New("cannot modify system tenant")
+	}
+	if name == "" {
+		return identity.Tenant{}, errors.New("tenant name is required")
+	}
+	defaultConfigsJSON, err := json.Marshal(policy.DefaultAgentConfigs)
+	if err != nil {
+		return identity.Tenant{}, fmt.Errorf("marshal default agent configs failed: %w", err)
+	}
+	_, err = s.db.Exec(`
+		UPDATE tenants SET name = $1, agent_config_locked = $2, locked_agent_keys = $3, allowed_agent_keys = $4, default_agent_configs = $5
+		WHERE id = $6
+	`, name, policy.AgentConfigLocked, pq.Array(policy.LockedAgentKeys), pq.Array(policy.AllowedAgentKeys), defaultConfigsJSON, id)
+	if err != nil {
+		return identity.Tenant{}, fmt.Errorf("update tenant failed: %w", err)
+	}
+	return s.GetTenant(id)
+}
+
+func (s *DBUserService) DeleteTenant(id string) error {
+	if id == "" {
+		return errors.New("tenant id is required")
+	}
+	if id == systemTenantID {
+		return errors.New("cannot delete system tenant")
+	}
+	_, err := s.db.Exec(`DELETE FROM tenants WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete tenant failed: %w", err)
+	}
+	return nil
+}
+
+func (s *DBUserService) ListTenantMembers(tenantID string) ([]TenantMember, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, email, platform_role FROM users WHERE tenant_id = $1 ORDER BY created_at
+	`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list tenant members failed: %w", err)
+	}
+	defer rows.Close()
+	result := make([]TenantMember, 0)
+	for rows.Next() {
+		var m TenantMember
+		if err := rows.Scan(&m.ID, &m.Name, &m.Email, &m.PlatformRole); err != nil {
+			return nil, fmt.Errorf("scan tenant member failed: %w", err)
+		}
+		result = append(result, m)
+	}
+	return result, rows.Err()
+}
+
+func (s *DBUserService) SetTenantAdmin(tenantID, userID string, isAdmin bool) error {
+	if tenantID == systemTenantID {
+		return errors.New("cannot set admin for system tenant")
+	}
+	role := identity.PlatformRoleUser
+	if isAdmin {
+		role = identity.PlatformRoleTenantAdmin
+	}
+	res, err := s.db.Exec(`UPDATE users SET platform_role = $1 WHERE id = $2 AND tenant_id = $3`, role, userID, tenantID)
+	if err != nil {
+		return fmt.Errorf("set tenant admin failed: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return errors.New("user not found in this tenant")
+	}
+	return nil
+}
+
+// generateID 生成 uuid4 去横线的 32 字符 ID。
+func generateID() string {
+	return strings.ReplaceAll(uuid.New().String(), "-", "")
 }
 

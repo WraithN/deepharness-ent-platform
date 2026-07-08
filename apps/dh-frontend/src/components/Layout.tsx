@@ -12,6 +12,8 @@ import {
   Terminal,
   ChevronDown,
   Code2,
+  Briefcase,
+  Palette,
   Bot,
   Sun,
   Moon,
@@ -41,7 +43,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissions } from '@/hooks/use-permissions';
-import { getSubRoleLabel } from '@/lib/role-constants';
+import { getSubRoleLabel, SUB_ROLE } from '@/lib/role-constants';
+import type { SubRole } from '@/lib/role-constants';
 import { workspaceApi } from '@/lib/workspace-api';
 import type { LucideIcon } from 'lucide-react';
 
@@ -59,11 +62,35 @@ const globalNavItems: NavItem[] = [
 
 const tenantNavItems: NavItem[] = [
   { path: '/chat', label: '智能会话', icon: MessageCircle },
-  { path: '/code', label: '工程代码', icon: Code2, perm: 'canViewCode' },
+  { path: '/personal-space', label: '研发空间', icon: Code2, perm: 'canViewCode' },
   { path: '/dashboard', label: '数据大盘', icon: LayoutDashboard, perm: 'canViewDashboard' },
   { path: '/personal-assistant', label: '虾班智守', icon: Bot },
   { path: '/settings', label: '空间设置', icon: Settings, perm: 'canViewSettings' },
 ];
+
+/**
+ * 根据职能子角色返回代码空间的展示名称。
+ * - designer → 设计空间
+ * - pm → 产品空间
+ * - 其他（developer/tester/space_admin/未设置）→ 研发空间
+ */
+function getCodeSpaceLabel(subRole: SubRole | string | undefined): string {
+  if (subRole === SUB_ROLE.DESIGNER) return '设计空间';
+  if (subRole === SUB_ROLE.PM) return '产品空间';
+  return '研发空间';
+}
+
+/**
+ * 根据职能子角色返回代码空间的图标。
+ * - designer → Palette（调色板）
+ * - pm → Briefcase（产品工作台）
+ * - 其他 → Code2（代码）
+ */
+function getCodeSpaceIcon(subRole: SubRole | string | undefined): LucideIcon {
+  if (subRole === SUB_ROLE.DESIGNER) return Palette;
+  if (subRole === SUB_ROLE.PM) return Briefcase;
+  return Code2;
+}
 
 export const Layout: React.FC = () => {
   const { theme, setTheme } = useTheme();
@@ -77,7 +104,12 @@ export const Layout: React.FC = () => {
   const navigate = useNavigate();
 
   // 导航项按权限过滤：无 perm 字段的始终展示，有 perm 字段的按权限判定
-  const visibleNavItems = tenantNavItems.filter(item => !item.perm || perms[item.perm]);
+  // 同时根据当前用户的职能子角色动态替换个人空间的展示文案与图标。
+  const codeSpaceLabel = getCodeSpaceLabel(membership?.subRole);
+  const codeSpaceIcon = getCodeSpaceIcon(membership?.subRole);
+  const visibleNavItems = tenantNavItems.map(item =>
+    item.path === '/personal-space' ? { ...item, label: codeSpaceLabel, icon: codeSpaceIcon } : item
+  ).filter(item => !item.perm || perms[item.perm]);
 
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
   const closeSidebar = () => setSidebarOpen(false);
@@ -324,7 +356,7 @@ export const Layout: React.FC = () => {
                 {location.pathname === '/market/skills' && '技能市场'}
                 {location.pathname === '/market/prompts' && '提示词市场'}
                 {location.pathname === '/chat' && '智能会话'}
-                {location.pathname === '/code' && '工程代码'}
+                {location.pathname === '/personal-space' && codeSpaceLabel}
                 {location.pathname === '/dashboard' && '数据大盘'}
                 {location.pathname.startsWith('/personal-assistant') && '虾班智守'}
                 {location.pathname === '/settings' && '空间设置'}
@@ -334,7 +366,7 @@ export const Layout: React.FC = () => {
                 {location.pathname === '/market/skills' && '发现和使用团队沉淀的各类AI技能'}
                 {location.pathname === '/market/prompts' && '发现和使用团队沉淀的优质提示词'}
                 {location.pathname === '/chat' && 'AI 驱动的多轮对话与问题解决辅助'}
-                {location.pathname === '/code' && '查看和管理您的代码仓库文件'}
+                {location.pathname === '/personal-space' && '按角色组织的个人工作台'}
                 {location.pathname === '/dashboard' && '查看团队在当前工作空间的统计数据与研发效率'}
                 {location.pathname.startsWith('/personal-assistant') && '代码守护与自动审查助手'}
                 {location.pathname === '/settings' && '管理当前工作空间的成员与研发规范等配置'}

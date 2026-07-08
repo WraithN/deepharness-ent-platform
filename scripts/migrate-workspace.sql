@@ -6,10 +6,10 @@ INSERT INTO tenants (id, name) VALUES ('t1', 'DeepHarness')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO users (id, tenant_id, email, name, role, password_hash) VALUES
-  ('u1', 't1', 'xiaoming@deepharness.com', '开发者小明', 'admin', crypt('123456', gen_salt('bf'))),
-  ('u2', 't1', 'xiaohong@deepharness.com', '产品小红', 'user', crypt('123456', gen_salt('bf'))),
-  ('u3', 't1', 'xiaoli@deepharness.com', '设计小李', 'user', crypt('123456', gen_salt('bf'))),
-  ('u4', 't1', 'xiaogang@deepharness.com', '测试小刚', 'user', crypt('123456', gen_salt('bf')))
+  ('5b577fdc9e8e406f81c695553dc74836', 't1', 'xiaoming@deepharness.com', '开发者小明', 'admin', crypt('123456', gen_salt('bf'))),
+  ('a7390f0b07e245d9a7495682738153b5', 't1', 'xiaohong@deepharness.com', '产品小红', 'user', crypt('123456', gen_salt('bf'))),
+  ('2dd09f577fb1421d8204c504d325b359', 't1', 'xiaoli@deepharness.com', '设计小李', 'user', crypt('123456', gen_salt('bf'))),
+  ('98d9613544fe42dfa07840ea254d3019', 't1', 'xiaogang@deepharness.com', '测试小刚', 'user', crypt('123456', gen_salt('bf')))
 ON CONFLICT (id) DO NOTHING;
 
 -- 1. 创建默认工作空间（幂等）
@@ -17,9 +17,9 @@ INSERT INTO workspaces (id, tenant_id, name, description, created_at, updated_at
 SELECT 'ws-default', 't1', '默认工作空间', '迁移生成的默认空间', NOW(), NOW()
 WHERE NOT EXISTS (SELECT 1 FROM workspaces WHERE id = 'ws-default');
 
--- 2. 将所有已有用户加入默认工作空间（管理员 / PM）
-INSERT INTO workspace_members (workspace_id, user_id, role, sub_role, joined_at)
-SELECT 'ws-default', id, 'admin', 'pm', created_at FROM users
+-- 2. 将所有已有用户加入默认工作空间（管理员 / PM），并分配展示 ID
+INSERT INTO workspace_members (workspace_id, user_id, display_id, role, sub_role, joined_at)
+SELECT 'ws-default', id, 'u' || ROW_NUMBER() OVER (ORDER BY created_at), 'admin', 'pm', created_at FROM users
 ON CONFLICT (workspace_id, user_id) DO NOTHING;
 
 -- 3. 迁移 team_skills -> skill_library + workspace_skills
@@ -116,8 +116,10 @@ END $$;
 
 -- 6. 创建默认 Agent（幂等）
 INSERT INTO agents (id, workspace_id, name, role, description, config, is_default, created_by_user_id, created_at, updated_at)
-SELECT 'agent-default', 'ws-default', '默认智能体', 'general', '迁移生成的默认智能体', '{}', TRUE, 'u1', NOW(), NOW()
-WHERE NOT EXISTS (SELECT 1 FROM agents WHERE id = 'agent-default');
+SELECT 'agent-default', 'ws-default', '默认智能体', 'general', '迁移生成的默认智能体', '{}', TRUE, u.id, NOW(), NOW()
+FROM users u
+WHERE u.email = 'xiaoming@deepharness.com'
+  AND NOT EXISTS (SELECT 1 FROM agents WHERE id = 'agent-default');
 
 -- 7. 回填已有会话的默认工作空间与默认 Agent。
 -- 警告：此步骤为一次性初始回填。若应用已运行并产生新的未归属会话，重跑该脚本也会将其归到默认空间。

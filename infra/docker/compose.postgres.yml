@@ -27,6 +27,7 @@ services:
       - ../database/agent/schema.sql:/docker-entrypoint-initdb.d/04_agent.sql:ro
       - ../database/team/schema.sql:/docker-entrypoint-initdb.d/05_team.sql:ro
       - ../database/workspace/schema.sql:/docker-entrypoint-initdb.d/06_workspace.sql:ro
+      - ../database/productdoc/schema.sql:/docker-entrypoint-initdb.d/07_productdoc.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U deepharness -d deepharness"]
       interval: 10s
