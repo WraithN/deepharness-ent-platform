@@ -33,6 +33,9 @@ const (
 
 	// changeSummaryRestoreToVersion 是 RestoreVersion 恢复到目标版本后的变更摘要模板。
 	changeSummaryRestoreToVersion = "恢复至 v%d"
+
+	maxTitleLength         = 500
+	maxChangeSummaryLength = 500
 )
 
 const (
@@ -55,7 +58,9 @@ const (
 	errMsgItemNotFound        = "product space item not found"
 	errMsgItemAlreadyExists   = "product space item already exists"
 	errMsgVersionNotFound     = "product space version not found"
-	errMsgInvalidVersion      = "invalid version"
+	errMsgInvalidVersion       = "invalid version"
+	errMsgTitleTooLong         = "title exceeds maximum length"
+	errMsgChangeSummaryTooLong = "change summary exceeds maximum length"
 )
 
 // 预定义的 MIME 类型映射，避免魔法字符串。
@@ -201,6 +206,9 @@ func resolveProductSpacePath(workspaceRoot, workspaceID, userID, relativePath st
 	}
 
 	base := filepath.Join(workspaceRoot, workspaceID, userID, object.ProductSpaceRoot)
+	if err := rejectSymlink(base); err != nil {
+		return "", fmt.Errorf("base directory symlink check failed: %w", err)
+	}
 	absBase, err := filepath.Abs(base)
 	if err != nil {
 		return "", fmt.Errorf("resolve base path failed: %w", err)
@@ -330,7 +338,8 @@ func copyFile(src, dst string) error {
 }
 
 // sanitizeName 清理名称中的文件系统危险字符，防止跨目录或非法文件名。
-// 显式拒绝 "." 与 ".."，避免通过文件夹名称逃逸到父目录；拒绝 "%" 与 "_"，避免与 LIKE 通配符混淆。
+// 显式拒绝 "." 与 ".."，避免通过文件夹名称逃逸到父目录；拒绝 "%"，避免与 LIKE 通配符混淆。
+// "_" 是常见文件名字符，且 escapeLikePattern 已将其转义，因此允许使用。
 func sanitizeName(name string) (string, error) {
 	cleaned := strings.TrimSpace(name)
 	if cleaned == "" || cleaned == "." || cleaned == ".." {
@@ -340,7 +349,7 @@ func sanitizeName(name string) (string, error) {
 	if cleaned == "." || cleaned == ".." {
 		return "", errors.New("invalid name")
 	}
-	if strings.ContainsAny(cleaned, "%_") {
+	if strings.ContainsAny(cleaned, "%") {
 		return "", errors.New("name cannot contain wildcard characters")
 	}
 	replacer := strings.NewReplacer(
@@ -360,6 +369,21 @@ func sanitizeName(name string) (string, error) {
 		return "", errors.New("invalid name")
 	}
 	return cleaned, nil
+}
+
+// rejectSymlink 校验指定路径本身不是符号链接；路径不存在时视为安全。
+func rejectSymlink(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("symlinks are not allowed")
+	}
+	return nil
 }
 
 // escapeLikePattern 对字符串中的 LIKE 通配符与转义字符进行转义，配合 ESCAPE '\\' 使用。
@@ -454,6 +478,9 @@ func (s *DBProductSpaceService) readFileBytes(ctx context.Context, workspaceID, 
 	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, relativePath)
 	if err != nil {
 		return nil, err
+	}
+	if err := rejectSymlink(absPath); err != nil {
+		return nil, fmt.Errorf("symlink check failed: %w", err)
 	}
 	data, err := os.ReadFile(absPath)
 	if err != nil {
@@ -792,6 +819,9 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 	if err != nil {
 		return nil, fmt.Errorf("invalid title: %w", err)
 	}
+	if len([]rune(title)) > maxTitleLength {
+		return nil, errors.New(errMsgTitleTooLong)
+	}
 	folder := ""
 	if req.Folder != "" {
 		if strings.ContainsAny(req.Folder, "/\\") {
@@ -854,6 +884,9 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 	}
 
 	// 数据库记录插入成功后，再创建目录并写入文件；此时唯一索引已保证路径未被占用。
+	if err := rejectSymlink(absPath); err != nil {
+		return nil, fmt.Errorf("symlink check failed: %w", err)
+	}
 	if err := ensureParentDir(absPath); err != nil {
 		return nil, err
 	}
@@ -939,16 +972,26 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectSymlink(currentAbsPath); err != nil {
+		return nil, fmt.Errorf("current file symlink check failed: %w", err)
+	}
 
 	oldBytes, err := os.ReadFile(currentAbsPath)
 	if err != nil {
 		return nil, fmt.Errorf("read current file failed: %w", err)
 	}
 
+	if len([]rune(req.ChangeSummary)) > maxChangeSummaryLength {
+		return nil, errors.New(errMsgChangeSummaryTooLong)
+	}
+
 	versionRelPath := buildVersionRelativePath(category, folder, name, ext, item.CurrentVersion)
 	versionAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, versionRelPath)
 	if err != nil {
 		return nil, err
+	}
+	if err := rejectSymlink(versionAbsPath); err != nil {
+		return nil, fmt.Errorf("version file symlink check failed: %w", err)
 	}
 	if err := ensureParentDir(versionAbsPath); err != nil {
 		return nil, err
@@ -1106,6 +1149,9 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectSymlink(sourceVersionAbsPath); err != nil {
+		return nil, fmt.Errorf("source version file symlink check failed: %w", err)
+	}
 
 	category, folder, name, ext, err := parseRelativePath(item.RelativePath)
 	if err != nil {
@@ -1118,8 +1164,19 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectSymlink(currentAbsPath); err != nil {
+		return nil, fmt.Errorf("current file symlink check failed: %w", err)
+	}
+	if err := rejectSymlink(snapshotAbsPath); err != nil {
+		return nil, fmt.Errorf("snapshot file symlink check failed: %w", err)
+	}
 	if err := ensureParentDir(snapshotAbsPath); err != nil {
 		return nil, err
+	}
+
+	changeSummary := fmt.Sprintf(changeSummaryRestoreToVersion, targetVersion)
+	if len([]rune(changeSummary)) > maxChangeSummaryLength {
+		return nil, errors.New(errMsgChangeSummaryTooLong)
 	}
 
 	oldBytes, err := os.ReadFile(currentAbsPath)
@@ -1215,6 +1272,9 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 	if err != nil {
 		return err
 	}
+	if err := rejectSymlink(absPath); err != nil {
+		return fmt.Errorf("current file symlink check failed: %w", err)
+	}
 	_, _, name, ext, err := parseRelativePath(item.RelativePath)
 	if err != nil {
 		return err
@@ -1225,6 +1285,9 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 	versionDir, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, versionDirRel)
 	if err != nil {
 		return err
+	}
+	if err := rejectSymlink(versionDir); err != nil {
+		return fmt.Errorf("version directory symlink check failed: %w", err)
 	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM product_doc_versions WHERE doc_id = $1`, itemID); err != nil {
@@ -1381,6 +1444,9 @@ func (s *DBProductSpaceService) DownloadVersion(ctx context.Context, workspaceID
 	absPath, err := s.resolveVersionFilePath(workspaceID, userID, versionRecord.FilePath)
 	if err != nil {
 		return "", nil, err
+	}
+	if err := rejectSymlink(absPath); err != nil {
+		return "", nil, fmt.Errorf("version file symlink check failed: %w", err)
 	}
 	data, err := os.ReadFile(absPath)
 	if err != nil {
