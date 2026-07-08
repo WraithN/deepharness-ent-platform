@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
@@ -16,7 +17,38 @@ const (
 	intentPrefixChat = "CHAT:"
 	// intentPrefixIntent 是任务意图的前缀标记。
 	intentPrefixIntent = "INTENT:"
+	// intentRecognitionTimeout 是意图识别 LLM 调用的最大等待时间。
+	// 规则匹配失败的场景再交给 LLM，但不应让用户等待太久。
+	intentRecognitionTimeout = 15 * time.Second
 )
+
+// commandKeywordMap 为每条指令维护一组关键字，用于规则匹配快速路径。
+// 命中关键字时直接返回任务意图，无需调用 LLM，显著降低意图识别延迟。
+var commandKeywordMap = map[string][]string{
+	"/prd-write":    {"写需求", "prd", "需求文档", "产品需求"},
+	"/prd-research": {"调研", "技术调研", "方案选型", "研究报告"},
+	"/proto-make":   {"原型", "做原型", "ui原型", "可运行原型"},
+	"/code":         {"写代码", "写个", "做一个", "开发", "实现", "编写代码", "创建工程", "写页面", "做个系统", "做个网站", "写功能"},
+	"/debug":        {"bug", "缺陷", "修复", "报错", "错误", "问题", "调试"},
+	"/review":       {"review", "审查", "代码审查", "codereview", "代码review", "评审"},
+}
+
+// ruleBasedClassify 基于关键字规则快速判断任务意图。
+// 未命中任何关键字时返回 nil，调用方应 fallback 到 LLM 意图识别。
+func ruleBasedClassify(userInput string) *IntentResult {
+	input := strings.ToLower(strings.TrimSpace(userInput))
+	if input == "" {
+		return nil
+	}
+	for cmd, keywords := range commandKeywordMap {
+		for _, kw := range keywords {
+			if strings.Contains(input, strings.ToLower(kw)) {
+				return &IntentResult{IsChat: false, Command: cmd}
+			}
+		}
+	}
+	return nil
+}
 
 // IntentResult 意图识别结果。
 type IntentResult struct {
@@ -30,33 +62,39 @@ type IntentResult struct {
 func intentRecognitionPrompt(userInput string, commands []CommandConfig) string {
 	var cmdList strings.Builder
 	for _, cmd := range commands {
-		cmdList.WriteString(fmt.Sprintf("- %s：%s（%s）\n", cmd.Cmd, cmd.Label, cmd.Desc))
+		cmdList.WriteString(fmt.Sprintf("- %s %s\n", cmd.Cmd, cmd.Desc))
 	}
 
-	return fmt.Sprintf(`你是一个意图识别助手。请分析用户的输入，判断它是闲聊还是有明确的任务意图。
+	return fmt.Sprintf(`判断用户输入是闲聊还是任务意图，只输出一行。
 
-可用的任务指令：
+可用指令：
 %s
-判断规则：
-1. 如果用户是打招呼、问简单问题、闲聊、询问功能用法、表达感谢等，直接回复用户。
-   格式：CHAT: <你的回复>
-2. 如果用户有明确的任务意图（如"帮我写个登录页面"、"做个CRM系统"、"修复这个bug"、"审查一下这段代码"等），选择最匹配的指令。
-   格式：INTENT: <指令>（如 INTENT: /code）
-3. 只输出一行，以 CHAT: 或 INTENT: 开头，不要输出其他内容。
+规则：
+1. 闲聊、问候、感谢、询问用法 → CHAT: <回复>
+2. 任务意图 → INTENT: <指令>，例如 INTENT: /code
 
-用户输入：%s`, cmdList.String(), userInput)
+输入：%s`, cmdList.String(), userInput)
 }
 
 // recognizeIntent 调用 LLM 识别用户意图。
 // 如果是闲聊，返回回复内容；如果是任务意图，返回匹配的指令。
 // 调用失败时返回 error，调用方应 fallback 到正常流程。
 func recognizeIntent(ctx context.Context, aguiClient *client.AGUIClient, userInput string) (*IntentResult, error) {
+	// 先用规则快速路径匹配常见任务关键字，避免每次意图识别都启动 agent run。
+	if result := ruleBasedClassify(userInput); result != nil {
+		log.Printf("[Intent] rule-based mapped to command: %s", result.Command)
+		return result, nil
+	}
+
 	commands := GetCommandConfigs()
 	prompt := intentRecognitionPrompt(userInput, commands)
 
 	log.Printf("[Intent] recognizing intent for input: %q", truncate(userInput, 80))
 
-	resp, err := aguiClient.QuickComplete(ctx, prompt)
+	// 限制 LLM 意图识别的等待时间，防止模型不可用时长时间阻塞请求。
+	llmCtx, cancel := context.WithTimeout(ctx, intentRecognitionTimeout)
+	defer cancel()
+	resp, err := aguiClient.QuickComplete(llmCtx, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("intent recognition failed: %w", err)
 	}

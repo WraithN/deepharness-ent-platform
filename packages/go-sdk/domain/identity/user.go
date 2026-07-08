@@ -27,7 +27,12 @@ const SystemTenantID = "__system__"
 
 // Tenant 租户
 type Tenant struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID                  string    `json:"id"`
+	DisplayID           string    `json:"displayId"`
+	Name                string    `json:"name"`
+	AgentConfigLocked   bool      `json:"agentConfigLocked"`
+	LockedAgentKeys     []string  `json:"lockedAgentKeys"`
+	AllowedAgentKeys    []string  `json:"allowedAgentKeys"`
+	DefaultAgentConfigs any       `json:"defaultAgentConfigs,omitempty"`
+	CreatedAt           time.Time `json:"createdAt"`
 }

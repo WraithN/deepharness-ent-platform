@@ -10,24 +10,31 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
+
+// AgentGlobalConfig 保存来自 config.yaml 的全局 agent 与模型配置。
+type AgentGlobalConfig struct {
+	Agents []agent.AgentType
+	Models []string
+}
 
 // DBAgentConfigService 是基于 PostgreSQL 的 AgentConfigService 实现。
 type DBAgentConfigService struct {
-	db *sql.DB
+	db        *sql.DB
+	globalCfg AgentGlobalConfig
 }
 
-// builtinAgentTypes 为系统内置智能体类型，作为平台目录的初始值。
-var builtinAgentTypes = []agent.AgentType{
+// defaultBuiltinAgentTypes 为未配置全局 agent 时的默认内置智能体类型。
+var defaultBuiltinAgentTypes = []agent.AgentType{
 	{Key: "opencode", Name: "OpenCode", Description: "开源编码智能体，支持多种编程语言和框架", Enabled: true, Builtin: true},
 	{Key: "claude-code", Name: "Claude Code", Description: "Anthropic 推出的编码助手，擅长复杂逻辑推理", Enabled: true, Builtin: true},
-	{Key: "cursor-agent", Name: "Cursor Agent", Description: "基于 GPT-4 的智能编码代理", Enabled: false, Builtin: true},
 	{Key: "codex", Name: "Codex", Description: "OpenAI Codex，专为软件工程优化的 AI 模型", Enabled: true, Builtin: true},
 }
 
 // NewDBAgentConfigService 创建 PostgreSQL 实现的智能体配置服务。
-func NewDBAgentConfigService(db *sql.DB) *DBAgentConfigService {
-	svc := &DBAgentConfigService{db: db}
+func NewDBAgentConfigService(db *sql.DB, cfg AgentGlobalConfig) *DBAgentConfigService {
+	svc := &DBAgentConfigService{db: db, globalCfg: cfg}
 	if err := svc.seedBuiltinAgentTypes(); err != nil {
 		// 初始化种子失败不应阻塞启动，仅记录日志。
 		fmt.Printf("[AgentConfig] seed builtin agent types failed: %v\n", err)
@@ -35,10 +42,18 @@ func NewDBAgentConfigService(db *sql.DB) *DBAgentConfigService {
 	return svc
 }
 
+// builtinAgentTypes 返回实际用于数据库种子的智能体类型列表。
+func (s *DBAgentConfigService) builtinAgentTypes() []agent.AgentType {
+	if len(s.globalCfg.Agents) > 0 {
+		return s.globalCfg.Agents
+	}
+	return defaultBuiltinAgentTypes
+}
+
 // seedBuiltinAgentTypes 确保内置智能体类型记录存在。
 func (s *DBAgentConfigService) seedBuiltinAgentTypes() error {
 	now := time.Now().UTC()
-	for _, at := range builtinAgentTypes {
+	for _, at := range s.builtinAgentTypes() {
 		_, err := s.db.Exec(`
 			INSERT INTO platform_agent_types (agent_key, name, description, enabled, builtin, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, TRUE, $5, $5)
@@ -51,7 +66,12 @@ func (s *DBAgentConfigService) seedBuiltinAgentTypes() error {
 	return nil
 }
 
-// ListAgentTypes 返回平台级智能体类型列表。
+// ListGlobalModels 返回全局配置中支持的模型池。
+func (s *DBAgentConfigService) ListGlobalModels() []string {
+	return s.globalCfg.Models
+}
+
+// ListAgentTypes 返回平台级智能体类型列表，按全局配置过滤。
 func (s *DBAgentConfigService) ListAgentTypes() ([]agent.AgentType, error) {
 	rows, err := s.db.Query(`
 		SELECT agent_key, name, description, enabled, builtin, created_at, updated_at
@@ -63,11 +83,20 @@ func (s *DBAgentConfigService) ListAgentTypes() ([]agent.AgentType, error) {
 	}
 	defer rows.Close()
 
+	allowed := make(map[string]bool, len(s.globalCfg.Agents))
+	for _, a := range s.globalCfg.Agents {
+		allowed[a.Key] = true
+	}
+
 	result := make([]agent.AgentType, 0)
 	for rows.Next() {
 		var at agent.AgentType
 		if err := rows.Scan(&at.Key, &at.Name, &at.Description, &at.Enabled, &at.Builtin, &at.CreatedAt, &at.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan agent type failed: %w", err)
+		}
+		// 全局配置为空时兼容旧数据，不过滤。
+		if len(allowed) > 0 && !allowed[at.Key] {
+			continue
 		}
 		result = append(result, at)
 	}
@@ -114,13 +143,105 @@ func (s *DBAgentConfigService) GetAgentType(key string) (agent.AgentType, error)
 	return at, nil
 }
 
-// ListWorkspaceConfigs 返回某空间下所有智能体配置，未配置的智能体返回默认空配置。
+// workspaceAgentPolicy 表示工作空间维度的智能体策略。
+type workspaceAgentPolicy struct {
+	locked           bool
+	lockedKeys       map[string]bool
+	allowedKeys      map[string]bool
+	defaultConfigs   map[string]agent.WorkspaceAgentConfig
+}
+
+// getWorkspaceAgentPolicy 读取工作空间所属租户的智能体策略。
+// 智能体策略统一存储在 tenants 表，同一租户下所有空间共享。
+func (s *DBAgentConfigService) getWorkspaceAgentPolicy(workspaceID string) (workspaceAgentPolicy, error) {
+	var locked bool
+	var raw []byte
+	var lockedKeysArr pq.StringArray
+	var allowedKeys pq.StringArray
+	err := s.db.QueryRow(`
+		SELECT t.agent_config_locked, t.locked_agent_keys, t.allowed_agent_keys, t.default_agent_configs
+		FROM workspaces w
+		JOIN tenants t ON t.id = w.tenant_id
+		WHERE w.id = $1
+	`, workspaceID).Scan(&locked, &lockedKeysArr, &allowedKeys, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return workspaceAgentPolicy{}, errors.New("workspace not found")
+	}
+	if err != nil {
+		return workspaceAgentPolicy{}, fmt.Errorf("get tenant policy failed: %w", err)
+	}
+
+	policy := workspaceAgentPolicy{
+		locked:      locked,
+		lockedKeys:  make(map[string]bool, len(lockedKeysArr)),
+		allowedKeys: make(map[string]bool, len(allowedKeys)),
+	}
+	for _, k := range lockedKeysArr {
+		policy.lockedKeys[k] = true
+	}
+	for _, k := range allowedKeys {
+		policy.allowedKeys[k] = true
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &policy.defaultConfigs); err != nil {
+			return workspaceAgentPolicy{}, fmt.Errorf("unmarshal default agent configs failed: %w", err)
+		}
+	}
+	return policy, nil
+}
+
+// isAgentAllowed 判断 agent key 是否被空间策略允许。
+func (p workspaceAgentPolicy) isAgentAllowed(key string) bool {
+	// 若空间未设置允许列表，则默认允许所有全局 agent（兼容旧数据）。
+	return len(p.allowedKeys) == 0 || p.allowedKeys[key]
+}
+
+// isAgentLocked 判断指定 agent 是否被锁定。
+// 当整体锁定（agentConfigLocked=true）时所有 agent 均被锁定；
+// 否则检查该 agent key 是否在单独锁定列表中。
+func (p workspaceAgentPolicy) isAgentLocked(key string) bool {
+	return p.locked || p.lockedKeys[key]
+}
+
+// applyDefaultConfig 使用超管预设的默认配置填充未配置字段。
+func (p workspaceAgentPolicy) applyDefaultConfig(cfg agent.WorkspaceAgentConfig) agent.WorkspaceAgentConfig {
+	defaultCfg, ok := p.defaultConfigs[cfg.AgentKey]
+	if !ok {
+		return cfg
+	}
+	if cfg.Model == "" {
+		cfg.Model = defaultCfg.Model
+	}
+	if cfg.ModelSource == "" {
+		cfg.ModelSource = defaultCfg.ModelSource
+	}
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = defaultCfg.BaseURL
+	}
+	if cfg.APIKey == "" {
+		cfg.APIKey = defaultCfg.APIKey
+	}
+	if cfg.Temperature == nil && defaultCfg.Temperature != nil {
+		t := *defaultCfg.Temperature
+		cfg.Temperature = &t
+	}
+	if cfg.AdvancedConfig == nil && defaultCfg.AdvancedConfig != nil {
+		cfg.AdvancedConfig = defaultCfg.AdvancedConfig
+	}
+	return cfg
+}
+
+// ListWorkspaceConfigs 返回某空间下所有智能体配置，受空间策略过滤并用默认配置初始化。
 func (s *DBAgentConfigService) ListWorkspaceConfigs(workspaceID string) ([]agent.WorkspaceAgentConfig, error) {
 	if workspaceID == "" {
 		return nil, errors.New("workspace id is required")
 	}
 
-	// 先取出平台目录，再左联空间配置。
+	policy, err := s.getWorkspaceAgentPolicy(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Query(`
 		SELECT t.agent_key, t.name, t.description, t.enabled,
 			c.id, c.enabled, c.model, c.model_source, c.base_url, c.api_key,
@@ -143,6 +264,10 @@ func (s *DBAgentConfigService) ListWorkspaceConfigs(workspaceID string) ([]agent
 			fmt.Printf("[AgentConfig] scan workspace config failed: %v\n", err)
 			return nil, err
 		}
+		if !policy.isAgentAllowed(cfg.AgentKey) {
+			continue
+		}
+		cfg = policy.applyDefaultConfig(cfg)
 		result = append(result, cfg)
 	}
 	if err := rows.Err(); err != nil {
@@ -153,6 +278,14 @@ func (s *DBAgentConfigService) ListWorkspaceConfigs(workspaceID string) ([]agent
 
 // GetWorkspaceConfig 返回某空间下指定智能体的配置。
 func (s *DBAgentConfigService) GetWorkspaceConfig(workspaceID, agentKey string) (agent.WorkspaceAgentConfig, error) {
+	policy, err := s.getWorkspaceAgentPolicy(workspaceID)
+	if err != nil {
+		return agent.WorkspaceAgentConfig{}, err
+	}
+	if !policy.isAgentAllowed(agentKey) {
+		return agent.WorkspaceAgentConfig{}, errors.New("agent not allowed in this workspace")
+	}
+
 	row := s.db.QueryRow(`
 		SELECT t.agent_key, t.name, t.description, t.enabled,
 			c.id, c.enabled, c.model, c.model_source, c.base_url, c.api_key,
@@ -163,7 +296,27 @@ func (s *DBAgentConfigService) GetWorkspaceConfig(workspaceID, agentKey string) 
 			ON c.workspace_id = $1 AND c.agent_key = t.agent_key
 		WHERE t.agent_key = $2
 	`, workspaceID, agentKey)
-	return scanWorkspaceAgentConfig(workspaceID, row)
+	cfg, err := scanWorkspaceAgentConfig(workspaceID, row)
+	if err != nil {
+		return agent.WorkspaceAgentConfig{}, err
+	}
+	return policy.applyDefaultConfig(cfg), nil
+}
+
+// CanModifyWorkspaceConfig 判断指定空间的智能体配置是否允许修改。
+// 整体锁定或该 agent 被单独锁定时返回错误。
+func (s *DBAgentConfigService) CanModifyWorkspaceConfig(workspaceID, agentKey string) error {
+	policy, err := s.getWorkspaceAgentPolicy(workspaceID)
+	if err != nil {
+		return err
+	}
+	if policy.isAgentLocked(agentKey) {
+		return errors.New("agent config is locked for this workspace")
+	}
+	if !policy.isAgentAllowed(agentKey) {
+		return errors.New("agent not allowed in this workspace")
+	}
+	return nil
 }
 
 // SaveWorkspaceConfig 保存或更新空间级智能体配置。
@@ -173,6 +326,10 @@ func (s *DBAgentConfigService) SaveWorkspaceConfig(workspaceID string, req SaveW
 	}
 	if req.AgentKey == "" {
 		return agent.WorkspaceAgentConfig{}, errors.New("agentKey is required")
+	}
+
+	if err := s.CanModifyWorkspaceConfig(workspaceID, req.AgentKey); err != nil {
+		return agent.WorkspaceAgentConfig{}, err
 	}
 
 	// 校验智能体类型是否存在。
@@ -243,8 +400,6 @@ func agentDisplayName(key string) string {
 		return "OpenCode"
 	case "claude-code":
 		return "Claude Code"
-	case "cursor-agent":
-		return "Cursor Agent"
 	case "codex":
 		return "Codex"
 	default:

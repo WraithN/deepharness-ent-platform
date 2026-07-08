@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"bytes"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/repository"
 	gitrepo "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/repository"
+	"github.com/go-enry/go-enry/v2"
 	"github.com/google/uuid"
 )
 
@@ -783,7 +785,16 @@ func (s *DBRepositoryService) GetDetails(workspaceID, repoID string) (*Repositor
 		details.SizeBytes = totalSize
 	}
 
-	details.Language = detectLanguage(repo.LocalPath)
+	// 使用 go-enry 统计语言分布，并计算有效代码行数（均基于 git ls-files，天然尊重 .gitignore）。
+	languageStats, effectiveLines := analyzeRepoLanguagesAndLines(repo.LocalPath)
+	details.LanguageStats = languageStats
+	details.EffectiveLinesOfCode = effectiveLines
+	if len(languageStats) > 0 {
+		details.Language = languageStats[0].Name
+	}
+
+	details.CommitterStats = loadCommitterStats(repo.LocalPath)
+	details.WeeklyCommits = loadWeeklyCommits(repo.LocalPath)
 
 	return details, nil
 }
@@ -866,6 +877,210 @@ func detectLanguage(repoDir string) string {
 		return lang
 	}
 	return "Other"
+}
+
+// languageColorMap 为常见语言提供近似 GitHub 配色，便于前端展示。
+var languageColorMap = map[string]string{
+	"Go":         "#00ADD8",
+	"TypeScript": "#3178C6",
+	"JavaScript": "#F1E05A",
+	"Python":     "#3572A5",
+	"Java":       "#B07219",
+	"Rust":       "#DEA584",
+	"C++":        "#F34B7D",
+	"C":          "#555555",
+	"C#":         "#178600",
+	"Vue":        "#41B883",
+	"HTML":       "#E34C26",
+	"CSS":        "#563D7C",
+	"Shell":      "#89E051",
+	"Markdown":   "#083FA1",
+	"JSON":       "#292929",
+	"YAML":       "#CB171E",
+	"SQL":        "#E38C00",
+	"Ruby":       "#701516",
+	"PHP":        "#4F5D95",
+	"Swift":      "#F05138",
+	"Kotlin":     "#A97BFF",
+	"Scala":      "#C22D40",
+}
+
+// ignoredLanguages 是不希望出现在语言统计中的语言黑名单。
+// 例如 go-enry 常把 Markdown 文件误判为 GCC Machine Description，需过滤掉。
+var ignoredLanguages = map[string]bool{
+	"GCC Machine Description": true,
+}
+
+// analyzeRepoLanguagesAndLines 遍历 git 跟踪的文件，统计语言分布与有效代码行数。
+// 使用 git ls-files 获取文件列表，天然尊重 .gitignore。
+func analyzeRepoLanguagesAndLines(repoDir string) ([]LanguageStat, int) {
+	out, err := gitExec(repoDir, "ls-files")
+	if err != nil {
+		return nil, 0
+	}
+	files := strings.Split(out, "\n")
+
+	langAgg := make(map[string]*LanguageStat)
+	totalLines := 0
+	// 单个文件大小上限 1MB，避免读取超大文件拖慢统计。
+	const maxFileSize = 1024 * 1024
+
+	for _, f := range files {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		fullPath := filepath.Join(repoDir, f)
+		info, err := os.Stat(fullPath)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if info.Size() > maxFileSize {
+			continue
+		}
+		data, err := os.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		if bytes.Contains(data, []byte{0}) {
+			continue
+		}
+		lang := detectFileLanguage(f, data)
+		if lang == "" || lang == "Unknown" || ignoredLanguages[lang] {
+			continue
+		}
+
+		lines := countEffectiveLines(data)
+		totalLines += lines
+
+		if stat, ok := langAgg[lang]; ok {
+			stat.Files++
+			stat.Bytes += info.Size()
+		} else {
+			langAgg[lang] = &LanguageStat{
+				Name:  lang,
+				Files: 1,
+				Bytes: info.Size(),
+			}
+		}
+	}
+
+	if len(langAgg) == 0 {
+		return nil, 0
+	}
+
+	var totalBytes int64
+	result := make([]LanguageStat, 0, len(langAgg))
+	for _, stat := range langAgg {
+		totalBytes += stat.Bytes
+		if c, ok := languageColorMap[stat.Name]; ok {
+			stat.Color = c
+		}
+		result = append(result, *stat)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Bytes > result[j].Bytes
+	})
+	for i := range result {
+		if totalBytes > 0 {
+			result[i].Percentage = float64(result[i].Bytes) / float64(totalBytes) * 100
+		}
+	}
+	return result, totalLines
+}
+
+// detectFileLanguage 使用 go-enry 识别文件语言，失败时返回空。
+func detectFileLanguage(path string, data []byte) string {
+	if lang, _ := enry.GetLanguageByExtension(path); lang != "" {
+		return lang
+	}
+	if lang, _ := enry.GetLanguageByContent(path, data); lang != "" {
+		return lang
+	}
+	if lang, _ := enry.GetLanguageByFilename(path); lang != "" {
+		return lang
+	}
+	return ""
+}
+
+// countEffectiveLines 统计有效代码行数：非空且不是简单注释行。
+func countEffectiveLines(data []byte) int {
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		// 简单过滤常见单行/多行注释标记，跨多行注释不精确剔除。
+		if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") ||
+			strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") ||
+			strings.HasPrefix(trimmed, "<!--") || strings.HasPrefix(trimmed, "--") {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+// loadCommitterStats 解析 git shortlog 输出，返回贡献者提交分布。
+func loadCommitterStats(repoDir string) []CommitterStat {
+	out, err := gitExec(repoDir, "shortlog", "-sn", "--email", "HEAD")
+	if err != nil {
+		return nil
+	}
+	var stats []CommitterStat
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		commits, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err != nil {
+			continue
+		}
+		name, email := parseCommitterNameEmail(parts[1])
+		stats = append(stats, CommitterStat{Name: name, Email: email, Commits: commits})
+	}
+	return stats
+}
+
+// parseCommitterNameEmail 从 "Name <email>" 格式中解析姓名与邮箱。
+func parseCommitterNameEmail(s string) (string, string) {
+	s = strings.TrimSpace(s)
+	if idx := strings.LastIndex(s, "<"); idx != -1 {
+		name := strings.TrimSpace(s[:idx])
+		email := strings.Trim(s[idx:], "<>")
+		return name, email
+	}
+	return s, ""
+}
+
+// loadWeeklyCommits 统计最近 7 天每日提交数量。
+func loadWeeklyCommits(repoDir string) []DailyCommit {
+	out, err := gitExec(repoDir, "log", "--since=7.days", "--pretty=%ad", "--date=short", "HEAD")
+	if err != nil {
+		return nil
+	}
+	counts := make(map[string]int)
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		counts[line]++
+	}
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	result := make([]DailyCommit, 7)
+	for i := 6; i >= 0; i-- {
+		d := today.AddDate(0, 0, i-6)
+		dateStr := d.Format("2006-01-02")
+		result[6-i] = DailyCommit{Date: dateStr, Count: counts[dateStr]}
+	}
+	return result
 }
 
 // GetFileTree 获取仓库文件树，尊重 .gitignore，按指定顺序排序。

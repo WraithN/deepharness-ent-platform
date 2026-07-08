@@ -1,11 +1,18 @@
 package tests
 
 import (
+	"os"
 	"testing"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
 )
+
+func TestMain(m *testing.M) {
+	// 测试运行在 apps/dh-backend/config/tests，需指向仓库根目录下的 config.yaml
+	os.Setenv("CONFIG_FILE", "../../config.yaml")
+	os.Exit(m.Run())
+}
 
 func TestLoad_Defaults(t *testing.T) {
 	cfg, err := config.Load()

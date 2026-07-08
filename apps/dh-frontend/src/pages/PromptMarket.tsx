@@ -12,8 +12,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { PLATFORM_ROLE, SPACE_ROLE } from '@/lib/role-constants';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { PaginationBar } from '@/components/admin/PaginationBar';
+import { useClientPagination } from '@/hooks/use-client-pagination';
 
 const CATEGORIES = ['全部', '研发', '测试', '产品', '设计'];
+const PROMPT_MARKET_PAGE_SIZE = 12;
 
 const PROMPT_STATUS_LABEL: Record<PromptStatus, string> = {
   pending_review: '审核中',
@@ -49,8 +52,8 @@ export const PromptMarket: React.FC = () => {
   const loadPrompts = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await teamApi.listPrompts();
-      setPrompts(list);
+      const res = await teamApi.listPrompts(1, 100);
+      setPrompts(res.list);
     } catch (err) {
       console.error('Failed to load prompts:', err);
       toast.error('加载提示词失败');
@@ -76,6 +79,13 @@ export const PromptMarket: React.FC = () => {
 
     return matchSearch && (selectedCategory === '全部' || prompt.useCase.includes(selectedCategory) || matchCategory);
   });
+
+  const { currentPage, totalPages, onPageChange, startIndex, endIndex } = useClientPagination({
+    pageSize: PROMPT_MARKET_PAGE_SIZE,
+    total: filteredPrompts.length,
+    resetDeps: [searchTerm, selectedCategory],
+  });
+  const paginatedPrompts = filteredPrompts.slice(startIndex, endIndex);
 
   const handleCopy = (content: string) => {
     navigator.clipboard.writeText(content).then(() => toast.success('提示词内容已复制到剪贴板'));
@@ -191,7 +201,7 @@ export const PromptMarket: React.FC = () => {
         <div className="py-12 text-center text-muted-foreground">加载中...</div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {filteredPrompts.map(prompt => {
+          {paginatedPrompts.map(prompt => {
             const status = prompt.status || 'on_shelf';
             const isOwner = user?.id === prompt.createdBy;
             const showReviewActions = isSuperAdmin && (status === 'pending_review' || status === 'on_shelf' || status === 'off_shelf' || status === 'rejected');
@@ -269,6 +279,14 @@ export const PromptMarket: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+
+      {filteredPrompts.length > 0 && (
+        <PaginationBar
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={onPageChange}
+        />
       )}
     </div>
   );

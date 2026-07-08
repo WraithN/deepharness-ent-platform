@@ -10,6 +10,8 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import type { PersonalAssistantDTO, CreatePersonalAssistantRequest, LobsterRole } from '@/lib/api-types';
+import { PaginationBar } from '@/components/admin/PaginationBar';
+import { useClientPagination } from '@/hooks/use-client-pagination';
 
 const AVAILABLE_ROLES: { id: LobsterRole; title: LobsterRole; desc: string; icon: string }[] = [
   { id: '测试虾', title: '测试虾', desc: '专注寻找代码中的 Bug，编写自动化测试用例', icon: '🐞' },
@@ -19,6 +21,8 @@ const AVAILABLE_ROLES: { id: LobsterRole; title: LobsterRole; desc: string; icon
   { id: '产品虾', title: '产品虾', desc: '需求分析与产品规划，绘制 PRD 和原型设计', icon: '📝' },
   { id: '运营虾', title: '运营虾', desc: '数据分析与活动策划，提升用户活跃度与留存', icon: '📊' },
 ];
+
+const LOBSTER_PAGE_SIZE = 12;
 
 export const PersonalAssistantPage: React.FC = () => {
   const navigate = useNavigate();
@@ -85,6 +89,12 @@ export const PersonalAssistantPage: React.FC = () => {
     '运营虾': 'bg-pink-500/10 text-pink-500 border-pink-500/20',
   };
 
+  const { currentPage, totalPages, onPageChange, startIndex, endIndex } = useClientPagination({
+    pageSize: LOBSTER_PAGE_SIZE,
+    total: lobsters.length,
+  });
+  const paginatedLobsters = lobsters.slice(startIndex, endIndex);
+
   if (loading && lobsters.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -123,7 +133,7 @@ export const PersonalAssistantPage: React.FC = () => {
         </Card>
 
         {/* Lobster Cards */}
-        {lobsters.map(lobster => (
+        {paginatedLobsters.map(lobster => (
           <Card 
             key={lobster.id} 
             className={`h-full flex flex-col soft-shadow cursor-pointer transition-all overflow-hidden group claude-card ${!lobster.isMine ? 'opacity-70 grayscale-[20%]' : 'hover:-translate-y-1'}`}
@@ -178,6 +188,14 @@ export const PersonalAssistantPage: React.FC = () => {
           </Card>
         ))}
       </div>
+
+      {lobsters.length > 0 && (
+        <PaginationBar
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={onPageChange}
+        />
+      )}
 
       {/* Create Dialog */}
       <Dialog open={createOpen} onOpenChange={(open) => !isLoading && setCreateOpen(open)}>

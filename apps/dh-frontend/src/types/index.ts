@@ -1,6 +1,13 @@
 import type { PlatformRole, SubRole, SpaceRole } from '@/lib/role-constants';
 import type { RepoType } from '@/lib/api-types';
 
+export interface PaginatedList<T> {
+  list: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -12,9 +19,20 @@ export interface User {
 
 export interface Tenant {
   id: string;
+  displayId: string;
   name: string;
-  logo?: string;
-  description?: string;
+  agentConfigLocked: boolean;
+  lockedAgentKeys: string[];
+  allowedAgentKeys: string[];
+  defaultAgentConfigs?: Record<string, WorkspaceAgentConfig>;
+  createdAt: string;
+}
+
+export interface TenantMember {
+  id: string;
+  name: string;
+  email: string;
+  platformRole: string;
 }
 
 export interface Skill {
@@ -28,6 +46,17 @@ export interface Skill {
   installed: boolean;
   icon?: string;
   phase?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SkillCategory {
+  id: string;
+  name: string;
+  builtin: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type PromptStatus = 'pending_review' | 'on_shelf' | 'off_shelf' | 'rejected';
@@ -52,8 +81,58 @@ export interface PromptCategory {
   id: string;
   workspaceId: string;
   name: string;
+  isBuiltin?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TeamPromptCategory {
+  id: string;
+  name: string;
+  builtin: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CategoryDistribution {
+  category: string;
+  count: number;
+}
+
+export interface StatusDistribution {
+  status: string;
+  count: number;
+}
+
+export interface TopSkill {
+  id: string;
+  name: string;
+  category: string;
+  downloads: number;
+  rating: number;
+}
+
+export interface TopPrompt {
+  id: string;
+  name: string;
+  useCase: string;
+  usageCount: number;
+}
+
+export interface SkillStats {
+  total: number;
+  installedCount: number;
+  categoryDistribution: CategoryDistribution[];
+  topSkills: TopSkill[];
+}
+
+export interface PromptStats {
+  total: number;
+  onShelfCount: number;
+  categoryDistribution: CategoryDistribution[];
+  statusDistribution: StatusDistribution[];
+  topPrompts: TopPrompt[];
 }
 
 export interface WorkspacePrompt {
@@ -68,6 +147,7 @@ export interface WorkspacePrompt {
   usageCount: number;
   isCustom: boolean;
   addedToSpace: boolean;
+  enabled: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -107,16 +187,31 @@ export interface SettingsConfig {
 
 export interface Workspace {
   id: string;
+  displayId: string;
   tenantId: string;
   name: string;
   description?: string;
+  agentConfigLocked: boolean;
+  lockedAgentKeys: string[];
+  allowedAgentKeys: string[];
+  defaultAgentConfigs?: Record<string, WorkspaceAgentConfig>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AgentPolicy {
+  agentConfigLocked: boolean;
+  lockedAgentKeys: string[];
+  allowedAgentKeys: string[];
+  defaultAgentConfigs?: Record<string, WorkspaceAgentConfig>;
 }
 
 export interface WorkspaceMember {
   workspaceId: string;
   userId: string;
+  displayId: string;
+  name: string;
+  email: string;
   role: SpaceRole;
   subRole?: SubRole;
   joinedAt: string;
@@ -175,6 +270,7 @@ export interface AdvancedAgentConfig {
   maxTokens?: number;
   contextWindow?: number;
   topP?: number;
+  topK?: number;
   frequencyPenalty?: number;
   presencePenalty?: number;
   extra?: Record<string, unknown>;

@@ -46,6 +46,53 @@ workspace:
 agent_stub:
   url: "http://127.0.0.1:8090"
 
+# 平台支持的 coding agent 与模型池配置
+# 该列表决定超管在空间管理时可选择哪些 agent 与模型。
+coding_agents:
+  agents:
+    - key: opencode
+      name: OpenCode
+      description: 开源编码智能体，支持多种编程语言和框架
+    - key: claude-code
+      name: Claude Code
+      description: Anthropic 推出的编码助手，擅长复杂逻辑推理
+    - key: codex
+      name: Codex
+      description: OpenAI Codex，专为软件工程优化的 AI 模型
+  models:
+    # Kimi（月之暗面）
+    - kimi-latest
+    - kimi-k2
+    - kimi-k1.5
+    # GLM（智谱清言）
+    - glm-4-plus
+    - glm-4-0520
+    - glm-4-air
+    - glm-4-airx
+    - glm-4-flash
+    - glm-4-long
+    - glm-4v-plus
+    # MiniMax
+    - minimax-text-01
+    - minimax-pro
+    # 通义千问
+    - qwen-max
+    - qwen-plus
+    - qwen-turbo
+    - qwen-coder-plus
+    - qwen3-235b-a22b
+    # DeepSeek
+    - deepseek-chat
+    - deepseek-coder
+    - deepseek-reasoner
+    # 文心一言
+    - "ernie-4.0"
+    - "ernie-4.5"
+    - "ernie-x1"
+    # 腾讯混元
+    - hunyuan-pro
+    - hunyuan-standard
+
 workitem:
   platforms:
     - meego

@@ -7,22 +7,33 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Save, UserPlus, Search, MoreHorizontal, Shield, Settings2, User as UserIcon, Puzzle, FileText, Trash2, Plus, Code2, Copy, CheckCircle, UploadCloud, Box, ListTodo, Camera, UserCircle, SlidersHorizontal, Wand2, Star, Download, X, ChevronLeft, ChevronRight, Bot, ChevronDown } from 'lucide-react';
+import { Save, UserPlus, Search, MoreHorizontal, Shield, Puzzle, FileText, Trash2, Plus, Code2, Copy, Check, CheckCircle, UploadCloud, Box, ListTodo, Camera, UserCircle, SlidersHorizontal, Wand2, Star, Download, X, ChevronLeft, ChevronRight, Bot, ChevronDown, Loader2, MessageSquareQuote, AlertCircle, Lock } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import MultiSelect from '@/components/ui/multi-select';
+import { PaginationBar } from '@/components/admin/PaginationBar';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { teamApi } from '@/lib/team-api';
 import { workspaceApi } from '@/lib/workspace-api';
+import { ApiError } from '@/lib/api';
 import { repositoryApi } from '@/lib/repository-api';
 import { agentConfigApi } from '@/lib/agent-config-api';
+import { isBuiltinPromptCategoryName, sortPromptCategoriesByBuiltin } from '@/lib/prompt-categories';
 import { toast } from 'sonner';
-import type { Skill, Prompt, WorkspacePrompt, PromptCategory, Workspace, WorkspaceMember, WorkitemProject, WorkspaceStandard, WorkspaceCICD, WorkspaceRepository, SettingsConfig, WorkspaceAgentConfig } from '@/types';
+import type { Skill, SkillCategory, Prompt, WorkspacePrompt, PromptCategory, Workspace, WorkspaceMember, WorkitemProject, WorkspaceStandard, WorkspaceCICD, WorkspaceRepository, SettingsConfig, WorkspaceAgentConfig, AgentType } from '@/types';
 import { useSearchParams } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useClientPagination } from '@/hooks/use-client-pagination';
 import { useAuth } from '@/contexts/AuthContext';
 import { PLATFORM_ROLE, SPACE_ROLE, SUB_ROLE, getSubRoleLabel } from '@/lib/role-constants';
 import { formatDateTime } from '@/lib/utils';
@@ -47,7 +58,6 @@ const LOCAL_REPO_ID_PREFIX = 'local-';
 const BUILTIN_MODELS: Record<string, string[]> = {
   'opencode': ['gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'],
   'claude-code': ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
-  'cursor-agent': ['gpt-4o', 'deepseek-v3'],
   'codex': ['gpt-4o', 'gpt-4-turbo'],
 };
 
@@ -57,14 +67,22 @@ const UNCATEGORIZED_NAME = '未分类';
 // 空间提示词每页数量
 const PROMPT_PAGE_SIZE = 8;
 
+// 代码仓库每页数量
+const GIT_REPO_PAGE_SIZE = 10;
+
 interface AgentConfigCardProps {
   config: WorkspaceAgentConfig;
   readOnly: boolean;
+  locked: boolean;
+  globalModels: string[];
+  platformEnabled: boolean;
   onChange: (config: WorkspaceAgentConfig) => void;
 }
 
-const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, onChange }) => {
-  const builtinModels = BUILTIN_MODELS[config.agentKey] ?? BUILTIN_MODELS['opencode'];
+const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, locked, globalModels, platformEnabled, onChange }) => {
+  const builtinModels = globalModels.length > 0 ? globalModels : (BUILTIN_MODELS[config.agentKey] ?? BUILTIN_MODELS['opencode']);
+  // 锁定后该卡片所有输入均禁用
+  const disabled = readOnly || locked;
 
   const updateField = <K extends keyof WorkspaceAgentConfig>(field: K, value: WorkspaceAgentConfig[K]) => {
     onChange({ ...config, [field]: value });
@@ -95,9 +113,21 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, onC
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {!platformEnabled && (
+              <span className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400" title="该智能体尚未在平台范围启用，空间级启用不会生效">
+                <AlertCircle className="h-3.5 w-3.5" />
+                平台未启用
+              </span>
+            )}
+            {locked && (
+              <span className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400" title="该智能体已被超级管理员锁定，仅可查看">
+                <Lock className="h-3.5 w-3.5" />
+                已锁定
+              </span>
+            )}
             <span className="text-xs text-muted-foreground">{config.enabled ? '已启用' : '已禁用'}</span>
             <Switch
-              disabled={readOnly}
+              disabled={disabled || !platformEnabled}
               checked={config.enabled}
               onCheckedChange={checked => updateField('enabled', checked)}
             />
@@ -112,7 +142,7 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, onC
                 <p className="text-xs text-muted-foreground">开启后可配置自己的模型服务地址</p>
               </div>
               <Checkbox
-                disabled={readOnly}
+                disabled={disabled}
                 checked={config.modelSource === 'custom'}
                 onCheckedChange={checked => updateField('modelSource', checked ? 'custom' : 'builtin')}
               />
@@ -123,14 +153,14 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, onC
                 <Label className="text-xs text-muted-foreground">{config.modelSource === 'custom' ? '模型名称' : '选择模型'}</Label>
                 {config.modelSource === 'custom' ? (
                   <Input
-                    disabled={readOnly}
+                    disabled={disabled}
                     placeholder="例如: custom-model-v1"
                     value={config.model}
                     onChange={e => updateField('model', e.target.value)}
                   />
                 ) : (
                   <Select
-                    disabled={readOnly}
+                    disabled={disabled}
                     value={config.model}
                     onValueChange={val => updateField('model', val)}
                   >
@@ -147,7 +177,7 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, onC
               <div className="space-y-2">
                 <Label className="text-xs text-muted-foreground">温度 (Temperature)</Label>
                 <Input
-                  disabled={readOnly}
+                  disabled={disabled}
                   type="number"
                   step="0.1"
                   min="0"
@@ -163,7 +193,7 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, onC
                 <div className="space-y-2">
                   <Label className="text-xs text-muted-foreground">Base URL</Label>
                   <Input
-                    disabled={readOnly}
+                    disabled={disabled}
                     placeholder="https://api.example.com/v1"
                     value={config.baseUrl}
                     onChange={e => updateField('baseUrl', e.target.value)}
@@ -172,7 +202,7 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, onC
                 <div className="space-y-2">
                   <Label className="text-xs text-muted-foreground">API Key</Label>
                   <Input
-                    disabled={readOnly}
+                    disabled={disabled}
                     type="password"
                     placeholder="sk-..."
                     value={config.apiKey}
@@ -189,11 +219,11 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, onC
                 </Button>
               </CollapsibleTrigger>
               <CollapsibleContent className="space-y-4 pt-2">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="space-y-2">
                     <Label className="text-xs text-muted-foreground">最大 Token 数</Label>
                     <Input
-                      disabled={readOnly}
+                      disabled={disabled}
                       type="number"
                       min="1"
                       placeholder="例如: 4096"
@@ -204,7 +234,7 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, onC
                   <div className="space-y-2">
                     <Label className="text-xs text-muted-foreground">上下文窗口</Label>
                     <Input
-                      disabled={readOnly}
+                      disabled={disabled}
                       type="number"
                       min="1"
                       placeholder="例如: 128000"
@@ -215,7 +245,7 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, onC
                   <div className="space-y-2">
                     <Label className="text-xs text-muted-foreground">Top P</Label>
                     <Input
-                      disabled={readOnly}
+                      disabled={disabled}
                       type="number"
                       step="0.1"
                       min="0"
@@ -223,6 +253,17 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, onC
                       placeholder="例如: 1.0"
                       value={config.advancedConfig?.topP ?? ''}
                       onChange={e => updateAdvanced('topP', e.target.value ? parseFloat(e.target.value) : undefined)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">Top K</Label>
+                    <Input
+                      disabled={disabled}
+                      type="number"
+                      min="1"
+                      placeholder="例如: 50"
+                      value={config.advancedConfig?.topK ?? ''}
+                      onChange={e => updateAdvanced('topK', e.target.value ? parseInt(e.target.value, 10) : undefined)}
                     />
                   </div>
                 </div>
@@ -256,9 +297,12 @@ export const Settings: React.FC = () => {
   const [promptCategories, setPromptCategories] = useState<PromptCategory[]>([]);
   const [selectedPromptCategory, setSelectedPromptCategory] = useState<string>('全部');
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [promptPage, setPromptPage] = useState(1);
   const [promptDetailOpen, setPromptDetailOpen] = useState(false);
   const [selectedPrompt, setSelectedPrompt] = useState<WorkspacePrompt | null>(null);
+  const [categoryToDelete, setCategoryToDelete] = useState<{ id: string; name: string; type: 'prompt' | 'skill' } | null>(null);
+  const [categoryDeleteConfirmOpen, setCategoryDeleteConfirmOpen] = useState(false);
 
   const [skills, setSkills] = useState<Skill[]>([]);
   const [prompts, setPrompts] = useState<WorkspacePrompt[]>([]);
@@ -276,20 +320,44 @@ export const Settings: React.FC = () => {
 
   const [agentConfigs, setAgentConfigs] = useState<WorkspaceAgentConfig[]>([]);
   const [agentConfigsLoading, setAgentConfigsLoading] = useState(false);
+  const [platformAgentTypes, setPlatformAgentTypes] = useState<AgentType[]>([]);
+  const [globalModels, setGlobalModels] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    teamApi.listSkills()
-      .then(loadedSkills => {
+    agentConfigApi.listGlobalModels()
+      .then(models => {
         if (cancelled) return;
-        setSkills(loadedSkills);
+        setGlobalModels(models);
       })
       .catch(err => {
         if (cancelled) return;
-        console.error('Failed to load team skills:', err);
-        toast.error('加载团队技能失败');
+        console.error('Failed to load global models:', err);
       });
     return () => { cancelled = true; };
+  }, []);
+
+  const loadSkills = async (page: number = 1) => {
+    setSkillsLoading(true);
+    try {
+      const [res, categories] = await Promise.all([
+        teamApi.listSkills(page, SKILL_PAGE_SIZE),
+        teamApi.listSkillCategories(),
+      ]);
+      setSkills(res.list);
+      setSkillTotal(res.total);
+      setSkillPage(res.page);
+      setSkillCategories(categories);
+    } catch (err) {
+      console.error('Failed to load team skills:', err);
+      toast.error('加载团队技能失败');
+    } finally {
+      setSkillsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadSkills(1);
   }, []);
 
   const loadWorkspacePrompts = async (wsId: string) => {
@@ -338,10 +406,14 @@ export const Settings: React.FC = () => {
     let cancelled = false;
     const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
     setAgentConfigsLoading(true);
-    agentConfigApi.listWorkspaceConfigs(workspaceId)
-      .then(configs => {
+    Promise.all([
+      agentConfigApi.listWorkspaceConfigs(workspaceId),
+      agentConfigApi.listAgentTypes().catch((): AgentType[] => []),
+    ])
+      .then(([configs, types]) => {
         if (cancelled) return;
         setAgentConfigs(configs);
+        setPlatformAgentTypes(types);
       })
       .catch(err => {
         if (cancelled) return;
@@ -394,11 +466,29 @@ export const Settings: React.FC = () => {
     return () => { cancelled = true; };
   }, []);
 
+  const loadMembers = React.useCallback(() => {
+    const wsId = workspace?.id || membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    workspaceApi.members(wsId)
+      .then(mems => setWorkspaceMembers(mems))
+      .catch(() => toast.error('加载成员列表失败'));
+  }, [workspace?.id, membership?.workspaceId]);
+
   const [skillMarketOpen, setSkillMarketOpen] = useState(false);
   const [skillSearch, setSkillSearch] = useState('');
   const [skillCategory, setSkillCategory] = useState('全部');
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [skillPhase, setSkillPhase] = useState('需求设计');
+  const [marketSkills, setMarketSkills] = useState<Skill[]>([]);
+  const [marketSkillsLoading, setMarketSkillsLoading] = useState(false);
+
+  const [skillCategories, setSkillCategories] = useState<SkillCategory[]>([]);
+  const [selectedSkillCategory, setSelectedSkillCategory] = useState<string>('全部');
+  const [skillPage, setSkillPage] = useState(1);
+  const [skillTotal, setSkillTotal] = useState(0);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [isAddingSkillCategory, setIsAddingSkillCategory] = useState(false);
+  const [newSkillCategoryName, setNewSkillCategoryName] = useState('');
+  const SKILL_PAGE_SIZE = 12;
 
   const [createSkillOpen, setCreateSkillOpen] = useState(false);
   const [createSkillPrompt, setCreateSkillPrompt] = useState('');
@@ -412,22 +502,45 @@ export const Settings: React.FC = () => {
   const [promptMarketSearch, setPromptMarketSearch] = useState('');
   const [promptMarketCategory, setPromptMarketCategory] = useState('全部');
 
-  const skillCategories = ['全部', ...Array.from(new Set(skills.map(s => s.category)))];
+  const marketSkillCategoryOptions = ['全部', ...skillCategories.map(c => c.name)];
   const marketPromptCategories = ['全部', ...Array.from(new Set(marketPrompts.map(p => p.useCase)))];
 
-  const filteredSkills = skills.filter(s => {
-    const matchSearch = s.name.toLowerCase().includes(skillSearch.toLowerCase()) || s.description.toLowerCase().includes(skillSearch.toLowerCase());
-    const matchCategory = skillCategory === '全部' || s.category === skillCategory;
+  // 判断技能是否匹配当前搜索词与分类筛选条件（搜索框为空时命中全部）。
+  const matchesSkillFilter = (s: Skill, search: string, category: string) => {
+    const term = search.trim().toLowerCase();
+    const matchSearch = term === '' || s.name.toLowerCase().includes(term) || s.description.toLowerCase().includes(term);
+    const matchCategory = category === '全部' || s.category === category;
     return matchSearch && matchCategory;
-  });
+  };
+
+  const filteredMarketSkills = marketSkills.filter(s => matchesSkillFilter(s, skillSearch, skillCategory));
+  const displaySkills = skills.filter(s => matchesSkillFilter(s, skillSearch, selectedSkillCategory));
+
+  const openSkillMarket = async () => {
+    setSkillMarketOpen(true);
+    setMarketSkillsLoading(true);
+    setSkillSearch('');
+    setSkillCategory('全部');
+    setSelectedSkillIds([]);
+    setSkillPhase('需求设计');
+    try {
+      const res = await teamApi.listSkills(1, 100);
+      setMarketSkills(res.list);
+    } catch (err) {
+      console.error('Failed to load market skills:', err);
+      toast.error('加载技能市场失败');
+    } finally {
+      setMarketSkillsLoading(false);
+    }
+  };
 
   const openPromptMarket = async () => {
     setPromptMarketOpen(true);
     setMarketPromptsLoading(true);
     try {
-      const list = await teamApi.listPrompts();
+      const res = await teamApi.listPrompts(1, 100);
       const existingIds = new Set(prompts.map(p => p.libraryPromptId).filter(Boolean));
-      setMarketPrompts(list.filter(p => p.status === 'on_shelf' && !existingIds.has(p.id)));
+      setMarketPrompts(res.list.filter(p => p.status === 'on_shelf' && !existingIds.has(p.id)));
     } catch (err) {
       console.error('Failed to load market prompts:', err);
       toast.error('加载提示词市场失败');
@@ -473,6 +586,20 @@ export const Settings: React.FC = () => {
     }
   };
 
+  const handleUpdatePromptEnabled = async (promptId: string, enabled: boolean) => {
+    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    try {
+      const updated = await workspaceApi.updatePromptEnabled(wsId, promptId, enabled);
+      setPrompts(prev => prev.map(p => p.id === promptId ? updated : p));
+      if (selectedPrompt?.id === promptId) {
+        setSelectedPrompt(updated);
+      }
+      toast.success(enabled ? '提示词已启用' : '提示词已停用');
+    } catch {
+      toast.error('操作失败');
+    }
+  };
+
   const openPromptDetail = (prompt: WorkspacePrompt) => {
     setSelectedPrompt(prompt);
     setPromptDetailOpen(true);
@@ -489,18 +616,64 @@ export const Settings: React.FC = () => {
       toast.error('请输入分类名称');
       return;
     }
+    if (isBuiltinPromptCategoryName(name)) {
+      toast.error('该分类名称为系统内置，无需创建');
+      return;
+    }
     const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
     try {
       const created = await workspaceApi.createPromptCategory(wsId, name);
       setPromptCategories(prev => [...prev, created]);
       setNewCategoryName('');
+      setIsAddingCategory(false);
       toast.success('分类已添加');
-    } catch {
-      toast.error('添加分类失败，可能已存在');
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        toast.error('暂无权限添加分类');
+      } else {
+        toast.error('添加分类失败，可能已存在');
+      }
     }
   };
 
-  const handleDeleteCategory = async (categoryId: string) => {
+  const handleCreateSkillCategory = async () => {
+    const name = newSkillCategoryName.trim();
+    if (!name) {
+      toast.error('请输入分类名称');
+      return;
+    }
+    try {
+      const created = await teamApi.createSkillCategory(name);
+      setSkillCategories(prev => [...prev, created]);
+      setNewSkillCategoryName('');
+      setIsAddingSkillCategory(false);
+      toast.success('分类已添加');
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        toast.error('暂无权限添加技能分类，请联系租户管理员');
+      } else {
+        toast.error('添加分类失败，可能已存在');
+      }
+    }
+  };
+
+  const handleDeletePromptCategory = async (categoryId: string) => {
+    const category = promptCategories.find(c => c.id === categoryId);
+    if (!category) return;
+    if (category.isBuiltin || isBuiltinPromptCategoryName(category.name)) {
+      toast.error('系统内置分类不可删除');
+      return;
+    }
+    const hasAssociation = prompts.some(p => p.categories.some(c => c.id === categoryId));
+    if (hasAssociation) {
+      setCategoryToDelete({ id: categoryId, name: category.name, type: 'prompt' });
+      setCategoryDeleteConfirmOpen(true);
+      return;
+    }
+    await executeDeletePromptCategory(categoryId);
+  };
+
+  const executeDeletePromptCategory = async (categoryId: string) => {
     const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
     try {
       await workspaceApi.deletePromptCategory(wsId, categoryId);
@@ -508,16 +681,58 @@ export const Settings: React.FC = () => {
       if (selectedPromptCategory === categoryId) {
         setSelectedPromptCategory('全部');
       }
+      // 删除后关联的提示词展示为未分类。
+      setPrompts(prev => prev.map(p => ({
+        ...p,
+        categories: p.categories.filter(c => c.id !== categoryId),
+      })));
       toast.success('分类已删除');
     } catch {
-      toast.error('删除分类失败，可能该分类下仍有提示词');
+      toast.error('删除分类失败');
+    } finally {
+      setCategoryDeleteConfirmOpen(false);
+      setCategoryToDelete(null);
+    }
+  };
+
+  const handleDeleteSkillCategory = async (categoryId: string) => {
+    const category = skillCategories.find(c => c.id === categoryId);
+    if (!category) return;
+    if (category.builtin) {
+      toast.error('系统内置分类不可删除');
+      return;
+    }
+    const hasAssociation = skills.some(s => s.category === category.name);
+    if (hasAssociation) {
+      setCategoryToDelete({ id: categoryId, name: category.name, type: 'skill' });
+      setCategoryDeleteConfirmOpen(true);
+      return;
+    }
+    await executeDeleteSkillCategory(categoryId);
+  };
+
+  const executeDeleteSkillCategory = async (categoryId: string) => {
+    const categoryName = skillCategories.find(c => c.id === categoryId)?.name;
+    try {
+      await teamApi.deleteSkillCategory(categoryId);
+      setSkillCategories(prev => prev.filter(c => c.id !== categoryId));
+      if (categoryName && selectedSkillCategory === categoryName) {
+        setSelectedSkillCategory('全部');
+      }
+      toast.success('分类已删除');
+    } catch {
+      toast.error('删除分类失败');
+    } finally {
+      setCategoryDeleteConfirmOpen(false);
+      setCategoryToDelete(null);
     }
   };
 
   // 空间提示词按分类筛选与分页
-  const promptCategoryFilterOptions = [
+  const sortedPromptCategories = React.useMemo(() => sortPromptCategoriesByBuiltin(promptCategories), [promptCategories]);
+  const promptCategoryFilterOptions: { id: string; name: string; isBuiltin?: boolean }[] = [
     { id: 'all', name: '全部' },
-    ...promptCategories.map(c => ({ id: c.id, name: c.name })),
+    ...sortedPromptCategories.map(c => ({ id: c.id, name: c.name, isBuiltin: c.isBuiltin })),
     { id: 'uncategorized', name: UNCATEGORIZED_NAME },
   ];
 
@@ -573,6 +788,9 @@ export const Settings: React.FC = () => {
       updatedAt: '',
     };
     setGitRepos([...gitRepos, tempRepo]);
+    // 跳转到新仓库所在页（末页），确保用户可见
+    const newTotalPages = Math.max(1, Math.ceil((gitRepos.length + 1) / GIT_REPO_PAGE_SIZE));
+    gitRepoPagination.onPageChange(newTotalPages);
   };
 
   const handleRemoveRepo = (id: string) => {
@@ -593,8 +811,19 @@ export const Settings: React.FC = () => {
 
   const handleSaveAgentConfigs = async () => {
     const wsId = workspace?.id || 'ws-default';
+    if (workspace?.agentConfigLocked) {
+      toast.error('当前空间智能体配置已被锁定，无法保存');
+      return;
+    }
+    // 过滤掉被单独锁定的 agent，仅保存未锁定的配置
+    const lockedKeys = workspace?.lockedAgentKeys ?? [];
+    const savableConfigs = agentConfigs.filter(cfg => !lockedKeys.includes(cfg.agentKey));
+    if (savableConfigs.length === 0) {
+      toast.info('所有智能体均被锁定，无需保存');
+      return;
+    }
     try {
-      await Promise.all(agentConfigs.map(cfg => agentConfigApi.saveWorkspaceConfig(wsId, {
+      await Promise.all(savableConfigs.map(cfg => agentConfigApi.saveWorkspaceConfig(wsId, {
         agentKey: cfg.agentKey,
         enabled: cfg.enabled,
         model: cfg.model,
@@ -687,7 +916,9 @@ export const Settings: React.FC = () => {
 
   const displayUsers = workspaceMembers.map(m => ({
     id: m.userId,
-    name: m.userId,
+    displayId: m.displayId,
+    name: m.name || m.displayId,
+    email: m.email,
     spaceRole: m.role,
     subRole: m.subRole,
     joinedAt: m.joinedAt,
@@ -695,27 +926,39 @@ export const Settings: React.FC = () => {
 
   const filteredUsers = displayUsers.filter(user =>
     user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
     getSubRoleLabel(user.subRole).toLowerCase().includes(searchTerm.toLowerCase()) ||
     user.spaceRole.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // getRoleBadge 根据空间权限与职能子角色渲染徽章；space_admin 显示管理员样式并附带职能后缀
-  const getRoleBadge = (spaceRole: string, subRole?: string) => {
-    if (spaceRole === SPACE_ROLE.SPACE_ADMIN) {
-      return <Badge className="bg-primary"><Shield className="w-3 h-3 mr-1"/> 空间管理员{subRole ? `·${getSubRoleLabel(subRole)}` : ''}</Badge>;
-    }
+  // 代码仓库客户端分页
+  const gitRepoPagination = useClientPagination({
+    pageSize: GIT_REPO_PAGE_SIZE,
+    total: gitRepos.length,
+  });
+  const paginatedGitRepos = gitRepos.slice(gitRepoPagination.startIndex, gitRepoPagination.endIndex);
+
+  // getSubRoleBadge 根据职能子角色渲染徽章，文案与添加成员弹窗保持一致，不带图标
+  const getSubRoleBadge = (subRole?: string) => {
+    const label = getSubRoleLabel(subRole);
     switch (subRole) {
-      case SUB_ROLE.PM: return <Badge variant="secondary"><Settings2 className="w-3 h-3 mr-1"/> 产品经理</Badge>;
-      case SUB_ROLE.DESIGNER: return <Badge variant="secondary" className="bg-fuchsia-100 text-fuchsia-700 hover:bg-fuchsia-200 dark:bg-fuchsia-900/30 dark:text-fuchsia-300">设计师</Badge>;
-      case SUB_ROLE.DEVELOPER: return <Badge variant="secondary" className="bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300">开发者</Badge>;
-      case SUB_ROLE.TESTER: return <Badge variant="secondary" className="bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300">测试人员</Badge>;
-      default: return <Badge variant="outline"><UserIcon className="w-3 h-3 mr-1"/> 成员</Badge>;
+      case SUB_ROLE.PM: return <Badge variant="secondary">{label}</Badge>;
+      case SUB_ROLE.DESIGNER: return <Badge variant="secondary" className="bg-fuchsia-100 text-fuchsia-700 hover:bg-fuchsia-200 dark:bg-fuchsia-900/30 dark:text-fuchsia-300">{label}</Badge>;
+      case SUB_ROLE.DEVELOPER: return <Badge variant="secondary" className="bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300">{label}</Badge>;
+      case SUB_ROLE.TESTER: return <Badge variant="secondary" className="bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300">{label}</Badge>;
+      default: return <Badge variant="outline">{label || '成员'}</Badge>;
     }
   };
 
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('developer');
+  const [inviteAsAdmin, setInviteAsAdmin] = useState(false);
+
+  const [memberToDelete, setMemberToDelete] = useState<typeof displayUsers[number] | null>(null);
+  const [assetAssigneeId, setAssetAssigneeId] = useState<string>('');
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const handleInvite = () => {
     setIsInviteOpen(true);
@@ -727,18 +970,52 @@ export const Settings: React.FC = () => {
       return;
     }
     const workspaceId = workspace?.id || 'ws-default';
-    // inviteRole 取值：space_admin | pm | designer | developer | tester
-    const isSpaceAdmin = inviteRole === SPACE_ROLE.SPACE_ADMIN;
-    const role = isSpaceAdmin ? SPACE_ROLE.SPACE_ADMIN : SPACE_ROLE.MEMBER;
-    const subRole = isSpaceAdmin ? SUB_ROLE.DEVELOPER : inviteRole;
+    // inviteRole 取值：pm | designer | developer | tester
+    const role = inviteAsAdmin ? SPACE_ROLE.SPACE_ADMIN : SPACE_ROLE.MEMBER;
+    const subRole = inviteRole;
     workspaceApi.addMember(workspaceId, { userId: inviteEmail, role, subRole })
       .then(() => {
         toast.success(`已添加成员 ${inviteEmail}`);
         setIsInviteOpen(false);
         setInviteEmail('');
-        setWorkspaceMembers(prev => [...prev, { workspaceId, userId: inviteEmail, role: role as WorkspaceMember['role'], subRole: subRole as WorkspaceMember['subRole'], joinedAt: new Date().toISOString() }]);
+        setInviteRole('developer');
+        setInviteAsAdmin(false);
+        loadMembers();
       })
       .catch(() => toast.error('添加成员失败'));
+  };
+
+  const handleSetAdmin = (user: typeof displayUsers[number], asAdmin: boolean) => {
+    const workspaceId = workspace?.id || 'ws-default';
+    const role = asAdmin ? SPACE_ROLE.SPACE_ADMIN : SPACE_ROLE.MEMBER;
+    workspaceApi.updateMemberRole(workspaceId, user.id, { role, subRole: user.subRole })
+      .then(() => {
+        toast.success(asAdmin ? '已设为空间管理员' : '已取消空间管理员');
+        loadMembers();
+      })
+      .catch(() => toast.error('设置失败'));
+  };
+
+  const handleDeleteMember = (user: typeof displayUsers[number]) => {
+    setMemberToDelete(user);
+    setAssetAssigneeId('');
+    setIsDeleteDialogOpen(true);
+  };
+
+  const confirmDeleteMember = () => {
+    if (!memberToDelete) return;
+    const workspaceId = workspace?.id || 'ws-default';
+    setIsProcessing(true);
+    workspaceApi.removeMember(workspaceId, memberToDelete.id, assetAssigneeId || undefined)
+      .then(() => {
+        toast.success('成员已删除');
+        setIsDeleteDialogOpen(false);
+        setMemberToDelete(null);
+        setAssetAssigneeId('');
+        loadMembers();
+      })
+      .catch(() => toast.error('删除成员失败'))
+      .finally(() => setIsProcessing(false));
   };
 
   return (
@@ -809,7 +1086,7 @@ export const Settings: React.FC = () => {
                   {gitRepos.length === 0 && (
                     <p className="text-sm text-muted-foreground py-4 text-center">暂无仓库配置</p>
                   )}
-                  {gitRepos.map((repo) => (
+                  {paginatedGitRepos.map((repo) => (
                     <div key={repo.id} className="flex items-center gap-3 p-3 rounded-lg border border-border/50 bg-muted/10">
                       <div className="flex-1">
                         <Input 
@@ -892,6 +1169,13 @@ export const Settings: React.FC = () => {
                   ))}
                 </div>
               </div>
+              {gitRepos.length > 0 && (
+                <PaginationBar
+                  currentPage={gitRepoPagination.currentPage}
+                  totalPages={gitRepoPagination.totalPages}
+                  onPageChange={gitRepoPagination.onPageChange}
+                />
+              )}
               {!isReadOnly && gitRepos.length > 0 && (
                 <Button onClick={handleSaveRepos} className="mt-6"><Save className="mr-2 h-4 w-4" /> 保存仓库配置</Button>
               )}
@@ -972,52 +1256,171 @@ export const Settings: React.FC = () => {
 
         <TabsContent value="skills">
           <Card className="soft-shadow border-none">
-            <CardHeader className="flex flex-row items-start justify-between pb-2">
-              <div>
-                <CardDescription>配置不同研发阶段所使用的默认技能组合。</CardDescription>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={() => { setCreateSkillPrompt(''); setCreateSkillOpen(true); }}><Wand2 className="w-4 h-4 mr-2" />创建技能</Button>
-                <Button size="sm" onClick={() => { setSkillSearch(''); setSkillCategory('全部'); setSelectedSkillIds([]); setSkillPhase('需求设计'); setSkillMarketOpen(true); }}><Plus className="w-4 h-4 mr-2" />去市场添加</Button>
-              </div>
+            <CardHeader className="pb-2">
+              <CardDescription>按分类管理当前空间已安装和可用的技能。</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-6">
-                {[
-                  { phase: '需求设计', icon: ListTodo, defaultSkill: 'PRD生成专家', color: 'text-amber-500', bg: 'bg-amber-100 dark:bg-amber-900/30' },
-                  { phase: 'UI 设计', icon: Box, defaultSkill: '前端组件设计系统', color: 'text-blue-500', bg: 'bg-blue-100 dark:bg-blue-900/30' },
-                  { phase: '架构方案', icon: Shield, defaultSkill: '系统架构设计专家', color: 'text-indigo-500', bg: 'bg-indigo-100 dark:bg-indigo-900/30' },
-                  { phase: '代码开发', icon: Code2, defaultSkill: 'Go 代码审查与规范', color: 'text-green-500', bg: 'bg-green-100 dark:bg-green-900/30' },
-                  { phase: '单元测试', icon: CheckCircle, defaultSkill: 'Jest 自动化测试', color: 'text-purple-500', bg: 'bg-purple-100 dark:bg-purple-900/30' },
-                  { phase: '集成 & UAT 验收', icon: CheckCircle, defaultSkill: '集成测试验证助手', color: 'text-cyan-500', bg: 'bg-cyan-100 dark:bg-cyan-900/30' },
-                  { phase: '预发布验证', icon: UploadCloud, defaultSkill: '预发布巡检助手', color: 'text-orange-500', bg: 'bg-orange-100 dark:bg-orange-900/30' },
-                  { phase: '生产上线运维', icon: UploadCloud, defaultSkill: '自动部署与发布脚本', color: 'text-rose-500', bg: 'bg-rose-100 dark:bg-rose-900/30' },
-                ].map((item, index) => (
-                  <div 
-                    key={index} 
-                    className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 border border-border/50 rounded-xl bg-card hover:border-primary/50 transition-colors soft-shadow overflow-visible"
-                    style={{ zIndex: 50 - index }}
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className={`h-12 w-12 rounded-lg flex items-center justify-center shrink-0 ${item.bg}`}>
-                        <item.icon className={`h-6 w-6 ${item.color}`} />
-                      </div>
-                      <div>
-                        <h4 className="font-semibold text-base">{item.phase}阶段</h4>
-                        <p className="text-sm text-muted-foreground mt-0.5">配置此阶段优先使用的AI技能</p>
-                      </div>
-                    </div>
-                    <div className="w-full sm:w-80 shrink-0">
-                      <MultiSelect 
-                        options={skills.map(s => ({ value: s.name, label: s.name }))}
-                        defaultSelected={[item.defaultSkill]}
-                        onChange={(selected) => {
-                          console.log('Selected skills for', item.phase, ':', selected);
-                        }}
-                      />
-                    </div>
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="搜索技能名称或描述..."
+                      className="pl-8 h-9"
+                      value={skillSearch}
+                      onChange={e => { setSkillSearch(e.target.value); setSkillPage(1); }}
+                    />
                   </div>
-                ))}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button size="sm" variant="outline" onClick={() => { setCreateSkillPrompt(''); setCreateSkillOpen(true); }}><Wand2 className="w-4 h-4 mr-2" />创建技能</Button>
+                    <Button size="sm" onClick={openSkillMarket}><Plus className="w-4 h-4 mr-2" />去市场添加</Button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {([{ id: 'all', name: '全部' }, ...skillCategories.map(c => ({ id: c.id, name: c.name, builtin: c.builtin }))] as { id: string; name: string; builtin?: boolean }[]).map(option => (
+                      <Button
+                        key={option.id}
+                        variant={selectedSkillCategory === option.name ? 'default' : 'outline'}
+                        size="sm"
+                        className="h-9 rounded-full"
+                        onClick={() => { setSelectedSkillCategory(option.name); setSkillPage(1); }}
+                      >
+                        {option.name}
+                        {option.id !== 'all' && !option.builtin && isTenantAdmin && (
+                          <span
+                            className="ml-1.5 inline-flex items-center justify-center rounded-full hover:bg-destructive/20 hover:text-destructive p-0.5"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteSkillCategory(option.id);
+                            }}
+                          >
+                            <X className="h-3 w-3" />
+                          </span>
+                        )}
+                      </Button>
+                    ))}
+                    {isTenantAdmin && (
+                      isAddingSkillCategory ? (
+                        <div className="flex items-center gap-2">
+                          <Input
+                            autoFocus
+                            placeholder="新分类名称"
+                            className="h-9 w-[140px] rounded-full px-3"
+                            value={newSkillCategoryName}
+                            onChange={(e) => setNewSkillCategoryName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleCreateSkillCategory();
+                              if (e.key === 'Escape') {
+                                setNewSkillCategoryName('');
+                                setIsAddingSkillCategory(false);
+                              }
+                            }}
+                          />
+                          <Button
+                            size="sm"
+                            className="h-9 w-9 p-0 rounded-full"
+                            onClick={handleCreateSkillCategory}
+                            title="确认"
+                          >
+                            <Check className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-9 w-9 p-0 rounded-full text-muted-foreground hover:text-foreground"
+                            onClick={() => { setNewSkillCategoryName(''); setIsAddingSkillCategory(false); }}
+                            title="取消"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-full h-9 w-9 p-0"
+                          onClick={() => setIsAddingSkillCategory(true)}
+                          title="新增分类"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      )
+                    )}
+                  </div>
+
+                {skillsLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {displaySkills.map(skill => (
+                          <div
+                            key={skill.id}
+                            className="flex flex-col p-4 rounded-xl border border-border/50 bg-card soft-shadow hover:border-primary/30 transition-colors"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                                  <Puzzle className="h-5 w-5 text-primary" />
+                                </div>
+                                <div className="min-w-0">
+                                  <h4 className="font-medium text-sm truncate">{skill.name}</h4>
+                                  <Badge variant="outline" className="text-[10px] h-5 mt-0.5 inline-flex items-center gap-1">
+                                    {skillCategories.some(c => c.name === skill.category) ? skill.category : UNCATEGORIZED_NAME}
+                                    {(() => {
+                                      const cat = skillCategories.find(c => c.name === skill.category);
+                                      if (cat && !cat.builtin && isTenantAdmin) {
+                                        return (
+                                          <span
+                                            className="inline-flex items-center justify-center rounded-full hover:bg-destructive/20 hover:text-destructive p-0.5"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleDeleteSkillCategory(cat.id);
+                                            }}
+                                          >
+                                            <X className="h-2.5 w-2.5" />
+                                          </span>
+                                        );
+                                      }
+                                      return null;
+                                    })()}
+                                  </Badge>
+                                </div>
+                              </div>
+                              <Switch
+                                checked={skill.installed}
+                                onCheckedChange={checked => {
+                                  teamApi.updateSkillInstalled(skill.id, checked)
+                                    .then(() => {
+                                      setSkills(prev => prev.map(s => s.id === skill.id ? { ...s, installed: checked } : s));
+                                      toast.success(checked ? '技能已安装到当前空间' : '技能已卸载');
+                                    })
+                                    .catch(() => toast.error('操作失败'));
+                                }}
+                              />
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-3 line-clamp-2 flex-1">{skill.description}</p>
+                            <div className="flex items-center gap-3 mt-3 text-[10px] text-muted-foreground">
+                              <span className="flex items-center gap-0.5"><Star className="h-3 w-3 fill-amber-400 text-amber-400" /> {skill.rating}</span>
+                              <span className="flex items-center gap-0.5"><Download className="h-3 w-3" /> {skill.downloads.toLocaleString()}</span>
+                              <span className="ml-auto">{skill.installed ? '已启用' : '未启用'}</span>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                    {displaySkills.length === 0 && (
+                      <div className="text-center py-10 text-sm text-muted-foreground">未找到匹配的技能</div>
+                    )}
+                    <PaginationBar
+                      currentPage={skillPage}
+                      totalPages={Math.max(1, Math.ceil(skillTotal / SKILL_PAGE_SIZE))}
+                      onPageChange={loadSkills}
+                    />
+                  </>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -1025,137 +1428,151 @@ export const Settings: React.FC = () => {
 
         <TabsContent value="prompts">
           <Card className="soft-shadow border-none">
-            <CardHeader className="flex flex-row items-start justify-between pb-2">
-              <div>
-                <CardDescription>管理当前空间常用的提示词模板。</CardDescription>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    placeholder="搜索提示词..." 
-                    className="pl-8 h-9 w-[200px]"
-                    value={promptSearchTerm}
-                    onChange={(e) => setPromptSearchTerm(e.target.value)}
-                  />
-                </div>
-                {canManageWorkspacePrompts && (
-                  <Button size="sm" onClick={() => { openPromptMarket(); }}><Plus className="w-4 h-4 mr-2" />添加提示词</Button>
-                )}
-              </div>
+            <CardHeader className="pb-2">
+              <CardDescription>按分类管理当前空间已启用的提示词模板。</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-col gap-4">
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="搜索提示词名称或内容..."
+                      className="pl-8 h-9"
+                      value={promptSearchTerm}
+                      onChange={(e) => { setPromptSearchTerm(e.target.value); setPromptPage(1); }}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {canManageWorkspacePrompts && (
+                      <Button size="sm" onClick={() => { openPromptMarket(); }}><Plus className="w-4 h-4 mr-2" />添加提示词</Button>
+                    )}
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-2 flex-wrap">
                   {promptCategoryFilterOptions.map(option => (
-                    <Button
-                      key={option.id}
-                      variant={selectedPromptCategory === option.name ? 'default' : 'outline'}
-                      className="rounded-full h-8 px-3 whitespace-nowrap"
-                      onClick={() => setSelectedPromptCategory(option.name)}
-                    >
-                      {option.name}
-                      {option.id !== 'all' && option.id !== 'uncategorized' && canManageWorkspacePrompts && (
-                        <span
-                          className="ml-1.5 inline-flex items-center justify-center rounded-full hover:bg-destructive/20 hover:text-destructive p-0.5"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteCategory(option.id);
-                          }}
-                        >
-                          <X className="h-3 w-3" />
-                        </span>
-                      )}
-                    </Button>
-                  ))}
-                  {canManageWorkspacePrompts && (
-                    <div className="flex items-center gap-2 ml-auto">
-                      <Input
-                        placeholder="新分类名称"
-                        className="h-8 w-[140px]"
-                        value={newCategoryName}
-                        onChange={(e) => setNewCategoryName(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCategory(); }}
-                      />
-                      <Button size="sm" className="h-8 px-3" onClick={handleCreateCategory}>
-                        <Plus className="h-4 w-4" />
+                      <Button
+                        key={option.id}
+                        variant={selectedPromptCategory === option.name ? 'default' : 'outline'}
+                        size="sm"
+                        className="h-9 rounded-full whitespace-nowrap"
+                        onClick={() => { setSelectedPromptCategory(option.name); setPromptPage(1); }}
+                      >
+                        {option.name}
+                        {option.id !== 'all' && option.id !== 'uncategorized' && canManageWorkspacePrompts && !option.isBuiltin && !isBuiltinPromptCategoryName(option.name) && (
+                          <span
+                            className="ml-1.5 inline-flex items-center justify-center rounded-full hover:bg-destructive/20 hover:text-destructive p-0.5"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeletePromptCategory(option.id);
+                            }}
+                          >
+                            <X className="h-3 w-3" />
+                          </span>
+                        )}
                       </Button>
-                    </div>
-                  )}
-                </div>
+                    ))}
+                    {canManageWorkspacePrompts && (
+                      isAddingCategory ? (
+                        <div className="flex items-center gap-2">
+                          <Input
+                            autoFocus
+                            placeholder="新分类名称"
+                            className="h-9 w-[140px] rounded-full px-3"
+                            value={newCategoryName}
+                            onChange={(e) => setNewCategoryName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleCreateCategory();
+                              if (e.key === 'Escape') {
+                                setNewCategoryName('');
+                                setIsAddingCategory(false);
+                              }
+                            }}
+                          />
+                          <Button
+                            size="sm"
+                            className="h-9 w-9 p-0 rounded-full"
+                            onClick={handleCreateCategory}
+                            title="确认"
+                          >
+                            <Check className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-9 w-9 p-0 rounded-full text-muted-foreground hover:text-foreground"
+                            onClick={() => { setNewCategoryName(''); setIsAddingCategory(false); }}
+                            title="取消"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-full h-9 w-9 p-0"
+                          onClick={() => setIsAddingCategory(true)}
+                          title="新增分类"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      )
+                    )}
+                  </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {paginatedPrompts.map((prompt) => (
-                    <Card
+                    <div
                       key={prompt.id}
-                      className="bg-muted/10 border-border/50 border-dashed hover:border-primary/50 transition-colors group cursor-pointer flex flex-col h-full"
+                      className="flex flex-col p-4 rounded-xl border border-border/50 bg-card soft-shadow cursor-pointer hover:border-primary/30 transition-colors"
                       onClick={() => openPromptDetail(prompt)}
                     >
-                      <CardContent className="p-4 flex flex-col h-full">
-                        <div className="flex items-start justify-between mb-2 gap-2">
-                          <h4 className="font-medium text-sm flex items-center min-w-0">
-                            <FileText className="h-4 w-4 mr-2 text-primary shrink-0" />
-                            <span className="line-clamp-1">{prompt.name}</span>
-                          </h4>
-                          <div
-                            className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-primary/10 hover:text-primary" onClick={() => {
-                              navigator.clipboard.writeText(prompt.content).then(() => toast.success('内容已复制到剪贴板'));
-                            }}>
-                              <Copy className="h-3.5 w-3.5" />
-                            </Button>
-                            {canManageWorkspacePrompts && (
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => handleRemoveWorkspacePrompt(prompt.id)}>
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                            <FileText className="h-5 w-5 text-primary" />
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="font-medium text-sm truncate">{prompt.name}</h4>
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {prompt.categories.length > 0 ? prompt.categories.slice(0, 4).map(c => (
+                                <Badge key={c.id} variant="outline" className="text-[10px] h-5">{c.name}</Badge>
+                              )) : (
+                                <Badge variant="outline" className="text-[10px] h-5">{UNCATEGORIZED_NAME}</Badge>
+                              )}
+                              {prompt.categories.length > 4 && (
+                                <Badge variant="outline" className="text-[10px] h-5">+{prompt.categories.length - 4}</Badge>
+                              )}
+                            </div>
                           </div>
                         </div>
-                        <div className="flex flex-wrap gap-1 mb-2">
-                          {prompt.categories.length > 0 ? prompt.categories.map(c => (
-                            <Badge key={c.id} variant="outline" className="text-xs h-6">{c.name}</Badge>
-                          )) : (
-                            <Badge variant="outline" className="text-xs h-6">{UNCATEGORIZED_NAME}</Badge>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed flex-1">
-                          {prompt.content}
-                        </p>
-                      </CardContent>
-                    </Card>
+                        {canManageWorkspacePrompts && (
+                          <Switch
+                            checked={prompt.enabled}
+                            onClick={(e) => e.stopPropagation()}
+                            onCheckedChange={checked => handleUpdatePromptEnabled(prompt.id, checked)}
+                          />
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-3 line-clamp-2 flex-1">{prompt.content}</p>
+                      <div className="flex items-center gap-3 mt-3 text-[10px] text-muted-foreground">
+                        <span className="flex items-center gap-0.5"><MessageSquareQuote className="h-3 w-3" /> {prompt.usageCount.toLocaleString()}</span>
+                        <span className="ml-auto">{prompt.enabled ? '已启用' : '未启用'}</span>
+                      </div>
+                    </div>
                   ))}
                   {paginatedPrompts.length === 0 && (
-                    <div className="col-span-full text-center py-12 text-muted-foreground">未找到匹配的提示词</div>
+                    <div className="col-span-full text-center py-12 text-sm text-muted-foreground">未找到匹配的提示词</div>
                   )}
                 </div>
 
-                {filteredWorkspacePrompts.length > PROMPT_PAGE_SIZE && (
-                  <div className="flex items-center justify-between pt-2">
-                    <span className="text-sm text-muted-foreground">
-                      共 {filteredWorkspacePrompts.length} 条，第 {promptPage} / {promptTotalPages} 页
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={promptPage <= 1}
-                        onClick={() => setPromptPage(p => Math.max(1, p - 1))}
-                      >
-                        上一页
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={promptPage >= promptTotalPages}
-                        onClick={() => setPromptPage(p => Math.min(promptTotalPages, p + 1))}
-                      >
-                        下一页
-                      </Button>
-                    </div>
-                  </div>
-                )}
+                <PaginationBar
+                  currentPage={promptPage}
+                  totalPages={promptTotalPages}
+                  onPageChange={setPromptPage}
+                />
               </div>
             </CardContent>
           </Card>
@@ -1178,7 +1595,7 @@ export const Settings: React.FC = () => {
                     {canManageWorkspacePrompts ? (
                       <div className="min-w-[200px] flex-1">
                         <MultiSelect
-                          options={promptCategories.map(c => ({ value: c.id, label: c.name }))}
+                          options={sortedPromptCategories.map(c => ({ value: c.id, label: c.name }))}
                           value={selectedPrompt.categories.map(c => c.id)}
                           onChange={(values) => handleUpdatePromptCategories(selectedPrompt.id, values)}
                         />
@@ -1217,6 +1634,33 @@ export const Settings: React.FC = () => {
           </DialogContent>
         </Dialog>
 
+        {/* 分类删除确认弹窗 -- 分类关联了技能/提示词时二次确认 */}
+        <AlertDialog open={categoryDeleteConfirmOpen} onOpenChange={setCategoryDeleteConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>确认删除分类？</AlertDialogTitle>
+              <AlertDialogDescription>
+                分类「{categoryToDelete?.name}」下仍有{categoryToDelete?.type === 'skill' ? '技能' : '提示词'}，删除后这些{categoryToDelete?.type === 'skill' ? '技能' : '提示词'}将展示为「未分类」。
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => { setCategoryDeleteConfirmOpen(false); setCategoryToDelete(null); }}>取消</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  if (categoryToDelete?.type === 'skill') {
+                    executeDeleteSkillCategory(categoryToDelete.id);
+                  } else if (categoryToDelete?.type === 'prompt') {
+                    executeDeletePromptCategory(categoryToDelete.id);
+                  }
+                }}
+                className="bg-destructive hover:bg-destructive/90"
+              >
+                确认删除
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
         <TabsContent value="agent">
           <Card className="soft-shadow border-none">
             <CardHeader>
@@ -1224,22 +1668,40 @@ export const Settings: React.FC = () => {
               <CardDescription>为当前空间启用并配置各智能体的模型与高级参数。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              {workspace?.agentConfigLocked && (
+                <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                  当前租户的智能体配置已被超级管理员整体锁定，仅可查看，不可修改。
+                </div>
+              )}
+              {!workspace?.agentConfigLocked && (workspace?.lockedAgentKeys ?? []).length > 0 && (
+                <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                  以下智能体已被超级管理员单独锁定：{(workspace?.lockedAgentKeys ?? []).join('、')}。其他智能体可正常编辑。
+                </div>
+              )}
               {agentConfigsLoading ? (
                 <p className="text-center py-8 text-muted-foreground">加载中...</p>
               ) : agentConfigs.length === 0 ? (
                 <p className="text-center py-8 text-muted-foreground">暂无可用智能体，请联系超管开启平台智能体范围。</p>
               ) : (
-                agentConfigs.map(cfg => (
-                  <AgentConfigCard
-                    key={cfg.agentKey}
-                    config={cfg}
-                    readOnly={isReadOnly}
-                    onChange={next => setAgentConfigs(prev => prev.map(c => c.agentKey === next.agentKey ? next : c))}
-                  />
-                ))
+                agentConfigs.map(cfg => {
+                  const platformType = platformAgentTypes.find(t => t.key === cfg.agentKey);
+                  const platformEnabled = platformType ? platformType.enabled : true;
+                  const agentLocked = workspace?.agentConfigLocked === true || (workspace?.lockedAgentKeys ?? []).includes(cfg.agentKey);
+                  return (
+                    <AgentConfigCard
+                      key={cfg.agentKey}
+                      config={cfg}
+                      readOnly={isReadOnly}
+                      locked={agentLocked}
+                      globalModels={globalModels}
+                      platformEnabled={platformEnabled}
+                      onChange={next => setAgentConfigs(prev => prev.map(c => c.agentKey === next.agentKey ? next : c))}
+                    />
+                  );
+                })
               )}
 
-              {!isReadOnly && agentConfigs.length > 0 && (
+              {!isReadOnly && !workspace?.agentConfigLocked && agentConfigs.length > 0 && (
                 <Button onClick={handleSaveAgentConfigs} className="mt-6">
                   <Save className="mr-2 h-4 w-4" /> 保存智能体配置
                 </Button>
@@ -1278,19 +1740,28 @@ export const Settings: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>角色权限</Label>
+                    <Label>角色</Label>
                     <Select value={inviteRole} onValueChange={setInviteRole}>
                       <SelectTrigger>
                         <SelectValue placeholder="选择角色" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="space_admin">空间管理员</SelectItem>
                         <SelectItem value="pm">产品经理</SelectItem>
                         <SelectItem value="developer">开发人员</SelectItem>
                         <SelectItem value="tester">测试人员</SelectItem>
-                        <SelectItem value="designer">设计师</SelectItem>
+                        <SelectItem value="designer">UI设计师</SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="invite-admin"
+                      checked={inviteAsAdmin}
+                      onCheckedChange={checked => setInviteAsAdmin(checked === true)}
+                    />
+                    <Label htmlFor="invite-admin" className="text-sm font-normal cursor-pointer">
+                      同时设置为空间管理员
+                    </Label>
                   </div>
                 </div>
                 <div className="flex justify-end gap-2">
@@ -1321,39 +1792,82 @@ export const Settings: React.FC = () => {
                   <Table className="min-w-max">
                     <TableHeader className="bg-muted/30">
                       <TableRow>
-                        <TableHead className="w-[300px]">成员信息</TableHead>
-                        <TableHead>角色权限</TableHead>
+                        <TableHead>ID</TableHead>
+                        <TableHead className="w-[220px]">成员信息</TableHead>
+                        <TableHead>成员角色</TableHead>
+                        <TableHead>是否管理员</TableHead>
                         <TableHead>加入时间</TableHead>
                         <TableHead className="text-right">操作</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredUsers.map((user) => (
-                        <TableRow key={user.id}>
+                      {filteredUsers.map((member) => (
+                        <TableRow key={member.id}>
+                          <TableCell className="font-mono text-xs text-muted-foreground">{member.displayId}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-3">
                               <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium">
-                                {user.name.charAt(0)}
+                                {member.name.charAt(0)}
                               </div>
-                              <div className="font-medium">{user.name}</div>
+                              <div>
+                                <div className="font-medium">{member.name}</div>
+                                <div className="text-xs text-muted-foreground">{member.email}</div>
+                              </div>
                             </div>
                           </TableCell>
+                          <TableCell>{getSubRoleBadge(member.subRole)}</TableCell>
                           <TableCell>
-                            {getRoleBadge(user.spaceRole, user.subRole)}
+                            {member.spaceRole === SPACE_ROLE.SPACE_ADMIN ? (
+                              <Badge className="bg-primary">是</Badge>
+                            ) : (
+                              <Badge variant="outline">否</Badge>
+                            )}
                           </TableCell>
                           <TableCell className="text-muted-foreground whitespace-nowrap">
-                            {formatDateTime(user.joinedAt)}
+                            {formatDateTime(member.joinedAt)}
                           </TableCell>
                           <TableCell className="text-right whitespace-nowrap">
-                            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground" onClick={() => toast.success('操作已点击')}>
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {user?.id !== member.id && !isReadOnly && (
+                                  <>
+                                    {member.spaceRole === SPACE_ROLE.SPACE_ADMIN ? (
+                                      <DropdownMenuItem onClick={() => handleSetAdmin(member, false)}>
+                                        取消空间管理员
+                                      </DropdownMenuItem>
+                                    ) : (
+                                      <DropdownMenuItem onClick={() => handleSetAdmin(member, true)}>
+                                        设为空间管理员
+                                      </DropdownMenuItem>
+                                    )}
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      className="text-destructive focus:text-destructive"
+                                      onClick={() => handleDeleteMember(member)}
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      删除成员
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                                {(user?.id === member.id || isReadOnly) && (
+                                  <DropdownMenuItem disabled>
+                                    {user?.id === member.id ? '当前登录用户' : '无操作权限'}
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </TableCell>
                         </TableRow>
                       ))}
                       {filteredUsers.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                             未找到匹配的成员
                           </TableCell>
                         </TableRow>
@@ -1363,6 +1877,51 @@ export const Settings: React.FC = () => {
                 </div>
               </CardContent>
             </Card>
+
+            <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>确认删除成员？</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    删除后，{memberToDelete?.name}（{memberToDelete?.email}）将失去当前工作空间的访问权限。
+                    请指定其负责的工作项、文档等资产归属方。
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <div className="py-4 space-y-3">
+                  <div className="space-y-2">
+                    <Label>资产归属方</Label>
+                    <Select value={assetAssigneeId} onValueChange={setAssetAssigneeId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="选择接收成员" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {displayUsers
+                          .filter(u => u.id !== memberToDelete?.id)
+                          .map(u => (
+                            <SelectItem key={u.id} value={u.id}>
+                              {u.displayId} · {u.name}（{getSubRoleLabel(u.subRole)}）
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      不选择时，被删除成员创建/负责的资产将保留原归属记录。
+                    </p>
+                  </div>
+                </div>
+                <AlertDialogFooter>
+                  <AlertDialogCancel onClick={() => setMemberToDelete(null)}>取消</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={confirmDeleteMember}
+                    disabled={isProcessing}
+                    className="bg-destructive hover:bg-destructive/90"
+                  >
+                    {isProcessing && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    确认删除
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </TabsContent>
       </Tabs>
@@ -1389,15 +1948,20 @@ export const Settings: React.FC = () => {
                   <SelectValue placeholder="分类" />
                 </SelectTrigger>
                 <SelectContent>
-                  {skillCategories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {marketSkillCategoryOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-              {filteredSkills.length === 0 && (
+              {marketSkillsLoading && (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              )}
+              {!marketSkillsLoading && filteredMarketSkills.length === 0 && (
                 <div className="text-center py-8 text-sm text-muted-foreground">未找到匹配的技能</div>
               )}
-              {filteredSkills.map(skill => (
+              {!marketSkillsLoading && filteredMarketSkills.map(skill => (
                 <div
                   key={skill.id}
                   className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedSkillIds.includes(skill.id) ? 'border-primary bg-primary/5' : 'border-border/50 hover:border-primary/30 hover:bg-muted/30'}`}
@@ -1424,7 +1988,7 @@ export const Settings: React.FC = () => {
             </div>
             
             <div className="flex items-center justify-between pt-2 border-t text-sm shrink-0">
-              <span className="text-muted-foreground">共 {filteredSkills.length} 条</span>
+              <span className="text-muted-foreground">共 {filteredMarketSkills.length} 条</span>
               <div className="flex items-center gap-1">
                 <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => {}} disabled><ChevronLeft className="h-4 w-4" /></Button>
                 <div className="h-8 flex items-center justify-center px-3 border border-border/50 rounded-md bg-muted/30">1</div>
@@ -1432,26 +1996,6 @@ export const Settings: React.FC = () => {
               </div>
             </div>
 
-            {selectedSkillIds.length > 0 && (
-              <div className="shrink-0 flex items-center gap-3 pt-2 border-t">
-                <span className="text-sm text-muted-foreground shrink-0">已选择 {selectedSkillIds.length} 个，添加到阶段：</span>
-                <Select value={skillPhase} onValueChange={setSkillPhase}>
-                  <SelectTrigger className="w-[180px] h-9">
-                    <SelectValue placeholder="选择阶段" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="需求设计">需求设计</SelectItem>
-                    <SelectItem value="UI 设计">UI 设计</SelectItem>
-                    <SelectItem value="架构方案">架构方案</SelectItem>
-                    <SelectItem value="代码开发">代码开发</SelectItem>
-                    <SelectItem value="单元测试">单元测试</SelectItem>
-                    <SelectItem value="集成 & UAT 验收">集成 & UAT 验收</SelectItem>
-                    <SelectItem value="预发布验证">预发布验证</SelectItem>
-                    <SelectItem value="生产上线运维">生产上线运维</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
           </div>
           <div className="flex justify-end gap-2 pt-2 border-t shrink-0">
             <Button variant="outline" onClick={() => setSkillMarketOpen(false)}>取消</Button>
@@ -1460,8 +2004,8 @@ export const Settings: React.FC = () => {
               onClick={() => {
                 Promise.all(selectedSkillIds.map(id => teamApi.updateSkillInstalled(id, true)))
                   .then(() => {
-                    setSkills(prev => prev.map(s => selectedSkillIds.includes(s.id) ? { ...s, installed: true } : s));
-                    toast.success(`已将 ${selectedSkillIds.length} 个技能添加到「${skillPhase}」阶段`);
+                    loadSkills(skillPage);
+                    toast.success(`已将 ${selectedSkillIds.length} 个技能安装到当前空间`);
                     setSkillMarketOpen(false);
                     setSelectedSkillIds([]);
                   })

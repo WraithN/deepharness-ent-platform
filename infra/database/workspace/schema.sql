@@ -14,6 +14,7 @@ $$ LANGUAGE plpgsql;
 
 CREATE TABLE IF NOT EXISTS workspaces (
     id VARCHAR(36) PRIMARY KEY,
+    display_id VARCHAR(20),
     tenant_id VARCHAR(36) NOT NULL,
     name VARCHAR(200) NOT NULL,
     description TEXT,
@@ -22,7 +23,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
 );
 
 COMMENT ON TABLE workspaces IS '工作空间';
-COMMENT ON COLUMN workspaces.id IS '空间 ID（VARCHAR(36)）';
+COMMENT ON COLUMN workspaces.id IS '空间 ID（UUID4 去横线，32 字符）';
+COMMENT ON COLUMN workspaces.display_id IS '租户内展示 ID，格式 w1, w2...，每个租户独立自增';
 COMMENT ON COLUMN workspaces.tenant_id IS '所属租户 ID';
 COMMENT ON COLUMN workspaces.name IS '空间名称';
 COMMENT ON COLUMN workspaces.description IS '空间描述';
@@ -30,6 +32,7 @@ COMMENT ON COLUMN workspaces.created_at IS '创建时间';
 COMMENT ON COLUMN workspaces.updated_at IS '更新时间';
 
 CREATE INDEX IF NOT EXISTS idx_workspaces_tenant_id ON workspaces (tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_display_id_tenant ON workspaces (tenant_id, display_id) WHERE display_id IS NOT NULL;
 
 DROP TRIGGER IF EXISTS trigger_workspaces_updated_at ON workspaces;
 CREATE TRIGGER trigger_workspaces_updated_at
@@ -40,6 +43,7 @@ EXECUTE FUNCTION update_updated_at_column();
 CREATE TABLE IF NOT EXISTS workspace_members (
     workspace_id VARCHAR(36) NOT NULL,
     user_id VARCHAR(36) NOT NULL,
+    display_id VARCHAR(20) NOT NULL,
     role VARCHAR(50) NOT NULL,
     sub_role VARCHAR(50),
     joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -50,7 +54,8 @@ CREATE TABLE IF NOT EXISTS workspace_members (
 
 COMMENT ON TABLE workspace_members IS '空间成员';
 COMMENT ON COLUMN workspace_members.workspace_id IS '空间 ID';
-COMMENT ON COLUMN workspace_members.user_id IS '用户 ID';
+COMMENT ON COLUMN workspace_members.user_id IS '用户唯一 ID（uuid，去掉 -）';
+COMMENT ON COLUMN workspace_members.display_id IS '空间内展示 ID，格式 u1, u2...，每个空间独立自增';
 COMMENT ON COLUMN workspace_members.role IS '空间权限角色：space_admin（空间管理员，可编辑设置/管成员）| member（普通成员）';
 COMMENT ON COLUMN workspace_members.sub_role IS '职能子角色（仅 member 生效收敛）：pm | designer | developer | tester。space_admin 此字段仅作身份展示。';
 COMMENT ON COLUMN workspace_members.joined_at IS '加入时间';
@@ -291,6 +296,7 @@ CREATE TABLE IF NOT EXISTS workspace_prompts (
     usage_count INT NOT NULL DEFAULT 0,
     is_custom BOOLEAN NOT NULL DEFAULT FALSE,
     added_to_space BOOLEAN NOT NULL DEFAULT TRUE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -306,12 +312,14 @@ COMMENT ON COLUMN workspace_prompts.use_case IS '使用场景分类（历史字�
 COMMENT ON COLUMN workspace_prompts.usage_count IS '使用次数';
 COMMENT ON COLUMN workspace_prompts.is_custom IS '是否为自定义提示词';
 COMMENT ON COLUMN workspace_prompts.added_to_space IS '是否已添加到空间常用列表';
+COMMENT ON COLUMN workspace_prompts.enabled IS '是否启用，未启用时不展示在会话输入框下拉菜单';
 COMMENT ON COLUMN workspace_prompts.created_at IS '创建时间';
 COMMENT ON COLUMN workspace_prompts.updated_at IS '更新时间';
 
 CREATE INDEX IF NOT EXISTS idx_workspace_prompts_library_prompt_id ON workspace_prompts (library_prompt_id);
 CREATE INDEX IF NOT EXISTS idx_workspace_prompts_use_case ON workspace_prompts (workspace_id, use_case);
 CREATE INDEX IF NOT EXISTS idx_workspace_prompts_added ON workspace_prompts (workspace_id, added_to_space);
+CREATE INDEX IF NOT EXISTS idx_workspace_prompts_enabled ON workspace_prompts (workspace_id, enabled);
 
 DROP TRIGGER IF EXISTS trigger_workspace_prompts_updated_at ON workspace_prompts;
 CREATE TRIGGER trigger_workspace_prompts_updated_at
@@ -336,6 +344,7 @@ CREATE TABLE IF NOT EXISTS workspace_prompt_categories (
     id VARCHAR(36) PRIMARY KEY,
     workspace_id VARCHAR(36) NOT NULL,
     name VARCHAR(100) NOT NULL,
+    is_builtin BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -344,6 +353,7 @@ COMMENT ON TABLE workspace_prompt_categories IS '空间提示词分类（每个�
 COMMENT ON COLUMN workspace_prompt_categories.id IS '分类 ID';
 COMMENT ON COLUMN workspace_prompt_categories.workspace_id IS '所属空间 ID';
 COMMENT ON COLUMN workspace_prompt_categories.name IS '分类名称';
+COMMENT ON COLUMN workspace_prompt_categories.is_builtin IS '是否为系统内置分类，不可删除';
 COMMENT ON COLUMN workspace_prompt_categories.created_at IS '创建时间';
 COMMENT ON COLUMN workspace_prompt_categories.updated_at IS '更新时间';
 
@@ -487,3 +497,15 @@ CREATE TRIGGER trigger_workspace_agent_configs_updated_at
 BEFORE UPDATE ON workspace_agent_configs
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
+
+-- 为工作空间增加智能体策略字段，支持超管在空间维度控制可用 agent 与是否允许空间管理员修改。
+ALTER TABLE workspaces
+    ADD COLUMN IF NOT EXISTS agent_config_locked BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS locked_agent_keys TEXT[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS allowed_agent_keys TEXT[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS default_agent_configs JSONB NOT NULL DEFAULT '{}';
+
+COMMENT ON COLUMN workspaces.agent_config_locked IS '空间智能体配置是否整体锁定；为 true 时空间管理员只读所有 agent 配置';
+COMMENT ON COLUMN workspaces.locked_agent_keys IS '单独锁定的 agent key 数组；agentConfigLocked 为 false 时，此列表中的 agent 仍被锁定';
+COMMENT ON COLUMN workspaces.allowed_agent_keys IS '当前空间允许的 coding agent key 数组';
+COMMENT ON COLUMN workspaces.default_agent_configs IS '超管为当前空间预设的各 agent 默认配置，key 为 agentKey';

@@ -9,8 +9,11 @@ import { toast } from 'sonner';
 import type { Skill } from '@/types';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { PaginationBar } from '@/components/admin/PaginationBar';
+import { useClientPagination } from '@/hooks/use-client-pagination';
 
 const CATEGORIES = ['全部', '研发', '测试', '产品', '设计'];
+const SKILL_MARKET_PAGE_SIZE = 12;
 
 export const SkillMarket: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -18,8 +21,8 @@ export const SkillMarket: React.FC = () => {
   const [skills, setSkills] = useState<Skill[]>([]);
 
   useEffect(() => {
-    teamApi.listSkills()
-      .then(setSkills)
+    teamApi.listSkills(1, 100)
+      .then(res => setSkills(res.list))
       .catch(err => {
         console.error('Failed to load skills:', err);
         toast.error('加载技能失败');
@@ -46,6 +49,13 @@ export const SkillMarket: React.FC = () => {
     // If mock data doesn't have these exact categories, let's just make it loose:
     return matchSearch && (selectedCategory === '全部' || skill.category.includes(selectedCategory) || matchCategory);
   });
+
+  const { currentPage, totalPages, onPageChange, startIndex, endIndex } = useClientPagination({
+    pageSize: SKILL_MARKET_PAGE_SIZE,
+    total: filteredSkills.length,
+    resetDeps: [searchTerm, selectedCategory],
+  });
+  const paginatedSkills = filteredSkills.slice(startIndex, endIndex);
 
   const handleInstall = (id: string) => {
     teamApi.updateSkillInstalled(id, true)
@@ -144,7 +154,7 @@ export const SkillMarket: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        {filteredSkills.map(skill => (
+        {paginatedSkills.map(skill => (
           <Card key={skill.id} className="flex flex-col h-full soft-shadow border border-border/50 hover:border-primary/20 transition-colors">
             <CardHeader>
               <div className="flex justify-between items-start mb-2">
@@ -194,6 +204,14 @@ export const SkillMarket: React.FC = () => {
           </div>
         )}
       </div>
+
+      {filteredSkills.length > 0 && (
+        <PaginationBar
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={onPageChange}
+        />
+      )}
     </div>
   );
 };

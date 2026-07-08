@@ -82,6 +82,7 @@ export interface WorkItemDTO {
   status: string
   priority: "low" | "medium" | "high"
   assigneeId?: string
+  assigneeName?: string
   reporter?: string
   source?: string
   externalId?: string

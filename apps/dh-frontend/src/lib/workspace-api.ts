@@ -8,21 +8,34 @@ import type {
   WorkspaceAgent,
   WorkspacePrompt,
   PromptCategory,
+  AgentPolicy,
+  PaginatedList,
 } from '@/types';
 
 export const workspaceApi = {
-  list: (tenantId: string) => api.get<Workspace[]>(`/v1/workspaces?tenantId=${tenantId}`),
-  create: (req: { tenantId: string; name: string; description?: string; ownerUserId: string }) =>
-    api.post<Workspace>('/v1/workspaces', req),
+  list: (tenantId: string, page = 1, pageSize = 10) =>
+    api.get<PaginatedList<Workspace>>(`/v1/workspaces?tenantId=${tenantId}&page=${page}&pageSize=${pageSize}`),
+  create: (req: {
+    tenantId: string;
+    name: string;
+    description?: string;
+    ownerUserId: string;
+    agentPolicy?: AgentPolicy;
+  }) => api.post<Workspace>('/v1/workspaces', req),
   get: (id: string) => api.get<Workspace>(`/v1/workspaces/${id}`),
-  update: (id: string, req: Partial<Workspace>) => api.put<Workspace>(`/v1/workspaces/${id}`, req),
+  update: (id: string, req: Partial<Workspace> & { agentPolicy?: AgentPolicy }) =>
+    api.put<Workspace>(`/v1/workspaces/${id}`, req),
   delete: (id: string) => api.delete<void>(`/v1/workspaces/${id}`),
 
   members: (workspaceId: string) => api.get<WorkspaceMember[]>(`/v1/workspaces/${workspaceId}/members`),
   addMember: (workspaceId: string, req: { userId: string; role: string; subRole?: string }) =>
     api.post<void>(`/v1/workspaces/${workspaceId}/members`, req),
-  removeMember: (workspaceId: string, userId: string) =>
-    api.delete<void>(`/v1/workspaces/${workspaceId}/members/${userId}`),
+  updateMemberRole: (workspaceId: string, userId: string, req: { role: string; subRole?: string }) =>
+    api.put<void>(`/v1/workspaces/${workspaceId}/members/${userId}`, req),
+  removeMember: (workspaceId: string, userId: string, assetAssigneeId?: string) => {
+    const query = assetAssigneeId ? `?assetAssigneeId=${encodeURIComponent(assetAssigneeId)}` : '';
+    return api.delete<void>(`/v1/workspaces/${workspaceId}/members/${userId}${query}`);
+  },
 
   getWorkitemProject: (workspaceId: string) =>
     api.get<WorkitemProject>(`/v1/workspaces/${workspaceId}/workitem-project`),
@@ -49,6 +62,8 @@ export const workspaceApi = {
     api.delete<void>(`/v1/workspaces/${workspaceId}/prompts/${promptId}`),
   updatePromptCategories: (workspaceId: string, promptId: string, categoryIds: string[]) =>
     api.patch<WorkspacePrompt>(`/v1/workspaces/${workspaceId}/prompts/${promptId}`, { categoryIds }),
+  updatePromptEnabled: (workspaceId: string, promptId: string, enabled: boolean) =>
+    api.patch<WorkspacePrompt>(`/v1/workspaces/${workspaceId}/prompts/${promptId}`, { enabled }),
 
   listPromptCategories: (workspaceId: string) => api.get<PromptCategory[]>(`/v1/workspaces/${workspaceId}/prompt-categories`),
   createPromptCategory: (workspaceId: string, name: string) =>

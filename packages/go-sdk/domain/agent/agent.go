@@ -52,12 +52,13 @@ type AgentType struct {
 
 // AdvancedAgentConfig 表示智能体高级配置参数。
 type AdvancedAgentConfig struct {
-	MaxTokens     *int    `json:"maxTokens,omitempty"`
-	ContextWindow *int    `json:"contextWindow,omitempty"`
-	TopP          *float64 `json:"topP,omitempty"`
-	FrequencyPenalty *float64 `json:"frequencyPenalty,omitempty"`
-	PresencePenalty  *float64 `json:"presencePenalty,omitempty"`
-	Extra         map[string]any `json:"extra,omitempty"`
+	MaxTokens        *int           `json:"maxTokens,omitempty"`
+	ContextWindow    *int           `json:"contextWindow,omitempty"`
+	TopP             *float64       `json:"topP,omitempty"`
+	TopK             *int           `json:"topK,omitempty"`
+	FrequencyPenalty *float64       `json:"frequencyPenalty,omitempty"`
+	PresencePenalty  *float64       `json:"presencePenalty,omitempty"`
+	Extra            map[string]any `json:"extra,omitempty"`
 }
 
 // WorkspaceAgentConfig 表示空间级智能体运行时配置。

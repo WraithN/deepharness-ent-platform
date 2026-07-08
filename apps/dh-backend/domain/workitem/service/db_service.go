@@ -49,9 +49,10 @@ func (s *DBWorkItemService) ListWorkItems(filter WorkItemFilter) ([]object.WorkI
 		argIdx++
 	}
 
-	query := `SELECT id, tenant_id, project_id, "type", title, description, status, priority,
-		assignee_id, reporter, source, external_id, created_at, updated_at
-		FROM workitems`
+	query := `SELECT w.id, w.tenant_id, w.project_id, w."type", w.title, w.description, w.status, w.priority,
+		w.assignee_id, COALESCE(u.name, ''), w.reporter, w.source, w.external_id, w.created_at, w.updated_at
+		FROM workitems w
+		LEFT JOIN users u ON u.id = w.assignee_id`
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -66,11 +67,11 @@ func (s *DBWorkItemService) ListWorkItems(filter WorkItemFilter) ([]object.WorkI
 	result := make([]object.WorkItem, 0)
 	for rows.Next() {
 		var it object.WorkItem
-		var desc, assigneeID, reporter, externalID sql.NullString
+		var desc, assigneeID, assigneeName, reporter, externalID sql.NullString
 		err := rows.Scan(
 			&it.ID, &it.TenantID, &it.ProjectID,
 			&it.Type, &it.Title, &desc, &it.Status, &it.Priority,
-			&assigneeID, &reporter, &it.Source, &externalID,
+			&assigneeID, &assigneeName, &reporter, &it.Source, &externalID,
 			&it.CreatedAt, &it.UpdatedAt,
 		)
 		if err != nil {
@@ -81,6 +82,9 @@ func (s *DBWorkItemService) ListWorkItems(filter WorkItemFilter) ([]object.WorkI
 		}
 		if assigneeID.Valid {
 			it.AssigneeID = assigneeID.String
+		}
+		if assigneeName.Valid {
+			it.AssigneeName = assigneeName.String
 		}
 		if reporter.Valid {
 			it.Reporter = reporter.String
@@ -96,15 +100,17 @@ func (s *DBWorkItemService) ListWorkItems(filter WorkItemFilter) ([]object.WorkI
 // GetWorkItem 按 ID 获取单个工作项详情。
 func (s *DBWorkItemService) GetWorkItem(id string) (object.WorkItem, error) {
 	var it object.WorkItem
-	var desc, assigneeID, reporter, externalID sql.NullString
+	var desc, assigneeID, assigneeName, reporter, externalID sql.NullString
 	err := s.db.QueryRow(`
-		SELECT id, tenant_id, project_id, "type", title, description, status, priority,
-			assignee_id, reporter, source, external_id, created_at, updated_at
-		FROM workitems WHERE id = $1
+		SELECT w.id, w.tenant_id, w.project_id, w."type", w.title, w.description, w.status, w.priority,
+			w.assignee_id, COALESCE(u.name, ''), w.reporter, w.source, w.external_id, w.created_at, w.updated_at
+		FROM workitems w
+		LEFT JOIN users u ON u.id = w.assignee_id
+		WHERE w.id = $1
 	`, id).Scan(
 		&it.ID, &it.TenantID, &it.ProjectID,
 		&it.Type, &it.Title, &desc, &it.Status, &it.Priority,
-		&assigneeID, &reporter, &it.Source, &externalID,
+		&assigneeID, &assigneeName, &reporter, &it.Source, &externalID,
 		&it.CreatedAt, &it.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -118,6 +124,9 @@ func (s *DBWorkItemService) GetWorkItem(id string) (object.WorkItem, error) {
 	}
 	if assigneeID.Valid {
 		it.AssigneeID = assigneeID.String
+	}
+	if assigneeName.Valid {
+		it.AssigneeName = assigneeName.String
 	}
 	if reporter.Valid {
 		it.Reporter = reporter.String

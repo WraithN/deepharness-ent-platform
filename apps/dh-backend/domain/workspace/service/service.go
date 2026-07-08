@@ -1,17 +1,37 @@
 package service
 
 import (
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workspace"
 )
 
+// AgentPolicy 表示超管为工作空间设置的智能体策略。
+type AgentPolicy struct {
+	AgentConfigLocked   bool                            `json:"agentConfigLocked"`
+	LockedAgentKeys     []string                        `json:"lockedAgentKeys"`
+	AllowedAgentKeys    []string                        `json:"allowedAgentKeys"`
+	DefaultAgentConfigs map[string]AgentConfigSnapshot  `json:"defaultAgentConfigs"`
+}
+
+// AgentConfigSnapshot 表示超管为某个 agent 预设的默认配置快照。
+type AgentConfigSnapshot struct {
+	Enabled        bool                       `json:"enabled"`
+	Model          string                     `json:"model"`
+	ModelSource    string                     `json:"modelSource"`
+	BaseURL        string                     `json:"baseUrl"`
+	APIKey         string                     `json:"apiKey"`
+	Temperature    *float64                   `json:"temperature,omitempty"`
+	AdvancedConfig *agent.AdvancedAgentConfig `json:"advancedConfig,omitempty"`
+}
+
 // WorkspaceService 定义 workspace 模块的服务接口。
 type WorkspaceService interface {
-	CreateWorkspace(tenantID, name, description, ownerUserID string) (workspace.Workspace, error)
+	CreateWorkspace(tenantID, name, description, ownerUserID string, policy AgentPolicy) (workspace.Workspace, error)
 	GetWorkspace(id string) (workspace.Workspace, error)
-	UpdateWorkspace(id, name, description string) (workspace.Workspace, error)
+	UpdateWorkspace(id, name, description string, policy AgentPolicy) (workspace.Workspace, error)
 	DeleteWorkspace(id string) error
-	ListWorkspaces(tenantID string) ([]workspace.Workspace, error)
+	ListWorkspaces(tenantID string, page, pageSize int) (common.PaginatedList[workspace.Workspace], error)
 	// ListMine 返回指定用户加入的工作空间及其成员关系（用于登录后确定当前空间与权限）。
 	ListMine(userID string) ([]MineWorkspace, error)
 	// EnsureUserWorkspaceDirs 确保用户在工作空间下的 projects 和 files 目录存在。
@@ -20,8 +40,11 @@ type WorkspaceService interface {
 	EnsureUserWorkspaceDirs(workspaceID, userID string) error
 
 	AddMember(workspaceID, userID, role, subRole string) error
+	AddMemberByEmail(workspaceID, email, role, subRole string) error
 	ListMembers(workspaceID string) ([]workspace.Member, error)
-	RemoveMember(workspaceID, userID string) error
+	GetMemberRole(workspaceID, userID string) (string, error)
+	UpdateMemberRole(workspaceID, userID, role, subRole string) error
+	RemoveMember(workspaceID, userID, assetAssigneeID string) error
 
 	SetWorkitemProject(workspaceID string, req WorkitemProjectRequest) (workspace.WorkitemProject, error)
 	GetWorkitemProject(workspaceID string) (workspace.WorkitemProject, error)

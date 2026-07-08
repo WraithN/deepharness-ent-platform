@@ -1,16 +1,17 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Folder, File, ChevronRight, ChevronDown, GitBranch, Code2, Book, Search, X, Share2, FileText, Activity, FileCode, Eye, ShieldCheck, Sparkles, RefreshCw, Loader2, Braces, Globe, Palette, Terminal, Settings, Image, FileJson, FileType, FileCode2, Database, Users, AlertCircle, CheckCircle } from 'lucide-react';
+import { Folder, File, ChevronRight, ChevronDown, GitBranch, Code2, Book, Search, X, Share2, FileText, Activity, FileCode, Eye, ShieldCheck, Sparkles, RefreshCw, Loader2, Braces, Globe, Palette, Terminal, Settings, Image, FileJson, FileType, FileCode2, Database, Users, AlertCircle, CheckCircle, BarChart3, Code, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
 import type { RepositoryDTO, FileNodeDTO, FileContentDTO, ScannedRepositoryDTO, RepositoryDetailsDTO, BranchInfoDTO } from '@/lib/api-types';
-import { LivePreview, type PreviewMode } from '@/components/chat/LivePreview';
+import { LivePreview } from '@/components/chat/LivePreview';
 import { detectFrontendProject } from '@/lib/project-detector';
 import { CodeBlock } from '@/components/CodeBlock';
 import { useAuth } from '@/contexts/AuthContext';
@@ -639,28 +640,6 @@ const DocGenButton: React.FC = () => {
   );
 };
 
-const PreviewEffectToolbar: React.FC = () => {
-  const [effect, setEffect] = useState<'none' | 'blur' | 'dark' | 'zoom'>('none');
-  return (
-    <div className="flex items-center gap-1 bg-muted/50 p-0.5 rounded-lg">
-      {([
-        { key: 'none' as const, label: '正常' },
-        { key: 'blur' as const, label: '模糊' },
-        { key: 'dark' as const, label: '暗色' },
-        { key: 'zoom' as const, label: '放大' },
-      ]).map(e => (
-        <button
-          key={e.key}
-          onClick={() => setEffect(e.key)}
-          className={`px-2 py-1 rounded-md text-xs transition-all ${effect === e.key ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
-        >
-          {e.label}
-        </button>
-      ))}
-    </div>
-  );
-};
-
 const ReviewPanel: React.FC = () => {
   const [reviewing, setReviewing] = useState(false);
   const [issues, setIssues] = useState<ReviewIssue[]>(MOCK_REVIEW_ISSUES);
@@ -797,7 +776,6 @@ export const ProjectCode: React.FC = () => {
 
   // View mode tabs
   const [viewMode, setViewMode] = useState<'code' | 'graph' | 'review' | 'doc' | 'preview' | 'details'>('code');
-  const [livePreviewMode, setLivePreviewMode] = useState<PreviewMode>('diff');
 
   // Code view mode for file viewer
   const [codeViewMode, setCodeViewMode] = useState<'code' | 'preview' | 'blame'>('code');
@@ -946,6 +924,15 @@ export const ProjectCode: React.FC = () => {
     }
   };
 
+  // 同时刷新仓库详情与分支（合并刷新功能）
+  const refreshRepoData = async (repoId: string) => {
+    if (!repoId) return;
+    await Promise.all([
+      loadRepositoryDetails(repoId),
+      loadBranches(repoId),
+    ]);
+  };
+
   // 扫描本地仓库
   const handleScanRepositories = async () => {
     setLoadingScan(true);
@@ -1015,7 +1002,9 @@ export const ProjectCode: React.FC = () => {
 
   // 当检测到当前仓库为非前端项目时，若当前处于预览模式则自动切换到代码模式。
   useEffect(() => {
+    console.log('[ProjectCode] frontend detect effect', { repoType, isFrontendProject, viewMode });
     if (repoType === 'dev' && isFrontendProject === false && viewMode === 'preview') {
+      console.log('[ProjectCode] auto switch preview -> code');
       setViewMode('code');
     }
   }, [repoType, isFrontendProject, viewMode]);
@@ -1312,16 +1301,6 @@ export const ProjectCode: React.FC = () => {
                 </SelectContent>
               </Select>
               {switchingBranch && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-9 w-9"
-                onClick={() => selectedRepoId && loadBranches(selectedRepoId)}
-                disabled={refreshingBranches || loadingBranches}
-                title="刷新分支"
-              >
-                {refreshingBranches ? <RefreshCw className="h-4 w-4 animate-spin text-primary" /> : <RefreshCw className="h-4 w-4" />}
-              </Button>
             </div>
 
             <Button
@@ -1394,7 +1373,12 @@ export const ProjectCode: React.FC = () => {
             return (
               <button
                 key={tab.key}
-                onClick={() => setViewMode(tab.key)}
+                onClick={() => {
+                  setViewMode(tab.key);
+                  if (tab.key === 'details' && selectedRepoId) {
+                    refreshRepoData(selectedRepoId);
+                  }
+                }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
                   viewMode === tab.key
                     ? 'bg-background text-foreground shadow-sm'
@@ -1736,23 +1720,21 @@ export const ProjectCode: React.FC = () => {
 
         {viewMode === 'preview' && (
           <div className="h-full flex flex-col">
+            {/* preview branch render debug removed */}
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/50 shrink-0 bg-background/90">
               <div className="flex items-center gap-2">
                 <Eye className="h-4 w-4 text-primary" />
                 <span className="text-sm font-semibold">预览模式</span>
                 <span className="text-xs text-muted-foreground">效果预览 · {currentRepo?.name} / {selectedBranch}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => toast.success('已刷新预览')}>
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  刷新预览
-                </Button>
-                <PreviewEffectToolbar />
-              </div>
+              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => toast.success('已刷新预览')}>
+                <RefreshCw className="h-3.5 w-3.5" />
+                刷新预览
+              </Button>
             </div>
             <div className="flex-1 overflow-hidden">
               {currentRepo?.localPath ? (
-                <LivePreview projectPath={currentRepo.localPath} mode={livePreviewMode} onModeChange={setLivePreviewMode} />
+                <LivePreview projectPath={currentRepo.localPath} previewOnly />
               ) : (
                 <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
                   仓库尚未克隆，无法预览
@@ -1766,12 +1748,11 @@ export const ProjectCode: React.FC = () => {
           <div className="h-full flex flex-col">
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/50 shrink-0 bg-background/90">
               <div className="flex items-center gap-2">
-                <Activity className="h-4 w-4 text-primary" />
-                <span className="text-sm font-semibold">仓库详情</span>
-                <span className="text-xs text-muted-foreground">{currentRepo?.name}</span>
+                <Zap className="h-4 w-4 text-primary" />
+                <span className="text-sm font-semibold">{currentRepo?.name} 仓库总览</span>
               </div>
-              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => loadRepositoryDetails(selectedRepoId)} disabled={loadingDetails}>
-                {loadingDetails ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => selectedRepoId && refreshRepoData(selectedRepoId)} disabled={loadingDetails || refreshingBranches}>
+                {loadingDetails || refreshingBranches ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                 刷新
               </Button>
             </div>
@@ -1783,109 +1764,196 @@ export const ProjectCode: React.FC = () => {
                   </div>
                 ) : repoDetails ? (
                   <>
-                    {/* Commit Stats */}
-                    <div>
-                      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <Activity className="h-5 w-5 text-primary" />
-                        提交统计
-                      </h3>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <Card>
-                          <CardContent className="p-4 text-center">
-                            <p className="text-2xl font-bold text-foreground">{repoDetails.commitStats.totalCommits}</p>
-                            <p className="text-xs text-muted-foreground mt-1">总提交数</p>
-                          </CardContent>
-                        </Card>
-                        <Card>
-                          <CardContent className="p-4 text-center">
-                            <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{repoDetails.commitStats.lastWeek}</p>
-                            <p className="text-xs text-muted-foreground mt-1">本周提交</p>
-                          </CardContent>
-                        </Card>
-                        <Card>
-                          <CardContent className="p-4 text-center">
-                            <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">{repoDetails.commitStats.lastMonth}</p>
-                            <p className="text-xs text-muted-foreground mt-1">本月提交</p>
-                          </CardContent>
-                        </Card>
-                        <Card>
-                          <CardContent className="p-4 text-center">
-                            <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{repoDetails.fileCount}</p>
-                            <p className="text-xs text-muted-foreground mt-1">文件数量</p>
-                          </CardContent>
-                        </Card>
+                    {/* 顶部基础信息 */}
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">主语言: </span>
+                        <span className="font-medium">{repoDetails.language || '未知'}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">仓库大小: </span>
+                        <span className="font-medium">{(repoDetails.sizeBytes / 1024).toFixed(2)}KB</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">克隆状态: </span>
+                        <span className={
+                          repoDetails.repository.cloneStatus === 'cloned'
+                            ? 'font-medium text-emerald-600 dark:text-emerald-400'
+                            : repoDetails.repository.cloneStatus === 'failed'
+                            ? 'font-medium text-destructive'
+                            : 'font-medium text-muted-foreground'
+                        }>
+                          {repoDetails.repository.cloneStatus === 'cloned'
+                            ? '已克隆'
+                            : repoDetails.repository.cloneStatus === 'cloning'
+                            ? '克隆中'
+                            : repoDetails.repository.cloneStatus === 'failed'
+                            ? '失败'
+                            : '待处理'}
+                        </span>
                       </div>
                     </div>
 
-                    {/* Branches */}
-                    <div>
-                      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <GitBranch className="h-5 w-5 text-primary" />
-                        分支列表
-                      </h3>
-                      <div className="space-y-2">
-                        {repoDetails.branches.map((branch, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-muted/10">
-                            <div className="flex items-center gap-3">
-                              <GitBranch className={`h-4 w-4 ${branch.isCurrent ? 'text-primary' : 'text-muted-foreground'}`} />
-                              <div>
-                                <span className="text-sm font-medium">{branch.name}</span>
-                                {branch.isCurrent && (
-                                  <span className="ml-2 text-xs px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">当前</span>
-                                )}
+                    {/* 统计卡片 */}
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                      <Card>
+                        <CardContent className="p-4 text-center">
+                          <p className="text-2xl font-bold text-foreground">{repoDetails.commitStats.totalCommits}</p>
+                          <p className="text-xs text-muted-foreground mt-1">总提交</p>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="p-4 text-center">
+                          <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{repoDetails.branches.length}</p>
+                          <p className="text-xs text-muted-foreground mt-1">分支</p>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="p-4 text-center">
+                          <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                            {repoDetails.effectiveLinesOfCode.toLocaleString()}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">代码行</p>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="p-4 text-center">
+                          <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{repoDetails.fileCount}</p>
+                          <p className="text-xs text-muted-foreground mt-1">文件</p>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="p-4 text-center">
+                          <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">{repoDetails.commitStats.lastWeek}</p>
+                          <p className="text-xs text-muted-foreground mt-1">本周</p>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="p-4 text-center">
+                          <p className="text-2xl font-bold text-rose-600 dark:text-rose-400">{repoDetails.commitStats.lastMonth}</p>
+                          <p className="text-xs text-muted-foreground mt-1">本月</p>
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    {/* 语言分布 */}
+                    {repoDetails.languageStats.length > 0 && (
+                      <Card className="p-5">
+                        <h3 className="text-base font-semibold mb-4 flex items-center gap-2">
+                          <Code className="h-4 w-4 text-primary" />
+                          语言分布
+                        </h3>
+                        <div className="space-y-3">
+                          {repoDetails.languageStats.slice(0, 4).map((lang, idx) => (
+                            <div key={idx}>
+                              <div className="flex items-center justify-between text-sm mb-1">
+                                <span className="font-medium">{lang.name}</span>
+                                <span className="text-muted-foreground">
+                                  {lang.percentage.toFixed(1)}% · {lang.files}
+                                </span>
+                              </div>
+                              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all duration-500"
+                                  style={{ width: `${lang.percentage}%`, backgroundColor: lang.color || 'hsl(var(--primary))' }}
+                                />
                               </div>
                             </div>
-                            <div className="text-xs text-muted-foreground">
-                              最后提交: {branch.lastCommit.substring(0, 7)}
-                            </div>
+                          ))}
+                        </div>
+                        {repoDetails.languageStats.length > 4 && (
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {repoDetails.languageStats.slice(4).map((lang, idx) => (
+                              <span
+                                key={idx}
+                                className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full bg-muted text-muted-foreground"
+                              >
+                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: lang.color || 'hsl(var(--primary))' }} />
+                                {lang.name} {lang.percentage.toFixed(1)}% · {lang.files}
+                              </span>
+                            ))}
                           </div>
-                        ))}
-                      </div>
+                        )}
+                      </Card>
+                    )}
+
+                    {/* 分支信息 + 贡献者分布 */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <Card className="p-5">
+                        <h3 className="text-base font-semibold mb-4 flex items-center gap-2">
+                          <GitBranch className="h-4 w-4 text-primary" />
+                          分支信息
+                        </h3>
+                        <div className="space-y-3">
+                          {repoDetails.branches.map((branch, idx) => (
+                            <div key={idx} className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium">{branch.name}</span>
+                                {branch.isCurrent && (
+                                  <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">当前</span>
+                                )}
+                              </div>
+                              <span className="text-xs text-muted-foreground">最后提交: {branch.lastCommit.substring(0, 7)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </Card>
+
+                      {repoDetails.committerStats.length > 0 && (
+                        <Card className="p-5">
+                          <h3 className="text-base font-semibold mb-4 flex items-center gap-2">
+                            <Users className="h-4 w-4 text-primary" />
+                            贡献者分布
+                          </h3>
+                          <div className="space-y-4">
+                            {repoDetails.committerStats.slice(0, 5).map((c, idx) => {
+                              const total = repoDetails.commitStats.totalCommits || 1;
+                              const initial = (c.name || c.email || '?').charAt(0).toUpperCase();
+                              return (
+                                <div key={idx} className="flex items-center gap-3">
+                                  <div className="h-10 w-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-semibold shrink-0">
+                                    {initial}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between text-sm">
+                                      <span className="font-medium truncate">{c.name || c.email}</span>
+                                      <span className="text-muted-foreground whitespace-nowrap ml-2">
+                                        {c.commits}次 · {((c.commits / total) * 100).toFixed(0)}%
+                                      </span>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">贡献</div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </Card>
+                      )}
                     </div>
 
-                    {/* Contributors */}
-                    <div>
-                      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <Users className="h-5 w-5 text-primary" />
-                        贡献者
-                      </h3>
-                      <div className="flex flex-wrap gap-2">
-                        {repoDetails.contributors.map((contributor, idx) => (
-                          <div key={idx} className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/30 border border-border/50">
-                            <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center">
-                              <span className="text-xs font-medium text-primary">{contributor.charAt(0)}</span>
-                            </div>
-                            <span className="text-sm">{contributor}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Repository Info */}
-                    <div>
-                      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <Book className="h-5 w-5 text-primary" />
-                        仓库信息
-                      </h3>
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                        <div className="p-3 rounded-lg border border-border/50 bg-muted/10">
-                          <p className="text-xs text-muted-foreground">语言</p>
-                          <p className="text-sm font-medium mt-1">{repoDetails.language || '未知'}</p>
+                    {/* 近 7 日提交趋势 */}
+                    {repoDetails.weeklyCommits.length > 0 && (
+                      <Card className="p-5">
+                        <h3 className="text-base font-semibold mb-4 flex items-center gap-2">
+                          <BarChart3 className="h-4 w-4 text-primary" />
+                          近7日提交趋势
+                        </h3>
+                        <div className="h-64 w-full">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={repoDetails.weeklyCommits}>
+                              <XAxis dataKey="date" tickFormatter={(v: string) => v.slice(5)} />
+                              <YAxis allowDecimals={false} />
+                              <Tooltip />
+                              <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                                {repoDetails.weeklyCommits.map((_, idx) => (
+                                  <Cell key={idx} fill="hsl(var(--primary))" />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
                         </div>
-                        <div className="p-3 rounded-lg border border-border/50 bg-muted/10">
-                          <p className="text-xs text-muted-foreground">大小</p>
-                          <p className="text-sm font-medium mt-1">{(repoDetails.sizeBytes / 1024).toFixed(2)} KB</p>
-                        </div>
-                        <div className="p-3 rounded-lg border border-border/50 bg-muted/10">
-                          <p className="text-xs text-muted-foreground">克隆状态</p>
-                          <p className="text-sm font-medium mt-1">
-                            {repoDetails.repository.cloneStatus === 'cloned' ? '已克隆' :
-                             repoDetails.repository.cloneStatus === 'cloning' ? '克隆中' :
-                             repoDetails.repository.cloneStatus === 'failed' ? '失败' : '待处理'}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
+                      </Card>
+                    )}
                   </>
                 ) : (
                   <div className="text-center py-12 text-muted-foreground">

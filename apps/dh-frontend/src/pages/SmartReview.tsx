@@ -6,6 +6,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { CheckCircle2, AlertTriangle, AlertCircle, GitPullRequest, GitMerge, XCircle, Clock, Link as LinkIcon, Send, Rocket } from 'lucide-react';
 import { toast } from 'sonner';
+import { PaginationBar } from '@/components/admin/PaginationBar';
+import { useClientPagination } from '@/hooks/use-client-pagination';
 
 interface PRRecord {
   id: string;
@@ -33,8 +35,16 @@ const mockPRs: PRRecord[] = [
   { id: 'PR-1021', title: 'docs: 更新API接口文档', author: '赵六', repo: 'backend-api', branch: 'docs/api-update', status: 'passed', time: '昨天 11:20', relatedRequirement: { id: 'REQ-210', title: '完善开发者接入文档' }, issues: { errors: 0, warnings: 0, info: 1 } },
 ];
 
+const REVIEW_PAGE_SIZE = 10;
+
 export const SmartReview: React.FC = () => {
   const [selectedPR, setSelectedPR] = useState<PRRecord | null>(null);
+
+  const { currentPage, totalPages, onPageChange, startIndex, endIndex } = useClientPagination({
+    pageSize: REVIEW_PAGE_SIZE,
+    total: mockPRs.length,
+  });
+  const paginatedPRs = mockPRs.slice(startIndex, endIndex);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -87,7 +97,7 @@ export const SmartReview: React.FC = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {mockPRs.map((pr) => (
+                {paginatedPRs.map((pr) => (
                   <TableRow 
                     key={pr.id} 
                     className="hover:bg-muted/50"
@@ -149,6 +159,13 @@ export const SmartReview: React.FC = () => {
               </TableBody>
             </Table>
           </div>
+          {mockPRs.length > 0 && (
+            <PaginationBar
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onPageChange={onPageChange}
+            />
+          )}
         </CardContent>
       </Card>
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui/buffer/memory"
@@ -13,6 +14,12 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 )
+
+func TestMain(m *testing.M) {
+	// 测试运行在 apps/dh-backend/gateway/handler/tests，需指向仓库根目录下的 config.yaml
+	os.Setenv("CONFIG_FILE", "../../../config.yaml")
+	os.Exit(m.Run())
+}
 
 func testConfig() config.Config {
 	cfg, err := config.Load()

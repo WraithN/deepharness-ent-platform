@@ -12,6 +12,8 @@ type AgentConfigService interface {
 	UpdateAgentType(key string, enabled bool) (agent.AgentType, error)
 	// GetAgentType 返回指定平台级智能体类型。
 	GetAgentType(key string) (agent.AgentType, error)
+	// ListGlobalModels 返回全局配置中支持的模型池。
+	ListGlobalModels() []string
 
 	// ListWorkspaceConfigs 返回某空间下所有智能体配置。
 	ListWorkspaceConfigs(workspaceID string) ([]agent.WorkspaceAgentConfig, error)
@@ -19,6 +21,8 @@ type AgentConfigService interface {
 	GetWorkspaceConfig(workspaceID, agentKey string) (agent.WorkspaceAgentConfig, error)
 	// SaveWorkspaceConfig 保存或更新空间级智能体配置。
 	SaveWorkspaceConfig(workspaceID string, req SaveWorkspaceConfigRequest) (agent.WorkspaceAgentConfig, error)
+	// CanModifyWorkspaceConfig 判断指定空间的智能体配置是否允许修改。
+	CanModifyWorkspaceConfig(workspaceID, agentKey string) error
 	// ListAvailableAgents 返回某空间下实际可用的智能体列表（全局启用 + 空间启用）。
 	ListAvailableAgents(workspaceID string) ([]agent.AvailableAgent, error)
 }
