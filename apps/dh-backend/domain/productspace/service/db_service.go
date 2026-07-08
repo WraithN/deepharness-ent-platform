@@ -741,6 +741,18 @@ func (s *DBProductSpaceService) GetTree(ctx context.Context, workspaceID, userID
 	}
 
 	roots := []object.ProductSpaceTreeNode{*root[object.ProductSpaceDocsDir], *root[object.ProductSpacePrototypesDir]}
+
+	// 在补充空文件夹前，校验分类目录本身不是符号链接，防止目录树读取被软链接重定向到工作区之外。
+	for _, catName := range []string{object.ProductSpaceDocsDir, object.ProductSpacePrototypesDir} {
+		catPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, catName)
+		if err != nil {
+			return nil, err
+		}
+		if err := rejectSymlink(catPath); err != nil {
+			return nil, fmt.Errorf("category directory symlink check failed: %w", err)
+		}
+	}
+
 	return s.appendEmptyFolders(ctx, workspaceID, userID, roots)
 }
 
@@ -757,6 +769,9 @@ func (s *DBProductSpaceService) appendEmptyFolders(ctx context.Context, workspac
 		catPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, cat.name)
 		if err != nil {
 			return nil, err
+		}
+		if err := rejectSymlink(catPath); err != nil {
+			return nil, fmt.Errorf("category directory symlink check failed: %w", err)
 		}
 		entries, err := os.ReadDir(catPath)
 		if err != nil {
@@ -1354,6 +1369,9 @@ func (s *DBProductSpaceService) CreateFolder(ctx context.Context, workspaceID, u
 	if err != nil {
 		return err
 	}
+	if err := rejectSymlink(absPath); err != nil {
+		return fmt.Errorf("folder symlink check failed: %w", err)
+	}
 	if err := os.MkdirAll(absPath, defaultDirPerm); err != nil {
 		return fmt.Errorf("create folder failed: %w", err)
 	}
@@ -1383,6 +1401,9 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, relativePath)
 	if err != nil {
 		return err
+	}
+	if err := rejectSymlink(absPath); err != nil {
+		return fmt.Errorf("folder symlink check failed: %w", err)
 	}
 
 	hasItems, err := s.folderHasItems(ctx, workspaceID, userID, req.Category, folder)
