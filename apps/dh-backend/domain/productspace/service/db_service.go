@@ -93,8 +93,8 @@ func isUniqueViolation(err error) bool {
 }
 
 // requirePM 校验当前用户在工作空间中的职能子角色为 PM。
-func (s *DBProductSpaceService) requirePM(workspaceID, userID string) error {
-	subRole, err := s.workspaceService.GetMemberSubRole(workspaceID, userID)
+func (s *DBProductSpaceService) requirePM(ctx context.Context, workspaceID, userID string) error {
+	subRole, err := s.workspaceService.GetMemberSubRole(ctx, workspaceID, userID)
 	if err != nil {
 		return err
 	}
@@ -469,10 +469,10 @@ func validateCreateItemRequest(req *object.CreateItemRequest) error {
 	return nil
 }
 
-// fetchItem 按 ID + 工作空间 + 用户获取产品空间条目。
-func (s *DBProductSpaceService) fetchItem(ctx context.Context, workspaceID, userID, itemID string) (*object.ProductSpaceItem, error) {
+// fetchItemWithExecer 按 ID + 工作空间 + 用户获取产品空间条目，支持传入 *sql.DB 或 *sql.Tx。
+func (s *DBProductSpaceService) fetchItemWithExecer(ctx context.Context, q queryRowContextExecer, workspaceID, userID, itemID string) (*object.ProductSpaceItem, error) {
 	var item object.ProductSpaceItem
-	err := scanProductSpaceItem(s.db.QueryRowContext(ctx, `
+	err := scanProductSpaceItem(q.QueryRowContext(ctx, `
 		SELECT id, workspace_id, user_id, type, title, relative_path, current_version,
 		       file_ext, mime_type, size_bytes, status, created_by, created_at, updated_at
 		FROM product_docs
@@ -487,10 +487,32 @@ func (s *DBProductSpaceService) fetchItem(ctx context.Context, workspaceID, user
 	return &item, nil
 }
 
-// fetchVersion 按文档 ID、工作空间、用户与版本号获取版本记录。
-func (s *DBProductSpaceService) fetchVersion(ctx context.Context, workspaceID, userID, itemID string, version int) (*object.ProductSpaceVersion, error) {
+// fetchItem 是 fetchItemWithExecer 的便捷方法，使用普通数据库连接。
+func (s *DBProductSpaceService) fetchItem(ctx context.Context, workspaceID, userID, itemID string) (*object.ProductSpaceItem, error) {
+	return s.fetchItemWithExecer(ctx, s.db, workspaceID, userID, itemID)
+}
+
+// fetchItemForUpdate 在事务中按 ID 获取产品空间条目，并对 product_docs 行加写锁。
+// 调用方必须负责提交或回滚事务以释放锁。
+func (s *DBProductSpaceService) fetchItemForUpdate(ctx context.Context, tx *sql.Tx, workspaceID, userID, itemID string) (*object.ProductSpaceItem, error) {
+	item, err := s.fetchItemWithExecer(ctx, tx, workspaceID, userID, itemID)
+	if err != nil {
+		return nil, err
+	}
+	var dummy string
+	err = tx.QueryRowContext(ctx, `
+		SELECT id FROM product_docs WHERE id = $1 AND workspace_id = $2 AND user_id = $3 FOR UPDATE
+	`, itemID, workspaceID, userID).Scan(&dummy)
+	if err != nil {
+		return nil, fmt.Errorf("lock item failed: %w", err)
+	}
+	return item, nil
+}
+
+// fetchVersionWithExecer 按文档 ID、工作空间、用户与版本号获取版本记录，支持传入 *sql.DB 或 *sql.Tx。
+func (s *DBProductSpaceService) fetchVersionWithExecer(ctx context.Context, q queryRowContextExecer, workspaceID, userID, itemID string, version int) (*object.ProductSpaceVersion, error) {
 	var v object.ProductSpaceVersion
-	err := scanProductSpaceVersion(s.db.QueryRowContext(ctx, `
+	err := scanProductSpaceVersion(q.QueryRowContext(ctx, `
 		SELECT v.id, v.doc_id, v.version, v.title, v.file_path, v.file_ext, v.mime_type, v.size_bytes, v.change_summary, v.created_by, v.created_at
 		FROM product_doc_versions v
 		JOIN product_docs d ON d.id = v.doc_id
@@ -503,6 +525,11 @@ func (s *DBProductSpaceService) fetchVersion(ctx context.Context, workspaceID, u
 		return nil, fmt.Errorf("fetch version failed: %w", err)
 	}
 	return &v, nil
+}
+
+// fetchVersion 是 fetchVersionWithExecer 的便捷方法，使用普通数据库连接。
+func (s *DBProductSpaceService) fetchVersion(ctx context.Context, workspaceID, userID, itemID string, version int) (*object.ProductSpaceVersion, error) {
+	return s.fetchVersionWithExecer(ctx, s.db, workspaceID, userID, itemID, version)
 }
 
 // insertProductDoc 将新条目写入 product_docs 并返回完整对象。
@@ -533,7 +560,7 @@ func (s *DBProductSpaceService) insertProductDoc(
 
 // GetTree 返回指定用户产品空间的目录树。
 func (s *DBProductSpaceService) GetTree(ctx context.Context, workspaceID, userID string) ([]object.ProductSpaceTreeNode, error) {
-	if err := s.requirePM(workspaceID, userID); err != nil {
+	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return nil, err
 	}
 
@@ -636,7 +663,7 @@ func findOrCreateFolder(parent *object.ProductSpaceTreeNode, folder string) int 
 
 // CreateItem 创建新的文档或原型条目，并写入初始文件。
 func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, userID string, req object.CreateItemRequest) (*object.ProductSpaceItem, error) {
-	if err := s.requirePM(workspaceID, userID); err != nil {
+	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return nil, err
 	}
 
@@ -734,7 +761,7 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 
 // GetItem 获取条目元数据与当前文件内容。
 func (s *DBProductSpaceService) GetItem(ctx context.Context, workspaceID, userID, itemID string) (*object.ProductSpaceItem, []byte, error) {
-	if err := s.requirePM(workspaceID, userID); err != nil {
+	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return nil, nil, err
 	}
 
@@ -751,11 +778,17 @@ func (s *DBProductSpaceService) GetItem(ctx context.Context, workspaceID, userID
 
 // UpdateContent 更新文档内容，原内容快照为历史版本。
 func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, userID, itemID string, req object.UpdateContentRequest) (*object.ProductSpaceItem, error) {
-	if err := s.requirePM(workspaceID, userID); err != nil {
+	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return nil, err
 	}
 
-	item, err := s.fetchItem(ctx, workspaceID, userID, itemID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	item, err := s.fetchItemForUpdate(ctx, tx, workspaceID, userID, itemID)
 	if err != nil {
 		return nil, err
 	}
@@ -802,28 +835,31 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 		return nil, fmt.Errorf("write new content failed: %w", err)
 	}
 
-	if err := s.saveVersionAndUpdate(ctx, item, versionAbsPath, req.Content, req.ChangeSummary, userID, oldBytes, newData); err != nil {
+	if err := s.saveVersionAndUpdateTx(ctx, tx, item, versionAbsPath, req.Content, req.ChangeSummary, userID, oldBytes, newData); err != nil {
 		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
 		_ = os.Remove(versionAbsPath)
 		return nil, err
 	}
 
+	if err := tx.Commit(); err != nil {
+		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
+		_ = os.Remove(versionAbsPath)
+		return nil, fmt.Errorf("commit transaction failed: %w", err)
+	}
+
 	return s.fetchItem(ctx, workspaceID, userID, itemID)
 }
 
-// saveVersionAndUpdate 在数据库中插入版本快照并递增当前版本号。
-func (s *DBProductSpaceService) saveVersionAndUpdate(
+// saveVersionAndUpdateTx 在事务中插入版本快照并递增当前版本号。
+// 调用方必须负责提交或回滚事务。
+func (s *DBProductSpaceService) saveVersionAndUpdateTx(
 	ctx context.Context,
+	tx *sql.Tx,
 	item *object.ProductSpaceItem,
 	versionFilePath, content, changeSummary, userID string,
 	oldBytes, newBytes []byte,
 ) error {
 	now := time.Now().UTC()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin transaction failed: %w", err)
-	}
-	defer tx.Rollback()
 
 	versionID := uuid.New().String()
 	if _, err := tx.ExecContext(ctx, `
@@ -853,15 +889,12 @@ func (s *DBProductSpaceService) saveVersionAndUpdate(
 		return errors.New(errMsgItemNotFound)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit transaction failed: %w", err)
-	}
 	return nil
 }
 
 // ListVersions 返回条目的版本历史列表。
 func (s *DBProductSpaceService) ListVersions(ctx context.Context, workspaceID, userID, itemID string) ([]object.ProductSpaceVersion, error) {
-	if err := s.requirePM(workspaceID, userID); err != nil {
+	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return nil, err
 	}
 
@@ -895,16 +928,22 @@ func (s *DBProductSpaceService) ListVersions(ctx context.Context, workspaceID, u
 
 // RestoreVersion 将指定版本恢复为当前版本，并将恢复后的内容快照为新的历史版本。
 func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID, userID, itemID string, version int) (*object.ProductSpaceItem, error) {
-	if err := s.requirePM(workspaceID, userID); err != nil {
+	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return nil, err
 	}
 
-	item, err := s.fetchItem(ctx, workspaceID, userID, itemID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	item, err := s.fetchItemForUpdate(ctx, tx, workspaceID, userID, itemID)
 	if err != nil {
 		return nil, err
 	}
 
-	versionRecord, err := s.fetchVersion(ctx, workspaceID, userID, itemID, version)
+	versionRecord, err := s.fetchVersionWithExecer(ctx, tx, workspaceID, userID, itemID, version)
 	if err != nil {
 		return nil, err
 	}
@@ -959,18 +998,26 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	if item.Type == object.ItemTypePrototype {
 		contentStr = base64.StdEncoding.EncodeToString(restoredBytes)
 	}
-	if err := s.saveRestoredVersion(ctx, item, version, newVersionAbsPath, contentStr, int64(len(restoredBytes)), userID); err != nil {
+	if err := s.saveRestoredVersionTx(ctx, tx, item, version, newVersionAbsPath, contentStr, int64(len(restoredBytes)), userID); err != nil {
 		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
 		_ = os.Remove(newVersionAbsPath)
 		return nil, err
 	}
 
+	if err := tx.Commit(); err != nil {
+		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
+		_ = os.Remove(newVersionAbsPath)
+		return nil, fmt.Errorf("commit transaction failed: %w", err)
+	}
+
 	return s.fetchItem(ctx, workspaceID, userID, itemID)
 }
 
-// saveRestoredVersion 在数据库中为恢复操作新增一条版本记录并递增版本号。
-func (s *DBProductSpaceService) saveRestoredVersion(
+// saveRestoredVersionTx 在事务中为恢复操作新增一条版本记录并递增版本号。
+// 调用方必须负责提交或回滚事务。
+func (s *DBProductSpaceService) saveRestoredVersionTx(
 	ctx context.Context,
+	tx *sql.Tx,
 	item *object.ProductSpaceItem,
 	restoredVersion int,
 	versionAbsPath, content string,
@@ -978,12 +1025,6 @@ func (s *DBProductSpaceService) saveRestoredVersion(
 	userID string,
 ) error {
 	now := time.Now().UTC()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin transaction failed: %w", err)
-	}
-	defer tx.Rollback()
-
 	versionID := uuid.New().String()
 	nextVersion := item.CurrentVersion + 1
 	changeSummary := fmt.Sprintf("恢复至版本 %d", restoredVersion)
@@ -1014,12 +1055,12 @@ func (s *DBProductSpaceService) saveRestoredVersion(
 		return errors.New(errMsgItemNotFound)
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // DeleteItem 删除条目及其所有历史版本文件。
 func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, userID, itemID string) error {
-	if err := s.requirePM(workspaceID, userID); err != nil {
+	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return err
 	}
 
@@ -1076,7 +1117,7 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 
 // CreateFolder 在磁盘上创建产品空间文件夹。
 func (s *DBProductSpaceService) CreateFolder(ctx context.Context, workspaceID, userID string, req object.CreateFolderRequest) error {
-	if err := s.requirePM(workspaceID, userID); err != nil {
+	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return err
 	}
 
@@ -1106,7 +1147,7 @@ func (s *DBProductSpaceService) CreateFolder(ctx context.Context, workspaceID, u
 
 // DeleteFolder 删除空文件夹。
 func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, userID string, req object.DeleteFolderRequest) error {
-	if err := s.requirePM(workspaceID, userID); err != nil {
+	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return err
 	}
 
@@ -1144,7 +1185,7 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 
 // DownloadVersion 下载指定版本文件，返回文件名与内容。
 func (s *DBProductSpaceService) DownloadVersion(ctx context.Context, workspaceID, userID, itemID string, version int) (string, []byte, error) {
-	if err := s.requirePM(workspaceID, userID); err != nil {
+	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return "", nil, err
 	}
 

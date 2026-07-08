@@ -9,7 +9,7 @@ import (
 
 // workspaceMemberRoleProvider 抽象了获取工作空间成员职能子角色的能力。
 type workspaceMemberRoleProvider interface {
-	GetMemberSubRole(workspaceID, userID string) (string, error)
+	GetMemberSubRole(ctx context.Context, workspaceID, userID string) (string, error)
 }
 
 // ProductSpaceService 是产品空间模块的核心服务接口，负责文档、原型及其版本的管理。

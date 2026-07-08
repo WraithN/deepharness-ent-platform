@@ -474,9 +474,9 @@ func (s *DBWorkspaceService) GetMemberRole(workspaceID, userID string) (string, 
 }
 
 // GetMemberSubRole 返回指定用户在工作空间中的职能子角色。
-func (s *DBWorkspaceService) GetMemberSubRole(workspaceID, userID string) (string, error) {
+func (s *DBWorkspaceService) GetMemberSubRole(ctx context.Context, workspaceID, userID string) (string, error) {
 	var subRole sql.NullString
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, `
 		SELECT sub_role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2
 	`, workspaceID, userID).Scan(&subRole)
 	if errors.Is(err, sql.ErrNoRows) {
