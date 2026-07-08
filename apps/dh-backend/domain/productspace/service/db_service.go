@@ -126,7 +126,7 @@ func isUniqueViolation(err error) bool {
 func (s *DBProductSpaceService) requirePM(ctx context.Context, workspaceID, userID string) error {
 	subRole, err := s.workspaceService.GetMemberSubRole(ctx, workspaceID, userID)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrForbidden, err)
 	}
 	if subRole != pmSubRole {
 		return fmt.Errorf("%w: only pm can access product space", ErrForbidden)
@@ -658,7 +658,7 @@ func (s *DBProductSpaceService) fetchVersionWithExecer(ctx context.Context, q qu
 		WHERE v.doc_id = $1 AND d.workspace_id = $2 AND d.user_id = $3 AND v.version = $4
 	`, itemID, workspaceID, userID, version), &v)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, errors.New(errMsgVersionNotFound)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, errMsgVersionNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("fetch version failed: %w", err)
@@ -1079,7 +1079,7 @@ func (s *DBProductSpaceService) saveVersionAndUpdateTx(
 		return fmt.Errorf("check affected rows failed: %w", err)
 	}
 	if affected == 0 {
-		return errors.New(errMsgItemNotFound)
+		return fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
 	}
 
 	return nil
@@ -1325,7 +1325,7 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 		return fmt.Errorf("check affected rows failed: %w", err)
 	}
 	if affected == 0 {
-		return errors.New(errMsgItemNotFound)
+		return fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
 	}
 
 	if err := tx.Commit(); err != nil {

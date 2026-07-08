@@ -4,9 +4,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/service"
@@ -35,6 +36,36 @@ type Handler struct {
 // NewHandler 创建 product-space HTTP 处理器。
 func NewHandler(svc service.ProductSpaceService) *Handler {
 	return &Handler{svc: svc}
+}
+
+// decodeJSONBody 解析请求 JSON 体，遇到请求体过大时返回 413，其他解析错误返回 400。
+func (h *Handler) decodeJSONBody(w http.ResponseWriter, r *http.Request, dst interface{}) bool {
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			h.writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return false
+		}
+		h.writeError(w, http.StatusBadRequest, errMsgInvalidRequestBody)
+		return false
+	}
+	return true
+}
+
+// rfc5987Encode 对字符串进行 RFC 5987 编码，用于 Content-Disposition 的 filename* 参数。
+func rfc5987Encode(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
+			r == '-' || r == '.' || r == '_' || r == '~' {
+			b.WriteRune(r)
+		} else {
+			for _, bb := range []byte(string(r)) {
+				b.WriteString(fmt.Sprintf("%%%02X", bb))
+			}
+		}
+	}
+	return b.String()
 }
 
 func (h *Handler) workspaceID(r *http.Request) string {
@@ -115,8 +146,7 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 
 	var req object.CreateItemRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.writeError(w, http.StatusBadRequest, errMsgInvalidRequestBody)
+	if !h.decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -188,8 +218,7 @@ func (h *Handler) UpdateContent(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 
 	var req object.UpdateContentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.writeError(w, http.StatusBadRequest, errMsgInvalidRequestBody)
+	if !h.decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -279,7 +308,7 @@ func (h *Handler) DownloadVersion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contentType := http.DetectContentType(data)
-	encoded := url.PathEscape(filename)
+	encoded := rfc5987Encode(filename)
 	w.Header().Set("Content-Disposition", "attachment; filename*=utf-8''"+encoded)
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
@@ -304,8 +333,7 @@ func (h *Handler) Folders(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var req object.CreateFolderRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			h.writeError(w, http.StatusBadRequest, errMsgInvalidRequestBody)
+		if !h.decodeJSONBody(w, r, &req) {
 			return
 		}
 		if req.Category == "" || req.Name == "" {
@@ -319,8 +347,7 @@ func (h *Handler) Folders(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 	case http.MethodDelete:
 		var req object.DeleteFolderRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			h.writeError(w, http.StatusBadRequest, errMsgInvalidRequestBody)
+		if !h.decodeJSONBody(w, r, &req) {
 			return
 		}
 		if req.Category == "" || req.Name == "" {
@@ -343,9 +370,11 @@ func (h *Handler) handleServiceError(w http.ResponseWriter, err error, defaultMs
 	case errors.Is(err, service.ErrForbidden):
 		h.writeError(w, http.StatusForbidden, errMsgForbidden)
 	case errors.Is(err, service.ErrInvalidInput):
-		h.writeError(w, http.StatusBadRequest, err.Error())
+		msg := strings.TrimPrefix(err.Error(), service.ErrInvalidInput.Error()+": ")
+		h.writeError(w, http.StatusBadRequest, msg)
 	case errors.Is(err, service.ErrConflict):
-		h.writeError(w, http.StatusConflict, err.Error())
+		msg := strings.TrimPrefix(err.Error(), service.ErrConflict.Error()+": ")
+		h.writeError(w, http.StatusConflict, msg)
 	case errors.Is(err, service.ErrUnauthorized):
 		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
 	default:
