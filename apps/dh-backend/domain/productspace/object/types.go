@@ -46,7 +46,7 @@ type ProductSpaceTreeNode struct {
 type CreateItemRequest struct {
 	Type     string `json:"type" validate:"required,oneof=doc prototype"`
 	Title    string `json:"title" validate:"required,max=500"`
-	Folder   string `json:"folder"`              // 一级子目录名，可为空
+	Folder   string `json:"folder"`              // 子目录路径，支持多级，如 "a/b"，可为空
 	Content  string `json:"content"`             // doc 初始内容
 	FileData []byte `json:"file_data,omitempty"` // prototype base64 或 raw bytes
 }
@@ -58,10 +58,10 @@ type UpdateContentRequest struct {
 
 type CreateFolderRequest struct {
 	Category string `json:"category" validate:"required,oneof=docs prototypes"`
-	Name     string `json:"name" validate:"required,max=200"`
+	Name     string `json:"name" validate:"required,max=500"` // 文件夹相对路径，支持多级，如 "a/b"
 }
 
 type DeleteFolderRequest struct {
 	Category string `json:"category" validate:"required,oneof=docs prototypes"`
-	Name     string `json:"name" validate:"required"`
+	Name     string `json:"name" validate:"required"` // 文件夹相对路径，支持多级，如 "a/b"
 }

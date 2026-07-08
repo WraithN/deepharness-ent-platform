@@ -75,7 +75,7 @@ ALTER TABLE product_doc_versions
 | POST | `/items/{id}/versions/{version}/restore` | 把指定版本复制为当前版本，并生成新版本记录 |
 | DELETE | `/items/{id}` | 删除数据库记录、当前文件及所有历史版本文件 |
 | POST | `/folders` | 在 `docs/` 或 `prototypes/` 下创建一级子目录 |
-| DELETE | `/folders` | 删除空子目录 |
+| DELETE | `/folders?category={docs\|prototypes}&name={folder}` | 删除空子目录（参数通过 query 传递） |
 | GET | `/items/{id}/download?version={n}` | 下载指定版本文件 |
 
 ### 4.1 权限

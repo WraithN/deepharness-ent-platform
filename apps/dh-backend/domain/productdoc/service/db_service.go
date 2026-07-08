@@ -113,6 +113,8 @@ func (s *DBProductDocService) GetDoc(id string) (object.ProductDoc, error) {
 }
 
 // CreateDoc 创建新的产品文档并返回创建后的记录。
+// 兼容 product-space 迁移后的表结构：必须提供 user_id 与 relative_path，否则会因为
+// (workspace_id, user_id, relative_path) 唯一约束冲突而失败。
 func (s *DBProductDocService) CreateDoc(req object.CreateProductDocRequest) (object.ProductDoc, error) {
 	now := time.Now().UTC()
 	if req.Status == "" {
@@ -124,13 +126,21 @@ func (s *DBProductDocService) CreateDoc(req object.CreateProductDocRequest) (obj
 		req.Slug = uuid.New().String()
 	}
 
+	// 未携带作者时给一个兜底值，保证 user_id 非空且不会与真实用户冲突。
+	userID := req.CreatedBy
+	if userID == "" {
+		userID = "legacy"
+	}
+	// 使用 docs/<slug>.md 格式，使 product-space 的树形解析逻辑能正常识别。
+	relativePath := fmt.Sprintf("docs/%s.md", req.Slug)
+
 	var doc object.ProductDoc
 	var content, category, createdBy sql.NullString
 	err := s.db.QueryRow(`
-		INSERT INTO product_docs (id, workspace_id, title, slug, content, status, category, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO product_docs (id, workspace_id, user_id, title, slug, relative_path, content, status, type, category, current_version, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id, workspace_id, title, slug, content, status, category, created_by, created_at, updated_at
-	`, id, req.WorkspaceID, req.Title, req.Slug, req.Content, string(req.Status), req.Category, req.CreatedBy, now, now).Scan(
+	`, id, req.WorkspaceID, userID, req.Title, req.Slug, relativePath, req.Content, string(req.Status), "doc", req.Category, 1, req.CreatedBy, now, now).Scan(
 		&doc.ID, &doc.WorkspaceID, &doc.Title, &doc.Slug,
 		&content, &doc.Status, &category, &createdBy,
 		&doc.CreatedAt, &doc.UpdatedAt,

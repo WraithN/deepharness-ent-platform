@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
+	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
@@ -57,10 +59,11 @@ const (
 	errMsgRelativePathDot      = "relative path cannot contain parent references"
 	errMsgItemNotFound         = "product space item not found"
 	errMsgItemAlreadyExists    = "product space item already exists"
-	errMsgVersionNotFound      = "product space version not found"
-	errMsgInvalidVersion       = "invalid version"
-	errMsgTitleTooLong         = "title exceeds maximum length"
-	errMsgChangeSummaryTooLong = "change summary exceeds maximum length"
+	errMsgVersionNotFound          = "product space version not found"
+	errMsgInvalidVersion           = "invalid version"
+	errMsgTitleTooLong             = "title exceeds maximum length"
+	errMsgChangeSummaryTooLong     = "change summary exceeds maximum length"
+	errMsgWorkspaceOrMemberNotFound = "workspace or member not found"
 )
 
 // invalidInput 将业务校验错误包装为 ErrInvalidInput，便于 handler 映射为 400。
@@ -123,9 +126,13 @@ func isUniqueViolation(err error) bool {
 }
 
 // requirePM 校验当前用户在工作空间中的职能子角色为 PM。
+// 当成员不存在时返回 ErrNotFound，避免与“存在但无权限”统一返回 403 造成信息泄露。
 func (s *DBProductSpaceService) requirePM(ctx context.Context, workspaceID, userID string) error {
 	subRole, err := s.workspaceService.GetMemberSubRole(ctx, workspaceID, userID)
 	if err != nil {
+		if errors.Is(err, workspaceservice.ErrMemberNotFound) {
+			return fmt.Errorf("%w: %s", ErrNotFound, errMsgWorkspaceOrMemberNotFound)
+		}
 		return fmt.Errorf("%w: %v", ErrForbidden, err)
 	}
 	if subRole != pmSubRole {
@@ -204,32 +211,79 @@ func validateID(id string) error {
 	return nil
 }
 
-// resolveProductSpacePath 返回相对路径对应的绝对路径，并校验路径逃逸。
-func resolveProductSpacePath(workspaceRoot, workspaceID, userID, relativePath string) (string, error) {
+// resolveProductSpacePathWithBase 返回产品空间根目录的绝对路径与相对路径对应的绝对路径，并校验路径逃逸。
+func resolveProductSpacePathWithBase(workspaceRoot, workspaceID, userID, relativePath string) (string, string, error) {
 	if err := validateID(workspaceID); err != nil {
-		return "", fmt.Errorf("invalid workspaceID: %w", err)
+		return "", "", fmt.Errorf("invalid workspaceID: %w", err)
 	}
 	if err := validateID(userID); err != nil {
-		return "", fmt.Errorf("invalid userID: %w", err)
+		return "", "", fmt.Errorf("invalid userID: %w", err)
 	}
 
 	base := filepath.Join(workspaceRoot, workspaceID, userID, object.ProductSpaceRoot)
 	if err := rejectSymlink(base); err != nil {
-		return "", fmt.Errorf("base directory symlink check failed: %w", err)
+		return "", "", fmt.Errorf("base directory symlink check failed: %w", err)
 	}
 	absBase, err := filepath.Abs(base)
 	if err != nil {
-		return "", fmt.Errorf("resolve base path failed: %w", err)
+		return "", "", fmt.Errorf("resolve base path failed: %w", err)
 	}
 	target := filepath.Join(absBase, relativePath)
 	absTarget, err := filepath.Abs(target)
 	if err != nil {
-		return "", fmt.Errorf("resolve target path failed: %w", err)
+		return "", "", fmt.Errorf("resolve target path failed: %w", err)
 	}
 	if !strings.HasPrefix(absTarget, absBase+string(filepath.Separator)) && absTarget != absBase {
-		return "", errors.New(errMsgPathTraversal)
+		return "", "", errors.New(errMsgPathTraversal)
 	}
-	return absTarget, nil
+	return absBase, absTarget, nil
+}
+
+// resolveProductSpacePath 返回相对路径对应的绝对路径，并校验路径逃逸。
+func resolveProductSpacePath(workspaceRoot, workspaceID, userID, relativePath string) (string, error) {
+	_, target, err := resolveProductSpacePathWithBase(workspaceRoot, workspaceID, userID, relativePath)
+	return target, err
+}
+
+// safeMkdirAll 在 baseAbs 下安全地创建到达 targetAbs 所经过的每一级目录。
+// 逐级检查已存在的目录段，若发现符号链接或非目录文件则立即返回错误，防止
+// 通过软链接将文件写入工作区之外。
+func safeMkdirAll(baseAbs, targetAbs string) error {
+	if !strings.HasPrefix(targetAbs, baseAbs+string(filepath.Separator)) {
+		return errors.New(errMsgPathTraversal)
+	}
+	rel, err := filepath.Rel(baseAbs, targetAbs)
+	if err != nil {
+		return fmt.Errorf("compute relative path failed: %w", err)
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	current := baseAbs
+	for _, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		if part == ".." {
+			return errors.New(errMsgPathTraversal)
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				if err := os.Mkdir(current, defaultDirPerm); err != nil {
+					return fmt.Errorf("create directory failed: %w", err)
+				}
+				continue
+			}
+			return fmt.Errorf("lstat directory failed: %w", err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("symlinks are not allowed in product space path")
+		}
+		if !info.IsDir() {
+			return errors.New("path component is not a directory")
+		}
+	}
+	return nil
 }
 
 // resolveVersionFilePath 解析 product_doc_versions 中存储的文件路径。
@@ -302,6 +356,7 @@ func validateRelativePath(relativePath string) error {
 }
 
 // buildRelativePath 构造相对路径：category/[folder/]filename.ext。
+// folder 支持多级子目录，如 "a/b"。
 func buildRelativePath(category, folder, name, ext string) string {
 	filename := name
 	if ext != "" {
@@ -311,6 +366,21 @@ func buildRelativePath(category, folder, name, ext string) string {
 		return filepath.Join(category, filename)
 	}
 	return filepath.Join(category, folder, filename)
+}
+
+// splitFolderPath 将 folder 路径拆分为各级目录名，空路径返回空切片。
+func splitFolderPath(folder string) []string {
+	if folder == "" {
+		return nil
+	}
+	parts := strings.Split(filepath.ToSlash(folder), "/")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 // buildVersionRelativePath 构造版本文件的相对路径：versions/{category}/{folder}/{name}-vN.ext。
@@ -379,6 +449,36 @@ func sanitizeName(name string) (string, error) {
 	return cleaned, nil
 }
 
+// sanitizeFolderPath 清理由 "/" 分隔的多级目录路径。
+// 对每一段分别调用 sanitizeName，并拒绝空段、"."、".." 与路径逃逸。
+func sanitizeFolderPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("invalid folder path")
+	}
+	// 统一使用正斜杠作为路径分隔符，便于数据库存储与前端展示。
+	path = filepath.ToSlash(path)
+	if strings.HasPrefix(path, "/") || strings.Contains(path, "..") {
+		return "", errors.New("invalid folder path")
+	}
+	segments := strings.Split(path, "/")
+	cleaned := make([]string, 0, len(segments))
+	for _, seg := range segments {
+		if seg == "" {
+			continue
+		}
+		s, err := sanitizeName(seg)
+		if err != nil {
+			return "", fmt.Errorf("invalid folder segment %q: %w", seg, err)
+		}
+		cleaned = append(cleaned, s)
+	}
+	if len(cleaned) == 0 {
+		return "", errors.New("invalid folder path")
+	}
+	return strings.Join(cleaned, "/"), nil
+}
+
 // rejectSymlink 校验指定路径本身不是符号链接；路径不存在时视为安全。
 func rejectSymlink(path string) error {
 	info, err := os.Lstat(path)
@@ -394,7 +494,9 @@ func rejectSymlink(path string) error {
 	return nil
 }
 
-// escapeLikePattern 对字符串中的 LIKE 通配符与转义字符进行转义，配合 ESCAPE '\\' 使用。
+// escapeLikePattern 对字符串中的 LIKE 通配符与转义字符进行转义，配合 ESCAPE '\' 使用。
+// 注意：SQL 语句中写 ESCAPE '\'，在 PostgreSQL 标准字符串语义下会被解析为两个反斜杠，
+// 导致“invalid escape string”。因此查询端使用 ESCAPE '\''（单个反斜杠），本函数将转义字符输出为 "\\"。
 func escapeLikePattern(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "%", "\\%")
@@ -472,15 +574,6 @@ func validateCategory(category string) error {
 	return errors.New(errMsgInvalidCategory)
 }
 
-// ensureParentDir 确保文件所在父目录存在。
-func ensureParentDir(path string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, defaultDirPerm); err != nil {
-		return fmt.Errorf("create directory failed: %w", err)
-	}
-	return nil
-}
-
 // readFileBytes 根据相对路径读取文件内容。
 func (s *DBProductSpaceService) readFileBytes(ctx context.Context, workspaceID, userID, relativePath string) ([]byte, error) {
 	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, relativePath)
@@ -498,17 +591,17 @@ func (s *DBProductSpaceService) readFileBytes(ctx context.Context, workspaceID, 
 }
 
 // parseRelativePath 将数据库中存储的相对路径解析为目录与文件名信息。
+// 支持多级子目录，返回的 folder 为中间目录路径（以 "/" 连接），可能为空。
 func parseRelativePath(relativePath string) (category, folder, name, ext string, err error) {
-	parts := strings.Split(relativePath, string(filepath.Separator))
-	if len(parts) != 2 && len(parts) != 3 {
+	parts := strings.Split(filepath.ToSlash(relativePath), "/")
+	if len(parts) < 2 {
 		return "", "", "", "", fmt.Errorf("invalid relative path format: %s", relativePath)
 	}
 	category = parts[0]
-	folder = ""
-	if len(parts) == 3 {
-		folder = parts[1]
-	}
 	filename := parts[len(parts)-1]
+	if len(parts) > 2 {
+		folder = strings.Join(parts[1:len(parts)-1], "/")
+	}
 	ext = parseExtFromName(filename)
 	name = stripExt(filename, ext)
 	return category, folder, name, ext, nil
@@ -633,7 +726,7 @@ func (s *DBProductSpaceService) itemExistsByPath(ctx context.Context, workspaceI
 func (s *DBProductSpaceService) folderHasItems(ctx context.Context, workspaceID, userID, category, folder string) (bool, error) {
 	const folderHasItemsQuery = `
 		SELECT id FROM product_docs
-		WHERE workspace_id = $1 AND user_id = $2 AND relative_path LIKE $3 ESCAPE '\\'
+		WHERE workspace_id = $1 AND user_id = $2 AND relative_path LIKE $3 ESCAPE '\'
 		LIMIT 1
 	`
 	prefix := buildRelativePath(category, folder, "", "") + "/"
@@ -741,8 +834,8 @@ func (s *DBProductSpaceService) GetTree(ctx context.Context, workspaceID, userID
 			rootNode.Children = append(rootNode.Children, fileNode)
 			continue
 		}
-		folderIdx := findOrCreateFolder(rootNode, folder)
-		rootNode.Children[folderIdx].Children = append(rootNode.Children[folderIdx].Children, fileNode)
+		folderNode := findOrCreateFolder(rootNode, folder)
+		folderNode.Children = append(folderNode.Children, fileNode)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate items failed: %w", err)
@@ -781,38 +874,59 @@ func (s *DBProductSpaceService) appendEmptyFolders(ctx context.Context, workspac
 		if err := rejectSymlink(catPath); err != nil {
 			return nil, fmt.Errorf("category directory symlink check failed: %w", err)
 		}
-		entries, err := os.ReadDir(catPath)
-		if err != nil {
+		// 递归扫描分类目录下的所有子目录，确保空的多级文件夹也能出现在树中。
+		if err := filepath.WalkDir(catPath, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if path == catPath || !d.IsDir() {
+				return nil
+			}
+			if err := rejectSymlink(path); err != nil {
+				return fmt.Errorf("folder symlink check failed: %w", err)
+			}
+			rel, err := filepath.Rel(catPath, path)
+			if err != nil {
+				return err
+			}
+			findOrCreateFolder(&roots[cat.idx], filepath.ToSlash(rel))
+			return nil
+		}); err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, fmt.Errorf("read category directory %s failed: %w", cat.name, err)
-		}
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			folderName := entry.Name()
-			findOrCreateFolder(&roots[cat.idx], folderName)
+			return nil, fmt.Errorf("walk category directory %s failed: %w", cat.name, err)
 		}
 	}
 	return roots, nil
 }
 
-// findOrCreateFolder 在父节点下查找或创建文件夹节点，并返回其在 Children 中的索引。
-func findOrCreateFolder(parent *object.ProductSpaceTreeNode, folder string) int {
-	folderPath := filepath.Join(parent.Path, folder)
-	for i := range parent.Children {
-		if parent.Children[i].Name == folder && parent.Children[i].Type == object.NodeTypeFolder {
-			return i
-		}
+// findOrCreateFolder 在父节点下查找或创建文件夹节点（支持多级子目录），并返回最深层节点。
+func findOrCreateFolder(parent *object.ProductSpaceTreeNode, folder string) *object.ProductSpaceTreeNode {
+	segments := splitFolderPath(folder)
+	if len(segments) == 0 {
+		return parent
 	}
-	parent.Children = append(parent.Children, object.ProductSpaceTreeNode{
-		Name: folder,
-		Path: folderPath,
-		Type: object.NodeTypeFolder,
-	})
-	return len(parent.Children) - 1
+	current := parent
+	for _, seg := range segments {
+		found := -1
+		for i := range current.Children {
+			if current.Children[i].Name == seg && current.Children[i].Type == object.NodeTypeFolder {
+				found = i
+				break
+			}
+		}
+		if found == -1 {
+			current.Children = append(current.Children, object.ProductSpaceTreeNode{
+				Name: seg,
+				Path: filepath.Join(current.Path, seg),
+				Type: object.NodeTypeFolder,
+			})
+			found = len(current.Children) - 1
+		}
+		current = &current.Children[found]
+	}
+	return current
 }
 
 // CreateItem 创建新的文档或原型条目，并写入初始文件。
@@ -847,10 +961,7 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 	}
 	folder := ""
 	if req.Folder != "" {
-		if strings.ContainsAny(req.Folder, "/\\") {
-			return nil, invalidInput(errors.New(errMsgFolderPathSeparator))
-		}
-		folder, err = sanitizeName(req.Folder)
+		folder, err = sanitizeFolderPath(req.Folder)
 		if err != nil {
 			return nil, invalidInput(err)
 		}
@@ -882,7 +993,7 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 	if err := validateRelativePath(relativePath); err != nil {
 		return nil, invalidInput(err)
 	}
-	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, relativePath)
+	baseAbs, absPath, err := resolveProductSpacePathWithBase(s.workspaceRoot, workspaceID, userID, relativePath)
 	if err != nil {
 		return nil, invalidInput(err)
 	}
@@ -906,11 +1017,11 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 		return nil, err
 	}
 
-	// 数据库记录插入成功后，再创建目录并写入文件；此时唯一索引已保证路径未被占用。
+	// 数据库记录插入成功后，再安全地创建目录并写入文件；safeMkdirAll 逐级检查父目录，防止软链接逃逸。
 	if err := rejectSymlink(absPath); err != nil {
 		return nil, fmt.Errorf("symlink check failed: %w", err)
 	}
-	if err := ensureParentDir(absPath); err != nil {
+	if err := safeMkdirAll(baseAbs, filepath.Dir(absPath)); err != nil {
 		return nil, err
 	}
 
@@ -991,7 +1102,7 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 		return nil, invalidInput(err)
 	}
 
-	currentAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, item.RelativePath)
+	baseAbs, currentAbsPath, err := resolveProductSpacePathWithBase(s.workspaceRoot, workspaceID, userID, item.RelativePath)
 	if err != nil {
 		return nil, err
 	}
@@ -1016,7 +1127,7 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 	if err := rejectSymlink(versionAbsPath); err != nil {
 		return nil, fmt.Errorf("version file symlink check failed: %w", err)
 	}
-	if err := ensureParentDir(versionAbsPath); err != nil {
+	if err := safeMkdirAll(baseAbs, filepath.Dir(versionAbsPath)); err != nil {
 		return nil, err
 	}
 	if err := copyFile(currentAbsPath, versionAbsPath); err != nil {
@@ -1163,7 +1274,7 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 		return nil, err
 	}
 
-	currentAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, item.RelativePath)
+	baseAbs, currentAbsPath, err := resolveProductSpacePathWithBase(s.workspaceRoot, workspaceID, userID, item.RelativePath)
 	if err != nil {
 		return nil, err
 	}
@@ -1193,7 +1304,7 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	if err := rejectSymlink(snapshotAbsPath); err != nil {
 		return nil, fmt.Errorf("snapshot file symlink check failed: %w", err)
 	}
-	if err := ensureParentDir(snapshotAbsPath); err != nil {
+	if err := safeMkdirAll(baseAbs, filepath.Dir(snapshotAbsPath)); err != nil {
 		return nil, err
 	}
 
@@ -1353,7 +1464,7 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 	return nil
 }
 
-// CreateFolder 在磁盘上创建产品空间文件夹。
+// CreateFolder 在磁盘上创建产品空间文件夹，支持多级子目录。
 func (s *DBProductSpaceService) CreateFolder(ctx context.Context, workspaceID, userID string, req object.CreateFolderRequest) error {
 	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return err
@@ -1362,14 +1473,11 @@ func (s *DBProductSpaceService) CreateFolder(ctx context.Context, workspaceID, u
 	if err := validateCategory(req.Category); err != nil {
 		return invalidInput(err)
 	}
-	if strings.ContainsAny(req.Name, "/\\") {
-		return invalidInput(errors.New(errMsgFolderPathSeparator))
-	}
-	folder, err := sanitizeName(req.Name)
+	folder, err := sanitizeFolderPath(req.Name)
 	if err != nil {
 		return invalidInput(err)
 	}
-	catPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, req.Category)
+	baseAbs, catPath, err := resolveProductSpacePathWithBase(s.workspaceRoot, workspaceID, userID, req.Category)
 	if err != nil {
 		return invalidInput(err)
 	}
@@ -1380,20 +1488,20 @@ func (s *DBProductSpaceService) CreateFolder(ctx context.Context, workspaceID, u
 	if err := validateRelativePath(relativePath); err != nil {
 		return invalidInput(err)
 	}
-	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, relativePath)
+	_, absPath, err := resolveProductSpacePathWithBase(s.workspaceRoot, workspaceID, userID, relativePath)
 	if err != nil {
 		return invalidInput(err)
 	}
 	if err := rejectSymlink(absPath); err != nil {
 		return fmt.Errorf("folder symlink check failed: %w", err)
 	}
-	if err := os.MkdirAll(absPath, defaultDirPerm); err != nil {
+	if err := safeMkdirAll(baseAbs, absPath); err != nil {
 		return fmt.Errorf("create folder failed: %w", err)
 	}
 	return nil
 }
 
-// DeleteFolder 删除空文件夹。
+// DeleteFolder 删除空文件夹，支持多级子目录。
 func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, userID string, req object.DeleteFolderRequest) error {
 	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return err
@@ -1402,10 +1510,7 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 	if err := validateCategory(req.Category); err != nil {
 		return invalidInput(err)
 	}
-	if strings.ContainsAny(req.Name, "/\\") {
-		return invalidInput(errors.New(errMsgFolderPathSeparator))
-	}
-	folder, err := sanitizeName(req.Name)
+	folder, err := sanitizeFolderPath(req.Name)
 	if err != nil {
 		return invalidInput(err)
 	}

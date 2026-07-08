@@ -465,7 +465,7 @@ func (s *DBWorkspaceService) GetMemberRole(workspaceID, userID string) (string, 
 		SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2
 	`, workspaceID, userID).Scan(&role)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", errors.New("member not found")
+		return "", fmt.Errorf("%w", ErrMemberNotFound)
 	}
 	if err != nil {
 		return "", fmt.Errorf("get member role failed: %w", err)
@@ -480,7 +480,7 @@ func (s *DBWorkspaceService) GetMemberSubRole(ctx context.Context, workspaceID, 
 		SELECT sub_role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2
 	`, workspaceID, userID).Scan(&subRole)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", errors.New("member not found")
+		return "", fmt.Errorf("%w", ErrMemberNotFound)
 	}
 	if err != nil {
 		return "", fmt.Errorf("get member sub role failed: %w", err)

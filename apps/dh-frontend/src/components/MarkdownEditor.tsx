@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { MarkdownView } from '@/components/chat/MarkdownView';
-import { Eye, Edit3, Columns3, Save, Loader2 } from 'lucide-react';
+import { Eye, Edit3, Columns3 } from 'lucide-react';
 
 export type EditorLayout = 'edit' | 'preview' | 'split';
 
@@ -11,8 +11,6 @@ export interface MarkdownEditorProps {
   onChange: (value: string) => void;
   layout?: EditorLayout;
   onLayoutChange?: (layout: EditorLayout) => void;
-  onSave?: () => void;
-  saving?: boolean;
   placeholder?: string;
   readOnly?: boolean;
 }
@@ -30,8 +28,6 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   onChange,
   layout: controlledLayout,
   onLayoutChange,
-  onSave,
-  saving = false,
   placeholder = '在此编辑 Markdown 文档…',
   readOnly = false,
 }) => {
@@ -70,12 +66,6 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           <LayoutButton target="split" icon={Columns3} label="双栏" />
           <LayoutButton target="preview" icon={Eye} label="预览" />
         </div>
-        {onSave && (
-          <Button size="sm" onClick={onSave} disabled={saving}>
-            {saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
-            保存
-          </Button>
-        )}
       </div>
 
       <div className="flex-1 flex overflow-hidden">
