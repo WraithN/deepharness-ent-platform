@@ -104,28 +104,33 @@ WORKSPACE_ROOT/
         docs/
           产品需求/
             PRD.md              ← 当前版本
-            PRD-v1.md           ← 历史版本
-            PRD-v2.md
         prototypes/
           App首页/
             home.png            ← 当前版本
-            home-v1.png
-            home-v2.png
+        versions/               ← 历史版本独立存放，避免与用户文件命名冲突
+          docs/
+            产品需求/
+              PRD-v1.md
+              PRD-v2.md
+          prototypes/
+            App首页/
+              home-v1.png
+              home-v2.png
 ```
 
 ### 5.2 版本命名
 
-- 当前版本：`{name}.{ext}`
-- 历史版本：`{name}-v{version}.{ext}`
+- 当前版本：`{name}.{ext}`，位于 `products/{docs|prototypes}/{folder}/`。
+- 历史版本：`{name}-v{version}.{ext}`，位于 `products/versions/{docs|prototypes}/{folder}/`。
 - `version` 从 1 开始，每次更新时递增。
 
 ### 5.3 核心流程
 
 1. **创建条目**：数据库插入记录；磁盘写入初始文件（version=1，不带 `-v1` 后缀）。
-2. **更新内容**：复制当前文件为 `-v{current_version}.ext`；写入新的当前文件；`current_version++`；插入版本记录。
-3. **恢复版本**：复制 `文件名-v{n}.ext` 为新的当前文件；`current_version++`；插入新版本记录（change_summary 标记为“恢复至 v{n}”）。
-4. **删除条目**：级联删除版本记录，同时删除当前文件及所有 `*-v*.ext` 文件。
-5. **子目录操作**：仅允许在 `docs/` 或 `prototypes/` 下创建一级目录；删除前校验目录为空。
+2. **更新内容**：复制当前文件到 `products/versions/` 下的 `{name}-v{current_version}.ext`；写入新的当前文件；`current_version++`；插入版本记录。
+3. **恢复版本**：从 `products/versions/` 复制 `文件名-v{n}.ext` 为新的当前文件；`current_version++`；在 `products/versions/` 插入新版本记录（change_summary 标记为“恢复至 v{n}”）。
+4. **删除条目**：级联删除版本记录，同时删除当前文件及 `products/versions/` 下所有对应的历史版本文件。
+5. **子目录操作**：仅允许在 `docs/` 或 `prototypes/` 下创建一级目录；删除前校验目录为空，并同步清理 `versions/` 下对应的空目录。
 
 ---
 
