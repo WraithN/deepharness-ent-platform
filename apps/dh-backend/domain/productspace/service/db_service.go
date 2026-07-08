@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -36,7 +37,8 @@ const (
 	errMsgInvalidExtension  = "invalid file extension"
 	errMsgPathTraversal     = "path traversal detected"
 	errMsgFolderNotEmpty    = "folder is not empty"
-	errMsgTitleEmpty        = "title is required"
+	errMsgTitleEmpty           = "title is required"
+	errMsgTitlePathSeparator   = "title cannot contain path separators"
 	errMsgContentRequired   = "doc content is required"
 	errMsgFileDataRequired  = "prototype file data is required"
 	errMsgPrototypeTooLarge = "prototype file exceeds maximum allowed size"
@@ -602,9 +604,13 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 		return nil, err
 	}
 
+	if strings.ContainsAny(req.Title, `/\`) {
+		return nil, errors.New(errMsgTitlePathSeparator)
+	}
+
 	title, err := sanitizeName(req.Title)
 	if err != nil {
-		return nil, errors.New(errMsgTitleEmpty)
+		return nil, fmt.Errorf("invalid title: %w", err)
 	}
 	folder := ""
 	if req.Folder != "" {
@@ -991,15 +997,7 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 	if err != nil {
 		return err
 	}
-
-	// 先删除文件系统文件；若失败则保留 DB 记录，避免文件孤儿。
-	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove current file failed: %w", err)
-	}
 	versionDir := filepath.Dir(absPath)
-	if err := deleteVersionFiles(versionDir, name, ext); err != nil {
-		return err
-	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1022,7 +1020,19 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 		return errors.New(errMsgItemNotFound)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction failed: %w", err)
+	}
+
+	// 数据库记录已成功删除，再清理文件系统；文件清理失败不影响删除结果。
+	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("remove current file %s failed: %v", absPath, err)
+	}
+	if err := deleteVersionFiles(versionDir, name, ext); err != nil {
+		log.Printf("remove version files in %s failed: %v", versionDir, err)
+	}
+
+	return nil
 }
 
 // CreateFolder 在磁盘上创建产品空间文件夹。
