@@ -40,6 +40,7 @@ const (
 	errMsgRelativePathAbs   = "relative path must be relative"
 	errMsgRelativePathDot   = "relative path cannot contain parent references"
 	errMsgItemNotFound      = "product space item not found"
+	errMsgItemAlreadyExists = "product space item already exists"
 	errMsgVersionNotFound   = "product space version not found"
 )
 
@@ -67,6 +68,11 @@ func NewDBProductSpaceService(db *sql.DB, workspaceRoot string) *DBProductSpaceS
 // scanner 抽象了 sql.Row 与 sql.Rows 的 Scan 能力，用于复用扫描逻辑。
 type scanner interface {
 	Scan(dest ...any) error
+}
+
+// queryRowContextExecer 抽象了 *sql.DB 与 *sql.Tx 的 QueryRowContext 能力。
+type queryRowContextExecer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // scanProductSpaceItem 从数据库行扫描到领域对象。
@@ -387,14 +393,15 @@ func (s *DBProductSpaceService) fetchItem(ctx context.Context, workspaceID, user
 	return &item, nil
 }
 
-// fetchVersion 按文档 ID 与版本号获取版本记录。
-func (s *DBProductSpaceService) fetchVersion(ctx context.Context, itemID string, version int) (*object.ProductSpaceVersion, error) {
+// fetchVersion 按文档 ID、工作空间、用户与版本号获取版本记录。
+func (s *DBProductSpaceService) fetchVersion(ctx context.Context, workspaceID, userID, itemID string, version int) (*object.ProductSpaceVersion, error) {
 	var v object.ProductSpaceVersion
 	err := scanProductSpaceVersion(s.db.QueryRowContext(ctx, `
-		SELECT id, doc_id, version, title, file_path, file_ext, mime_type, size_bytes, change_summary, created_by, created_at
-		FROM product_doc_versions
-		WHERE doc_id = $1 AND version = $2
-	`, itemID, version), &v)
+		SELECT v.id, v.doc_id, v.version, v.title, v.file_path, v.file_ext, v.mime_type, v.size_bytes, v.change_summary, v.created_by, v.created_at
+		FROM product_doc_versions v
+		JOIN product_docs d ON d.id = v.doc_id
+		WHERE v.doc_id = $1 AND d.workspace_id = $2 AND d.user_id = $3 AND v.version = $4
+	`, itemID, workspaceID, userID, version), &v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errors.New(errMsgVersionNotFound)
 	}
@@ -407,12 +414,13 @@ func (s *DBProductSpaceService) fetchVersion(ctx context.Context, itemID string,
 // insertProductDoc 将新条目写入 product_docs 并返回完整对象。
 func (s *DBProductSpaceService) insertProductDoc(
 	ctx context.Context,
+	q queryRowContextExecer,
 	id, workspaceID, userID, itemType, title, slug, relativePath, content, status string,
 	currentVersion int, fileExt, mimeType string, sizeBytes int64, createdBy string,
 ) (*object.ProductSpaceItem, error) {
 	now := time.Now().UTC()
 	var item object.ProductSpaceItem
-	err := scanProductSpaceItem(s.db.QueryRowContext(ctx, `
+	err := scanProductSpaceItem(q.QueryRowContext(ctx, `
 		INSERT INTO product_docs (
 			id, workspace_id, user_id, type, title, slug, relative_path, content,
 			status, current_version, file_ext, mime_type, size_bytes, created_by, created_at, updated_at
@@ -538,23 +546,42 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 	if err != nil {
 		return nil, err
 	}
+
+	// 检查目标文件是否已存在，避免覆盖用户已有的数据。
+	if _, err := os.Stat(absPath); err == nil {
+		return nil, errors.New(errMsgItemAlreadyExists)
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("check file existence failed: %w", err)
+	}
+
 	if err := ensureParentDir(absPath); err != nil {
 		return nil, err
 	}
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
 	id := uuid.New().String()
+	item, err := s.insertProductDoc(
+		ctx, tx, id, workspaceID, userID, req.Type, title, id, relativePath,
+		content, ItemStatusDraft, 1, ext, mime, size, userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := os.WriteFile(absPath, data, defaultFilePerm); err != nil {
 		return nil, fmt.Errorf("write initial file failed: %w", err)
 	}
 
-	item, err := s.insertProductDoc(
-		ctx, id, workspaceID, userID, req.Type, title, id, relativePath,
-		content, ItemStatusDraft, 1, ext, mime, size, userID,
-	)
-	if err != nil {
+	if err := tx.Commit(); err != nil {
 		_ = os.Remove(absPath)
-		return nil, err
+		return nil, fmt.Errorf("commit transaction failed: %w", err)
 	}
+
 	return item, nil
 }
 
@@ -608,7 +635,7 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 		return nil, fmt.Errorf("write new content failed: %w", err)
 	}
 
-	if err := s.saveVersionAndUpdate(ctx, item, versionRelPath, req.Content, req.ChangeSummary, userID, oldBytes, newData); err != nil {
+	if err := s.saveVersionAndUpdate(ctx, item, versionAbsPath, req.Content, req.ChangeSummary, userID, oldBytes, newData); err != nil {
 		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
 		_ = os.Remove(versionAbsPath)
 		return nil, err
@@ -621,7 +648,7 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 func (s *DBProductSpaceService) saveVersionAndUpdate(
 	ctx context.Context,
 	item *object.ProductSpaceItem,
-	versionRelPath, content, changeSummary, userID string,
+	versionFilePath, content, changeSummary, userID string,
 	oldBytes, newBytes []byte,
 ) error {
 	now := time.Now().UTC()
@@ -637,7 +664,7 @@ func (s *DBProductSpaceService) saveVersionAndUpdate(
 			id, doc_id, version, title, file_path, file_ext, mime_type, size_bytes, change_summary, created_by, created_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, versionID, item.ID, item.CurrentVersion, item.Title, versionRelPath,
+	`, versionID, item.ID, item.CurrentVersion, item.Title, versionFilePath,
 		item.FileExt, item.MimeType, int64(len(oldBytes)), changeSummary, userID, now,
 	); err != nil {
 		return fmt.Errorf("insert version failed: %w", err)
@@ -673,11 +700,12 @@ func (s *DBProductSpaceService) ListVersions(ctx context.Context, workspaceID, u
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, doc_id, version, title, file_path, file_ext, mime_type, size_bytes, change_summary, created_by, created_at
-		FROM product_doc_versions
-		WHERE doc_id = $1
+		SELECT v.id, v.doc_id, v.version, v.title, v.file_path, v.file_ext, v.mime_type, v.size_bytes, v.change_summary, v.created_by, v.created_at
+		FROM product_doc_versions v
+		JOIN product_docs d ON d.id = v.doc_id
+		WHERE v.doc_id = $1 AND d.workspace_id = $2 AND d.user_id = $3
 		ORDER BY version DESC
-	`, itemID)
+	`, itemID, workspaceID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list versions failed: %w", err)
 	}
@@ -701,7 +729,7 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 		return nil, err
 	}
 
-	versionRecord, err := s.fetchVersion(ctx, itemID, version)
+	versionRecord, err := s.fetchVersion(ctx, workspaceID, userID, itemID, version)
 	if err != nil {
 		return nil, err
 	}
@@ -809,7 +837,34 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 		return err
 	}
 
-	res, err := s.db.ExecContext(ctx, `DELETE FROM product_docs WHERE id = $1`, itemID)
+	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, item.RelativePath)
+	if err != nil {
+		return err
+	}
+	_, _, name, ext, err := parseRelativePath(item.RelativePath)
+	if err != nil {
+		return err
+	}
+
+	// 先删除文件系统文件；若失败则保留 DB 记录，避免文件孤儿。
+	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove current file failed: %w", err)
+	}
+	versionDir := filepath.Dir(absPath)
+	if err := deleteVersionFiles(versionDir, name, ext); err != nil {
+		return err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM product_doc_versions WHERE doc_id = $1`, itemID); err != nil {
+		return fmt.Errorf("delete versions failed: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM product_docs WHERE id = $1`, itemID)
 	if err != nil {
 		return fmt.Errorf("delete item failed: %w", err)
 	}
@@ -821,23 +876,7 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 		return errors.New(errMsgItemNotFound)
 	}
 
-	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, item.RelativePath)
-	if err != nil {
-		return err
-	}
-	_, _, name, ext, err := parseRelativePath(item.RelativePath)
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove current file failed: %w", err)
-	}
-
-	versionDir := filepath.Dir(absPath)
-	if err := deleteVersionFiles(versionDir, name, ext); err != nil {
-		return err
-	}
-	return nil
+	return tx.Commit()
 }
 
 // CreateFolder 在磁盘上创建产品空间文件夹。
