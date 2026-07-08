@@ -63,6 +63,14 @@ const (
 	errMsgChangeSummaryTooLong = "change summary exceeds maximum length"
 )
 
+// invalidInput 将业务校验错误包装为 ErrInvalidInput，便于 handler 映射为 400。
+func invalidInput(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrInvalidInput, err.Error())
+}
+
 // 预定义的 MIME 类型映射，避免魔法字符串。
 var mimeTypeByExt = map[string]string{
 	object.DocExtMarkdown: "text/markdown",
@@ -121,7 +129,7 @@ func (s *DBProductSpaceService) requirePM(ctx context.Context, workspaceID, user
 		return err
 	}
 	if subRole != pmSubRole {
-		return errors.New("only pm can access product space")
+		return fmt.Errorf("%w: only pm can access product space", ErrForbidden)
 	}
 	return nil
 }
@@ -568,7 +576,7 @@ func (s *DBProductSpaceService) fetchItemWithExecer(ctx context.Context, q query
 		WHERE id = $1 AND workspace_id = $2 AND user_id = $3
 	`, itemID, workspaceID, userID), &item)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, errors.New(errMsgItemNotFound)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("fetch item failed: %w", err)
@@ -596,7 +604,7 @@ func (s *DBProductSpaceService) fetchItemForUpdate(ctx context.Context, tx *sql.
 	err := scanProductSpaceItem(tx.QueryRowContext(ctx, query, itemID, workspaceID, userID), &item)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errors.New(errMsgItemNotFound)
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
 		}
 		return nil, fmt.Errorf("fetch item for update failed: %w", err)
 	}
@@ -814,43 +822,43 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 	}
 
 	if err := validateCreateItemRequest(&req); err != nil {
-		return nil, err
+		return nil, invalidInput(err)
 	}
 
 	if req.Type == object.ItemTypeDoc && int64(len(req.Content)) > object.MaxDocSizeBytes {
-		return nil, errors.New(errMsgDocTooLarge)
+		return nil, invalidInput(errors.New(errMsgDocTooLarge))
 	}
 
 	categoryDir, err := typeToCategoryDir(req.Type)
 	if err != nil {
-		return nil, err
+		return nil, invalidInput(err)
 	}
 
 	if strings.ContainsAny(req.Title, `/\`) {
-		return nil, errors.New(errMsgTitlePathSeparator)
+		return nil, invalidInput(errors.New(errMsgTitlePathSeparator))
 	}
 
 	title, err := sanitizeName(req.Title)
 	if err != nil {
-		return nil, fmt.Errorf("invalid title: %w", err)
+		return nil, invalidInput(fmt.Errorf("invalid title: %w", err))
 	}
 	if len([]rune(title)) > maxTitleLength {
-		return nil, errors.New(errMsgTitleTooLong)
+		return nil, invalidInput(errors.New(errMsgTitleTooLong))
 	}
 	folder := ""
 	if req.Folder != "" {
 		if strings.ContainsAny(req.Folder, "/\\") {
-			return nil, errors.New(errMsgFolderPathSeparator)
+			return nil, invalidInput(errors.New(errMsgFolderPathSeparator))
 		}
 		folder, err = sanitizeName(req.Folder)
 		if err != nil {
-			return nil, err
+			return nil, invalidInput(err)
 		}
 	}
 
 	ext, err := parseAndValidateExt(req.Type, title)
 	if err != nil {
-		return nil, err
+		return nil, invalidInput(err)
 	}
 	name := stripExt(title, ext)
 	mime := mimeTypeForExt(ext)
@@ -872,11 +880,11 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 
 	relativePath := buildRelativePath(categoryDir, folder, name, ext)
 	if err := validateRelativePath(relativePath); err != nil {
-		return nil, err
+		return nil, invalidInput(err)
 	}
 	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, relativePath)
 	if err != nil {
-		return nil, err
+		return nil, invalidInput(err)
 	}
 
 	// 先启动事务并插入数据库记录，利用唯一索引锁定路径，避免并发请求先写磁盘再冲突时误删已提交文件。
@@ -893,7 +901,7 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return nil, errors.New(errMsgItemAlreadyExists)
+			return nil, fmt.Errorf("%w: %s", ErrConflict, errMsgItemAlreadyExists)
 		}
 		return nil, err
 	}
@@ -955,7 +963,7 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 	}
 
 	if item.Type == object.ItemTypeDoc && int64(len(req.Content)) > object.MaxDocSizeBytes {
-		return nil, errors.New(errMsgDocTooLarge)
+		return nil, invalidInput(errors.New(errMsgDocTooLarge))
 	}
 
 	// 先校验并解码新内容，确认合法后再创建版本快照，避免生成孤儿版本文件。
@@ -964,14 +972,14 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 		// Base64 is ~4/3 of original size plus padding
 		maxBase64Len := int(base64.StdEncoding.EncodedLen(int(object.MaxPrototypeSizeBytes)))
 		if len(req.Content) > maxBase64Len {
-			return nil, errors.New(errMsgPrototypeTooLarge)
+			return nil, invalidInput(errors.New(errMsgPrototypeTooLarge))
 		}
 		decoded, err := base64.StdEncoding.DecodeString(req.Content)
 		if err != nil {
-			return nil, fmt.Errorf("invalid base64 data: %w", err)
+			return nil, invalidInput(fmt.Errorf("invalid base64 data: %w", err))
 		}
 		if int64(len(decoded)) > object.MaxPrototypeSizeBytes {
-			return nil, errors.New(errMsgPrototypeTooLarge)
+			return nil, invalidInput(errors.New(errMsgPrototypeTooLarge))
 		}
 		newData = decoded
 	} else {
@@ -980,7 +988,7 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 
 	category, folder, name, ext, err := parseRelativePath(item.RelativePath)
 	if err != nil {
-		return nil, err
+		return nil, invalidInput(err)
 	}
 
 	currentAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, item.RelativePath)
@@ -997,7 +1005,7 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 	}
 
 	if len([]rune(req.ChangeSummary)) > maxChangeSummaryLength {
-		return nil, errors.New(errMsgChangeSummaryTooLong)
+		return nil, invalidInput(errors.New(errMsgChangeSummaryTooLong))
 	}
 
 	versionRelPath := buildVersionRelativePath(category, folder, name, ext, item.CurrentVersion)
@@ -1147,7 +1155,7 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	}
 
 	if targetVersion <= 0 || targetVersion >= item.CurrentVersion {
-		return nil, errors.New(errMsgInvalidVersion)
+		return nil, invalidInput(errors.New(errMsgInvalidVersion))
 	}
 
 	versionRecord, err := s.fetchVersionWithExecer(ctx, tx, workspaceID, userID, itemID, targetVersion)
@@ -1170,7 +1178,7 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 
 	category, folder, name, ext, err := parseRelativePath(item.RelativePath)
 	if err != nil {
-		return nil, err
+		return nil, invalidInput(err)
 	}
 
 	nextVersion := item.CurrentVersion + 1
@@ -1191,7 +1199,7 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 
 	changeSummary := fmt.Sprintf(changeSummaryRestoreToVersion, targetVersion)
 	if len([]rune(changeSummary)) > maxChangeSummaryLength {
-		return nil, errors.New(errMsgChangeSummaryTooLong)
+		return nil, invalidInput(errors.New(errMsgChangeSummaryTooLong))
 	}
 
 	oldBytes, err := os.ReadFile(currentAbsPath)
@@ -1255,7 +1263,7 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	}
 	if affected == 0 {
 		rollbackFS()
-		return nil, errors.New(errMsgItemNotFound)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -1352,29 +1360,29 @@ func (s *DBProductSpaceService) CreateFolder(ctx context.Context, workspaceID, u
 	}
 
 	if err := validateCategory(req.Category); err != nil {
-		return err
+		return invalidInput(err)
 	}
 	if strings.ContainsAny(req.Name, "/\\") {
-		return errors.New("folder name cannot contain path separators")
+		return invalidInput(errors.New(errMsgFolderPathSeparator))
 	}
 	folder, err := sanitizeName(req.Name)
 	if err != nil {
-		return err
+		return invalidInput(err)
 	}
 	catPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, req.Category)
 	if err != nil {
-		return err
+		return invalidInput(err)
 	}
 	if err := rejectSymlink(catPath); err != nil {
 		return fmt.Errorf("category directory symlink check failed: %w", err)
 	}
 	relativePath := filepath.Join(req.Category, folder)
 	if err := validateRelativePath(relativePath); err != nil {
-		return err
+		return invalidInput(err)
 	}
 	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, relativePath)
 	if err != nil {
-		return err
+		return invalidInput(err)
 	}
 	if err := rejectSymlink(absPath); err != nil {
 		return fmt.Errorf("folder symlink check failed: %w", err)
@@ -1392,29 +1400,29 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 	}
 
 	if err := validateCategory(req.Category); err != nil {
-		return err
+		return invalidInput(err)
 	}
 	if strings.ContainsAny(req.Name, "/\\") {
-		return errors.New("folder name cannot contain path separators")
+		return invalidInput(errors.New(errMsgFolderPathSeparator))
 	}
 	folder, err := sanitizeName(req.Name)
 	if err != nil {
-		return err
+		return invalidInput(err)
 	}
 	catPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, req.Category)
 	if err != nil {
-		return err
+		return invalidInput(err)
 	}
 	if err := rejectSymlink(catPath); err != nil {
 		return fmt.Errorf("category directory symlink check failed: %w", err)
 	}
 	relativePath := filepath.Join(req.Category, folder)
 	if err := validateRelativePath(relativePath); err != nil {
-		return err
+		return invalidInput(err)
 	}
 	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, relativePath)
 	if err != nil {
-		return err
+		return invalidInput(err)
 	}
 	if err := rejectSymlink(absPath); err != nil {
 		return fmt.Errorf("folder symlink check failed: %w", err)
@@ -1425,18 +1433,18 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 		return fmt.Errorf("check folder items failed: %w", err)
 	}
 	if hasItems {
-		return errors.New(errMsgFolderNotEmpty)
+		return fmt.Errorf("%w: %s", ErrConflict, errMsgFolderNotEmpty)
 	}
 
 	entries, err := os.ReadDir(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return errors.New(errMsgFolderNotFound)
+			return fmt.Errorf("%w: %s", ErrNotFound, errMsgFolderNotFound)
 		}
 		return fmt.Errorf("read folder failed: %w", err)
 	}
 	if len(entries) > 0 {
-		return errors.New(errMsgFolderNotEmpty)
+		return fmt.Errorf("%w: %s", ErrConflict, errMsgFolderNotEmpty)
 	}
 	if err := os.Remove(absPath); err != nil {
 		return fmt.Errorf("remove folder failed: %w", err)
@@ -1465,11 +1473,11 @@ func (s *DBProductSpaceService) DownloadVersion(ctx context.Context, workspaceID
 
 	_, _, name, ext, err := parseRelativePath(item.RelativePath)
 	if err != nil {
-		return "", nil, err
+		return "", nil, invalidInput(err)
 	}
 
 	if version <= 0 || version > item.CurrentVersion {
-		return "", nil, errors.New(errMsgInvalidVersion)
+		return "", nil, invalidInput(errors.New(errMsgInvalidVersion))
 	}
 	if version == item.CurrentVersion {
 		data, err := s.readFileBytes(ctx, workspaceID, userID, item.RelativePath)

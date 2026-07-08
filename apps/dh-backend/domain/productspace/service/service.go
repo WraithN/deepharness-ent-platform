@@ -3,8 +3,22 @@ package service
 
 import (
 	"context"
+	"errors"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
+)
+
+var (
+	// ErrNotFound 表示请求的资源不存在。
+	ErrNotFound = errors.New("not found")
+	// ErrForbidden 表示当前用户没有权限访问该资源。
+	ErrForbidden = errors.New("forbidden")
+	// ErrInvalidInput 表示请求参数不合法。
+	ErrInvalidInput = errors.New("invalid input")
+	// ErrConflict 表示请求与现有资源冲突。
+	ErrConflict = errors.New("conflict")
+	// ErrUnauthorized 表示用户未认证。
+	ErrUnauthorized = errors.New("unauthorized")
 )
 
 // workspaceMemberRoleProvider 抽象了获取工作空间成员职能子角色的能力。
