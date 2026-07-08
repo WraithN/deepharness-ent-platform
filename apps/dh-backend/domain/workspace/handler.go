@@ -197,10 +197,10 @@ func Mine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 非超级管理员登录后，确保用户在各工作空间下的 projects/files 目录存在。
+	// 登录后，确保用户在各工作空间下的 projects/files/products 目录存在。
 	// os.MkdirAll 是幂等操作，并发安全。
 	for _, ws := range mine {
-		if err := defaultService.EnsureUserWorkspaceDirs(ws.ID, userID); err != nil {
+		if err := defaultService.EnsureUserWorkspaceDirs(r.Context(), ws.ID, userID); err != nil {
 			log.Printf("[Workspace] ensure user dirs failed for ws=%s user=%s: %v", ws.ID, userID, err)
 		}
 	}

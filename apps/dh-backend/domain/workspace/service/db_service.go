@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -112,17 +113,23 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 	return ws, nil
 }
 
-// EnsureUserWorkspaceDirs 确保用户在工作空间下的 projects 和 files 目录存在。
-// 目录结构：WORKSPACE_ROOT/{workspaceID}/{userID}/{projects,files}
+// EnsureUserWorkspaceDirs 确保用户在工作空间下的 projects、files 与 products 目录存在。
+// 目录结构：WORKSPACE_ROOT/{workspaceID}/{userID}/{projects,files,products/{docs,prototypes}}
 // os.MkdirAll 是幂等操作，天然并发安全。
-func (s *DBWorkspaceService) EnsureUserWorkspaceDirs(workspaceID, userID string) error {
+func (s *DBWorkspaceService) EnsureUserWorkspaceDirs(ctx context.Context, workspaceID, userID string) error {
 	if s.workspaceRoot == "" || workspaceID == "" || userID == "" {
 		return nil
 	}
-	for _, sub := range []string{"projects", "files"} {
-		dir := filepath.Join(s.workspaceRoot, workspaceID, userID, sub)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create user dir %s failed: %w", dir, err)
+	base := filepath.Join(s.workspaceRoot, workspaceID, userID)
+	dirs := []string{
+		filepath.Join(base, "projects"),
+		filepath.Join(base, "files"),
+		filepath.Join(base, "products", "docs"),
+		filepath.Join(base, "products", "prototypes"),
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return fmt.Errorf("create dir %s: %w", d, err)
 		}
 	}
 	return nil

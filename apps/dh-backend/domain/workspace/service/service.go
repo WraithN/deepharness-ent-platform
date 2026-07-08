@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workspace"
@@ -34,10 +36,10 @@ type WorkspaceService interface {
 	ListWorkspaces(tenantID string, page, pageSize int) (common.PaginatedList[workspace.Workspace], error)
 	// ListMine 返回指定用户加入的工作空间及其成员关系（用于登录后确定当前空间与权限）。
 	ListMine(userID string) ([]MineWorkspace, error)
-	// EnsureUserWorkspaceDirs 确保用户在工作空间下的 projects 和 files 目录存在。
-	// 目录结构：WORKSPACE_ROOT/{workspaceID}/{userID}/{projects,files}
+	// EnsureUserWorkspaceDirs 确保用户在工作空间下的 projects、files 与 products 目录存在。
+	// 目录结构：WORKSPACE_ROOT/{workspaceID}/{userID}/{projects,files,products/{docs,prototypes}}
 	// os.MkdirAll 是幂等的，并发安全。
-	EnsureUserWorkspaceDirs(workspaceID, userID string) error
+	EnsureUserWorkspaceDirs(ctx context.Context, workspaceID, userID string) error
 
 	AddMember(workspaceID, userID, role, subRole string) error
 	AddMemberByEmail(workspaceID, email, role, subRole string) error
