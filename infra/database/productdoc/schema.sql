@@ -5,20 +5,28 @@
 CREATE TABLE IF NOT EXISTS product_docs (
     id VARCHAR(36) PRIMARY KEY,
     workspace_id VARCHAR(36) NOT NULL,
+    user_id VARCHAR(36) NOT NULL,
     title VARCHAR(500) NOT NULL,
     slug VARCHAR(500) NOT NULL,
+    relative_path VARCHAR(1000) NOT NULL,
     content TEXT,
     status VARCHAR(50) NOT NULL DEFAULT 'draft', -- draft / published / archived
+    type VARCHAR(50) NOT NULL DEFAULT 'doc',
     category VARCHAR(100),
+    current_version INT NOT NULL DEFAULT 1,
+    file_ext VARCHAR(50),
+    mime_type VARCHAR(200),
+    size_bytes BIGINT,
     created_by VARCHAR(36),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(workspace_id, slug)
+    UNIQUE(workspace_id, user_id, relative_path)
 );
 
 CREATE INDEX IF NOT EXISTS idx_product_docs_workspace ON product_docs (workspace_id);
 CREATE INDEX IF NOT EXISTS idx_product_docs_status ON product_docs (status);
 CREATE INDEX IF NOT EXISTS idx_product_docs_category ON product_docs (category);
+CREATE INDEX IF NOT EXISTS idx_product_docs_workspace_user ON product_docs (workspace_id, user_id);
 
 DROP TRIGGER IF EXISTS trigger_product_docs_updated_at ON product_docs;
 CREATE TRIGGER trigger_product_docs_updated_at
@@ -34,6 +42,10 @@ CREATE TABLE IF NOT EXISTS product_doc_versions (
     title VARCHAR(500),
     content TEXT,
     change_summary VARCHAR(500),
+    file_path VARCHAR(2000),
+    file_ext VARCHAR(50),
+    mime_type VARCHAR(200),
+    size_bytes BIGINT,
     created_by VARCHAR(36),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(doc_id, version)
