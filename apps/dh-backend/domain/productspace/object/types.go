@@ -1,3 +1,4 @@
+// Package object defines domain types and constants for the product-space module.
 package object
 
 import "time"
@@ -34,20 +35,20 @@ type ProductSpaceVersion struct {
 }
 
 type ProductSpaceTreeNode struct {
-	Name     string               `json:"name"`
-	Path     string               `json:"path"`
-	Type     string               `json:"type"` // folder | doc | prototype
+	Name     string                 `json:"name"`
+	Path     string                 `json:"path"`
+	Type     string                 `json:"type"` // folder | doc | prototype
 	Children []ProductSpaceTreeNode `json:"children,omitempty"`
 }
 
 // Requests
 
 type CreateItemRequest struct {
-	Type    string `json:"type" validate:"required,oneof=doc prototype"`
-	Title   string `json:"title" validate:"required,max=500"`
-	Folder  string `json:"folder"`  // 一级子目录名，可为空
-	Content string `json:"content"` // doc 初始内容
-	// prototype file data will be handled separately via multipart in the handler
+	Type     string `json:"type" validate:"required,oneof=doc prototype"`
+	Title    string `json:"title" validate:"required,max=500"`
+	Folder   string `json:"folder"`              // 一级子目录名，可为空
+	Content  string `json:"content"`             // doc 初始内容
+	FileData []byte `json:"file_data,omitempty"` // prototype base64 或 raw bytes
 }
 
 type UpdateContentRequest struct {

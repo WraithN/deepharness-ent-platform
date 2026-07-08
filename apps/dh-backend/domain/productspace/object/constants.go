@@ -1,3 +1,4 @@
+// Package object defines domain types and constants for the product-space module.
 package object
 
 const (
@@ -7,6 +8,8 @@ const (
 
 	ItemTypeDoc       = "doc"
 	ItemTypePrototype = "prototype"
+
+	NodeTypeFolder = "folder"
 
 	DocExtMarkdown = "md"
 	DocExtText     = "txt"
