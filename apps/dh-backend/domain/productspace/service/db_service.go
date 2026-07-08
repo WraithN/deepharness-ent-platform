@@ -844,13 +844,19 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 
 	var newData []byte
 	if item.Type == object.ItemTypePrototype {
-		newData, err = base64.StdEncoding.DecodeString(req.Content)
+		// Base64 is ~4/3 of original size plus padding
+		maxBase64Len := int(base64.StdEncoding.EncodedLen(int(object.MaxPrototypeSizeBytes)))
+		if len(req.Content) > maxBase64Len {
+			return nil, errors.New(errMsgPrototypeTooLarge)
+		}
+		decoded, err := base64.StdEncoding.DecodeString(req.Content)
 		if err != nil {
 			return nil, fmt.Errorf("invalid base64 data: %w", err)
 		}
-		if int64(len(newData)) > object.MaxPrototypeSizeBytes {
-			return nil, fmt.Errorf("%s: %d bytes", errMsgPrototypeTooLarge, object.MaxPrototypeSizeBytes)
+		if int64(len(decoded)) > object.MaxPrototypeSizeBytes {
+			return nil, errors.New(errMsgPrototypeTooLarge)
 		}
+		newData = decoded
 	} else {
 		newData = []byte(req.Content)
 	}
