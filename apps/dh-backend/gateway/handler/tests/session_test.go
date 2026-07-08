@@ -13,6 +13,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 )
 
 func TestMain(m *testing.M) {
@@ -39,9 +40,10 @@ func TestCreateSession_Success(t *testing.T) {
 		"model":     "claude-3-7",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewReader(reqBody))
+	req.Header.Set("Authorization", "Bearer test-user")
 	w := httptest.NewRecorder()
 
-	h.CreateSession(w, req)
+	middleware.Auth(http.HandlerFunc(h.CreateSession)).ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())

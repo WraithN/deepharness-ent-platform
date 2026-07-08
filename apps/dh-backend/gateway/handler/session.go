@@ -13,6 +13,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/service"
 	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	"github.com/google/uuid"
 )
@@ -118,13 +119,19 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		workspaceID = "ws-default"
 	}
 
-	// 根据 workspace 成员与配置根目录计算 gatewayd 工作目录，并确保目录存在。
-	workspacePath, err := resolveWorkspacePath(workspaceID, h.cfg.WorkspaceRoot, h.workspaceService)
+	// 从请求上下文中取出当前登录用户 ID，workspace 路径必须以当前用户为目录所有者。
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return
+	}
+
+	// 根据当前登录用户、workspaceID 与配置根目录计算 gatewayd 工作目录，并确保目录存在。
+	workspacePath, err := resolveWorkspacePath(workspaceID, userID, h.cfg.WorkspaceRoot)
 	if err != nil {
 		WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
 		return
 	}
-	ensureWorkspaceDir(workspacePath)
 
 	agentID := req.AgentID
 	if agentID == "" {
