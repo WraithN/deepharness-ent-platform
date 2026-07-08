@@ -82,6 +82,9 @@ func NewDBProductSpaceService(db *sql.DB, workspaceRoot string, workspaceService
 	if db == nil {
 		return nil, errors.New("db is required")
 	}
+	if workspaceRoot == "" {
+		return nil, errors.New("workspaceRoot is required")
+	}
 	if workspaceService == nil {
 		return nil, errors.New("workspaceService is required")
 	}
@@ -799,10 +802,7 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 		return nil, err
 	}
 
-	if err := ensureParentDir(absPath); err != nil {
-		return nil, err
-	}
-
+	// 先启动事务并插入数据库记录，利用唯一索引锁定路径，避免并发请求先写磁盘再冲突时误删已提交文件。
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction failed: %w", err)
@@ -818,6 +818,11 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 		if isUniqueViolation(err) {
 			return nil, errors.New(errMsgItemAlreadyExists)
 		}
+		return nil, err
+	}
+
+	// 数据库记录插入成功后，再创建目录并写入文件；此时唯一索引已保证路径未被占用。
+	if err := ensureParentDir(absPath); err != nil {
 		return nil, err
 	}
 
