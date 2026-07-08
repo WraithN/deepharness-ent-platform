@@ -51,8 +51,9 @@ import { teamApi } from '@/lib/team-api';
 import { workspaceApi } from '@/lib/workspace-api';
 import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
 import { agentConfigApi } from '@/lib/agent-config-api';
-import type { WorkItemDTO } from '@/lib/api-types';
-import type { Skill, WorkspacePrompt, WorkspaceAgent, AvailableAgent } from '@/types';
+import { sortPromptCategoriesByBuiltin } from '@/lib/prompt-categories';
+import type { WorkItemDTO, AgentSessionDTO } from '@/lib/api-types';
+import type { Skill, WorkspacePrompt, WorkspaceAgent, AvailableAgent, PromptCategory } from '@/types';
 import { AssistantRuntimeProvider, type ThreadMessageLike } from '@assistant-ui/react';
 import { useAgUiChat, type SendContext } from '@/hooks/use-ag-ui-chat';
 import { ChatThread } from '@/components/chat/ChatThread';
@@ -69,7 +70,9 @@ type DefectStatus = 'open' | 'in-progress' | 'fixed' | 'closed';
 type DefectSeverity = 'critical' | 'high' | 'medium' | 'low';
 type CaseStatus = 'draft' | 'ready' | 'passed' | 'failed' | 'blocked';
 
-type PreviewHistoryEntry = { type: 'file' | 'project'; path: string; mode?: PreviewMode };
+type PreviewHistoryEntry =
+  | { type: 'file'; path: string }
+  | { type: 'project'; path: string; mode: PreviewMode };
 
 interface ReqItem {
   id: string; title: string; description: string;
@@ -206,7 +209,23 @@ const DEFAULT_AGENT_OPTIONS: AvailableAgent[] = [
   { agentKey: 'opencode', name: 'OpenCode', description: '', model: '' },
 ];
 
+// 新会话创建时默认智能体的优先级，取第一个可用的。
+const DEFAULT_AGENT_PRIORITY = ['claude-code', 'opencode', 'codex'];
+
+const resolveDefaultAgentKey = (options: AvailableAgent[]): string | undefined => {
+  const priorityKey = DEFAULT_AGENT_PRIORITY.find(key => options.some(o => o.agentKey === key));
+  if (priorityKey) return priorityKey;
+  return options[0]?.agentKey;
+};
+
 const getAgentLabel = (key: string, options: AvailableAgent[]): string => options.find(o => o.agentKey === key)?.name ?? key;
+
+/** 根据历史会话项生成智能体展示文本（完整与截断版本）。 */
+function getHistoryAgentLabel(item: { pluginKey?: string; instanceId?: string }, options: AvailableAgent[]) {
+  const label = getAgentLabel(item.pluginKey || 'claude-code', options);
+  if (!item.instanceId) return { label, full: label, short: label };
+  return { label, full: `${label} · ${item.instanceId}`, short: `${label} · ${item.instanceId.slice(0, 8)}` };
+}
 
 const AGENT_STATUS_COLORS: Record<AgentStatus, string> = {
   error: 'bg-red-500',
@@ -337,15 +356,20 @@ export const Chat: React.FC = () => {
   const [syncingRepoId, setSyncingRepoId] = useState<string | null>(null);
   const [availableSkills, setAvailableSkills] = useState<Skill[]>([]);
   const [availablePrompts, setAvailablePrompts] = useState<WorkspacePrompt[]>([]);
+  const [promptCategories, setPromptCategories] = useState<PromptCategory[]>([]);
+  const [promptMenuSearch, setPromptMenuSearch] = useState('');
+  const [promptMenuCategory, setPromptMenuCategory] = useState<string>('全部');
+  const [skillMenuSearch, setSkillMenuSearch] = useState('');
   const [availableAgents, setAvailableAgents] = useState<WorkspaceAgent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
   const [availableAgentOptions, setAvailableAgentOptions] = useState<AvailableAgent[]>(DEFAULT_AGENT_OPTIONS);
+  const [availableAgentsLoaded, setAvailableAgentsLoaded] = useState(false);
 
   const [agentTabs, setAgentTabs] = useState<AgentTab[]>([]);
   const [activeAgentTabId, setActiveAgentTabId] = useState<string | null>(null);
 
   const activeTab = agentTabs.find(t => t.sessionId === activeAgentTabId) ?? null;
-  const defaultPluginKey = availableAgentOptions[0]?.agentKey ?? 'claude-code';
+  const defaultPluginKey = resolveDefaultAgentKey(availableAgentOptions);
   const activePluginKey = activeTab?.pluginKey ?? defaultPluginKey;
 
   const { runtime, sessionId, wsConnected, messages, isRunning, sendMessage, switchSession, createSession, cancelRun, tryRestoreSession } = useAgUiChat({ agentPluginKey: activePluginKey });
@@ -394,10 +418,10 @@ export const Chat: React.FC = () => {
     pushPreviewHistory({ type: 'file', path });
   }, [previewPath]);
 
-  const handleProjectPreview = useCallback((path: string, mode: PreviewMode) => {
+  const handleProjectPreview = useCallback((path: string, previewMode: PreviewMode) => {
     setPreviewPath(null);
-    setProjectPreview({ path, mode });
-    pushPreviewHistory({ type: 'project', path, mode });
+    setProjectPreview({ path, mode: previewMode });
+    pushPreviewHistory({ type: 'project', path, mode: previewMode });
   }, []);
 
   // pushPreviewHistory 将一条预览记录推入历史栈，
@@ -426,7 +450,7 @@ export const Chat: React.FC = () => {
       setPreviewPath(entry.path);
     } else {
       setPreviewPath(null);
-      setProjectPreview({ path: entry.path, mode: entry.mode || 'code' });
+      setProjectPreview({ path: entry.path, mode: entry.mode });
     }
   }, [historyIndex, previewHistory]);
 
@@ -689,13 +713,15 @@ export const Chat: React.FC = () => {
     let cancelled = false;
     const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
     Promise.all([
-      teamApi.listSkills(),
+      teamApi.listSkills(1, 100).then(res => res.list),
       workspaceApi.listPrompts(workspaceId).catch((): WorkspacePrompt[] => []),
+      workspaceApi.listPromptCategories(workspaceId).catch((): PromptCategory[] => []),
     ])
-      .then(([loadedSkills, loadedPrompts]) => {
+      .then(([loadedSkills, loadedPrompts, loadedCategories]) => {
         if (cancelled) return;
         setAvailableSkills(loadedSkills);
         setAvailablePrompts(loadedPrompts);
+        setPromptCategories(loadedCategories);
       })
       .catch(err => {
         if (cancelled) return;
@@ -709,7 +735,7 @@ export const Chat: React.FC = () => {
     const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
     Promise.all([
       workspaceApi.listAgents(workspaceId).catch((): WorkspaceAgent[] => []),
-      agentConfigApi.listAvailableAgents(workspaceId).catch((): AvailableAgent[] => DEFAULT_AGENT_OPTIONS),
+      agentConfigApi.listAvailableAgents(workspaceId).catch((): AvailableAgent[] => []),
     ])
       .then(([agents, runtimeAgents]) => {
         if (cancelled) return;
@@ -718,7 +744,8 @@ export const Chat: React.FC = () => {
         if (defaultAgent) {
           setSelectedAgentId(defaultAgent.id);
         }
-        setAvailableAgentOptions(runtimeAgents.length > 0 ? runtimeAgents : DEFAULT_AGENT_OPTIONS);
+        setAvailableAgentOptions(runtimeAgents);
+        setAvailableAgentsLoaded(true);
       })
       .catch(err => {
         if (cancelled) return;
@@ -736,7 +763,31 @@ export const Chat: React.FC = () => {
     Puzzle,
   };
 
-  const insertPrompt = (c: string) => { setInput(p => p.trimEnd() ? p.trimEnd() + '\n' + c : c); setPromptMenuOpen(false); toast.success('已插入提示词'); };
+  const insertPrompt = (c: string) => { setInput(p => p.trimEnd() ? p.trimEnd() + '\n' + c : c); setPromptMenuOpen(false); setCompactPlusSubmenu(null); setCompactPlusOpen(false); toast.success('已插入提示词'); };
+
+  const filteredAvailablePrompts = useMemo(() => {
+    const term = promptMenuSearch.toLowerCase().trim();
+    return availablePrompts.filter(p => {
+      if (p.enabled === false) return false;
+      const matchesSearch = !term ||
+        p.name.toLowerCase().includes(term) ||
+        (p.content || '').toLowerCase().includes(term) ||
+        (p.description || '').toLowerCase().includes(term);
+      const matchesCategory = promptMenuCategory === '全部' ||
+        p.categories.some(c => c.name === promptMenuCategory);
+      return matchesSearch && matchesCategory;
+    });
+  }, [availablePrompts, promptMenuSearch, promptMenuCategory]);
+
+  const filteredAvailableSkills = useMemo(() => {
+    const term = skillMenuSearch.toLowerCase().trim();
+    return availableSkills.filter(s =>
+      s.installed &&
+      (activeSkillTab === '全部' || s.phase === activeSkillTab) &&
+      (!term || s.name.toLowerCase().includes(term) || (s.description || '').toLowerCase().includes(term))
+    );
+  }, [availableSkills, activeSkillTab, skillMenuSearch]);
+
   const toggleRepo = (repo: {id: string; name: string}) => setSelectedRepos(prev => prev.find(r => r.id === repo.id) ? prev.filter(r => r.id !== repo.id) : [...prev, repo]);
   const appendSkillTag = (name: string) => { setInput(p => p.trimEnd() ? p.trimEnd() + ` #${name} ` : `#${name} `); toast.success(`已选择：${name}`); };
   // 插入指令到输入框开头（斜杠指令通常作为前缀），若已有内容则追加空格分隔。
@@ -1046,29 +1097,50 @@ export const Chat: React.FC = () => {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historySearch, setHistorySearch] = useState('');
   const historyRef = useRef<HTMLDivElement>(null);
-  const filteredHistory = historyList.filter(h => h.title.includes(historySearch));
+  const filteredHistory = historyList.filter(h => {
+    const term = historySearch.trim().toLowerCase();
+    if (!term) return true;
+    const agent = getHistoryAgentLabel(h, availableAgentOptions);
+    return h.title.toLowerCase().includes(term)
+      || agent.label.toLowerCase().includes(term)
+      || (h.instanceId || '').toLowerCase().includes(term)
+      || (h.pluginKey || '').toLowerCase().includes(term);
+  });
 
   // 加载历史会话列表。从 session.context 中读取插件 key 与实例 id，便于归类到对应智能体。
   useEffect(() => {
-    api.get<{ id: string; title?: string; createdAt?: string; agentType?: string; context?: Record<string, unknown> }[]>('/v1/sessions')
+    api.get<(AgentSessionDTO & { context?: Record<string, unknown> })[]>('/v1/sessions')
       .then(list => {
-        setHistoryList(list.map(s => ({
-          id: s.id,
-          title: s.title || s.id.slice(0, 8),
-          date: s.createdAt ? new Date(s.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '',
-          type: s.agentType || 'chat',
-          pluginKey: typeof s.context?.pluginKey === 'string' ? s.context.pluginKey : undefined,
-          instanceId: typeof s.context?.instanceId === 'string' ? s.context.instanceId : undefined,
-        })));
+        setHistoryList(list.map(s => {
+          const pluginKey = typeof s.context?.pluginKey === 'string' ? s.context.pluginKey : (s.agentId || 'claude-code');
+          const instanceId = typeof s.context?.instanceId === 'string' ? s.context.instanceId : undefined;
+          return {
+            id: s.id,
+            title: s.title || s.id.slice(0, 8),
+            date: s.createdAt ? new Date(s.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '',
+            type: s.agentType || 'chat',
+            pluginKey,
+            instanceId,
+          };
+        }));
       })
       .catch(err => console.warn('[Chat] load history failed:', err));
   }, [agentTabs.length]);
 
   // 初始化一个默认智能体 tab。
+  // 必须等 /available-agents 加载完成后再决定默认插件 key，
+  // 否则初始值会是 DEFAULT_AGENT_OPTIONS 里的 claude-code，
+  // 若当前空间未启用该智能体，createSession 会收到 403。
   useEffect(() => {
-    if (initializedRef.current || agentTabs.length > 0) return;
+    if (initializedRef.current || !availableAgentsLoaded || agentTabs.length > 0) return;
     initializedRef.current = true;
-    const defaultKey = availableAgentOptions[0]?.agentKey ?? 'claude-code';
+
+    const defaultKey = resolveDefaultAgentKey(availableAgentOptions);
+    if (!defaultKey) {
+      toast.error('当前没有可用的智能体，请联系管理员。');
+      return;
+    }
+
     tryRestoreSession().then(savedId => {
       if (savedId) {
         const tab: AgentTab = {
@@ -1095,8 +1167,7 @@ export const Chat: React.FC = () => {
         setActiveAgentTabId(result.sessionId);
       });
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [availableAgentsLoaded, availableAgentOptions]);
 
   // 如果当前会话正在运行，先弹出确认框；确认后取消当前 run 再执行目标动作。
   const runIfIdleOrConfirm = useCallback((action: () => void, title: string) => {
@@ -1360,8 +1431,8 @@ export const Chat: React.FC = () => {
                       key={projectPreview.path}
                       projectPath={projectPreview.path}
                       mode={projectPreview.mode}
+                      onModeChange={(nextMode) => setProjectPreview({ path: projectPreview.path, mode: nextMode })}
                       onClose={closePreview}
-                      onModeChange={(m) => setProjectPreview(prev => prev ? { ...prev, mode: m } : prev)}
                     />
                   )}
                 </div>
@@ -1493,7 +1564,7 @@ export const Chat: React.FC = () => {
                   <div className="absolute top-full right-0 mt-1 w-72 bg-popover border shadow-xl rounded-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
                     <div className="p-2 border-b border-border/50">
                       <div className="relative">
-                        <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
+                        <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
                         <Input
                           placeholder="搜索历史会话..."
                           className="pl-8 h-7 text-xs bg-muted/30 border-border/50 rounded-lg"
@@ -1535,31 +1606,21 @@ export const Chat: React.FC = () => {
                             }, `打开历史：${h.title}`);
                           }}
                         >
-                          <div className="flex items-center gap-2 flex-1 min-w-0 pr-12 group-hover:pr-16 transition-all">
-                            {h.type === 'ui' && <Box className="h-3.5 w-3.5 text-blue-500 shrink-0" />}
-                            {h.type === 'requirement' && <ListTodo className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
-                            {h.type === 'code' && <Code2 className="h-3.5 w-3.5 text-green-500 shrink-0" />}
-                            {h.type !== 'ui' && h.type !== 'requirement' && h.type !== 'code' && <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
-                            <span className="flex-1 truncate text-xs">{h.title}</span>
-                            <span className="text-[10px] text-muted-foreground shrink-0 hidden sm:inline-block group-hover:hidden">{h.date}</span>
-                          </div>
-                          <div className="absolute right-2 opacity-0 group-hover:opacity-100 flex items-center gap-1 bg-gradient-to-l from-accent via-accent to-transparent pl-2 transition-opacity">
-                            <Button
-                              variant="ghost" size="icon"
-                              className="h-6 w-6 rounded hover:bg-background text-muted-foreground hover:text-foreground"
-                              title="会话复盘"
-                              onClick={(e) => { e.stopPropagation(); toast.success('已生成会话复盘报告'); setHistoryOpen(false); }}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              {h.type === 'ui' && <Box className="h-3.5 w-3.5 text-blue-500 shrink-0" />}
+                              {h.type === 'requirement' && <ListTodo className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
+                              {h.type === 'code' && <Code2 className="h-3.5 w-3.5 text-green-500 shrink-0" />}
+                              {h.type !== 'ui' && h.type !== 'requirement' && h.type !== 'code' && <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+                              <span className="flex-1 truncate text-xs font-medium">{h.title}</span>
+                              <span className="text-[10px] text-muted-foreground shrink-0 hidden sm:inline-block">{h.date}</span>
+                            </div>
+                            <div
+                              className="text-[10px] text-muted-foreground truncate"
+                              title={getHistoryAgentLabel(h, availableAgentOptions).full}
                             >
-                              <FileText className="h-3 w-3" />
-                            </Button>
-                            <Button
-                              variant="ghost" size="icon"
-                              className="h-6 w-6 rounded hover:bg-background text-muted-foreground hover:text-foreground"
-                              title="总结为技能"
-                              onClick={(e) => { e.stopPropagation(); toast.success('已将当前会话总结为新技能'); setHistoryOpen(false); }}
-                            >
-                              <Wand2 className="h-3 w-3" />
-                            </Button>
+                              {getHistoryAgentLabel(h, availableAgentOptions).short}
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -1888,9 +1949,36 @@ export const Chat: React.FC = () => {
                     )}
                     {/* 二级菜单：提示词 */}
                     {compactPlusSubmenu === 'prompt' && (
-                      <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
-                        <div className="max-h-[280px] overflow-y-auto p-1">
-                          {availablePrompts.map(p => (
+                      <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
+                        <div className="p-2 border-b space-y-2">
+                          <div className="relative">
+                            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input
+                              placeholder="搜索提示词..."
+                              className="pl-8 h-8"
+                              value={promptMenuSearch}
+                              onChange={(e) => setPromptMenuSearch(e.target.value)}
+                            />
+                          </div>
+                          <div className="flex gap-1 overflow-x-auto pb-1">
+                            {['全部', ...sortPromptCategoriesByBuiltin(promptCategories).map(c => c.name)].map(cat => (
+                              <Button
+                                key={cat}
+                                variant={promptMenuCategory === cat ? 'secondary' : 'ghost'}
+                                size="sm"
+                                className="h-7 text-xs whitespace-nowrap"
+                                onClick={() => setPromptMenuCategory(cat)}
+                              >
+                                {cat}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-1">
+                          {filteredAvailablePrompts.length === 0 && (
+                            <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配提示词</div>
+                          )}
+                          {filteredAvailablePrompts.map(p => (
                             <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => { insertPrompt(p.content || p.description); setCompactPlusSubmenu(null); setCompactPlusOpen(false); }}>
                               <span className="font-medium text-sm mb-1">{p.name}</span>
                               <span className="text-xs text-muted-foreground line-clamp-2">{p.content || p.description}</span>
@@ -1903,17 +1991,27 @@ export const Chat: React.FC = () => {
                     {compactPlusSubmenu === 'skill' && (
                       <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
                         <Tabs value={activeSkillTab} onValueChange={setActiveSkillTab} className="w-full flex flex-col">
-                          <div className="px-1 pt-2 bg-muted/30">
-                            <TabsList className="w-full justify-start h-auto bg-transparent p-0 overflow-x-auto flex-nowrap rounded-none border-b">
+                          <div className="px-2 pt-2 bg-muted/30 border-b space-y-2">
+                            <div className="relative">
+                              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                placeholder="搜索技能..."
+                                className="pl-8 h-8"
+                                value={skillMenuSearch}
+                                onChange={(e) => setSkillMenuSearch(e.target.value)}
+                              />
+                            </div>
+                            <TabsList className="w-full justify-start h-auto bg-transparent p-0 overflow-x-auto flex-nowrap rounded-none">
                               {['全部', '需求设计', 'UI设计', '代码开发', '测试编写', '需求上线'].map(tab => (
                                 <TabsTrigger key={tab} value={tab} className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2 px-3 text-xs">{tab}</TabsTrigger>
                               ))}
                             </TabsList>
                           </div>
-                          <div className="max-h-[280px] overflow-y-auto p-2 space-y-1">
-                            {availableSkills
-                              .filter(s => activeSkillTab === '全部' || s.phase === activeSkillTab)
-                              .map(skill => {
+                          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                            {filteredAvailableSkills.length === 0 && (
+                              <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配技能</div>
+                            )}
+                            {filteredAvailableSkills.map(skill => {
                                 const IconComponent = skillIconMap[skill.icon || ''] || Puzzle;
                                 return (
                                   <div key={skill.id} className="flex items-start gap-3 p-2.5 rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors" onClick={() => { appendSkillTag(skill.name); setCompactPlusSubmenu(null); setCompactPlusOpen(false); }}>
@@ -2022,9 +2120,36 @@ export const Chat: React.FC = () => {
                         <FileText className="h-3.5 w-3.5 mr-1.5" />提示词
                       </Button>
                       {promptMenuOpen && (
-                        <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
-                          <div className="max-h-[280px] overflow-y-auto p-1">
-                            {availablePrompts.map(p => (
+                        <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
+                          <div className="p-2 border-b space-y-2">
+                            <div className="relative">
+                              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                placeholder="搜索提示词..."
+                                className="pl-8 h-8"
+                                value={promptMenuSearch}
+                                onChange={(e) => setPromptMenuSearch(e.target.value)}
+                              />
+                            </div>
+                            <div className="flex gap-1 overflow-x-auto pb-1">
+                              {['全部', ...sortPromptCategoriesByBuiltin(promptCategories).map(c => c.name)].map(cat => (
+                                <Button
+                                  key={cat}
+                                  variant={promptMenuCategory === cat ? 'secondary' : 'ghost'}
+                                  size="sm"
+                                  className="h-7 text-xs whitespace-nowrap"
+                                  onClick={() => setPromptMenuCategory(cat)}
+                                >
+                                  {cat}
+                                </Button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex-1 overflow-y-auto p-1">
+                            {filteredAvailablePrompts.length === 0 && (
+                              <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配提示词</div>
+                            )}
+                            {filteredAvailablePrompts.map(p => (
                               <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => insertPrompt(p.content || p.description)}>
                                 <span className="font-medium text-sm mb-1">{p.name}</span>
                                 <span className="text-xs text-muted-foreground line-clamp-2">{p.content || p.description}</span>
@@ -2043,17 +2168,27 @@ export const Chat: React.FC = () => {
                       {skillPopoverOpen && (
                         <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
                           <Tabs value={activeSkillTab} onValueChange={setActiveSkillTab} className="w-full flex flex-col">
-                            <div className="px-1 pt-2 bg-muted/30">
-                              <TabsList className="w-full justify-start h-auto bg-transparent p-0 overflow-x-auto flex-nowrap rounded-none border-b">
+                            <div className="px-2 pt-2 bg-muted/30 border-b space-y-2">
+                              <div className="relative">
+                                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                  placeholder="搜索技能..."
+                                  className="pl-8 h-8"
+                                  value={skillMenuSearch}
+                                  onChange={(e) => setSkillMenuSearch(e.target.value)}
+                                />
+                              </div>
+                              <TabsList className="w-full justify-start h-auto bg-transparent p-0 overflow-x-auto flex-nowrap rounded-none">
                                 {['全部', '需求设计', 'UI设计', '代码开发', '测试编写', '需求上线'].map(tab => (
                                   <TabsTrigger key={tab} value={tab} className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2 px-3 text-xs">{tab}</TabsTrigger>
                                 ))}
                               </TabsList>
                             </div>
-                            <div className="max-h-[280px] overflow-y-auto p-2 space-y-1">
-                              {availableSkills
-                                .filter(s => activeSkillTab === '全部' || s.phase === activeSkillTab)
-                                .map(skill => {
+                            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                              {filteredAvailableSkills.length === 0 && (
+                                <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配技能</div>
+                              )}
+                              {filteredAvailableSkills.map(skill => {
                                   const IconComponent = skillIconMap[skill.icon || ''] || Puzzle;
                                   return (
                                     <div key={skill.id} className="flex items-start gap-3 p-2.5 rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors" onClick={() => { appendSkillTag(skill.name); setSkillPopoverOpen(false); }}>

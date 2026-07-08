@@ -135,6 +135,12 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	// 任务意图 → 映射到对应指令模板，再走正常 agent run。
 	if !commandApplied {
 		userInput := extractLastUserText(input.Messages)
+		// 简单问候语直接返回静态回复，避免在 LLM/agent 不可用时进入长时间等待。
+		if isGreeting(userInput) {
+			log.Printf("[AGUIHandler] run=%s greeting matched, bypassing intent/agent run", input.RunID)
+			h.streamChatResponse(r, w, flusher, greetingResponse(), sessionID, input.RunID)
+			return
+		}
 		if userInput != "" {
 			intentResult, err := recognizeIntent(r.Context(), h.aguiClient, userInput)
 			if err != nil {
@@ -710,45 +716,19 @@ func (h *AGUIHandler) saveUserMessages(ctx context.Context, sessionID string, me
 			log.Printf("[AGUIHandler] saved user message id=%s role=%s", msg.ID, msg.Role)
 		}
 	}
-	// 若会话尚无标题，取第一条用户消息生成标题。
-	sess, err := h.sessions.Get(ctx, sessionID)
-	if err == nil && sess.Title == "" {
-		for _, m := range messages {
-			if m.Role == agui.RoleUser {
-				title := deriveSessionTitle(m.ContentText())
-				if title != "" {
-					_ = h.sessions.UpdateTitle(ctx, sessionID, title)
-				}
-				break
-			}
-		}
-	}
+	// 若会话尚无标题，取第一条非问候用户消息生成标题。
+	h.ensureSessionTitle(ctx, sessionID, messages)
 }
 
-// finalizeSession 更新会话活动时间，并根据第一条用户消息生成标题。
+// finalizeSession 更新会话活动时间，并根据第一条非问候用户消息生成标题。
 func (h *AGUIHandler) finalizeSession(ctx context.Context, sessionID string, inputMessages []agui.Message) {
 	if sessionID == "" {
 		return
 	}
 	_ = h.sessions.UpdateActivity(ctx, sessionID)
 
-	sess, err := h.sessions.Get(ctx, sessionID)
-	if err != nil {
-		log.Printf("[AGUIHandler] get session for title failed: %v", err)
-		return
-	}
-	if sess.Title != "" {
-		return
-	}
-	for _, m := range inputMessages {
-		if m.Role == agui.RoleUser {
-			title := deriveSessionTitle(m.ContentText())
-			if title != "" {
-				_ = h.sessions.UpdateTitle(ctx, sessionID, title)
-			}
-			break
-		}
-	}
+	// 若会话尚无标题，取第一条非问候用户消息生成标题。
+	h.ensureSessionTitle(ctx, sessionID, inputMessages)
 }
 
 // extractOriginalUserPrompt 从包装后的提示词模板中提取用户原始输入。
@@ -784,6 +764,33 @@ func deriveSessionTitle(text string) string {
 		return text
 	}
 	return string([]rune(text)[:30]) + "..."
+}
+
+// ensureSessionTitle 在会话尚无标题时，根据第一条非问候用户消息生成标题。
+// 规则：用户首个输入若是问候语，则跳过，等待后续功能性输入再生成标题。
+func (h *AGUIHandler) ensureSessionTitle(ctx context.Context, sessionID string, messages []agui.Message) {
+	sess, err := h.sessions.Get(ctx, sessionID)
+	if err != nil || sess.Title != "" {
+		return
+	}
+	for _, m := range messages {
+		if m.Role != agui.RoleUser {
+			continue
+		}
+		text := m.ContentText()
+		if original := extractOriginalUserPrompt(text); original != "" {
+			text = original
+		}
+		text = strings.TrimSpace(text)
+		if text == "" || isGreeting(text) {
+			continue
+		}
+		title := deriveSessionTitle(text)
+		if title != "" {
+			_ = h.sessions.UpdateTitle(ctx, sessionID, title)
+		}
+		break
+	}
 }
 
 // extractContextItemRaw 从上下文项列表中按名称查找并返回原始 JSON 值。

@@ -10,7 +10,7 @@ import (
 var defaultService service.PersonalAssistantService
 
 // currentUserID 用于 mock 身份，生产环境应从认证中间件获取。
-const currentUserID = "u1"
+const currentUserID = "5b577fdc9e8e406f81c695553dc74836"
 const currentUserName = "Meego"
 
 // Init 注入 PersonalAssistantService 实现（MySQL 或 mock）。

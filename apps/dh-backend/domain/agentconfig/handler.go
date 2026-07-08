@@ -161,6 +161,10 @@ func WorkspaceAgentConfigByKey(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.AgentKey = agentKey
+		if err := defaultService.CanModifyWorkspaceConfig(workspaceID, req.AgentKey); err != nil {
+			handler.WriteJSONError(w, http.StatusForbidden, 3, err.Error())
+			return
+		}
 		cfg, err := defaultService.SaveWorkspaceConfig(workspaceID, req)
 		if err != nil {
 			handler.HandleServiceError(w, err, "workspace agent config not found", "failed to save workspace agent config")
@@ -174,6 +178,17 @@ func WorkspaceAgentConfigByKey(w http.ResponseWriter, r *http.Request) {
 	default:
 		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
 	}
+}
+
+// AgentModels 处理 GET /api/v1/agent-models，返回全局支持的模型池。
+func AgentModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+	models := defaultService.ListGlobalModels()
+	handler.SetJSONHeader(w)
+	json.NewEncoder(w).Encode(models)
 }
 
 // AvailableAgents 处理 GET /api/v1/workspaces/{id}/available-agents。

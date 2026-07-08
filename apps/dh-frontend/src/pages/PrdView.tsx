@@ -7,6 +7,7 @@ import { MarkdownView } from '@/components/chat/MarkdownView';
 import { fileApi } from '@/lib/file-api';
 import { workspaceApi } from '@/lib/workspace-api';
 import { api } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
 import type { WorkItemDTO } from '@/lib/api-types';
 import { toast } from 'sonner';
 import { Save, Send, FileText, Eye, Edit3, Loader2 } from 'lucide-react';
@@ -33,6 +34,7 @@ const PRD_FILE_SUFFIX = '-prd.md';
 
 export const PrdView: React.FC = () => {
   const { wsId } = useParams<{ wsId: string }>();
+  const { user } = useAuth();
 
   const [title, setTitle] = useState('新需求');
   const [content, setContent] = useState(PRD_DEFAULT_CONTENT);
@@ -102,7 +104,7 @@ export const PrdView: React.FC = () => {
     setCreating(true);
     try {
       await api.post<WorkItemDTO>('/v1/workitems', {
-        tenantId: 't1',
+        tenantId: user?.tenantId || '',
         projectId: 'p1',
         type: 'requirement',
         title,

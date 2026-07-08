@@ -2,8 +2,11 @@ package workspace
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 
 	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
 	service "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
@@ -15,6 +18,8 @@ import (
 var (
 	defaultService     service.WorkspaceService
 	defaultUserService identityservice.UserService
+	// allowedAgentKeys 保存全局 config.yaml 中声明的 coding agent key，用于校验超管设置的空间策略。
+	allowedAgentKeys = make(map[string]bool)
 )
 
 // Init 注入 WorkspaceService 实现（MySQL 或 mock）。
@@ -25,6 +30,34 @@ func Init(svc service.WorkspaceService) {
 // InitUserService 注入 UserService，用于工作空间相关权限校验。
 func InitUserService(svc identityservice.UserService) {
 	defaultUserService = svc
+}
+
+// SetAllowedAgentKeys 设置平台全局允许的 coding agent key 集合。
+func SetAllowedAgentKeys(keys []string) {
+	allowedAgentKeys = make(map[string]bool, len(keys))
+	for _, k := range keys {
+		allowedAgentKeys[k] = true
+	}
+}
+
+// validateAgentPolicy 校验超管传入的空间智能体策略是否合法。
+func validateAgentPolicy(policy service.AgentPolicy) error {
+	for _, key := range policy.AllowedAgentKeys {
+		if !allowedAgentKeys[key] {
+			return fmt.Errorf("agent key %s is not allowed by global config", key)
+		}
+	}
+	for key := range policy.DefaultAgentConfigs {
+		if !allowedAgentKeys[key] {
+			return fmt.Errorf("agent key %s in default configs is not allowed by global config", key)
+		}
+	}
+	for _, key := range policy.LockedAgentKeys {
+		if !allowedAgentKeys[key] {
+			return fmt.Errorf("agent key %s in locked keys is not allowed by global config", key)
+		}
+	}
+	return nil
 }
 
 // requireSuperAdmin 校验当前请求用户是否为超级管理员。
@@ -50,6 +83,59 @@ func requireSuperAdmin(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// requireWorkspaceAdmin 校验当前请求用户是否为超级管理员或当前工作空间管理员。
+func requireWorkspaceAdmin(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return false
+	}
+	if defaultUserService == nil || defaultService == nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "service not initialized")
+		return false
+	}
+	user, err := defaultUserService.GetByID(userID)
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "failed to authenticate user")
+		return false
+	}
+	if user.PlatformRole == identity.PlatformRoleSuperAdmin {
+		return true
+	}
+	role, err := defaultService.GetMemberRole(workspaceID, userID)
+	if err != nil || role != service.MemberRoleSpaceAdmin {
+		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: space admin required")
+		return false
+	}
+	return true
+}
+
+// requireTenantAdmin 校验当前请求用户是否为租户管理员或超级管理员，返回租户 ID。
+func requireTenantAdmin(w http.ResponseWriter, r *http.Request) (string, bool) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return "", false
+	}
+	if defaultUserService == nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "user service not initialized")
+		return "", false
+	}
+	user, err := defaultUserService.GetByID(userID)
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "failed to authenticate user")
+		return "", false
+	}
+	if user.PlatformRole == identity.PlatformRoleSuperAdmin {
+		return user.TenantID, true
+	}
+	if user.PlatformRole == identity.PlatformRoleTenantAdmin {
+		return user.TenantID, true
+	}
+	handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin required")
+	return "", false
+}
+
 // Workspaces 处理 GET /api/v1/workspaces 与 POST /api/v1/workspaces。
 func Workspaces(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -57,7 +143,9 @@ func Workspaces(w http.ResponseWriter, r *http.Request) {
 		if !requireSuperAdmin(w, r) {
 			return
 		}
-		workspaces, err := defaultService.ListWorkspaces(r.URL.Query().Get("tenantId"))
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+		workspaces, err := defaultService.ListWorkspaces(r.URL.Query().Get("tenantId"), page, pageSize)
 		if err != nil {
 			handler.HandleServiceError(w, err, "workspace not found", "failed to list workspaces")
 			return
@@ -65,7 +153,8 @@ func Workspaces(w http.ResponseWriter, r *http.Request) {
 		handler.SetJSONHeader(w)
 		json.NewEncoder(w).Encode(workspaces)
 	case http.MethodPost:
-		if !requireSuperAdmin(w, r) {
+		tenantID, ok := requireTenantAdmin(w, r)
+		if !ok {
 			return
 		}
 		var req createWorkspaceRequest
@@ -76,7 +165,8 @@ func Workspaces(w http.ResponseWriter, r *http.Request) {
 			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name and ownerUserId are required")
 			return
 		}
-		ws, err := defaultService.CreateWorkspace(req.TenantID, req.Name, req.Description, req.OwnerUserID)
+		// 工作空间的智能体策略从租户继承，创建时使用空策略（默认值）
+		ws, err := defaultService.CreateWorkspace(tenantID, req.Name, req.Description, req.OwnerUserID, service.AgentPolicy{})
 		if err != nil {
 			handler.HandleServiceError(w, err, "workspace not found", "failed to create workspace")
 			return
@@ -107,10 +197,10 @@ func Mine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 非超级管理员登录后，确保用户在各工作空间下的 projects/files 目录存在。
+	// 登录后，确保用户在各工作空间下的 projects/files/products 目录存在。
 	// os.MkdirAll 是幂等操作，并发安全。
 	for _, ws := range mine {
-		if err := defaultService.EnsureUserWorkspaceDirs(ws.ID, userID); err != nil {
+		if err := defaultService.EnsureUserWorkspaceDirs(r.Context(), ws.ID, userID); err != nil {
 			log.Printf("[Workspace] ensure user dirs failed for ws=%s user=%s: %v", ws.ID, userID, err)
 		}
 	}
@@ -136,7 +226,7 @@ func WorkspaceByID(w http.ResponseWriter, r *http.Request) {
 		handler.SetJSONHeader(w)
 		json.NewEncoder(w).Encode(ws)
 	case http.MethodPut:
-		if !requireSuperAdmin(w, r) {
+		if !requireWorkspaceAdmin(w, r, id) {
 			return
 		}
 		var req updateWorkspaceRequest
@@ -147,7 +237,19 @@ func WorkspaceByID(w http.ResponseWriter, r *http.Request) {
 			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
 			return
 		}
-		ws, err := defaultService.UpdateWorkspace(id, req.Name, req.Description)
+		// 智能体策略从租户继承，工作空间更新仅修改名称和描述，保留现有策略不变
+		existing, err := defaultService.GetWorkspace(id)
+		if err != nil {
+			handler.HandleServiceError(w, err, "workspace not found", "failed to get workspace")
+			return
+		}
+		existingPolicy := service.AgentPolicy{
+			AgentConfigLocked:   existing.AgentConfigLocked,
+			LockedAgentKeys:     existing.LockedAgentKeys,
+			AllowedAgentKeys:    existing.AllowedAgentKeys,
+			DefaultAgentConfigs: nil,
+		}
+		ws, err := defaultService.UpdateWorkspace(id, req.Name, req.Description, existingPolicy)
 		if err != nil {
 			handler.HandleServiceError(w, err, "workspace not found", "failed to update workspace")
 			return
@@ -172,6 +274,9 @@ func WorkspaceByID(w http.ResponseWriter, r *http.Request) {
 func Members(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := handler.PathValueOr404(w, r, "id")
 	if !ok {
+		return
+	}
+	if !requireWorkspaceAdmin(w, r, workspaceID) {
 		return
 	}
 
@@ -201,7 +306,23 @@ func Members(w http.ResponseWriter, r *http.Request) {
 			handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid subRole")
 			return
 		}
-		if err := defaultService.AddMember(workspaceID, req.UserID, req.Role, req.SubRole); err != nil {
+
+		// 支持通过邮箱或 userId 添加成员：若包含 @ 则按邮箱解析为 users.id。
+		userID := req.UserID
+		if strings.Contains(req.UserID, "@") {
+			if defaultUserService == nil {
+				handler.WriteJSONError(w, http.StatusInternalServerError, 1, "user service not initialized")
+				return
+			}
+			u, err := defaultUserService.GetByEmail(req.UserID)
+			if err != nil {
+				handler.WriteJSONError(w, http.StatusBadRequest, 1, "user not found")
+				return
+			}
+			userID = u.ID
+		}
+
+		if err := defaultService.AddMember(workspaceID, userID, req.Role, req.SubRole); err != nil {
 			handler.HandleServiceError(w, err, "workspace not found", "failed to add member")
 			return
 		}
@@ -211,10 +332,13 @@ func Members(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// MemberByID 处理 DELETE /api/v1/workspaces/{id}/members/{userId}。
+// MemberByID 处理 DELETE / PUT /api/v1/workspaces/{id}/members/{userId}。
 func MemberByID(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := handler.PathValueOr404(w, r, "id")
 	if !ok {
+		return
+	}
+	if !requireWorkspaceAdmin(w, r, workspaceID) {
 		return
 	}
 	userID, ok := handler.PathValueOr404(w, r, "userId")
@@ -224,8 +348,27 @@ func MemberByID(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodDelete:
-		if err := defaultService.RemoveMember(workspaceID, userID); err != nil {
+		assetAssigneeID := r.URL.Query().Get("assetAssigneeId")
+		if err := defaultService.RemoveMember(workspaceID, userID, assetAssigneeID); err != nil {
 			handler.HandleServiceError(w, err, "member not found", "failed to remove member")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodPut:
+		var req updateMemberRequest
+		if !handler.DecodeJSONBody(w, r, &req) {
+			return
+		}
+		if !isValidMemberRole(req.Role) {
+			handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid role")
+			return
+		}
+		if req.SubRole != "" && !isValidMemberSubRole(req.SubRole) {
+			handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid subRole")
+			return
+		}
+		if err := defaultService.UpdateMemberRole(workspaceID, userID, req.Role, req.SubRole); err != nil {
+			handler.HandleServiceError(w, err, "member not found", "failed to update member role")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -423,19 +566,26 @@ func isValidMemberSubRole(subRole string) bool {
 }
 
 type createWorkspaceRequest struct {
-	TenantID    string `json:"tenantId"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	OwnerUserID string `json:"ownerUserId"`
+	TenantID    string            `json:"tenantId"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	OwnerUserID string            `json:"ownerUserId"`
+	AgentPolicy service.AgentPolicy `json:"agentPolicy"`
 }
 
 type updateWorkspaceRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	AgentPolicy service.AgentPolicy `json:"agentPolicy"`
 }
 
 type addMemberRequest struct {
 	UserID  string `json:"userId"`
+	Role    string `json:"role"`
+	SubRole string `json:"subRole"`
+}
+
+type updateMemberRequest struct {
 	Role    string `json:"role"`
 	SubRole string `json:"subRole"`
 }

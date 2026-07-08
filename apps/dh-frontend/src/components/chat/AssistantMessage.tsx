@@ -6,6 +6,7 @@ import { MarkdownView } from './MarkdownView';
 import { FileAttachmentCard } from './FileAttachmentCard';
 import { ProjectCard } from './ProjectCard';
 import { DiffView } from './DiffView';
+import type { PreviewMode } from './LivePreview';
 import { TaskListView, type TaskItemData } from './TaskListView';
 import { ToolCallView } from './ToolCallView';
 import { ThinkingCard } from './ThinkingCard';
@@ -18,7 +19,7 @@ interface AssistantMessageProps {
   onArtifactClick?: () => void;
   onRegenerate?: () => void;
   onFilePreview?: (path: string) => void;
-  onProjectPreview?: (path: string, mode: 'diff' | 'code' | 'preview') => void;
+  onProjectPreview?: (path: string, mode: PreviewMode) => void;
 }
 
 export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview }) => {

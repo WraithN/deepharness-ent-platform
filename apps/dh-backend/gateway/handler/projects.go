@@ -15,10 +15,13 @@ import (
 // ──────────────── 常量 ────────────────
 
 const (
+	// aicodingMarker 是 AI Coding 平台协助生成代码的 Git 提交标记。
+	// 所有由本平台触发的 git commit 均会带上该标记，便于在 git 历史中识别 AI 辅助提交。
+	aicodingMarker = "[AICoding]"
 	// gitInitCommitMessage 是新工程初始化 git 仓库时的提交消息。
-	gitInitCommitMessage = "Initial commit by DeepHarness AI"
+	gitInitCommitMessage = "Initial commit by DeepHarness AI " + aicodingMarker
 	// gitSyncCommitMessage 是同步工程到仓库时的默认提交消息。
-	gitSyncCommitMessage = "Sync project by DeepHarness AI"
+	gitSyncCommitMessage = "Sync project by DeepHarness AI " + aicodingMarker
 	// maxDiffOutputLen 限制 diff 输出最大长度，防止超大 diff 导致响应过大。
 	maxDiffOutputLen = 512 * 1024 // 512KB
 	// maxDiffFileSize 限制单个文件 diff 内容的最大字节数，超过则跳过该文件。
@@ -157,10 +160,14 @@ func initGitRepo(dir string) error {
 }
 
 // commitAllChanges 提交工程目录中的所有更改。
+// 提交消息会自动追加 AICoding 平台标记，确保 AI 辅助生成的代码在 git 历史中可识别。
 func commitAllChanges(dir, message string) error {
 	msg := message
 	if msg == "" {
 		msg = gitSyncCommitMessage
+	}
+	if !strings.Contains(msg, aicodingMarker) {
+		msg = strings.TrimSpace(msg) + " " + aicodingMarker
 	}
 	if _, err := projectGitExec(dir, "add", "."); err != nil {
 		return fmt.Errorf("git add failed: %w", err)

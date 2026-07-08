@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { FolderGit2, GitCompareArrows, Eye, GitCommit, Loader2, Code2 } from 'lucide-react';
+import { FolderGit2, GitCompareArrows, Eye, Code2, GitCommit, Loader2 } from 'lucide-react';
 import { projectApi, type ProjectCheckResponse } from '@/lib/project-api';
 import { repositoryApi } from '@/lib/repository-api';
 import { profileApi } from '@/lib/profile-api';
@@ -12,15 +12,29 @@ import type { WorkspaceRepository } from '@/types';
 interface ProjectCardProps {
   /** 工程根目录的绝对路径 */
   path: string;
-  /** 点击按钮时的回调，传递预览模式 */
+  /** 点击操作按钮时的回调，传递预览模式 */
   onPreview?: (path: string, mode: PreviewMode) => void;
 }
+
+/** 卡片主题色类型。 */
+type CardTheme = 'green' | 'amber';
+
+const THEME_TEXT_CLASS: Record<CardTheme, string> = {
+  green: 'text-green-700 dark:text-green-300',
+  amber: 'text-amber-700 dark:text-amber-300',
+};
+
+const SYNC_TEXT_CLASS = 'text-blue-600 dark:text-blue-400';
 
 /**
  * 工程卡片组件。
  *
- * 所有工程都显示"查看 Diff"按钮（通过 git diff 对比 master/main）；
- * 前端工程额外显示"预览"按钮（启动 dev server）。
+ * 提供四种操作：
+ * - 查看 Diff（对比 master/main）
+ * - 预览页面（启动 dev server）
+ * - 查看工程（文件树 + 代码高亮）
+ * - 提交修改（同步到远程仓库）
+ *
  * 根据工程状态区分两种展示形态：
  * - 新建工程（绿色）
  * - 已有工程修改（琥珀色）
@@ -112,17 +126,9 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
     }
   };
 
-  const handleDiff = () => {
-    onPreview?.(path, 'diff');
-  };
-
-  const handlePreview = () => {
-    onPreview?.(path, 'preview');
-  };
-
-  const handleCode = () => {
-    onPreview?.(path, 'code');
-  };
+  const handleDiff = () => onPreview?.(path, 'diff');
+  const handlePreview = () => onPreview?.(path, 'preview');
+  const handleCode = () => onPreview?.(path, 'code');
 
   if (loading) {
     return (
@@ -140,6 +146,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
   const isNew = checkResult?.isNew ?? true;
   const hasDiff = checkResult?.hasDiff ?? false;
   const fileCount = checkResult?.fileCount ?? 0;
+  const theme: CardTheme = isNew || checkFailed ? 'green' : 'amber';
 
   // check 失败时作为新建工程展示，仍允许查看 Diff 和预览。
   if (isNew || checkFailed) {
@@ -162,41 +169,14 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
                 <span className="ml-2">{formatSize(checkResult.dirSize)}</span>
               )}
             </p>
-            <div className="flex items-center gap-3 mt-3">
-              <button
-                type="button"
-                onClick={handleDiff}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-300 hover:underline transition-transform duration-200 hover:scale-105 active:scale-95"
-              >
-                <GitCompareArrows className="h-3.5 w-3.5" />
-                查看 Diff
-              </button>
-              <button
-                type="button"
-                onClick={handlePreview}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-300 hover:underline transition-transform duration-200 hover:scale-105 active:scale-95"
-              >
-                <Eye className="h-3.5 w-3.5" />
-                预览页面
-              </button>
-              <button
-                type="button"
-                onClick={handleCode}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-300 hover:underline transition-transform duration-200 hover:scale-105 active:scale-95"
-              >
-                <Code2 className="h-3.5 w-3.5" />
-                查看工程
-              </button>
-              <button
-                type="button"
-                onClick={handleSync}
-                disabled={syncing}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 transition-transform duration-200 hover:scale-105 active:scale-95"
-              >
-                {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitCommit className="h-3.5 w-3.5" />}
-                提交修改
-              </button>
-            </div>
+            <ActionBar
+              theme={theme}
+              syncing={syncing}
+              onDiff={handleDiff}
+              onPreview={handlePreview}
+              onCode={handleCode}
+              onSync={handleSync}
+            />
           </div>
         </div>
       </div>
@@ -225,46 +205,72 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
           <p className="text-xs text-muted-foreground mt-1">
             {fileCount > 0 ? `${fileCount} 个文件` : ''}
           </p>
-          <div className="flex items-center gap-3 mt-3">
-            <button
-              type="button"
-              onClick={handleDiff}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline transition-transform duration-200 hover:scale-105 active:scale-95"
-            >
-              <GitCompareArrows className="h-3.5 w-3.5" />
-              查看 Diff
-            </button>
-            <button
-              type="button"
-              onClick={handlePreview}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline transition-transform duration-200 hover:scale-105 active:scale-95"
-            >
-              <Eye className="h-3.5 w-3.5" />
-              预览页面
-            </button>
-            <button
-              type="button"
-              onClick={handleCode}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline transition-transform duration-200 hover:scale-105 active:scale-95"
-            >
-              <Code2 className="h-3.5 w-3.5" />
-              查看工程
-            </button>
-            <button
-              type="button"
-              onClick={handleSync}
-              disabled={syncing}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 transition-transform duration-200 hover:scale-105 active:scale-95"
-            >
-              {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitCommit className="h-3.5 w-3.5" />}
-              提交修改
-            </button>
-          </div>
+          <ActionBar
+            theme={theme}
+            syncing={syncing}
+            onDiff={handleDiff}
+            onPreview={handlePreview}
+            onCode={handleCode}
+            onSync={handleSync}
+          />
         </div>
       </div>
     </div>
   );
 };
+
+interface ActionBarProps {
+  theme: CardTheme;
+  syncing: boolean;
+  onDiff: () => void;
+  onPreview: () => void;
+  onCode: () => void;
+  onSync: () => void;
+}
+
+/** 工程卡片操作按钮组：Diff、预览、代码、提交。 */
+const ActionBar: React.FC<ActionBarProps> = ({ theme, syncing, onDiff, onPreview, onCode, onSync }) => {
+  const themeClass = THEME_TEXT_CLASS[theme];
+
+  return (
+    <div className="flex items-center gap-3 mt-3 flex-wrap">
+      <ActionLink icon={GitCompareArrows} label="查看 Diff" themeClass={themeClass} onClick={onDiff} />
+      <ActionLink icon={Eye} label="预览页面" themeClass={themeClass} onClick={onPreview} />
+      <ActionLink icon={Code2} label="查看工程" themeClass={themeClass} onClick={onCode} />
+      <button
+        type="button"
+        onClick={onSync}
+        disabled={syncing}
+        className="inline-flex items-center gap-1.5 text-xs font-medium hover:underline disabled:opacity-50 transition-transform duration-200 hover:scale-105 active:scale-95"
+      >
+        {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitCommit className="h-3.5 w-3.5" />}
+        提交修改
+      </button>
+    </div>
+  );
+};
+
+interface ActionLinkProps {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  themeClass: string;
+  onClick: () => void;
+}
+
+/** 单个文本操作按钮（Diff/预览/代码）。 */
+const ActionLink: React.FC<ActionLinkProps> = ({ icon: Icon, label, themeClass, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={cn(
+      'inline-flex items-center gap-1.5 text-xs font-medium hover:underline transition-transform duration-200 hover:scale-105 active:scale-95',
+      themeClass
+    )}
+  >
+    <Icon className="h-3.5 w-3.5" />
+    {label}
+  </button>
+);
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

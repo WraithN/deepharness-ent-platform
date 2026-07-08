@@ -105,15 +105,41 @@ type BranchInfo struct {
 	Behind       int       `json:"behind"`
 }
 
+// CommitterStat 贡献者提交统计。
+type CommitterStat struct {
+	Name    string `json:"name"`
+	Email   string `json:"email"`
+	Commits int    `json:"commits"`
+}
+
+// DailyCommit 单日提交数量。
+type DailyCommit struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
+}
+
+// LanguageStat 语言统计信息。
+type LanguageStat struct {
+	Name       string  `json:"name"`
+	Files      int     `json:"files"`
+	Bytes      int64   `json:"bytes"`
+	Percentage float64 `json:"percentage"`
+	Color      string  `json:"color"`
+}
+
 // RepositoryDetails 仓库详细信息。
 type RepositoryDetails struct {
-	Repository   repository.Repository `json:"repository"`
-	CommitStats  CommitStats           `json:"commitStats"`
-	Branches     []BranchInfo          `json:"branches"`
-	Contributors []string              `json:"contributors"`
-	FileCount    int                   `json:"fileCount"`
-	SizeBytes    int64                 `json:"sizeBytes"`
-	Language     string                `json:"language"`
+	Repository           repository.Repository `json:"repository"`
+	CommitStats          CommitStats           `json:"commitStats"`
+	Branches             []BranchInfo          `json:"branches"`
+	Contributors         []string              `json:"contributors"`
+	FileCount            int                   `json:"fileCount"`
+	SizeBytes            int64                 `json:"sizeBytes"`
+	Language             string                `json:"language"`
+	EffectiveLinesOfCode int                   `json:"effectiveLinesOfCode"`
+	CommitterStats       []CommitterStat       `json:"committerStats"`
+	WeeklyCommits        []DailyCommit         `json:"weeklyCommits"`
+	LanguageStats        []LanguageStat        `json:"languageStats"`
 }
 
 // FileNode 文件树节点。

@@ -5,7 +5,9 @@ import (
 	"net/http"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/identity"
 )
 
 var defaultUserService service.UserService
@@ -138,4 +140,164 @@ func SaveProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(profile)
+}
+
+// ── 租户管理 ──
+
+// requireSuperAdmin 校验当前请求用户是否为超级管理员。
+func requireSuperAdmin(w http.ResponseWriter, r *http.Request) bool {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return false
+	}
+	if defaultUserService == nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "user service not initialized")
+		return false
+	}
+	user, err := defaultUserService.GetByID(userID)
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "failed to authenticate user")
+		return false
+	}
+	if user.PlatformRole != identity.PlatformRoleSuperAdmin {
+		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		return false
+	}
+	return true
+}
+
+// Tenants 处理 GET /api/v1/tenants 与 POST /api/v1/tenants。
+func Tenants(w http.ResponseWriter, r *http.Request) {
+	if !requireSuperAdmin(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		tenants, err := defaultUserService.ListTenants()
+		if err != nil {
+			handler.HandleServiceError(w, err, "tenant not found", "failed to list tenants")
+			return
+		}
+		handler.SetJSONHeader(w)
+		json.NewEncoder(w).Encode(tenants)
+	case http.MethodPost:
+		var req struct {
+			Name        string               `json:"name"`
+			AgentPolicy service.TenantPolicy `json:"agentPolicy"`
+		}
+		if !handler.DecodeJSONBody(w, r, &req) {
+			return
+		}
+		if req.Name == "" {
+			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
+			return
+		}
+		t, err := defaultUserService.CreateTenant(req.Name, req.AgentPolicy)
+		if err != nil {
+			handler.HandleServiceError(w, err, "tenant not found", "failed to create tenant")
+			return
+		}
+		handler.SetJSONHeader(w)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(t)
+	default:
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+	}
+}
+
+// TenantByID 处理 GET/PUT/DELETE /api/v1/tenants/{id}。
+func TenantByID(w http.ResponseWriter, r *http.Request) {
+	if !requireSuperAdmin(w, r) {
+		return
+	}
+	id, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		t, err := defaultUserService.GetTenant(id)
+		if err != nil {
+			handler.HandleServiceError(w, err, "tenant not found", "failed to get tenant")
+			return
+		}
+		handler.SetJSONHeader(w)
+		json.NewEncoder(w).Encode(t)
+	case http.MethodPut:
+		var req struct {
+			Name        string               `json:"name"`
+			AgentPolicy service.TenantPolicy `json:"agentPolicy"`
+		}
+		if !handler.DecodeJSONBody(w, r, &req) {
+			return
+		}
+		if req.Name == "" {
+			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
+			return
+		}
+		t, err := defaultUserService.UpdateTenant(id, req.Name, req.AgentPolicy)
+		if err != nil {
+			handler.HandleServiceError(w, err, "tenant not found", "failed to update tenant")
+			return
+		}
+		handler.SetJSONHeader(w)
+		json.NewEncoder(w).Encode(t)
+	case http.MethodDelete:
+		if err := defaultUserService.DeleteTenant(id); err != nil {
+			handler.HandleServiceError(w, err, "tenant not found", "failed to delete tenant")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+	}
+}
+
+// TenantMembers 处理 GET /api/v1/tenants/{id}/members。
+func TenantMembers(w http.ResponseWriter, r *http.Request) {
+	if !requireSuperAdmin(w, r) {
+		return
+	}
+	id, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	members, err := defaultUserService.ListTenantMembers(id)
+	if err != nil {
+		handler.HandleServiceError(w, err, "tenant not found", "failed to list tenant members")
+		return
+	}
+	handler.SetJSONHeader(w)
+	json.NewEncoder(w).Encode(members)
+}
+
+// TenantMemberByID 处理 PUT /api/v1/tenants/{id}/members/{userId} — 设置/取消租户管理员。
+func TenantMemberByID(w http.ResponseWriter, r *http.Request) {
+	if !requireSuperAdmin(w, r) {
+		return
+	}
+	tenantID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	userID, ok := handler.PathValueOr404(w, r, "userId")
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPut {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+	var req struct {
+		IsAdmin bool `json:"isAdmin"`
+	}
+	if !handler.DecodeJSONBody(w, r, &req) {
+		return
+	}
+	if err := defaultUserService.SetTenantAdmin(tenantID, userID, req.IsAdmin); err != nil {
+		handler.HandleServiceError(w, err, "tenant member not found", "failed to set tenant admin")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

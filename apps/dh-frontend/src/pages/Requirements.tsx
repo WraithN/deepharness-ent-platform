@@ -8,6 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { LayoutList, LayoutGrid, Plus, MoreHorizontal, RefreshCw } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
+import { PaginationBar } from '@/components/admin/PaginationBar';
+import { useClientPagination } from '@/hooks/use-client-pagination';
 
 // 后端状态（下划线）与中文展示状态的映射
 const API_STATUS_TO_UI: Record<string, string> = {
@@ -30,6 +32,7 @@ const API_PRIORITY_TO_UI: Record<string, string> = {
 };
 
 const STATUSES = ['待处理', '进行中', '已完成'];
+const REQUIREMENT_PAGE_SIZE = 10;
 
 interface ReqRow {
   id: string;
@@ -45,6 +48,14 @@ export const Requirements: React.FC = () => {
   const [requirements, setRequirements] = useState<ReqRow[]>([]);
   const [draggedReqId, setDraggedReqId] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  // 列表视图客户端分页（看板视图不使用分页）
+  const { currentPage, totalPages, onPageChange, startIndex, endIndex } = useClientPagination({
+    pageSize: REQUIREMENT_PAGE_SIZE,
+    total: requirements.length,
+    resetDeps: [viewMode],
+  });
+  const paginatedRequirements = requirements.slice(startIndex, endIndex);
 
   useEffect(() => {
     api.get<WorkItemDTO[]>('/v1/workitems?type=requirement')
@@ -172,7 +183,7 @@ export const Requirements: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {requirements.map((req) => (
+                  {paginatedRequirements.map((req) => (
                     <TableRow key={req.id}>
                       <TableCell className="font-medium text-muted-foreground whitespace-nowrap">{req.id}</TableCell>
                       <TableCell className="font-medium whitespace-nowrap">{req.title}</TableCell>
@@ -197,6 +208,13 @@ export const Requirements: React.FC = () => {
                 </TableBody>
               </Table>
             </div>
+            {requirements.length > 0 && (
+              <PaginationBar
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPageChange={onPageChange}
+              />
+            )}
           </Card>
         ) : (
           <div className="flex gap-4 h-full overflow-x-auto pb-4 items-start">

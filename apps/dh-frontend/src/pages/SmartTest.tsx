@@ -42,6 +42,8 @@ import {
   Search,
 } from 'lucide-react';
 import { CodeBlock } from '@/components/CodeBlock';
+import { PaginationBar } from '@/components/admin/PaginationBar';
+import { useClientPagination } from '@/hooks/use-client-pagination';
 
 interface TestCase {
   id: string;
@@ -57,6 +59,8 @@ interface Requirement {
   title: string;
   testCases: TestCase[];
 }
+
+const TEST_REQ_PAGE_SIZE = 10;
 
 // Mock Data
 const MOCK_REQUIREMENTS: Requirement[] = [
@@ -222,6 +226,14 @@ export const SmartTest: React.FC = () => {
       })
       .filter((r): r is Requirement => r !== null);
   }, [requirements, searchQuery]);
+
+  // 左侧需求列表客户端分页
+  const { currentPage, totalPages, onPageChange, startIndex, endIndex } = useClientPagination({
+    pageSize: TEST_REQ_PAGE_SIZE,
+    total: filteredRequirements.length,
+    resetDeps: [searchQuery],
+  });
+  const paginatedRequirements = filteredRequirements.slice(startIndex, endIndex);
 
   // Tag operations
   const handleAddTag = () => {
@@ -428,7 +440,7 @@ def test_ai_generated_case():
           </CardHeader>
           <CardContent className="flex-1 overflow-y-auto p-4 space-y-4">
             <Accordion type="multiple" defaultValue={['req-1', 'req-2']} className="w-full">
-              {filteredRequirements.map((req) => (
+              {paginatedRequirements.map((req) => (
                 <AccordionItem
                   value={req.id}
                   key={req.id}
@@ -520,6 +532,13 @@ def test_ai_generated_case():
               ))}
             </Accordion>
           </CardContent>
+          {filteredRequirements.length > 0 && (
+              <PaginationBar
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPageChange={onPageChange}
+              />
+          )}
         </Card>
 
         {/* 右侧：代码编辑器与执行控制 */}

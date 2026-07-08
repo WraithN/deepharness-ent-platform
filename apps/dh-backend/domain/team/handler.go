@@ -3,6 +3,7 @@ package team
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team/service"
@@ -28,18 +29,27 @@ func InitUserService(svc identityservice.UserService) {
 
 // currentUser 返回当前请求的用户 ID、是否为超级管理员以及是否已认证。
 func currentUser(r *http.Request) (userID string, isSuperAdmin bool, ok bool) {
-	userID, ok = middleware.UserIDFromContext(r.Context())
+	userID, role, ok := currentUserWithRole(r)
 	if !ok {
 		return "", false, false
 	}
+	return userID, role == identity.PlatformRoleSuperAdmin, ok
+}
+
+// currentUserWithRole 返回当前用户 ID 与平台角色。
+func currentUserWithRole(r *http.Request) (userID string, role identity.PlatformRole, ok bool) {
+	userID, ok = middleware.UserIDFromContext(r.Context())
+	if !ok {
+		return "", "", false
+	}
 	if defaultUserService == nil {
-		return userID, false, true
+		return userID, "", true
 	}
 	user, err := defaultUserService.GetByID(userID)
 	if err != nil {
-		return userID, false, true
+		return userID, "", true
 	}
-	return userID, user.PlatformRole == identity.PlatformRoleSuperAdmin, true
+	return userID, user.PlatformRole, true
 }
 
 // requireAuth 要求请求必须携带有效用户 ID。
@@ -58,7 +68,9 @@ func Skills(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		skills, err := defaultService.ListSkills()
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+		skills, err := defaultService.ListSkills(page, pageSize)
 		if err != nil {
 			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list skills")
 			return
@@ -127,7 +139,9 @@ func Prompts(w http.ResponseWriter, r *http.Request) {
 			handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
 			return
 		}
-		prompts, err := defaultService.ListPromptsVisibleTo(userID, isSuperAdmin)
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+		prompts, err := defaultService.ListPromptsVisibleTo(userID, isSuperAdmin, page, pageSize)
 		if err != nil {
 			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list prompts")
 			return
@@ -233,4 +247,200 @@ func ReviewPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(prompt)
+}
+
+// SkillCategories 处理 GET /api/v1/team/skill-categories 与 POST /api/v1/team/skill-categories。
+func SkillCategories(w http.ResponseWriter, r *http.Request) {
+	handler.SetJSONHeader(w)
+
+	switch r.Method {
+	case http.MethodGet:
+		categories, err := defaultService.ListSkillCategories()
+		if err != nil {
+			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list skill categories")
+			return
+		}
+		json.NewEncoder(w).Encode(categories)
+	case http.MethodPost:
+		_, role, ok := currentUserWithRole(r)
+		if !ok {
+			handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+			return
+		}
+		if role != identity.PlatformRoleSuperAdmin && role != identity.PlatformRoleTenantAdmin {
+			handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or super admin required")
+			return
+		}
+		var req service.CreateSkillCategoryRequest
+		if !handler.DecodeJSONBody(w, r, &req) {
+			return
+		}
+		if req.Name == "" {
+			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
+			return
+		}
+		category, err := defaultService.CreateSkillCategory(req)
+		if err != nil {
+			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to create skill category")
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(category)
+	default:
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+	}
+}
+
+// SkillCategoryByID 处理 DELETE /api/v1/team/skill-categories/{id}。
+func SkillCategoryByID(w http.ResponseWriter, r *http.Request) {
+	handler.SetJSONHeader(w)
+	id, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+
+	if r.Method != http.MethodDelete {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+
+	_, role, authOk := currentUserWithRole(r)
+	if !authOk {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return
+	}
+	if role != identity.PlatformRoleSuperAdmin && role != identity.PlatformRoleTenantAdmin {
+		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or super admin required")
+		return
+	}
+
+	if err := defaultService.DeleteSkillCategory(id); err != nil {
+		handler.HandleServiceError(w, err, "skill category not found", "failed to delete skill category")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PromptCategories 处理 GET /api/v1/team/prompt-categories 与 POST /api/v1/team/prompt-categories。
+func PromptCategories(w http.ResponseWriter, r *http.Request) {
+	handler.SetJSONHeader(w)
+
+	switch r.Method {
+	case http.MethodGet:
+		categories, err := defaultService.ListPromptCategories()
+		if err != nil {
+			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list prompt categories")
+			return
+		}
+		json.NewEncoder(w).Encode(categories)
+	case http.MethodPost:
+		_, isSuperAdmin, ok := currentUser(r)
+		if !ok {
+			handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+			return
+		}
+		if !isSuperAdmin {
+			handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+			return
+		}
+		var req service.CreatePromptCategoryRequest
+		if !handler.DecodeJSONBody(w, r, &req) {
+			return
+		}
+		if req.Name == "" {
+			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
+			return
+		}
+		category, err := defaultService.CreatePromptCategory(req)
+		if err != nil {
+			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to create prompt category")
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(category)
+	default:
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+	}
+}
+
+// PromptCategoryByID 处理 DELETE /api/v1/team/prompt-categories/{id}。
+func PromptCategoryByID(w http.ResponseWriter, r *http.Request) {
+	handler.SetJSONHeader(w)
+	id, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+
+	if r.Method != http.MethodDelete {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+
+	_, isSuperAdmin, authOk := currentUser(r)
+	if !authOk {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return
+	}
+	if !isSuperAdmin {
+		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		return
+	}
+
+	if err := defaultService.DeletePromptCategory(id); err != nil {
+		handler.HandleServiceError(w, err, "prompt category not found", "failed to delete prompt category")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// SkillStats 处理 GET /api/v1/team/skills/stats。
+func SkillStats(w http.ResponseWriter, r *http.Request) {
+	handler.SetJSONHeader(w)
+	if r.Method != http.MethodGet {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+
+	_, isSuperAdmin, ok := currentUser(r)
+	if !ok {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return
+	}
+	if !isSuperAdmin {
+		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		return
+	}
+
+	stats, err := defaultService.GetSkillStats()
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to get skill stats")
+		return
+	}
+	json.NewEncoder(w).Encode(stats)
+}
+
+// PromptStats 处理 GET /api/v1/team/prompts/stats。
+func PromptStats(w http.ResponseWriter, r *http.Request) {
+	handler.SetJSONHeader(w)
+	if r.Method != http.MethodGet {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+
+	_, isSuperAdmin, ok := currentUser(r)
+	if !ok {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return
+	}
+	if !isSuperAdmin {
+		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		return
+	}
+
+	stats, err := defaultService.GetPromptStats()
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to get prompt stats")
+		return
+	}
+	json.NewEncoder(w).Encode(stats)
 }

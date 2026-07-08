@@ -2,7 +2,9 @@ package workspace
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
@@ -114,8 +116,25 @@ func PromptByID(w http.ResponseWriter, r *http.Request) {
 			handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or space admin required")
 			return
 		}
+		// 根据请求体字段分发：存在 enabled 字段时更新启用状态，否则更新分类。
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid request body")
+			return
+		}
+		var enabledReq service.UpdateWorkspacePromptEnabledRequest
+		if err := json.Unmarshal(body, &enabledReq); err == nil && enabledReq.Enabled != nil {
+			p, err := defaultPromptService.UpdateEnabled(workspaceID, promptID, enabledReq)
+			if err != nil {
+				handler.HandleServiceError(w, err, "prompt not found", "failed to update prompt enabled")
+				return
+			}
+			json.NewEncoder(w).Encode(p)
+			return
+		}
 		var req service.UpdateWorkspacePromptCategoryRequest
-		if !handler.DecodeJSONBody(w, r, &req) {
+		if err := json.Unmarshal(body, &req); err != nil {
+			handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid request body")
 			return
 		}
 		p, err := defaultPromptService.UpdateCategories(workspaceID, promptID, req)
@@ -207,6 +226,10 @@ func PromptCategoryByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := defaultPromptService.DeleteCategory(workspaceID, categoryID); err != nil {
+		if strings.Contains(err.Error(), "builtin category") {
+			handler.WriteJSONError(w, http.StatusBadRequest, 3, err.Error())
+			return
+		}
 		handler.HandleServiceError(w, err, "category not found", "failed to delete category")
 		return
 	}

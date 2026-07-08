@@ -106,3 +106,65 @@ INSERT INTO team_prompts (id, name, description, content, use_case, usage_count,
   ('prompt-003', 'React组件生成标准', '根据业务需求生成SQL建表语句', '请生成一个React组件，要求：使用TypeScript，TailwindCSS进行样式编写，遵循响应式设计，分离逻辑与视图，并添加适当的JSDoc注释。', '前端开发', 28000, FALSE),
   ('prompt-004', 'Go API 接口规范', '为指定函数编写单元测试', '实现一个RESTful API端点，语言为Go，使用Gin框架。要求包含参数验证、统一的错误处理封装、以及完整的Swagger注释。', '后端开发', 19000, FALSE)
 ON CONFLICT (id) DO NOTHING;
+
+-- 技能分类表
+CREATE TABLE IF NOT EXISTS team_skill_categories (
+    id VARCHAR(36) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    builtin BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE team_skill_categories IS '团队技能分类';
+COMMENT ON COLUMN team_skill_categories.name IS '分类名称';
+COMMENT ON COLUMN team_skill_categories.builtin IS '是否内置分类，内置不可删除';
+COMMENT ON COLUMN team_skill_categories.sort_order IS '排序权重';
+
+DROP TRIGGER IF EXISTS trigger_team_skill_categories_updated_at ON team_skill_categories;
+CREATE TRIGGER trigger_team_skill_categories_updated_at
+BEFORE UPDATE ON team_skill_categories
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
+
+-- 提示词分类表
+CREATE TABLE IF NOT EXISTS team_prompt_categories (
+    id VARCHAR(36) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    builtin BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE team_prompt_categories IS '团队提示词分类';
+COMMENT ON COLUMN team_prompt_categories.name IS '分类名称';
+COMMENT ON COLUMN team_prompt_categories.builtin IS '是否内置分类，内置不可删除';
+COMMENT ON COLUMN team_prompt_categories.sort_order IS '排序权重';
+
+DROP TRIGGER IF EXISTS trigger_team_prompt_categories_updated_at ON team_prompt_categories;
+CREATE TRIGGER trigger_team_prompt_categories_updated_at
+BEFORE UPDATE ON team_prompt_categories
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
+
+-- 初始化技能分类
+INSERT INTO team_skill_categories (id, name, builtin, sort_order) VALUES
+  ('skill-cat-001', '编码开发', TRUE, 1),
+  ('skill-cat-002', '代码审查', TRUE, 2),
+  ('skill-cat-003', 'UI设计', TRUE, 3),
+  ('skill-cat-004', '测试验证', TRUE, 4),
+  ('skill-cat-005', '需求设计', TRUE, 5),
+  ('skill-cat-006', '架构方案', TRUE, 6),
+  ('skill-cat-007', '预发布验证', TRUE, 7)
+ON CONFLICT (name) DO NOTHING;
+
+-- 初始化提示词分类
+INSERT INTO team_prompt_categories (id, name, builtin, sort_order) VALUES
+  ('prompt-cat-001', '需求设计', TRUE, 1),
+  ('prompt-cat-002', '前端开发', TRUE, 2),
+  ('prompt-cat-003', '后端开发', TRUE, 3),
+  ('prompt-cat-004', '测试', TRUE, 4),
+  ('prompt-cat-005', '通用', TRUE, 5)
+ON CONFLICT (name) DO NOTHING;

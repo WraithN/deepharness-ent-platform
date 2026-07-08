@@ -1,18 +1,23 @@
 package service
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workspace"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // DBWorkspaceService 是基于 PostgreSQL 的 WorkspaceService 实现。
@@ -28,15 +33,31 @@ func NewDBWorkspaceService(db *sql.DB, workspaceRoot string) *DBWorkspaceService
 }
 
 // CreateWorkspace 创建新工作空间，并将所有者加入成员表。
-func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerUserID string) (workspace.Workspace, error) {
+func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerUserID string, policy AgentPolicy) (workspace.Workspace, error) {
+	// 确保 slice 不为 nil，避免 pq.Array(nil) 插入 NULL 违反 NOT NULL 约束
+	if policy.LockedAgentKeys == nil {
+		policy.LockedAgentKeys = []string{}
+	}
+	if policy.AllowedAgentKeys == nil {
+		policy.AllowedAgentKeys = []string{}
+	}
 	now := time.Now().UTC()
 	ws := workspace.Workspace{
-		ID:          uuid.New().String(),
-		TenantID:    tenantID,
-		Name:        name,
-		Description: description,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:                  strings.ReplaceAll(uuid.New().String(), "-", ""),
+		TenantID:            tenantID,
+		Name:                name,
+		Description:         description,
+		AgentConfigLocked:   policy.AgentConfigLocked,
+		LockedAgentKeys:     policy.LockedAgentKeys,
+		AllowedAgentKeys:    policy.AllowedAgentKeys,
+		DefaultAgentConfigs: policy.DefaultAgentConfigs,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+
+	defaultConfigsJSON, err := json.Marshal(policy.DefaultAgentConfigs)
+	if err != nil {
+		return workspace.Workspace{}, fmt.Errorf("marshal default agent configs failed: %w", err)
 	}
 
 	tx, err := s.db.Begin()
@@ -45,20 +66,36 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 	}
 	defer tx.Rollback()
 
+	// 生成租户内自增的展示 ID（w1, w2...）
+	displayID, err := s.nextWorkspaceDisplayIDTx(tx, tenantID)
+	if err != nil {
+		return workspace.Workspace{}, fmt.Errorf("generate workspace display id failed: %w", err)
+	}
+	ws.DisplayID = displayID
+
 	_, err = tx.Exec(`
-		INSERT INTO workspaces (id, tenant_id, name, description, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, ws.ID, ws.TenantID, ws.Name, ws.Description, ws.CreatedAt, ws.UpdatedAt)
+		INSERT INTO workspaces (id, display_id, tenant_id, name, description, agent_config_locked, locked_agent_keys, allowed_agent_keys, default_agent_configs, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, ws.ID, ws.DisplayID, ws.TenantID, ws.Name, ws.Description,
+		policy.AgentConfigLocked,
+		pq.Array(policy.LockedAgentKeys),
+		pq.Array(policy.AllowedAgentKeys),
+		defaultConfigsJSON,
+		ws.CreatedAt, ws.UpdatedAt)
 	if err != nil {
 		return workspace.Workspace{}, fmt.Errorf("insert workspace failed: %w", err)
 	}
 
 	_, err = tx.Exec(`
-		INSERT INTO workspace_members (workspace_id, user_id, role, sub_role, joined_at)
-		VALUES ($1, $2, $3, $4, $5)
-	`, ws.ID, ownerUserID, MemberRoleSpaceAdmin, MemberSubRoleDeveloper, now)
+		INSERT INTO workspace_members (workspace_id, user_id, display_id, role, sub_role, joined_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, ws.ID, ownerUserID, "u1", MemberRoleSpaceAdmin, MemberSubRoleDeveloper, now)
 	if err != nil {
 		return workspace.Workspace{}, fmt.Errorf("insert workspace member failed: %w", err)
+	}
+
+	if err := SeedBuiltinPromptCategories(tx, ws.ID); err != nil {
+		return workspace.Workspace{}, fmt.Errorf("seed builtin prompt categories failed: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -76,74 +113,149 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 	return ws, nil
 }
 
-// EnsureUserWorkspaceDirs 确保用户在工作空间下的 projects 和 files 目录存在。
-// 目录结构：WORKSPACE_ROOT/{workspaceID}/{userID}/{projects,files}
+// EnsureUserWorkspaceDirs 确保用户在工作空间下的 projects、files 与 products 目录存在。
+// 目录结构：WORKSPACE_ROOT/{workspaceID}/{userID}/{projects,files,products/{docs,prototypes}}
 // os.MkdirAll 是幂等操作，天然并发安全。
-func (s *DBWorkspaceService) EnsureUserWorkspaceDirs(workspaceID, userID string) error {
-	if s.workspaceRoot == "" || workspaceID == "" || userID == "" {
-		return nil
+func (s *DBWorkspaceService) EnsureUserWorkspaceDirs(ctx context.Context, workspaceID, userID string) error {
+	if s.workspaceRoot == "" {
+		return errors.New("workspace root not configured")
 	}
-	for _, sub := range []string{"projects", "files"} {
-		dir := filepath.Join(s.workspaceRoot, workspaceID, userID, sub)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create user dir %s failed: %w", dir, err)
+	if workspaceID == "" {
+		return errors.New("workspaceID is required")
+	}
+	if userID == "" {
+		return errors.New("userID is required")
+	}
+	base := filepath.Join(s.workspaceRoot, workspaceID, userID)
+	dirs := []string{
+		filepath.Join(base, "projects"),
+		filepath.Join(base, "files"),
+		filepath.Join(base, "products", "docs"),
+		filepath.Join(base, "products", "prototypes"),
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return fmt.Errorf("create dir %s: %w", d, err)
 		}
 	}
 	return nil
 }
 
-// GetWorkspace 按 ID 查询工作空间。
-func (s *DBWorkspaceService) GetWorkspace(id string) (workspace.Workspace, error) {
+// scanWorkspace 从数据库行解析工作空间，包括智能体策略字段。
+func scanWorkspace(row *sql.Row) (workspace.Workspace, error) {
 	var ws workspace.Workspace
 	var desc sql.NullString
-	err := s.db.QueryRow(`
-		SELECT id, tenant_id, name, description, created_at, updated_at
-		FROM workspaces WHERE id = $1
-	`, id).Scan(&ws.ID, &ws.TenantID, &ws.Name, &desc, &ws.CreatedAt, &ws.UpdatedAt)
+	var defaultConfigs []byte
+	var lockedKeys pq.StringArray
+	var allowedKeys pq.StringArray
+	err := row.Scan(
+		&ws.ID, &ws.DisplayID, &ws.TenantID, &ws.Name, &desc,
+		&ws.AgentConfigLocked, &lockedKeys, &allowedKeys, &defaultConfigs,
+		&ws.CreatedAt, &ws.UpdatedAt,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return workspace.Workspace{}, errors.New("workspace not found")
 	}
 	if err != nil {
-		return workspace.Workspace{}, fmt.Errorf("get workspace failed: %w", err)
+		return workspace.Workspace{}, fmt.Errorf("scan workspace failed: %w", err)
 	}
 	ws.Description = sqlutil.ScanNullString(desc)
+	ws.LockedAgentKeys = []string(lockedKeys)
+	ws.AllowedAgentKeys = []string(allowedKeys)
+	if len(defaultConfigs) > 0 {
+		if err := json.Unmarshal(defaultConfigs, &ws.DefaultAgentConfigs); err != nil {
+			return workspace.Workspace{}, fmt.Errorf("unmarshal default agent configs failed: %w", err)
+		}
+	}
 	return ws, nil
 }
 
-// ListWorkspaces 返回工作空间列表，支持按租户过滤。
-func (s *DBWorkspaceService) ListWorkspaces(tenantID string) ([]workspace.Workspace, error) {
-	query := `SELECT id, tenant_id, name, description, created_at, updated_at FROM workspaces`
+// scanWorkspaceRows 从 rows 游标解析工作空间。
+func scanWorkspaceRows(rows *sql.Rows) (workspace.Workspace, error) {
+	var ws workspace.Workspace
+	var desc sql.NullString
+	var defaultConfigs []byte
+	var lockedKeys pq.StringArray
+	var allowedKeys pq.StringArray
+	if err := rows.Scan(
+		&ws.ID, &ws.DisplayID, &ws.TenantID, &ws.Name, &desc,
+		&ws.AgentConfigLocked, &lockedKeys, &allowedKeys, &defaultConfigs,
+		&ws.CreatedAt, &ws.UpdatedAt,
+	); err != nil {
+		return workspace.Workspace{}, fmt.Errorf("scan workspace failed: %w", err)
+	}
+	ws.Description = sqlutil.ScanNullString(desc)
+	ws.LockedAgentKeys = []string(lockedKeys)
+	ws.AllowedAgentKeys = []string(allowedKeys)
+	if len(defaultConfigs) > 0 {
+		if err := json.Unmarshal(defaultConfigs, &ws.DefaultAgentConfigs); err != nil {
+			return workspace.Workspace{}, fmt.Errorf("unmarshal default agent configs failed: %w", err)
+		}
+	}
+	return ws, nil
+}
+
+// GetWorkspace 按 ID 查询工作空间，智能体策略从租户表继承。
+func (s *DBWorkspaceService) GetWorkspace(id string) (workspace.Workspace, error) {
+	return scanWorkspace(s.db.QueryRow(`
+		SELECT w.id, w.display_id, w.tenant_id, w.name, w.description,
+		       t.agent_config_locked, t.locked_agent_keys, t.allowed_agent_keys, t.default_agent_configs,
+		       w.created_at, w.updated_at
+		FROM workspaces w
+		JOIN tenants t ON t.id = w.tenant_id
+		WHERE w.id = $1
+	`, id))
+}
+
+// ListWorkspaces 返回工作空间列表，支持按租户过滤和服务端分页。
+func (s *DBWorkspaceService) ListWorkspaces(tenantID string, page, pageSize int) (common.PaginatedList[workspace.Workspace], error) {
+	page = common.NormalizePage(page)
+	pageSize = common.NormalizePageSize(pageSize, 10, 100)
+
+	whereClause := ""
 	var args []any
 	if tenantID != "" {
-		query += ` WHERE tenant_id = $1`
+		whereClause = "WHERE w.tenant_id = $1"
 		args = append(args, tenantID)
 	}
-	query += ` ORDER BY created_at DESC`
 
-	rows, err := s.db.Query(query, args...)
+	countQuery := "SELECT COUNT(*) FROM workspaces w " + whereClause
+	var total int
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return common.PaginatedList[workspace.Workspace]{}, fmt.Errorf("count workspaces failed: %w", err)
+	}
+
+	query := "SELECT w.id, w.display_id, w.tenant_id, w.name, w.description, t.agent_config_locked, t.locked_agent_keys, t.allowed_agent_keys, t.default_agent_configs, w.created_at, w.updated_at FROM workspaces w JOIN tenants t ON t.id = w.tenant_id " + whereClause + " ORDER BY w.created_at DESC LIMIT $" + fmt.Sprintf("%d", len(args)+1) + " OFFSET $" + fmt.Sprintf("%d", len(args)+2)
+	pageArgs := append(args, pageSize, common.Offset(page, pageSize))
+
+	rows, err := s.db.Query(query, pageArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("list workspaces failed: %w", err)
+		return common.PaginatedList[workspace.Workspace]{}, fmt.Errorf("list workspaces failed: %w", err)
 	}
 	defer rows.Close()
 
 	result := make([]workspace.Workspace, 0)
 	for rows.Next() {
-		var ws workspace.Workspace
-		var desc sql.NullString
-		if err := rows.Scan(&ws.ID, &ws.TenantID, &ws.Name, &desc, &ws.CreatedAt, &ws.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan workspace failed: %w", err)
+		ws, err := scanWorkspaceRows(rows)
+		if err != nil {
+			return common.PaginatedList[workspace.Workspace]{}, err
 		}
-		ws.Description = sqlutil.ScanNullString(desc)
 		result = append(result, ws)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate workspaces failed: %w", err)
+		return common.PaginatedList[workspace.Workspace]{}, fmt.Errorf("iterate workspaces failed: %w", err)
 	}
-	return result, nil
+
+	return common.PaginatedList[workspace.Workspace]{
+		List:     result,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
 }
 
-// UpdateWorkspace 更新工作空间名称与描述。
-func (s *DBWorkspaceService) UpdateWorkspace(id, name, description string) (workspace.Workspace, error) {
+// UpdateWorkspace 更新工作空间名称、描述与智能体策略。
+func (s *DBWorkspaceService) UpdateWorkspace(id, name, description string, policy AgentPolicy) (workspace.Workspace, error) {
 	if id == "" {
 		return workspace.Workspace{}, errors.New("workspace id is required")
 	}
@@ -151,11 +263,25 @@ func (s *DBWorkspaceService) UpdateWorkspace(id, name, description string) (work
 		return workspace.Workspace{}, errors.New("name is required")
 	}
 
+	defaultConfigsJSON, err := json.Marshal(policy.DefaultAgentConfigs)
+	if err != nil {
+		return workspace.Workspace{}, fmt.Errorf("marshal default agent configs failed: %w", err)
+	}
+
 	res, err := s.db.Exec(`
 		UPDATE workspaces
-		SET name = $1, description = $2, updated_at = CURRENT_TIMESTAMP
+		SET name = $1, description = $2,
+		    agent_config_locked = $4,
+		    locked_agent_keys = $5,
+		    allowed_agent_keys = $6,
+		    default_agent_configs = $7,
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $3
-	`, name, sqlutil.NullString(description), id)
+	`, name, sqlutil.NullString(description), id,
+		policy.AgentConfigLocked,
+		pq.Array(policy.LockedAgentKeys),
+		pq.Array(policy.AllowedAgentKeys),
+		defaultConfigsJSON)
 	if err != nil {
 		return workspace.Workspace{}, fmt.Errorf("update workspace failed: %w", err)
 	}
@@ -200,9 +326,12 @@ func (s *DBWorkspaceService) DeleteWorkspace(id string) error {
 // 用于登录后确定当前用户的可用空间与空间内权限/职能角色。
 func (s *DBWorkspaceService) ListMine(userID string) ([]MineWorkspace, error) {
 	rows, err := s.db.Query(`
-		SELECT w.id, w.tenant_id, w.name, w.description, w.created_at, w.updated_at,
+		SELECT w.id, w.display_id, w.tenant_id, w.name, w.description,
+		       t.agent_config_locked, t.locked_agent_keys, t.allowed_agent_keys, t.default_agent_configs,
+		       w.created_at, w.updated_at,
 		       m.role, COALESCE(m.sub_role, '')
 		FROM workspaces w
+		JOIN tenants t ON t.id = w.tenant_id
 		JOIN workspace_members m ON m.workspace_id = w.id
 		WHERE m.user_id = $1
 		ORDER BY w.created_at DESC
@@ -216,10 +345,25 @@ func (s *DBWorkspaceService) ListMine(userID string) ([]MineWorkspace, error) {
 	for rows.Next() {
 		var mw MineWorkspace
 		var desc sql.NullString
-		if err := rows.Scan(&mw.ID, &mw.TenantID, &mw.Name, &desc, &mw.CreatedAt, &mw.UpdatedAt, &mw.Role, &mw.SubRole); err != nil {
+		var defaultConfigs []byte
+		var lockedKeys pq.StringArray
+		var allowedKeys pq.StringArray
+		if err := rows.Scan(
+			&mw.ID, &mw.DisplayID, &mw.TenantID, &mw.Name, &desc,
+			&mw.AgentConfigLocked, &lockedKeys, &allowedKeys, &defaultConfigs,
+			&mw.CreatedAt, &mw.UpdatedAt,
+			&mw.Role, &mw.SubRole,
+		); err != nil {
 			return nil, fmt.Errorf("scan mine workspace failed: %w", err)
 		}
 		mw.Description = sqlutil.ScanNullString(desc)
+		mw.LockedAgentKeys = []string(lockedKeys)
+		mw.AllowedAgentKeys = []string(allowedKeys)
+		if len(defaultConfigs) > 0 {
+			if err := json.Unmarshal(defaultConfigs, &mw.DefaultAgentConfigs); err != nil {
+				return nil, fmt.Errorf("unmarshal default agent configs failed: %w", err)
+			}
+		}
 		result = append(result, mw)
 	}
 	if err := rows.Err(); err != nil {
@@ -228,29 +372,68 @@ func (s *DBWorkspaceService) ListMine(userID string) ([]MineWorkspace, error) {
 	return result, nil
 }
 
-// AddMember 向工作空间添加成员。
+// AddMember 向工作空间添加成员，并分配该空间内唯一的展示 ID（u + 自增序号）。
 func (s *DBWorkspaceService) AddMember(workspaceID, userID, role, subRole string) error {
 	if err := s.workspaceExists(workspaceID); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`
-		INSERT INTO workspace_members (workspace_id, user_id, role, sub_role, joined_at)
-		VALUES ($1, $2, $3, $4, $5)
-	`, workspaceID, userID, role, sqlutil.NullString(subRole), time.Now().UTC())
+
+	displayID, err := s.nextMemberDisplayID(workspaceID)
+	if err != nil {
+		return fmt.Errorf("generate display id failed: %w", err)
+	}
+
+	_, err = s.db.Exec(`
+		INSERT INTO workspace_members (workspace_id, user_id, display_id, role, sub_role, joined_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, workspaceID, userID, displayID, role, sqlutil.NullString(subRole), time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("add member failed: %w", err)
 	}
 	return nil
 }
 
-// ListMembers 返回工作空间成员列表。
+// nextMemberDisplayID 返回当前工作空间下一个展示 ID，格式为 u1, u2...，按现有最大序号递增。
+func (s *DBWorkspaceService) nextMemberDisplayID(workspaceID string) (string, error) {
+	var maxSeq int
+	err := s.db.QueryRow(`
+		SELECT COALESCE(MAX(CAST(SUBSTRING(display_id FROM 2) AS INTEGER)), 0)
+		FROM workspace_members
+		WHERE workspace_id = $1
+	`, workspaceID).Scan(&maxSeq)
+	if err != nil {
+		return "", fmt.Errorf("query max display id failed: %w", err)
+	}
+	return fmt.Sprintf("u%d", maxSeq+1), nil
+}
+
+// nextWorkspaceDisplayIDTx 在事务中生成租户内自增的空间展示 ID（w1, w2...）。
+// 按当前租户下已有工作空间的最大序号递增，确保并发创建时序号不冲突。
+func (s *DBWorkspaceService) nextWorkspaceDisplayIDTx(tx *sql.Tx, tenantID string) (string, error) {
+	var maxSeq int
+	err := tx.QueryRow(`
+		SELECT COALESCE(MAX(CAST(SUBSTRING(display_id FROM 2) AS INTEGER)), 0)
+		FROM workspaces
+		WHERE tenant_id = $1 AND display_id ~ '^w[0-9]+$'
+	`, tenantID).Scan(&maxSeq)
+	if err != nil {
+		return "", fmt.Errorf("query max workspace display id failed: %w", err)
+	}
+	return fmt.Sprintf("w%d", maxSeq+1), nil
+}
+
+// ListMembers 返回工作空间成员列表，并关联 users 表获取姓名与邮箱。
 func (s *DBWorkspaceService) ListMembers(workspaceID string) ([]workspace.Member, error) {
 	if err := s.workspaceExists(workspaceID); err != nil {
 		return nil, err
 	}
 	rows, err := s.db.Query(`
-		SELECT workspace_id, user_id, role, sub_role, joined_at
-		FROM workspace_members WHERE workspace_id = $1
+		SELECT m.workspace_id, m.user_id, m.display_id, COALESCE(u.name, ''), COALESCE(u.email, ''),
+			m.role, m.sub_role, m.joined_at
+		FROM workspace_members m
+		LEFT JOIN users u ON u.id = m.user_id
+		WHERE m.workspace_id = $1
+		ORDER BY m.joined_at ASC
 	`, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list members failed: %w", err)
@@ -260,10 +443,12 @@ func (s *DBWorkspaceService) ListMembers(workspaceID string) ([]workspace.Member
 	result := make([]workspace.Member, 0)
 	for rows.Next() {
 		var m workspace.Member
-		var subRole sql.NullString
-		if err := rows.Scan(&m.WorkspaceID, &m.UserID, &m.Role, &subRole, &m.JoinedAt); err != nil {
+		var name, email, subRole sql.NullString
+		if err := rows.Scan(&m.WorkspaceID, &m.UserID, &m.DisplayID, &name, &email, &m.Role, &subRole, &m.JoinedAt); err != nil {
 			return nil, fmt.Errorf("scan member failed: %w", err)
 		}
+		m.Name = sqlutil.ScanNullString(name)
+		m.Email = sqlutil.ScanNullString(email)
 		m.SubRole = sqlutil.ScanNullString(subRole)
 		result = append(result, m)
 	}
@@ -273,9 +458,94 @@ func (s *DBWorkspaceService) ListMembers(workspaceID string) ([]workspace.Member
 	return result, nil
 }
 
-// RemoveMember 移除工作空间成员。
-func (s *DBWorkspaceService) RemoveMember(workspaceID, userID string) error {
+// GetMemberRole 返回指定用户在工作空间中的角色。
+func (s *DBWorkspaceService) GetMemberRole(workspaceID, userID string) (string, error) {
+	var role string
+	err := s.db.QueryRow(`
+		SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2
+	`, workspaceID, userID).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w", ErrMemberNotFound)
+	}
+	if err != nil {
+		return "", fmt.Errorf("get member role failed: %w", err)
+	}
+	return role, nil
+}
+
+// GetMemberSubRole 返回指定用户在工作空间中的职能子角色。
+func (s *DBWorkspaceService) GetMemberSubRole(ctx context.Context, workspaceID, userID string) (string, error) {
+	var subRole sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT sub_role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2
+	`, workspaceID, userID).Scan(&subRole)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w", ErrMemberNotFound)
+	}
+	if err != nil {
+		return "", fmt.Errorf("get member sub role failed: %w", err)
+	}
+	return sqlutil.ScanNullString(subRole), nil
+}
+
+// UpdateMemberRole 更新工作空间成员的角色与职能。
+func (s *DBWorkspaceService) UpdateMemberRole(workspaceID, userID, role, subRole string) error {
 	res, err := s.db.Exec(`
+		UPDATE workspace_members SET role = $1, sub_role = $2
+		WHERE workspace_id = $3 AND user_id = $4
+	`, role, sqlutil.NullString(subRole), workspaceID, userID)
+	if err != nil {
+		return fmt.Errorf("update member role failed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected failed: %w", err)
+	}
+	if n == 0 {
+		return errors.New("member not found")
+	}
+	return nil
+}
+
+// AddMemberByEmail 通过邮箱向工作空间添加成员。
+func (s *DBWorkspaceService) AddMemberByEmail(workspaceID, email, role, subRole string) error {
+	var userID string
+	err := s.db.QueryRow(`SELECT id FROM users WHERE email = $1`, email).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("user not found")
+	}
+	if err != nil {
+		return fmt.Errorf("resolve user by email failed: %w", err)
+	}
+	return s.AddMember(workspaceID, userID, role, subRole)
+}
+
+// RemoveMember 移除工作空间成员，并可选将相关资产转移给指定成员。
+func (s *DBWorkspaceService) RemoveMember(workspaceID, userID, assetAssigneeID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	if assetAssigneeID != "" {
+		// 转移产品文档及其版本归属
+		if _, err := tx.Exec(`UPDATE product_docs SET created_by = $1 WHERE workspace_id = $2 AND created_by = $3`, assetAssigneeID, workspaceID, userID); err != nil {
+			return fmt.Errorf("transfer product docs failed: %w", err)
+		}
+		if _, err := tx.Exec(`UPDATE product_doc_versions SET created_by = $1 WHERE doc_id IN (SELECT id FROM product_docs WHERE workspace_id = $2) AND created_by = $3`, assetAssigneeID, workspaceID, userID); err != nil {
+			return fmt.Errorf("transfer product doc versions failed: %w", err)
+		}
+		// 转移工作项负责人与报告人
+		if _, err := tx.Exec(`UPDATE workitems SET assignee_id = $1 WHERE project_id IN (SELECT id FROM workitem_projects WHERE workspace_id = $2) AND assignee_id = $3`, assetAssigneeID, workspaceID, userID); err != nil {
+			return fmt.Errorf("transfer workitems assignee failed: %w", err)
+		}
+		if _, err := tx.Exec(`UPDATE workitems SET reporter = $1 WHERE project_id IN (SELECT id FROM workitem_projects WHERE workspace_id = $2) AND reporter = $3`, assetAssigneeID, workspaceID, userID); err != nil {
+			return fmt.Errorf("transfer workitems reporter failed: %w", err)
+		}
+	}
+
+	res, err := tx.Exec(`
 		DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2
 	`, workspaceID, userID)
 	if err != nil {
@@ -288,7 +558,8 @@ func (s *DBWorkspaceService) RemoveMember(workspaceID, userID string) error {
 	if n == 0 {
 		return errors.New("member not found")
 	}
-	return nil
+
+	return tx.Commit()
 }
 
 // SetWorkitemProject 设置工作空间的工作项项目，使用 workspace_id 作为唯一键进行 upsert。

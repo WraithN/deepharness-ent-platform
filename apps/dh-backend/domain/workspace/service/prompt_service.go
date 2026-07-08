@@ -24,6 +24,7 @@ type WorkspacePrompt struct {
 	UsageCount      int              `json:"usageCount"`
 	IsCustom        bool             `json:"isCustom"`
 	AddedToSpace    bool             `json:"addedToSpace"`
+	Enabled         bool             `json:"enabled"`
 	CreatedAt       time.Time        `json:"createdAt"`
 	UpdatedAt       time.Time        `json:"updatedAt"`
 }
@@ -33,6 +34,7 @@ type PromptCategory struct {
 	ID          string    `json:"id"`
 	WorkspaceID string    `json:"workspaceId"`
 	Name        string    `json:"name"`
+	IsBuiltin   bool      `json:"isBuiltin"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
@@ -47,12 +49,18 @@ type UpdateWorkspacePromptCategoryRequest struct {
 	CategoryIDs []string `json:"categoryIds"`
 }
 
+// UpdateWorkspacePromptEnabledRequest 更新空间提示词启用状态的请求。
+type UpdateWorkspacePromptEnabledRequest struct {
+	Enabled *bool `json:"enabled"`
+}
+
 // WorkspacePromptService 定义工作空间提示词服务接口。
 type WorkspacePromptService interface {
 	List(workspaceID string) ([]WorkspacePrompt, error)
 	Add(workspaceID string, req AddWorkspacePromptRequest) (WorkspacePrompt, error)
 	Remove(workspaceID, promptID string) error
 	UpdateCategories(workspaceID, promptID string, req UpdateWorkspacePromptCategoryRequest) (WorkspacePrompt, error)
+	UpdateEnabled(workspaceID, promptID string, req UpdateWorkspacePromptEnabledRequest) (WorkspacePrompt, error)
 
 	ListCategories(workspaceID string) ([]PromptCategory, error)
 	CreateCategory(workspaceID, name string) (PromptCategory, error)
@@ -73,7 +81,7 @@ func NewDBWorkspacePromptService(db *sql.DB) *DBWorkspacePromptService {
 func (s *DBWorkspacePromptService) List(workspaceID string) ([]WorkspacePrompt, error) {
 	rows, err := s.db.Query(`
 		SELECT id, workspace_id, library_prompt_id, name, description, content, use_case,
-		       usage_count, is_custom, added_to_space, created_at, updated_at
+		       usage_count, is_custom, added_to_space, enabled, created_at, updated_at
 		FROM workspace_prompts
 		WHERE workspace_id = $1
 		ORDER BY created_at DESC
@@ -90,7 +98,7 @@ func (s *DBWorkspacePromptService) List(workspaceID string) ([]WorkspacePrompt, 
 		var libID sql.NullString
 		var desc sql.NullString
 		err := rows.Scan(&p.ID, &p.WorkspaceID, &libID, &p.Name, &desc, &p.Content, &p.UseCase,
-			&p.UsageCount, &p.IsCustom, &p.AddedToSpace, &p.CreatedAt, &p.UpdatedAt)
+			&p.UsageCount, &p.IsCustom, &p.AddedToSpace, &p.Enabled, &p.CreatedAt, &p.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("scan workspace prompt failed: %w", err)
 		}
@@ -130,11 +138,11 @@ func (s *DBWorkspacePromptService) listCategoriesForPrompts(promptIDs []string) 
 		args[i] = id
 	}
 	query := fmt.Sprintf(`
-		SELECT l.prompt_id, c.id, c.workspace_id, c.name, c.created_at, c.updated_at
+		SELECT l.prompt_id, c.id, c.workspace_id, c.name, c.is_builtin, c.created_at, c.updated_at
 		FROM workspace_prompt_category_links l
 		JOIN workspace_prompt_categories c ON c.id = l.category_id
 		WHERE l.prompt_id IN (%s)
-		ORDER BY c.created_at ASC
+		ORDER BY c.is_builtin DESC, c.created_at ASC
 	`, strings.Join(placeholders, ", "))
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -146,7 +154,7 @@ func (s *DBWorkspacePromptService) listCategoriesForPrompts(promptIDs []string) 
 	for rows.Next() {
 		var promptID string
 		var c PromptCategory
-		if err := rows.Scan(&promptID, &c.ID, &c.WorkspaceID, &c.Name, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&promptID, &c.ID, &c.WorkspaceID, &c.Name, &c.IsBuiltin, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan prompt category link failed: %w", err)
 		}
 		result[promptID] = append(result[promptID], c)
@@ -305,17 +313,36 @@ func (s *DBWorkspacePromptService) UpdateCategories(workspaceID, promptID string
 	return s.get(workspaceID, promptID)
 }
 
+// UpdateEnabled 更新空间提示词的启用状态。
+func (s *DBWorkspacePromptService) UpdateEnabled(workspaceID, promptID string, req UpdateWorkspacePromptEnabledRequest) (WorkspacePrompt, error) {
+	if req.Enabled == nil {
+		return WorkspacePrompt{}, errors.New("enabled is required")
+	}
+	res, err := s.db.Exec(`
+		UPDATE workspace_prompts SET enabled = $1, updated_at = $2
+		WHERE workspace_id = $3 AND id = $4
+	`, *req.Enabled, time.Now().UTC(), workspaceID, promptID)
+	if err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("update prompt enabled failed: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return WorkspacePrompt{}, errors.New("workspace prompt not found")
+	}
+	return s.get(workspaceID, promptID)
+}
+
 func (s *DBWorkspacePromptService) get(workspaceID, promptID string) (WorkspacePrompt, error) {
 	var p WorkspacePrompt
 	var libID sql.NullString
 	var desc sql.NullString
 	err := s.db.QueryRow(`
 		SELECT id, workspace_id, library_prompt_id, name, description, content, use_case,
-		       usage_count, is_custom, added_to_space, created_at, updated_at
+		       usage_count, is_custom, added_to_space, enabled, created_at, updated_at
 		FROM workspace_prompts
 		WHERE workspace_id = $1 AND id = $2
 	`, workspaceID, promptID).Scan(&p.ID, &p.WorkspaceID, &libID, &p.Name, &desc, &p.Content, &p.UseCase,
-		&p.UsageCount, &p.IsCustom, &p.AddedToSpace, &p.CreatedAt, &p.UpdatedAt)
+		&p.UsageCount, &p.IsCustom, &p.AddedToSpace, &p.Enabled, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return WorkspacePrompt{}, errors.New("workspace prompt not found")
 	}
@@ -339,10 +366,10 @@ func (s *DBWorkspacePromptService) get(workspaceID, promptID string) (WorkspaceP
 // ListCategories 返回工作空间下的所有提示词分类。
 func (s *DBWorkspacePromptService) ListCategories(workspaceID string) ([]PromptCategory, error) {
 	rows, err := s.db.Query(`
-		SELECT id, workspace_id, name, created_at, updated_at
+		SELECT id, workspace_id, name, is_builtin, created_at, updated_at
 		FROM workspace_prompt_categories
 		WHERE workspace_id = $1
-		ORDER BY created_at ASC
+		ORDER BY is_builtin DESC, created_at ASC
 	`, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list prompt categories failed: %w", err)
@@ -352,7 +379,7 @@ func (s *DBWorkspacePromptService) ListCategories(workspaceID string) ([]PromptC
 	result := make([]PromptCategory, 0)
 	for rows.Next() {
 		var c PromptCategory
-		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.IsBuiltin, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan prompt category failed: %w", err)
 		}
 		result = append(result, c)
@@ -388,8 +415,8 @@ func (s *DBWorkspacePromptService) CreateCategory(workspaceID, name string) (Pro
 		UpdatedAt:   now,
 	}
 	_, err = s.db.Exec(`
-		INSERT INTO workspace_prompt_categories (id, workspace_id, name, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO workspace_prompt_categories (id, workspace_id, name, is_builtin, created_at, updated_at)
+		VALUES ($1, $2, $3, FALSE, $4, $5)
 	`, c.ID, c.WorkspaceID, c.Name, c.CreatedAt, c.UpdatedAt)
 	if err != nil {
 		return PromptCategory{}, fmt.Errorf("create prompt category failed: %w", err)
@@ -398,10 +425,25 @@ func (s *DBWorkspacePromptService) CreateCategory(workspaceID, name string) (Pro
 }
 
 // DeleteCategory 删除工作空间下的提示词分类。
-// 如果该分类下仍有提示词，则不允许删除，避免数据丢失。
+// 系统内置分类不可删除；如果该分类下仍有提示词，也不允许删除，避免数据丢失。
 func (s *DBWorkspacePromptService) DeleteCategory(workspaceID, categoryID string) error {
-	var count int
+	var isBuiltin bool
 	err := s.db.QueryRow(`
+		SELECT is_builtin FROM workspace_prompt_categories
+		WHERE workspace_id = $1 AND id = $2
+	`, workspaceID, categoryID).Scan(&isBuiltin)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("category not found")
+		}
+		return fmt.Errorf("query category failed: %w", err)
+	}
+	if isBuiltin {
+		return errors.New("builtin category cannot be deleted")
+	}
+
+	var count int
+	err = s.db.QueryRow(`
 		SELECT COUNT(*) FROM workspace_prompt_category_links
 		WHERE category_id = $1
 	`, categoryID).Scan(&count)
@@ -422,6 +464,24 @@ func (s *DBWorkspacePromptService) DeleteCategory(workspaceID, categoryID string
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return errors.New("category not found")
+	}
+	return nil
+}
+
+// BuiltinPromptCategoryNames 是系统内置提示词分类，按展示顺序排列。
+var BuiltinPromptCategoryNames = []string{"通用", "代码开发", "需求分析", "产品设计", "测试", "运维", "文档"}
+
+// SeedBuiltinPromptCategories 为指定工作空间插入内置提示词分类。
+func SeedBuiltinPromptCategories(tx *sql.Tx, workspaceID string) error {
+	now := time.Now().UTC()
+	for _, name := range BuiltinPromptCategoryNames {
+		if _, err := tx.Exec(`
+			INSERT INTO workspace_prompt_categories (id, workspace_id, name, is_builtin, created_at, updated_at)
+			VALUES ($1, $2, $3, TRUE, $4, $5)
+			ON CONFLICT DO NOTHING
+		`, uuid.New().String(), workspaceID, name, now, now); err != nil {
+			return fmt.Errorf("seed builtin category %s failed: %w", name, err)
+		}
 	}
 	return nil
 }

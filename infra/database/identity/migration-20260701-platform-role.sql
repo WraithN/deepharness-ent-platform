@@ -26,10 +26,10 @@ UPDATE users SET platform_role = 'super_admin', tenant_id = '__system__',
   WHERE id = 'u1';
 
 INSERT INTO users (id, tenant_id, email, name, platform_role, password_hash) VALUES
-  ('u2', 't1', 'pm@deepharness.com', '产品小红', 'user', crypt('123456', gen_salt('bf'))),
-  ('u3', 't1', 'designer@deepharness.com', '设计小李', 'user', crypt('123456', gen_salt('bf'))),
-  ('u4', 't1', 'developer@deepharness.com', '开发小明', 'user', crypt('123456', gen_salt('bf'))),
-  ('u5', 't1', 'tester@deepharness.com', '测试小刚', 'user', crypt('123456', gen_salt('bf')))
+  ('a7390f0b07e245d9a7495682738153b5', 't1', 'pm@deepharness.com', '产品小红', 'user', crypt('123456', gen_salt('bf'))),
+  ('2dd09f577fb1421d8204c504d325b359', 't1', 'designer@deepharness.com', '设计小李', 'user', crypt('123456', gen_salt('bf'))),
+  ('9113acf484b540f2ab340d7c7a110d7c', 't1', 'developer@deepharness.com', '开发小明', 'user', crypt('123456', gen_salt('bf'))),
+  ('98d9613544fe42dfa07840ea254d3019', 't1', 'tester@deepharness.com', '测试小刚', 'user', crypt('123456', gen_salt('bf')))
 ON CONFLICT (id) DO UPDATE SET
   email = EXCLUDED.email,
   name = EXCLUDED.name,
