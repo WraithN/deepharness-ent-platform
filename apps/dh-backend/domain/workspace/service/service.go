@@ -45,6 +45,7 @@ type WorkspaceService interface {
 	AddMemberByEmail(workspaceID, email, role, subRole string) error
 	ListMembers(workspaceID string) ([]workspace.Member, error)
 	GetMemberRole(workspaceID, userID string) (string, error)
+	GetMemberSubRole(workspaceID, userID string) (string, error)
 	UpdateMemberRole(workspaceID, userID, role, subRole string) error
 	RemoveMember(workspaceID, userID, assetAssigneeID string) error
 

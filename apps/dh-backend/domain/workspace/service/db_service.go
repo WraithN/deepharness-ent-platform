@@ -473,6 +473,21 @@ func (s *DBWorkspaceService) GetMemberRole(workspaceID, userID string) (string, 
 	return role, nil
 }
 
+// GetMemberSubRole 返回指定用户在工作空间中的职能子角色。
+func (s *DBWorkspaceService) GetMemberSubRole(workspaceID, userID string) (string, error) {
+	var subRole sql.NullString
+	err := s.db.QueryRow(`
+		SELECT sub_role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2
+	`, workspaceID, userID).Scan(&subRole)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errors.New("member not found")
+	}
+	if err != nil {
+		return "", fmt.Errorf("get member sub role failed: %w", err)
+	}
+	return sqlutil.ScanNullString(subRole), nil
+}
+
 // UpdateMemberRole 更新工作空间成员的角色与职能。
 func (s *DBWorkspaceService) UpdateMemberRole(workspaceID, userID, role, subRole string) error {
 	res, err := s.db.Exec(`
