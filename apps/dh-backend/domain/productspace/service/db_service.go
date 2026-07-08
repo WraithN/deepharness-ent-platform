@@ -293,13 +293,13 @@ func buildRelativePath(category, folder, name, ext string) string {
 	return filepath.Join(category, folder, filename)
 }
 
-// buildVersionRelativePath 构造版本文件的相对路径。
+// buildVersionRelativePath 构造版本文件的相对路径：versions/{category}/{folder}/{name}-vN.ext。
 func buildVersionRelativePath(category, folder, name, ext string, version int) string {
 	filename := buildVersionFileName(name, ext, version)
 	if folder == "" {
-		return filepath.Join(category, filename)
+		return filepath.Join(object.ProductSpaceVersionsDir, category, filename)
 	}
-	return filepath.Join(category, folder, filename)
+	return filepath.Join(object.ProductSpaceVersionsDir, category, folder, filename)
 }
 
 // buildVersionFileName 构造版本文件名：name-vN.ext。
@@ -468,6 +468,9 @@ func parseRelativePath(relativePath string) (category, folder, name, ext string,
 func deleteVersionFiles(dir, name, ext string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return fmt.Errorf("read directory failed: %w", err)
 	}
 	prefix := name + versionSuffix
@@ -870,6 +873,26 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 		return nil, errors.New(errMsgDocTooLarge)
 	}
 
+	// 先校验并解码新内容，确认合法后再创建版本快照，避免生成孤儿版本文件。
+	var newData []byte
+	if item.Type == object.ItemTypePrototype {
+		// Base64 is ~4/3 of original size plus padding
+		maxBase64Len := int(base64.StdEncoding.EncodedLen(int(object.MaxPrototypeSizeBytes)))
+		if len(req.Content) > maxBase64Len {
+			return nil, errors.New(errMsgPrototypeTooLarge)
+		}
+		decoded, err := base64.StdEncoding.DecodeString(req.Content)
+		if err != nil {
+			return nil, fmt.Errorf("invalid base64 data: %w", err)
+		}
+		if int64(len(decoded)) > object.MaxPrototypeSizeBytes {
+			return nil, errors.New(errMsgPrototypeTooLarge)
+		}
+		newData = decoded
+	} else {
+		newData = []byte(req.Content)
+	}
+
 	category, folder, name, ext, err := parseRelativePath(item.RelativePath)
 	if err != nil {
 		return nil, err
@@ -890,27 +913,11 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureParentDir(versionAbsPath); err != nil {
+		return nil, err
+	}
 	if err := copyFile(currentAbsPath, versionAbsPath); err != nil {
 		return nil, fmt.Errorf("backup current version failed: %w", err)
-	}
-
-	var newData []byte
-	if item.Type == object.ItemTypePrototype {
-		// Base64 is ~4/3 of original size plus padding
-		maxBase64Len := int(base64.StdEncoding.EncodedLen(int(object.MaxPrototypeSizeBytes)))
-		if len(req.Content) > maxBase64Len {
-			return nil, errors.New(errMsgPrototypeTooLarge)
-		}
-		decoded, err := base64.StdEncoding.DecodeString(req.Content)
-		if err != nil {
-			return nil, fmt.Errorf("invalid base64 data: %w", err)
-		}
-		if int64(len(decoded)) > object.MaxPrototypeSizeBytes {
-			return nil, errors.New(errMsgPrototypeTooLarge)
-		}
-		newData = decoded
-	} else {
-		newData = []byte(req.Content)
 	}
 
 	if err := os.WriteFile(currentAbsPath, newData, defaultFilePerm); err != nil {
@@ -918,7 +925,7 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 		return nil, fmt.Errorf("write new content failed: %w", err)
 	}
 
-	if err := s.saveVersionAndUpdateTx(ctx, tx, item, versionAbsPath, req.Content, req.ChangeSummary, userID, oldBytes, newData); err != nil {
+	if err := s.saveVersionAndUpdateTx(ctx, tx, item, versionRelPath, req.Content, req.ChangeSummary, userID, oldBytes, newData); err != nil {
 		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
 		_ = os.Remove(versionAbsPath)
 		return nil, err
@@ -1074,6 +1081,9 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureParentDir(snapshotAbsPath); err != nil {
+		return nil, err
+	}
 
 	oldBytes, err := os.ReadFile(currentAbsPath)
 	if err != nil {
@@ -1172,7 +1182,13 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 	if err != nil {
 		return err
 	}
-	versionDir := filepath.Dir(absPath)
+
+	// 历史版本文件统一存放在 products/versions/ 平行目录下。
+	versionDirRel := filepath.Join(object.ProductSpaceVersionsDir, filepath.Dir(item.RelativePath))
+	versionDir, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, versionDirRel)
+	if err != nil {
+		return err
+	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM product_doc_versions WHERE doc_id = $1`, itemID); err != nil {
 		return fmt.Errorf("delete versions failed: %w", err)
@@ -1298,7 +1314,7 @@ func (s *DBProductSpaceService) DownloadVersion(ctx context.Context, workspaceID
 		return "", nil, err
 	}
 
-	if version < 0 || version > item.CurrentVersion {
+	if version <= 0 || version > item.CurrentVersion {
 		return "", nil, errors.New(errMsgInvalidVersion)
 	}
 	if version == item.CurrentVersion {
