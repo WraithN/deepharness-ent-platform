@@ -2,11 +2,16 @@ package service
 
 import (
 	"context"
+	"errors"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workspace"
 )
+
+// ErrMemberNotFound 表示指定用户不是该工作空间的成员。
+// 供依赖方区分“无权限”与“成员/工作空间不存在”，避免统一返回 403 造成信息泄露。
+var ErrMemberNotFound = errors.New("workspace member not found")
 
 // AgentPolicy 表示超管为工作空间设置的智能体策略。
 type AgentPolicy struct {

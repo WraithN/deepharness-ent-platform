@@ -280,7 +280,7 @@ func (h *Handler) RestoreVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 // DownloadVersion 处理 GET /api/v1/workspaces/{id}/product-space/items/{itemId}/download。
-// 通过 query 参数 version 指定版本，缺省时下载当前版本。
+// 通过 query 参数 version 指定版本，必须提供有效的版本号。
 func (h *Handler) DownloadVersion(w http.ResponseWriter, r *http.Request) {
 	if !h.requireMethod(w, r, http.MethodGet) {
 		return
@@ -346,9 +346,11 @@ func (h *Handler) Folders(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusCreated)
 	case http.MethodDelete:
-		var req object.DeleteFolderRequest
-		if !h.decodeJSONBody(w, r, &req) {
-			return
+		// DELETE 请求使用 query 参数而非请求体，避免部分代理/客户端不支持 DELETE body。
+		q := r.URL.Query()
+		req := object.DeleteFolderRequest{
+			Category: q.Get("category"),
+			Name:     q.Get("name"),
 		}
 		if req.Category == "" || req.Name == "" {
 			h.writeError(w, http.StatusBadRequest, errMsgCategoryNameRequired)

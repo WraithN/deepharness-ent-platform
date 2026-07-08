@@ -12,6 +12,16 @@ import { KanbanWorkspace } from './KanbanWorkspace';
 import { PrototypeWorkspace } from './PrototypeWorkspace';
 import { productDocApi, type ProductDoc, type ProductDocVersion } from '@/lib/productdoc-api';
 import { Badge } from '@/components/ui/badge';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import ReactDiffViewer from 'react-diff-viewer-continued';
 
@@ -109,6 +119,7 @@ const DocMode: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const loadDocs = async () => {
     if (!workspaceId) return;
@@ -205,9 +216,13 @@ const DocMode: React.FC = () => {
     }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!workspaceId || !selectedDocId) return;
-    if (!confirm('确定要删除该文档吗？删除后不可恢复。')) return;
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!workspaceId || !selectedDocId) return;
     try {
       await productDocApi.delete(workspaceId, selectedDocId);
       setDocs(prev => prev.filter(d => d.id !== selectedDocId));
@@ -215,6 +230,8 @@ const DocMode: React.FC = () => {
       toast.success('文档已删除');
     } catch {
       toast.error('删除失败');
+    } finally {
+      setDeleteDialogOpen(false);
     }
   };
 
@@ -301,24 +318,29 @@ const DocMode: React.FC = () => {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {!isCreating && (
-                  <Button variant="outline" size="sm" className="h-8" onClick={handlePublish} disabled={publishing}>
-                    {publishing ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Send className="h-4 w-4 mr-1" />}
-                    发布版本
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={handlePublish}
+                    disabled={publishing}
+                    title="发布版本"
+                  >
+                    {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   </Button>
                 )}
-                <Button size="sm" className="h-8" onClick={handleSaveDraft} disabled={saving}>
-                  {saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
-                  {isCreating ? '创建' : '保存'}
+                <Button size="icon" className="h-8 w-8" onClick={handleSaveDraft} disabled={saving} title={isCreating ? '创建' : '保存'}>
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 </Button>
                 {!isCreating && selectedDocId && (
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={handleDelete}>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={handleDelete} title="删除">
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 )}
               </div>
             </div>
             <div className="flex-1 overflow-hidden">
-              <MarkdownEditor value={content} onChange={setContent} onSave={handleSaveDraft} saving={saving} />
+              <MarkdownEditor value={content} onChange={setContent} />
             </div>
           </div>
         ) : (
@@ -332,6 +354,23 @@ const DocMode: React.FC = () => {
           </div>
         )}
       </ResizablePanel>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除文档</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要删除该文档吗？删除后不可恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteDialogOpen(false)}>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </ResizablePanelGroup>
   );
 };

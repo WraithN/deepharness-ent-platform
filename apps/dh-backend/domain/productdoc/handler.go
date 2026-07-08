@@ -7,6 +7,7 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 )
 
 var defaultProductDocService service.ProductDocService
@@ -52,6 +53,11 @@ func ProductDocs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.WorkspaceID = workspaceID
+		if req.CreatedBy == "" {
+			if userID, ok := middleware.UserIDFromContext(r.Context()); ok {
+				req.CreatedBy = userID
+			}
+		}
 		doc, err := defaultProductDocService.CreateDoc(req)
 		if err != nil {
 			log.Printf("[ProductDoc] CreateDoc failed: %v", err)
@@ -160,6 +166,11 @@ func PublishProductDoc(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"code":1,"message":"invalid request body"}`, http.StatusBadRequest)
 		return
+	}
+	if req.CreatedBy == "" {
+		if userID, ok := middleware.UserIDFromContext(r.Context()); ok {
+			req.CreatedBy = userID
+		}
 	}
 
 	version, err := defaultProductDocService.PublishVersion(docID, req)
