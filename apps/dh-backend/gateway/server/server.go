@@ -23,6 +23,8 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant"
 	paservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/service"
+	psHandler "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace"
+	psService "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc"
 	productdocservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent"
@@ -41,7 +43,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var defaultAgentConfigService agentconfigservice.AgentConfigService
+var (
+	defaultAgentConfigService agentconfigservice.AgentConfigService
+	productSpaceService       psService.ProductSpaceService
+)
 
 func New(cfg config.Config) http.Handler {
 	mux := http.NewServeMux()
@@ -63,6 +68,7 @@ func New(cfg config.Config) http.Handler {
 	initEventService(db)
 	initOrchestratorService(db)
 	workspaceService := initWorkspaceService(db, cfg.WorkspaceRoot, userService, cfg.CodingAgents)
+	initProductSpaceService(db, cfg.WorkspaceRoot, workspaceService)
 	initAgentConfigService(db, cfg.CodingAgents, cfg.CodingAgentModels)
 	initWorkspacePromptService(db)
 	initRepositoryService(db, cfg)
@@ -196,6 +202,17 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/workspaces/{id}/product-docs/{docId}/versions", productdoc.ProductDocVersions)
 	mux.HandleFunc("/api/v1/workspaces/{id}/product-docs/{docId}/publish", productdoc.PublishProductDoc)
 
+	// Product space module
+	psH := psHandler.NewHandler(productSpaceService)
+	mux.Handle("/api/v1/workspaces/{id}/product-space/tree", middleware.Auth(http.HandlerFunc(psH.GetTree)))
+	mux.Handle("/api/v1/workspaces/{id}/product-space/items", middleware.Auth(http.HandlerFunc(psH.CreateItem)))
+	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}", middleware.Auth(http.HandlerFunc(psH.ItemByID)))
+	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}/content", middleware.Auth(http.HandlerFunc(psH.UpdateContent)))
+	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}/versions", middleware.Auth(http.HandlerFunc(psH.ListVersions)))
+	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}/versions/{version}/restore", middleware.Auth(http.HandlerFunc(psH.RestoreVersion)))
+	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}/download", middleware.Auth(http.HandlerFunc(psH.DownloadVersion)))
+	mux.Handle("/api/v1/workspaces/{id}/product-space/folders", middleware.Auth(http.HandlerFunc(psH.Folders)))
+
 	// Team skills / prompts
 	mux.HandleFunc("/api/v1/team/skills", team.Skills)
 	mux.HandleFunc("/api/v1/team/skills/{id}", team.SkillByID)
@@ -320,6 +337,15 @@ func initWorkspacePromptService(db *sql.DB) {
 func initProductDocService(db *sql.DB) {
 	log.Println("[ProductDoc] using postgres storage")
 	productdoc.Init(productdocservice.NewDBProductDocService(db))
+}
+
+func initProductSpaceService(db *sql.DB, workspaceRoot string, workspaceService workspaceservice.WorkspaceService) {
+	log.Printf("[ProductSpace] using postgres storage, workspaceRoot=%s", workspaceRoot)
+	var err error
+	productSpaceService, err = psService.NewDBProductSpaceService(db, workspaceRoot, workspaceService)
+	if err != nil {
+		log.Fatalf("init productspace service: %v", err)
+	}
 }
 
 func initRepositoryService(db *sql.DB, cfg config.Config) {
