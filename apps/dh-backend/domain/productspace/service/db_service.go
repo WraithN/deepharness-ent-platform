@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -93,19 +94,15 @@ type queryRowContextExecer interface {
 
 // scanProductSpaceItem 从数据库行扫描到领域对象。
 func scanProductSpaceItem(sc scanner, item *object.ProductSpaceItem) error {
-	var content, createdBy sql.NullString
+	var createdBy sql.NullString
 	err := sc.Scan(
 		&item.ID, &item.WorkspaceID, &item.UserID, &item.Type,
 		&item.Title, &item.RelativePath, &item.CurrentVersion,
 		&item.FileExt, &item.MimeType, &item.SizeBytes, &item.Status,
-		&content, &createdBy, &item.CreatedAt, &item.UpdatedAt,
+		&createdBy, &item.CreatedAt, &item.UpdatedAt,
 	)
 	if err != nil {
 		return err
-	}
-	if content.Valid {
-		// content 仅作为元数据保留，领域对象不直接暴露该字段。
-		_ = content.String
 	}
 	if createdBy.Valid {
 		item.CreatedBy = createdBy.String
@@ -432,7 +429,7 @@ func (s *DBProductSpaceService) fetchItem(ctx context.Context, workspaceID, user
 	var item object.ProductSpaceItem
 	err := scanProductSpaceItem(s.db.QueryRowContext(ctx, `
 		SELECT id, workspace_id, user_id, type, title, relative_path, current_version,
-		       file_ext, mime_type, size_bytes, status, content, created_by, created_at, updated_at
+		       file_ext, mime_type, size_bytes, status, created_by, created_at, updated_at
 		FROM product_docs
 		WHERE id = $1 AND workspace_id = $2 AND user_id = $3
 	`, itemID, workspaceID, userID), &item)
@@ -479,7 +476,7 @@ func (s *DBProductSpaceService) insertProductDoc(
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id, workspace_id, user_id, type, title, relative_path, current_version,
-		          file_ext, mime_type, size_bytes, status, content, created_by, created_at, updated_at
+		          file_ext, mime_type, size_bytes, status, created_by, created_at, updated_at
 	`, id, workspaceID, userID, itemType, title, slug, relativePath, content,
 		status, currentVersion, fileExt, mimeType, sizeBytes, createdBy, now, now,
 	), &item)
@@ -497,7 +494,7 @@ func (s *DBProductSpaceService) GetTree(ctx context.Context, workspaceID, userID
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, workspace_id, user_id, type, title, relative_path, current_version,
-		       file_ext, mime_type, size_bytes, status, content, created_by, created_at, updated_at
+		       file_ext, mime_type, size_bytes, status, created_by, created_at, updated_at
 		FROM product_docs
 		WHERE workspace_id = $1 AND user_id = $2
 	`, workspaceID, userID)
@@ -533,8 +530,8 @@ func (s *DBProductSpaceService) GetTree(ctx context.Context, workspaceID, userID
 			rootNode.Children = append(rootNode.Children, fileNode)
 			continue
 		}
-		folderNode := ensureFolderNode(rootNode, folder)
-		folderNode.Children = append(folderNode.Children, fileNode)
+		folderIdx := findOrCreateFolder(rootNode, folder)
+		rootNode.Children[folderIdx].Children = append(rootNode.Children[folderIdx].Children, fileNode)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate items failed: %w", err)
@@ -543,12 +540,12 @@ func (s *DBProductSpaceService) GetTree(ctx context.Context, workspaceID, userID
 	return []object.ProductSpaceTreeNode{*root[object.ProductSpaceDocsDir], *root[object.ProductSpacePrototypesDir]}, nil
 }
 
-// ensureFolderNode 在父节点下查找或创建文件夹节点。
-func ensureFolderNode(parent *object.ProductSpaceTreeNode, folder string) *object.ProductSpaceTreeNode {
+// findOrCreateFolder 在父节点下查找或创建文件夹节点，并返回其在 Children 中的索引。
+func findOrCreateFolder(parent *object.ProductSpaceTreeNode, folder string) int {
 	folderPath := filepath.Join(parent.Path, folder)
 	for i := range parent.Children {
 		if parent.Children[i].Name == folder && parent.Children[i].Type == object.NodeTypeFolder {
-			return &parent.Children[i]
+			return i
 		}
 	}
 	parent.Children = append(parent.Children, object.ProductSpaceTreeNode{
@@ -556,7 +553,7 @@ func ensureFolderNode(parent *object.ProductSpaceTreeNode, folder string) *objec
 		Path: folderPath,
 		Type: object.NodeTypeFolder,
 	})
-	return &parent.Children[len(parent.Children)-1]
+	return len(parent.Children) - 1
 }
 
 // CreateItem 创建新的文档或原型条目，并写入初始文件。
@@ -703,7 +700,16 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 		return nil, fmt.Errorf("backup current version failed: %w", err)
 	}
 
-	newData := []byte(req.Content)
+	var newData []byte
+	if item.Type == object.ItemTypePrototype {
+		newData, err = base64.StdEncoding.DecodeString(req.Content)
+		if err != nil {
+			return nil, fmt.Errorf("invalid base64 data: %w", err)
+		}
+	} else {
+		newData = []byte(req.Content)
+	}
+
 	if err := os.WriteFile(currentAbsPath, newData, defaultFilePerm); err != nil {
 		_ = os.Remove(versionAbsPath)
 		return nil, fmt.Errorf("write new content failed: %w", err)
