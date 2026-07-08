@@ -493,20 +493,25 @@ func (s *DBProductSpaceService) fetchItem(ctx context.Context, workspaceID, user
 }
 
 // fetchItemForUpdate 在事务中按 ID 获取产品空间条目，并对 product_docs 行加写锁。
+// 使用单次 SELECT ... FOR UPDATE 查询，避免先读取再锁定时出现竞态条件导致 current_version 等字段过期。
 // 调用方必须负责提交或回滚事务以释放锁。
 func (s *DBProductSpaceService) fetchItemForUpdate(ctx context.Context, tx *sql.Tx, workspaceID, userID, itemID string) (*object.ProductSpaceItem, error) {
-	item, err := s.fetchItemWithExecer(ctx, tx, workspaceID, userID, itemID)
+	const query = `
+		SELECT id, workspace_id, user_id, type, title, relative_path, current_version,
+		       file_ext, mime_type, size_bytes, status, created_by, created_at, updated_at
+		FROM product_docs
+		WHERE id = $1 AND workspace_id = $2 AND user_id = $3
+		FOR UPDATE
+	`
+	var item object.ProductSpaceItem
+	err := scanProductSpaceItem(tx.QueryRowContext(ctx, query, itemID, workspaceID, userID), &item)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New(errMsgItemNotFound)
+		}
+		return nil, fmt.Errorf("fetch item for update failed: %w", err)
 	}
-	var dummy string
-	err = tx.QueryRowContext(ctx, `
-		SELECT id FROM product_docs WHERE id = $1 AND workspace_id = $2 AND user_id = $3 FOR UPDATE
-	`, itemID, workspaceID, userID).Scan(&dummy)
-	if err != nil {
-		return nil, fmt.Errorf("lock item failed: %w", err)
-	}
-	return item, nil
+	return &item, nil
 }
 
 // fetchVersionWithExecer 按文档 ID、工作空间、用户与版本号获取版本记录，支持传入 *sql.DB 或 *sql.Tx。
