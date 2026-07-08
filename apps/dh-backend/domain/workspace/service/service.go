@@ -10,10 +10,10 @@ import (
 
 // AgentPolicy 表示超管为工作空间设置的智能体策略。
 type AgentPolicy struct {
-	AgentConfigLocked   bool                            `json:"agentConfigLocked"`
-	LockedAgentKeys     []string                        `json:"lockedAgentKeys"`
-	AllowedAgentKeys    []string                        `json:"allowedAgentKeys"`
-	DefaultAgentConfigs map[string]AgentConfigSnapshot  `json:"defaultAgentConfigs"`
+	AgentConfigLocked   bool                           `json:"agentConfigLocked"`
+	LockedAgentKeys     []string                       `json:"lockedAgentKeys"`
+	AllowedAgentKeys    []string                       `json:"allowedAgentKeys"`
+	DefaultAgentConfigs map[string]AgentConfigSnapshot `json:"defaultAgentConfigs"`
 }
 
 // AgentConfigSnapshot 表示超管为某个 agent 预设的默认配置快照。
@@ -45,7 +45,7 @@ type WorkspaceService interface {
 	AddMemberByEmail(workspaceID, email, role, subRole string) error
 	ListMembers(workspaceID string) ([]workspace.Member, error)
 	GetMemberRole(workspaceID, userID string) (string, error)
-	GetMemberSubRole(workspaceID, userID string) (string, error)
+	GetMemberSubRole(ctx context.Context, workspaceID, userID string) (string, error)
 	UpdateMemberRole(workspaceID, userID, role, subRole string) error
 	RemoveMember(workspaceID, userID, assetAssigneeID string) error
 
