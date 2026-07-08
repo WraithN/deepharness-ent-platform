@@ -4,8 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
@@ -279,7 +279,7 @@ func (h *Handler) DownloadVersion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contentType := http.DetectContentType(data)
-	encoded := mime.QEncoding.Encode("utf-8", filename)
+	encoded := url.PathEscape(filename)
 	w.Header().Set("Content-Disposition", "attachment; filename*=utf-8''"+encoded)
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
