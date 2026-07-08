@@ -41,6 +41,7 @@ const (
 	errMsgInvalidExtension    = "invalid file extension"
 	errMsgPathTraversal       = "path traversal detected"
 	errMsgFolderNotEmpty      = "folder is not empty"
+	errMsgFolderNotFound      = "folder not found"
 	errMsgTitleEmpty          = "title is required"
 	errMsgTitlePathSeparator  = "title cannot contain path separators"
 	errMsgContentRequired     = "doc content is required"
@@ -329,7 +330,7 @@ func copyFile(src, dst string) error {
 }
 
 // sanitizeName 清理名称中的文件系统危险字符，防止跨目录或非法文件名。
-// 显式拒绝 "." 与 ".."，避免通过文件夹名称逃逸到父目录。
+// 显式拒绝 "." 与 ".."，避免通过文件夹名称逃逸到父目录；拒绝 "%" 与 "_"，避免与 LIKE 通配符混淆。
 func sanitizeName(name string) (string, error) {
 	cleaned := strings.TrimSpace(name)
 	if cleaned == "" || cleaned == "." || cleaned == ".." {
@@ -338,6 +339,9 @@ func sanitizeName(name string) (string, error) {
 	cleaned = filepath.Base(cleaned)
 	if cleaned == "." || cleaned == ".." {
 		return "", errors.New("invalid name")
+	}
+	if strings.ContainsAny(cleaned, "%_") {
+		return "", errors.New("name cannot contain wildcard characters")
 	}
 	replacer := strings.NewReplacer(
 		"/", "_",
@@ -356,6 +360,14 @@ func sanitizeName(name string) (string, error) {
 		return "", errors.New("invalid name")
 	}
 	return cleaned, nil
+}
+
+// escapeLikePattern 对字符串中的 LIKE 通配符与转义字符进行转义，配合 ESCAPE '\\' 使用。
+func escapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
 }
 
 // parseExtFromName 从名称中解析扩展名（小写）。
@@ -586,12 +598,12 @@ func (s *DBProductSpaceService) itemExistsByPath(ctx context.Context, workspaceI
 func (s *DBProductSpaceService) folderHasItems(ctx context.Context, workspaceID, userID, category, folder string) (bool, error) {
 	const folderHasItemsQuery = `
 		SELECT id FROM product_docs
-		WHERE workspace_id = $1 AND user_id = $2 AND relative_path LIKE $3
+		WHERE workspace_id = $1 AND user_id = $2 AND relative_path LIKE $3 ESCAPE '\\'
 		LIMIT 1
 	`
 	prefix := buildRelativePath(category, folder, "", "") + "/"
 	var id string
-	err := s.db.QueryRowContext(ctx, folderHasItemsQuery, workspaceID, userID, prefix+"%").Scan(&id)
+	err := s.db.QueryRowContext(ctx, folderHasItemsQuery, workspaceID, userID, escapeLikePattern(prefix)+"%").Scan(&id)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -1320,6 +1332,9 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 
 	entries, err := os.ReadDir(absPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return errors.New(errMsgFolderNotFound)
+		}
 		return fmt.Errorf("read folder failed: %w", err)
 	}
 	if len(entries) > 0 {
