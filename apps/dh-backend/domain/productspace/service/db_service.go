@@ -1361,6 +1361,13 @@ func (s *DBProductSpaceService) CreateFolder(ctx context.Context, workspaceID, u
 	if err != nil {
 		return err
 	}
+	catPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, req.Category)
+	if err != nil {
+		return err
+	}
+	if err := rejectSymlink(catPath); err != nil {
+		return fmt.Errorf("category directory symlink check failed: %w", err)
+	}
 	relativePath := filepath.Join(req.Category, folder)
 	if err := validateRelativePath(relativePath); err != nil {
 		return err
@@ -1394,6 +1401,13 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 	if err != nil {
 		return err
 	}
+	catPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, req.Category)
+	if err != nil {
+		return err
+	}
+	if err := rejectSymlink(catPath); err != nil {
+		return fmt.Errorf("category directory symlink check failed: %w", err)
+	}
 	relativePath := filepath.Join(req.Category, folder)
 	if err := validateRelativePath(relativePath); err != nil {
 		return err
@@ -1426,6 +1440,14 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 	}
 	if err := os.Remove(absPath); err != nil {
 		return fmt.Errorf("remove folder failed: %w", err)
+	}
+
+	// 删除成功后，清理并行存储版本文件的对应空目录。
+	versionsAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, filepath.Join(object.ProductSpaceVersionsDir, req.Category, folder))
+	if err == nil {
+		if entries, err := os.ReadDir(versionsAbsPath); err == nil && len(entries) == 0 {
+			_ = os.Remove(versionsAbsPath)
+		}
 	}
 	return nil
 }
