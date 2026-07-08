@@ -5,6 +5,7 @@ const (
 	ProductSpaceRoot          = "products"
 	ProductSpaceDocsDir       = "docs"
 	ProductSpacePrototypesDir = "prototypes"
+	ProductSpaceVersionsDir   = "versions"
 
 	ItemTypeDoc       = "doc"
 	ItemTypePrototype = "prototype"
