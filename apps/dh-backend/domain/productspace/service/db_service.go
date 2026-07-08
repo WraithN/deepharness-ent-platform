@@ -570,7 +570,40 @@ func (s *DBProductSpaceService) GetTree(ctx context.Context, workspaceID, userID
 		return nil, fmt.Errorf("iterate items failed: %w", err)
 	}
 
-	return []object.ProductSpaceTreeNode{*root[object.ProductSpaceDocsDir], *root[object.ProductSpacePrototypesDir]}, nil
+	roots := []object.ProductSpaceTreeNode{*root[object.ProductSpaceDocsDir], *root[object.ProductSpacePrototypesDir]}
+	return s.appendEmptyFolders(ctx, workspaceID, userID, roots)
+}
+
+// appendEmptyFolders 扫描磁盘上产品空间的 docs 与 prototypes 目录，将数据库中无条目的空文件夹补充到树中。
+func (s *DBProductSpaceService) appendEmptyFolders(ctx context.Context, workspaceID, userID string, roots []object.ProductSpaceTreeNode) ([]object.ProductSpaceTreeNode, error) {
+	categories := []struct {
+		name string
+		idx  int
+	}{
+		{object.ProductSpaceDocsDir, 0},
+		{object.ProductSpacePrototypesDir, 1},
+	}
+	for _, cat := range categories {
+		catPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, cat.name)
+		if err != nil {
+			return nil, err
+		}
+		entries, err := os.ReadDir(catPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("read category directory %s failed: %w", cat.name, err)
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			folderName := entry.Name()
+			findOrCreateFolder(&roots[cat.idx], folderName)
+		}
+	}
+	return roots, nil
 }
 
 // findOrCreateFolder 在父节点下查找或创建文件夹节点，并返回其在 Children 中的索引。
@@ -753,6 +786,9 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 		if err != nil {
 			return nil, fmt.Errorf("invalid base64 data: %w", err)
 		}
+		if int64(len(newData)) > object.MaxPrototypeSizeBytes {
+			return nil, fmt.Errorf("%s: %d bytes", errMsgPrototypeTooLarge, object.MaxPrototypeSizeBytes)
+		}
 	} else {
 		newData = []byte(req.Content)
 	}
@@ -919,7 +955,7 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	if item.Type == object.ItemTypePrototype {
 		contentStr = base64.StdEncoding.EncodeToString(restoredBytes)
 	}
-	if err := s.saveRestoredVersion(ctx, item, version, newVersionAbsPath, contentStr, int64(len(restoredBytes)), oldBytes, userID); err != nil {
+	if err := s.saveRestoredVersion(ctx, item, version, newVersionAbsPath, contentStr, int64(len(restoredBytes)), userID); err != nil {
 		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
 		_ = os.Remove(newVersionAbsPath)
 		return nil, err
@@ -935,7 +971,6 @@ func (s *DBProductSpaceService) saveRestoredVersion(
 	restoredVersion int,
 	versionAbsPath, content string,
 	sizeBytes int64,
-	oldBytes []byte,
 	userID string,
 ) error {
 	now := time.Now().UTC()
@@ -1044,6 +1079,9 @@ func (s *DBProductSpaceService) CreateFolder(ctx context.Context, workspaceID, u
 	if err := validateCategory(req.Category); err != nil {
 		return err
 	}
+	if strings.ContainsAny(req.Name, "/\\") {
+		return errors.New("folder name cannot contain path separators")
+	}
 	folder, err := sanitizeName(req.Name)
 	if err != nil {
 		return err
@@ -1070,6 +1108,9 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 
 	if err := validateCategory(req.Category); err != nil {
 		return err
+	}
+	if strings.ContainsAny(req.Name, "/\\") {
+		return errors.New("folder name cannot contain path separators")
 	}
 	folder, err := sanitizeName(req.Name)
 	if err != nil {
