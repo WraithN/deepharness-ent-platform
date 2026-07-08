@@ -117,8 +117,14 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 // 目录结构：WORKSPACE_ROOT/{workspaceID}/{userID}/{projects,files,products/{docs,prototypes}}
 // os.MkdirAll 是幂等操作，天然并发安全。
 func (s *DBWorkspaceService) EnsureUserWorkspaceDirs(ctx context.Context, workspaceID, userID string) error {
-	if s.workspaceRoot == "" || workspaceID == "" || userID == "" {
-		return nil
+	if s.workspaceRoot == "" {
+		return errors.New("workspace root not configured")
+	}
+	if workspaceID == "" {
+		return errors.New("workspaceID is required")
+	}
+	if userID == "" {
+		return errors.New("userID is required")
 	}
 	base := filepath.Join(s.workspaceRoot, workspaceID, userID)
 	dirs := []string{
