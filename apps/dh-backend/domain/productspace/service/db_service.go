@@ -16,6 +16,7 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 const (
@@ -32,22 +33,22 @@ const (
 )
 
 const (
-	errMsgInvalidItemType   = "invalid item type"
-	errMsgInvalidCategory   = "invalid category"
-	errMsgInvalidExtension  = "invalid file extension"
-	errMsgPathTraversal     = "path traversal detected"
-	errMsgFolderNotEmpty    = "folder is not empty"
-	errMsgTitleEmpty           = "title is required"
-	errMsgTitlePathSeparator   = "title cannot contain path separators"
-	errMsgContentRequired   = "doc content is required"
-	errMsgFileDataRequired  = "prototype file data is required"
-	errMsgPrototypeTooLarge = "prototype file exceeds maximum allowed size"
-	errMsgRelativePathEmpty = "relative path is required"
-	errMsgRelativePathAbs   = "relative path must be relative"
-	errMsgRelativePathDot   = "relative path cannot contain parent references"
-	errMsgItemNotFound      = "product space item not found"
-	errMsgItemAlreadyExists = "product space item already exists"
-	errMsgVersionNotFound   = "product space version not found"
+	errMsgInvalidItemType    = "invalid item type"
+	errMsgInvalidCategory    = "invalid category"
+	errMsgInvalidExtension   = "invalid file extension"
+	errMsgPathTraversal      = "path traversal detected"
+	errMsgFolderNotEmpty     = "folder is not empty"
+	errMsgTitleEmpty         = "title is required"
+	errMsgTitlePathSeparator = "title cannot contain path separators"
+	errMsgContentRequired    = "doc content is required"
+	errMsgFileDataRequired   = "prototype file data is required"
+	errMsgPrototypeTooLarge  = "prototype file exceeds maximum allowed size"
+	errMsgRelativePathEmpty  = "relative path is required"
+	errMsgRelativePathAbs    = "relative path must be relative"
+	errMsgRelativePathDot    = "relative path cannot contain parent references"
+	errMsgItemNotFound       = "product space item not found"
+	errMsgItemAlreadyExists  = "product space item already exists"
+	errMsgVersionNotFound    = "product space version not found"
 )
 
 // 预定义的 MIME 类型映射，避免魔法字符串。
@@ -67,6 +68,8 @@ type DBProductSpaceService struct {
 	workspaceService workspaceMemberRoleProvider
 }
 
+var _ ProductSpaceService = (*DBProductSpaceService)(nil)
+
 // NewDBProductSpaceService 创建 DBProductSpaceService 实例。
 // workspaceRoot 会被解析为绝对路径，避免进程工作目录变化导致已存储的路径失效。
 func NewDBProductSpaceService(db *sql.DB, workspaceRoot string, workspaceService workspaceMemberRoleProvider) (*DBProductSpaceService, error) {
@@ -78,6 +81,14 @@ func NewDBProductSpaceService(db *sql.DB, workspaceRoot string, workspaceService
 		return nil, fmt.Errorf("resolve workspace root: %w", err)
 	}
 	return &DBProductSpaceService{db: db, workspaceRoot: absRoot, workspaceService: workspaceService}, nil
+}
+
+// isUniqueViolation 判断数据库错误是否为 PostgreSQL 唯一约束冲突（SQLSTATE 23505）。
+func isUniqueViolation(err error) bool {
+	if pqErr, ok := err.(*pq.Error); ok {
+		return pqErr.Code == "23505"
+	}
+	return false
 }
 
 // requirePM 校验当前用户在工作空间中的职能子角色为 PM。
@@ -664,20 +675,14 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 	var content string
 	switch req.Type {
 	case object.ItemTypeDoc:
-		content = req.Content
 		data = []byte(req.Content)
+		content = req.Content
 	case object.ItemTypePrototype:
 		data = req.FileData
+		content = base64.StdEncoding.EncodeToString(req.FileData)
 	}
 
 	// 原型文件在 product_docs.content 中存储 base64 编码内容，与 UpdateContent / RestoreVersion 保持一致。
-	contentStr := ""
-	if req.Type == object.ItemTypePrototype {
-		contentStr = base64.StdEncoding.EncodeToString(req.FileData)
-	} else {
-		contentStr = req.Content
-	}
-	content = contentStr
 
 	size := int64(len(data))
 
@@ -688,13 +693,6 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, relativePath)
 	if err != nil {
 		return nil, err
-	}
-
-	// 检查目标文件是否已存在，避免覆盖用户已有的数据。
-	if _, err := os.Stat(absPath); err == nil {
-		return nil, errors.New(errMsgItemAlreadyExists)
-	} else if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("check file existence failed: %w", err)
 	}
 
 	if err := ensureParentDir(absPath); err != nil {
@@ -713,10 +711,15 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 		content, ItemStatusDraft, 1, ext, mime, size, userID,
 	)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, errors.New(errMsgItemAlreadyExists)
+		}
 		return nil, err
 	}
 
 	if err := os.WriteFile(absPath, data, defaultFilePerm); err != nil {
+		_ = tx.Rollback()
+		_ = os.Remove(absPath)
 		return nil, fmt.Errorf("write initial file failed: %w", err)
 	}
 
