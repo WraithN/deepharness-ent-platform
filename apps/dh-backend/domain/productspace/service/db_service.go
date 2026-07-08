@@ -31,10 +31,8 @@ const (
 	// pmSubRole 是允许访问产品空间的职能子角色。
 	pmSubRole = "pm"
 
-	// changeSummaryPreRestoreSnapshot 是 RestoreVersion 恢复前快照的变更摘要。
-	changeSummaryPreRestoreSnapshot = "恢复前快照"
 	// changeSummaryRestoreToVersion 是 RestoreVersion 恢复到目标版本后的变更摘要模板。
-	changeSummaryRestoreToVersion = "恢复至版本 %d"
+	changeSummaryRestoreToVersion = "恢复至 v%d"
 )
 
 const (
@@ -957,9 +955,16 @@ func (s *DBProductSpaceService) ListVersions(ctx context.Context, workspaceID, u
 	return result, rows.Err()
 }
 
-// RestoreVersion 将指定版本恢复为当前版本。
-// 为防止数据丢失，会先对当前文件做“恢复前快照”，再覆盖为历史版本，最后对恢复后的内容再做一次快照，
-// 最终在事务中更新 product_docs 的当前版本号与元数据。
+// RestoreVersion 将指定历史版本恢复为当前版本。
+// 操作流程：
+//   1. 在事务中锁定条目并读取目标版本记录；
+//   2. 备份当前文件内容；
+//   3. 将目标版本文件复制到当前文件路径；
+//   4. 读取恢复后的当前文件内容；
+//   5. 将恢复后的内容写入新的不可变快照文件（v{current_version+1}）；
+//   6. 插入一条版本记录，change_summary 为 "恢复至 vN"；
+//   7. 更新 product_docs 的 current_version、content、size_bytes、updated_at。
+// 任何在覆盖当前文件之后的失败都会回滚文件系统变更：恢复原始当前文件并删除新建快照。
 func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID, userID, itemID string, targetVersion int) (*object.ProductSpaceItem, error) {
 	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return nil, err
@@ -989,6 +994,7 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	if err != nil {
 		return nil, err
 	}
+
 	sourceVersionAbsPath, err := s.resolveVersionFilePath(workspaceID, userID, versionRecord.FilePath)
 	if err != nil {
 		return nil, err
@@ -999,75 +1005,75 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 		return nil, err
 	}
 
-	firstNewVersion := item.CurrentVersion + 1
-	firstVersionRelPath := buildVersionRelativePath(category, folder, name, ext, firstNewVersion)
-	firstVersionAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, firstVersionRelPath)
+	nextVersion := item.CurrentVersion + 1
+	snapshotRelPath := buildVersionRelativePath(category, folder, name, ext, nextVersion)
+	snapshotAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, snapshotRelPath)
 	if err != nil {
 		return nil, err
 	}
 
-	secondNewVersion := firstNewVersion + 1
-	secondVersionRelPath := buildVersionRelativePath(category, folder, name, ext, secondNewVersion)
-	secondVersionAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, secondVersionRelPath)
-	if err != nil {
-		return nil, err
-	}
-
-	// 步骤 1：读取当前文件内容，用于恢复前快照以及失败后的文件系统回滚。
 	oldBytes, err := os.ReadFile(currentAbsPath)
 	if err != nil {
 		return nil, fmt.Errorf("read current file failed: %w", err)
 	}
 
-	// rollbackFS 在后续步骤失败后将当前文件恢复为 oldBytes，并清理已创建的快照文件。
 	rollbackFS := func() {
 		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
-		_ = os.Remove(firstVersionAbsPath)
-		_ = os.Remove(secondVersionAbsPath)
+		_ = os.Remove(snapshotAbsPath)
 	}
 
-	// 步骤 2/3：将当前文件内容快照为第一个新版本文件，并插入“恢复前快照”版本记录。
-	if err := os.WriteFile(firstVersionAbsPath, oldBytes, defaultFilePerm); err != nil {
-		return nil, fmt.Errorf("create pre-restore snapshot failed: %w", err)
-	}
-	if err := s.insertVersionTx(ctx, tx, item, firstNewVersion, firstVersionAbsPath, changeSummaryPreRestoreSnapshot, int64(len(oldBytes)), userID); err != nil {
-		_ = os.Remove(firstVersionAbsPath)
-		return nil, err
-	}
-
-	// 步骤 4：将目标版本文件复制回当前文件。
 	if err := copyFile(sourceVersionAbsPath, currentAbsPath); err != nil {
 		rollbackFS()
 		return nil, fmt.Errorf("restore version file failed: %w", err)
 	}
 
-	// 步骤 5：读取恢复后的当前文件内容。
 	restoredBytes, err := os.ReadFile(currentAbsPath)
 	if err != nil {
 		rollbackFS()
 		return nil, fmt.Errorf("read restored file failed: %w", err)
 	}
 
-	// 步骤 6/7：将恢复后的内容快照为第二个新版本文件，并插入“恢复至版本 X”版本记录。
-	if err := os.WriteFile(secondVersionAbsPath, restoredBytes, defaultFilePerm); err != nil {
+	if err := os.WriteFile(snapshotAbsPath, restoredBytes, defaultFilePerm); err != nil {
 		rollbackFS()
-		return nil, fmt.Errorf("create post-restore snapshot failed: %w", err)
-	}
-	changeSummary := fmt.Sprintf(changeSummaryRestoreToVersion, targetVersion)
-	if err := s.insertVersionTx(ctx, tx, item, secondNewVersion, secondVersionAbsPath, changeSummary, int64(len(restoredBytes)), userID); err != nil {
-		rollbackFS()
-		return nil, err
+		return nil, fmt.Errorf("create restore snapshot failed: %w", err)
 	}
 
-	// 步骤 8：更新 product_docs 当前版本号和元数据。
-	// 对于原型文件，product_docs.content 需要与 UpdateContent 保持一致，存储 base64 编码后的内容。
+	now := time.Now().UTC()
+	versionID := uuid.New().String()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO product_doc_versions (
+			id, doc_id, version, title, file_path, file_ext, mime_type, size_bytes, change_summary, created_by, created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, versionID, item.ID, nextVersion, item.Title, snapshotAbsPath,
+		item.FileExt, item.MimeType, int64(len(restoredBytes)), fmt.Sprintf(changeSummaryRestoreToVersion, targetVersion), userID, now,
+	); err != nil {
+		rollbackFS()
+		return nil, fmt.Errorf("insert version failed: %w", err)
+	}
+
 	contentStr := string(restoredBytes)
 	if item.Type == object.ItemTypePrototype {
 		contentStr = base64.StdEncoding.EncodeToString(restoredBytes)
 	}
-	if err := s.updateProductDocAfterRestoreTx(ctx, tx, item, secondNewVersion, contentStr, int64(len(restoredBytes))); err != nil {
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE product_docs
+		SET content = $1, current_version = $2, size_bytes = $3, updated_at = $4
+		WHERE id = $5 AND workspace_id = $6 AND user_id = $7
+	`, contentStr, nextVersion, int64(len(restoredBytes)), now, item.ID, item.WorkspaceID, item.UserID)
+	if err != nil {
 		rollbackFS()
-		return nil, err
+		return nil, fmt.Errorf("update item version failed: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		rollbackFS()
+		return nil, fmt.Errorf("check affected rows failed: %w", err)
+	}
+	if affected == 0 {
+		rollbackFS()
+		return nil, errors.New(errMsgItemNotFound)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -1076,59 +1082,6 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	}
 
 	return s.fetchItem(ctx, workspaceID, userID, itemID)
-}
-
-// insertVersionTx 在事务中插入一条 product_doc_versions 记录，不更新 product_docs。
-func (s *DBProductSpaceService) insertVersionTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	item *object.ProductSpaceItem,
-	version int,
-	versionAbsPath, changeSummary string,
-	sizeBytes int64,
-	userID string,
-) error {
-	now := time.Now().UTC()
-	versionID := uuid.New().String()
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO product_doc_versions (
-			id, doc_id, version, title, file_path, file_ext, mime_type, size_bytes, change_summary, created_by, created_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, versionID, item.ID, version, item.Title, versionAbsPath,
-		item.FileExt, item.MimeType, sizeBytes, changeSummary, userID, now,
-	); err != nil {
-		return fmt.Errorf("insert version failed: %w", err)
-	}
-	return nil
-}
-
-// updateProductDocAfterRestoreTx 在事务中更新 product_docs 的当前版本、内容、大小和更新时间。
-func (s *DBProductSpaceService) updateProductDocAfterRestoreTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	item *object.ProductSpaceItem,
-	currentVersion int,
-	content string,
-	sizeBytes int64,
-) error {
-	now := time.Now().UTC()
-	result, err := tx.ExecContext(ctx, `
-		UPDATE product_docs
-		SET content = $1, current_version = $2, size_bytes = $3, updated_at = $4
-		WHERE id = $5 AND workspace_id = $6 AND user_id = $7
-	`, content, currentVersion, sizeBytes, now, item.ID, item.WorkspaceID, item.UserID)
-	if err != nil {
-		return fmt.Errorf("update item version failed: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("check affected rows failed: %w", err)
-	}
-	if affected == 0 {
-		return errors.New(errMsgItemNotFound)
-	}
-	return nil
 }
 
 // DeleteItem 删除条目及其所有历史版本文件。
