@@ -193,15 +193,17 @@ func (s *DBProductSpaceService) resolveVersionFilePath(workspaceID, userID, stor
 	}
 	if filepath.IsAbs(storedPath) {
 		// 校验已存储的绝对路径位于用户的产品空间根目录下，防止路径逃逸。
+		// 先对 storedPath 做 Clean，避免 /base/.../etc/passwd 这类路径绕过前缀检查。
 		base := filepath.Join(s.workspaceRoot, workspaceID, userID, object.ProductSpaceRoot)
 		absBase, err := filepath.Abs(base)
 		if err != nil {
 			return "", err
 		}
-		if !strings.HasPrefix(storedPath, absBase+string(filepath.Separator)) && storedPath != absBase {
+		cleaned := filepath.Clean(storedPath)
+		if !strings.HasPrefix(cleaned, absBase+string(filepath.Separator)) && cleaned != absBase {
 			return "", errors.New("version file path is outside workspace")
 		}
-		return storedPath, nil
+		return cleaned, nil
 	}
 	return resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, storedPath)
 }
