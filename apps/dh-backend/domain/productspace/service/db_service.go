@@ -66,8 +66,16 @@ type DBProductSpaceService struct {
 }
 
 // NewDBProductSpaceService 创建 DBProductSpaceService 实例。
-func NewDBProductSpaceService(db *sql.DB, workspaceRoot string, workspaceService workspaceMemberRoleProvider) *DBProductSpaceService {
-	return &DBProductSpaceService{db: db, workspaceRoot: workspaceRoot, workspaceService: workspaceService}
+// workspaceRoot 会被解析为绝对路径，避免进程工作目录变化导致已存储的路径失效。
+func NewDBProductSpaceService(db *sql.DB, workspaceRoot string, workspaceService workspaceMemberRoleProvider) (*DBProductSpaceService, error) {
+	if db == nil {
+		return nil, errors.New("db is required")
+	}
+	absRoot, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace root: %w", err)
+	}
+	return &DBProductSpaceService{db: db, workspaceRoot: absRoot, workspaceService: workspaceService}, nil
 }
 
 // requirePM 校验当前用户在工作空间中的职能子角色为 PM。
@@ -867,7 +875,12 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	}
 
 	// 步骤 6/7：持久化新的版本记录并更新当前版本号。
-	if err := s.saveRestoredVersion(ctx, item, version, newVersionAbsPath, string(restoredBytes), int64(len(restoredBytes)), oldBytes, userID); err != nil {
+	// 对于原型文件，product_docs.content 需要与 UpdateContent 保持一致，存储 base64 编码后的内容。
+	contentStr := string(restoredBytes)
+	if item.Type == object.ItemTypePrototype {
+		contentStr = base64.StdEncoding.EncodeToString(restoredBytes)
+	}
+	if err := s.saveRestoredVersion(ctx, item, version, newVersionAbsPath, contentStr, int64(len(restoredBytes)), oldBytes, userID); err != nil {
 		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
 		_ = os.Remove(newVersionAbsPath)
 		return nil, err
