@@ -15,6 +15,7 @@ const (
 	DocExtText     = "txt"
 
 	MaxPrototypeSizeBytes = 50 * 1024 * 1024 // 50MB
+	MaxDocSizeBytes       = 10 * 1024 * 1024 // 10MB
 )
 
 var AllowedDocExts = map[string]bool{"md": true, "txt": true}
