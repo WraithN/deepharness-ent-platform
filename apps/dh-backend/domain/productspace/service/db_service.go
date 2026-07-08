@@ -185,6 +185,27 @@ func resolveProductSpacePath(workspaceRoot, workspaceID, userID, relativePath st
 	return absTarget, nil
 }
 
+// resolveVersionFilePath 解析 product_doc_versions 中存储的文件路径。
+// 历史版本表中可能存储绝对路径；若路径已是绝对路径，则校验其位于用户的产品空间根目录下后直接使用。
+func (s *DBProductSpaceService) resolveVersionFilePath(workspaceID, userID, storedPath string) (string, error) {
+	if storedPath == "" {
+		return "", errors.New("version file path is empty")
+	}
+	if filepath.IsAbs(storedPath) {
+		// 校验已存储的绝对路径位于用户的产品空间根目录下，防止路径逃逸。
+		base := filepath.Join(s.workspaceRoot, workspaceID, userID, object.ProductSpaceRoot)
+		absBase, err := filepath.Abs(base)
+		if err != nil {
+			return "", err
+		}
+		if !strings.HasPrefix(storedPath, absBase+string(filepath.Separator)) && storedPath != absBase {
+			return "", errors.New("version file path is outside workspace")
+		}
+		return storedPath, nil
+	}
+	return resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, storedPath)
+}
+
 // validateRelativePath 校验相对路径基本规则。
 func validateRelativePath(relativePath string) error {
 	if relativePath == "" {
@@ -607,6 +628,16 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 	case object.ItemTypePrototype:
 		data = req.FileData
 	}
+
+	// 原型文件在 product_docs.content 中存储 base64 编码内容，与 UpdateContent / RestoreVersion 保持一致。
+	contentStr := ""
+	if req.Type == object.ItemTypePrototype {
+		contentStr = base64.StdEncoding.EncodeToString(req.FileData)
+	} else {
+		contentStr = req.Content
+	}
+	content = contentStr
+
 	size := int64(len(data))
 
 	relativePath := buildRelativePath(categoryDir, folder, name, ext)
@@ -834,7 +865,7 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	if err != nil {
 		return nil, err
 	}
-	sourceVersionAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, versionRecord.FilePath)
+	sourceVersionAbsPath, err := s.resolveVersionFilePath(workspaceID, userID, versionRecord.FilePath)
 	if err != nil {
 		return nil, err
 	}
@@ -1086,7 +1117,7 @@ func (s *DBProductSpaceService) DownloadVersion(ctx context.Context, workspaceID
 		return "", nil, err
 	}
 
-	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, versionRecord.FilePath)
+	absPath, err := s.resolveVersionFilePath(workspaceID, userID, versionRecord.FilePath)
 	if err != nil {
 		return "", nil, err
 	}
