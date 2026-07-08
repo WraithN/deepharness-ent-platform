@@ -85,7 +85,8 @@ func NewDBProductSpaceService(db *sql.DB, workspaceRoot string, workspaceService
 
 // isUniqueViolation 判断数据库错误是否为 PostgreSQL 唯一约束冲突（SQLSTATE 23505）。
 func isUniqueViolation(err error) bool {
-	if pqErr, ok := err.(*pq.Error); ok {
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) {
 		return pqErr.Code == "23505"
 	}
 	return false
