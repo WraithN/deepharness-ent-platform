@@ -36,23 +36,25 @@ const (
 )
 
 const (
-	errMsgInvalidItemType    = "invalid item type"
-	errMsgInvalidCategory    = "invalid category"
-	errMsgInvalidExtension   = "invalid file extension"
-	errMsgPathTraversal      = "path traversal detected"
-	errMsgFolderNotEmpty     = "folder is not empty"
-	errMsgTitleEmpty         = "title is required"
-	errMsgTitlePathSeparator = "title cannot contain path separators"
-	errMsgContentRequired    = "doc content is required"
-	errMsgFileDataRequired   = "prototype file data is required"
-	errMsgPrototypeTooLarge  = "prototype file exceeds maximum allowed size"
-	errMsgRelativePathEmpty  = "relative path is required"
-	errMsgRelativePathAbs    = "relative path must be relative"
-	errMsgRelativePathDot    = "relative path cannot contain parent references"
-	errMsgItemNotFound       = "product space item not found"
-	errMsgItemAlreadyExists  = "product space item already exists"
-	errMsgVersionNotFound    = "product space version not found"
-	errMsgInvalidVersion     = "invalid version"
+	errMsgInvalidItemType     = "invalid item type"
+	errMsgInvalidCategory     = "invalid category"
+	errMsgInvalidExtension    = "invalid file extension"
+	errMsgPathTraversal       = "path traversal detected"
+	errMsgFolderNotEmpty      = "folder is not empty"
+	errMsgTitleEmpty          = "title is required"
+	errMsgTitlePathSeparator  = "title cannot contain path separators"
+	errMsgContentRequired     = "doc content is required"
+	errMsgFileDataRequired    = "prototype file data is required"
+	errMsgPrototypeTooLarge   = "prototype file exceeds maximum allowed size"
+	errMsgDocTooLarge         = "doc content exceeds maximum allowed size"
+	errMsgFolderPathSeparator = "folder name cannot contain path separators"
+	errMsgRelativePathEmpty   = "relative path is required"
+	errMsgRelativePathAbs     = "relative path must be relative"
+	errMsgRelativePathDot     = "relative path cannot contain parent references"
+	errMsgItemNotFound        = "product space item not found"
+	errMsgItemAlreadyExists   = "product space item already exists"
+	errMsgVersionNotFound     = "product space version not found"
+	errMsgInvalidVersion      = "invalid version"
 )
 
 // 预定义的 MIME 类型映射，避免魔法字符串。
@@ -231,6 +233,30 @@ func (s *DBProductSpaceService) resolveVersionFilePath(workspaceID, userID, stor
 		return cleaned, nil
 	}
 	return resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, storedPath)
+}
+
+// toRelativeFilePath 将版本表中存储的绝对或相对文件路径转换为产品空间根目录下的相对路径。
+// 若路径位于产品空间根目录之外，则返回错误，防止 API 泄露服务器目录结构或路径逃逸。
+func (s *DBProductSpaceService) toRelativeFilePath(storedPath, workspaceID, userID string) (string, error) {
+	base := filepath.Join(s.workspaceRoot, workspaceID, userID, object.ProductSpaceRoot)
+	absBase, err := filepath.Abs(base)
+	if err != nil {
+		return "", err
+	}
+
+	pathToCheck := storedPath
+	if !filepath.IsAbs(storedPath) {
+		pathToCheck = filepath.Join(absBase, storedPath)
+	}
+
+	rel, err := filepath.Rel(absBase, pathToCheck)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(rel, "..") {
+		return "", errors.New("path outside product space")
+	}
+	return rel, nil
 }
 
 // validateRelativePath 校验相对路径基本规则。
@@ -532,6 +558,23 @@ func (s *DBProductSpaceService) fetchItemForUpdate(ctx context.Context, tx *sql.
 	return &item, nil
 }
 
+// itemExistsByPath 根据工作空间、用户与相对路径查询是否仍存在 product_docs 记录。
+// 用于 DeleteItem 提交后确认并发请求是否已创建同名新条目，避免误删新文件。
+func (s *DBProductSpaceService) itemExistsByPath(ctx context.Context, workspaceID, userID, relativePath string) (bool, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT id FROM product_docs WHERE workspace_id = $1 AND user_id = $2 AND relative_path = $3 LIMIT 1",
+		workspaceID, userID, relativePath,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // fetchVersionWithExecer 按文档 ID、工作空间、用户与版本号获取版本记录，支持传入 *sql.DB 或 *sql.Tx。
 func (s *DBProductSpaceService) fetchVersionWithExecer(ctx context.Context, q queryRowContextExecer, workspaceID, userID, itemID string, version int) (*object.ProductSpaceVersion, error) {
 	var v object.ProductSpaceVersion
@@ -694,6 +737,10 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 		return nil, err
 	}
 
+	if req.Type == object.ItemTypeDoc && int64(len(req.Content)) > object.MaxDocSizeBytes {
+		return nil, errors.New(errMsgDocTooLarge)
+	}
+
 	categoryDir, err := typeToCategoryDir(req.Type)
 	if err != nil {
 		return nil, err
@@ -709,6 +756,9 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 	}
 	folder := ""
 	if req.Folder != "" {
+		if strings.ContainsAny(req.Folder, "/\\") {
+			return nil, errors.New(errMsgFolderPathSeparator)
+		}
 		folder, err = sanitizeName(req.Folder)
 		if err != nil {
 			return nil, err
@@ -814,6 +864,10 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 	item, err := s.fetchItemForUpdate(ctx, tx, workspaceID, userID, itemID)
 	if err != nil {
 		return nil, err
+	}
+
+	if item.Type == object.ItemTypeDoc && int64(len(req.Content)) > object.MaxDocSizeBytes {
+		return nil, errors.New(errMsgDocTooLarge)
 	}
 
 	category, folder, name, ext, err := parseRelativePath(item.RelativePath)
@@ -950,20 +1004,29 @@ func (s *DBProductSpaceService) ListVersions(ctx context.Context, workspaceID, u
 		if err := scanProductSpaceVersion(rows, &v); err != nil {
 			return nil, fmt.Errorf("scan version failed: %w", err)
 		}
+		rel, err := s.toRelativeFilePath(v.FilePath, workspaceID, userID)
+		if err != nil {
+			return nil, fmt.Errorf("normalize version file path failed: %w", err)
+		}
+		v.FilePath = rel
 		result = append(result, v)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate versions failed: %w", err)
+	}
+	return result, nil
 }
 
 // RestoreVersion 将指定历史版本恢复为当前版本。
 // 操作流程：
-//   1. 在事务中锁定条目并读取目标版本记录；
-//   2. 备份当前文件内容；
-//   3. 将目标版本文件复制到当前文件路径；
-//   4. 读取恢复后的当前文件内容；
-//   5. 将恢复后的内容写入新的不可变快照文件（v{current_version+1}）；
-//   6. 插入一条版本记录，change_summary 为 "恢复至 vN"；
-//   7. 更新 product_docs 的 current_version、content、size_bytes、updated_at。
+//  1. 在事务中锁定条目并读取目标版本记录；
+//  2. 备份当前文件内容；
+//  3. 将目标版本文件复制到当前文件路径；
+//  4. 读取恢复后的当前文件内容；
+//  5. 将恢复后的内容写入新的不可变快照文件（v{current_version+1}）；
+//  6. 插入一条版本记录，change_summary 为 "恢复至 vN"；
+//  7. 更新 product_docs 的 current_version、content、size_bytes、updated_at。
+//
 // 任何在覆盖当前文件之后的失败都会回滚文件系统变更：恢复原始当前文件并删除新建快照。
 func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID, userID, itemID string, targetVersion int) (*object.ProductSpaceItem, error) {
 	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
@@ -1045,7 +1108,7 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 			id, doc_id, version, title, file_path, file_ext, mime_type, size_bytes, change_summary, created_by, created_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, versionID, item.ID, nextVersion, item.Title, snapshotAbsPath,
+	`, versionID, item.ID, nextVersion, item.Title, snapshotRelPath,
 		item.FileExt, item.MimeType, int64(len(restoredBytes)), fmt.Sprintf(changeSummaryRestoreToVersion, targetVersion), userID, now,
 	); err != nil {
 		rollbackFS()
@@ -1090,7 +1153,13 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 		return err
 	}
 
-	item, err := s.fetchItem(ctx, workspaceID, userID, itemID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	item, err := s.fetchItemForUpdate(ctx, tx, workspaceID, userID, itemID)
 	if err != nil {
 		return err
 	}
@@ -1104,12 +1173,6 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 		return err
 	}
 	versionDir := filepath.Dir(absPath)
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin transaction failed: %w", err)
-	}
-	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM product_doc_versions WHERE doc_id = $1`, itemID); err != nil {
 		return fmt.Errorf("delete versions failed: %w", err)
@@ -1131,6 +1194,16 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 	}
 
 	// 数据库记录已成功删除，再清理文件系统；文件清理失败不影响删除结果。
+	// 为避免并发请求在事务提交后、文件删除前创建同名新条目导致误删，先确认该相对路径已无记录。
+	exists, err := s.itemExistsByPath(ctx, workspaceID, userID, item.RelativePath)
+	if err != nil {
+		log.Printf("check item existence by path failed: %v", err)
+		return nil
+	}
+	if exists {
+		return nil
+	}
+
 	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
 		log.Printf("remove current file %s failed: %v", absPath, err)
 	}
