@@ -240,8 +240,16 @@ func copyFile(src, dst string) error {
 }
 
 // sanitizeName 清理名称中的文件系统危险字符，防止跨目录或非法文件名。
-func sanitizeName(name string) string {
-	name = strings.TrimSpace(name)
+// 显式拒绝 "." 与 ".."，避免通过文件夹名称逃逸到父目录。
+func sanitizeName(name string) (string, error) {
+	cleaned := strings.TrimSpace(name)
+	if cleaned == "" || cleaned == "." || cleaned == ".." {
+		return "", errors.New("invalid name")
+	}
+	cleaned = filepath.Base(cleaned)
+	if cleaned == "." || cleaned == ".." {
+		return "", errors.New("invalid name")
+	}
 	replacer := strings.NewReplacer(
 		"/", "_",
 		"\\", "_",
@@ -252,8 +260,13 @@ func sanitizeName(name string) string {
 		"<", "_",
 		">", "_",
 		"|", "_",
+		"\x00", "",
 	)
-	return replacer.Replace(name)
+	cleaned = replacer.Replace(cleaned)
+	if cleaned == "" {
+		return "", errors.New("invalid name")
+	}
+	return cleaned, nil
 }
 
 // parseExtFromName 从名称中解析扩展名（小写）。
@@ -265,9 +278,13 @@ func parseExtFromName(name string) string {
 	return strings.ToLower(name[idx+1:])
 }
 
-// stripExt 去掉名称中的扩展名部分。
+// stripExt 去掉名称中的扩展名部分（扩展名比较不区分大小写）。
 func stripExt(name, ext string) string {
-	return strings.TrimSuffix(name, "."+ext)
+	suffix := "." + ext
+	if strings.HasSuffix(strings.ToLower(name), strings.ToLower(suffix)) {
+		return name[:len(name)-len(suffix)]
+	}
+	return name
 }
 
 // parseAndValidateExt 根据条目类型解析并校验扩展名。
@@ -557,11 +574,17 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 		return nil, err
 	}
 
-	title := sanitizeName(req.Title)
-	if title == "" {
+	title, err := sanitizeName(req.Title)
+	if err != nil {
 		return nil, errors.New(errMsgTitleEmpty)
 	}
-	folder := sanitizeName(req.Folder)
+	folder := ""
+	if req.Folder != "" {
+		folder, err = sanitizeName(req.Folder)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	ext, err := parseAndValidateExt(req.Type, title)
 	if err != nil {
@@ -959,9 +982,9 @@ func (s *DBProductSpaceService) CreateFolder(ctx context.Context, workspaceID, u
 	if err := validateCategory(req.Category); err != nil {
 		return err
 	}
-	folder := sanitizeName(req.Name)
-	if folder == "" {
-		return errors.New("folder name is empty after sanitization")
+	folder, err := sanitizeName(req.Name)
+	if err != nil {
+		return err
 	}
 	relativePath := filepath.Join(req.Category, folder)
 	if err := validateRelativePath(relativePath); err != nil {
@@ -986,9 +1009,9 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 	if err := validateCategory(req.Category); err != nil {
 		return err
 	}
-	folder := sanitizeName(req.Name)
-	if folder == "" {
-		return errors.New("folder name is empty after sanitization")
+	folder, err := sanitizeName(req.Name)
+	if err != nil {
+		return err
 	}
 	relativePath := filepath.Join(req.Category, folder)
 	if err := validateRelativePath(relativePath); err != nil {
@@ -1028,7 +1051,10 @@ func (s *DBProductSpaceService) DownloadVersion(ctx context.Context, workspaceID
 		return "", nil, err
 	}
 
-	if version <= 0 || version == item.CurrentVersion {
+	if version < 0 {
+		return "", nil, errors.New("invalid version")
+	}
+	if version == 0 || version == item.CurrentVersion {
 		data, err := s.readFileBytes(ctx, workspaceID, userID, item.RelativePath)
 		if err != nil {
 			return "", nil, err
