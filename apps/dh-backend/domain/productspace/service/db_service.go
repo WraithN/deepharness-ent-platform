@@ -706,6 +706,11 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 		return nil, err
 	}
 
+	category, folder, name, ext, err := parseRelativePath(item.RelativePath)
+	if err != nil {
+		return nil, err
+	}
+
 	currentAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, item.RelativePath)
 	if err != nil {
 		return nil, err
@@ -719,23 +724,42 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	if err != nil {
 		return nil, fmt.Errorf("read current file failed: %w", err)
 	}
+
+	nextVersion := item.CurrentVersion + 1
+	snapshotRelPath := buildVersionRelativePath(category, folder, name, ext, nextVersion)
+	snapshotAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, snapshotRelPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureParentDir(snapshotAbsPath); err != nil {
+		return nil, err
+	}
+	if err := copyFile(currentAbsPath, snapshotAbsPath); err != nil {
+		return nil, fmt.Errorf("snapshot current file failed: %w", err)
+	}
+
 	if err := copyFile(versionAbsPath, currentAbsPath); err != nil {
+		_ = os.Remove(snapshotAbsPath)
 		return nil, fmt.Errorf("restore version file failed: %w", err)
 	}
 
-	if err := s.saveRestoredVersion(ctx, item, versionRecord, userID); err != nil {
+	if err := s.saveRestoredVersion(ctx, item, version, snapshotAbsPath, oldBytes, versionRecord.SizeBytes, userID); err != nil {
 		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
+		_ = os.Remove(snapshotAbsPath)
 		return nil, err
 	}
 
 	return s.fetchItem(ctx, workspaceID, userID, itemID)
 }
 
-// saveRestoredVersion 在数据库中为恢复操作新增一条版本记录并递增版本号。
+// saveRestoredVersion 在数据库中为恢复操作新增一条版本快照记录并递增版本号。
 func (s *DBProductSpaceService) saveRestoredVersion(
 	ctx context.Context,
 	item *object.ProductSpaceItem,
-	version *object.ProductSpaceVersion,
+	version int,
+	snapshotAbsPath string,
+	oldBytes []byte,
+	restoredSizeBytes int64,
 	userID string,
 ) error {
 	now := time.Now().UTC()
@@ -747,13 +771,14 @@ func (s *DBProductSpaceService) saveRestoredVersion(
 
 	versionID := uuid.New().String()
 	nextVersion := item.CurrentVersion + 1
+	changeSummary := fmt.Sprintf("恢复至版本 %d", version)
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO product_doc_versions (
 			id, doc_id, version, title, file_path, file_ext, mime_type, size_bytes, change_summary, created_by, created_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, versionID, item.ID, nextVersion, version.Title, item.RelativePath,
-		version.FileExt, version.MimeType, version.SizeBytes, "", userID, now,
+	`, versionID, item.ID, nextVersion, item.Title, snapshotAbsPath,
+		item.FileExt, item.MimeType, int64(len(oldBytes)), changeSummary, userID, now,
 	); err != nil {
 		return fmt.Errorf("insert restored version failed: %w", err)
 	}
@@ -762,7 +787,7 @@ func (s *DBProductSpaceService) saveRestoredVersion(
 		UPDATE product_docs
 		SET current_version = $1, size_bytes = $2, updated_at = $3
 		WHERE id = $4 AND workspace_id = $5 AND user_id = $6
-	`, nextVersion, version.SizeBytes, now, item.ID, item.WorkspaceID, item.UserID)
+	`, nextVersion, restoredSizeBytes, now, item.ID, item.WorkspaceID, item.UserID)
 	if err != nil {
 		return fmt.Errorf("update item version failed: %w", err)
 	}
