@@ -777,7 +777,7 @@ func (s *DBProductSpaceService) ListVersions(ctx context.Context, workspaceID, u
 	return result, rows.Err()
 }
 
-// RestoreVersion 将指定版本恢复为当前版本。
+// RestoreVersion 将指定版本恢复为当前版本，并将恢复后的内容快照为新的历史版本。
 func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID, userID, itemID string, version int) (*object.ProductSpaceItem, error) {
 	if err := s.requirePM(workspaceID, userID); err != nil {
 		return nil, err
@@ -797,7 +797,19 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	if err != nil {
 		return nil, err
 	}
-	versionAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, versionRecord.FilePath)
+	sourceVersionAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, versionRecord.FilePath)
+	if err != nil {
+		return nil, err
+	}
+
+	category, folder, name, ext, err := parseRelativePath(item.RelativePath)
+	if err != nil {
+		return nil, err
+	}
+
+	nextVersion := item.CurrentVersion + 1
+	newVersionRelPath := buildVersionRelativePath(category, folder, name, ext, nextVersion)
+	newVersionAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, newVersionRelPath)
 	if err != nil {
 		return nil, err
 	}
@@ -807,18 +819,28 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 		return nil, fmt.Errorf("read current file failed: %w", err)
 	}
 
-	if err := copyFile(versionAbsPath, currentAbsPath); err != nil {
+	// 步骤 3：将历史版本文件复制回当前文件。
+	if err := copyFile(sourceVersionAbsPath, currentAbsPath); err != nil {
 		return nil, fmt.Errorf("restore version file failed: %w", err)
 	}
 
-	newBytes, err := os.ReadFile(currentAbsPath)
+	// 步骤 4：读取恢复后的当前文件内容。
+	restoredBytes, err := os.ReadFile(currentAbsPath)
 	if err != nil {
 		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
 		return nil, fmt.Errorf("read restored file failed: %w", err)
 	}
 
-	if err := s.saveRestoredVersion(ctx, item, version, currentAbsPath, string(newBytes), int64(len(newBytes)), oldBytes, userID); err != nil {
+	// 步骤 5：将恢复后的当前文件复制为新的版本快照文件。
+	if err := copyFile(currentAbsPath, newVersionAbsPath); err != nil {
 		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
+		return nil, fmt.Errorf("create restored version snapshot failed: %w", err)
+	}
+
+	// 步骤 6/7：持久化新的版本记录并更新当前版本号。
+	if err := s.saveRestoredVersion(ctx, item, version, newVersionAbsPath, string(restoredBytes), int64(len(restoredBytes)), oldBytes, userID); err != nil {
+		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
+		_ = os.Remove(newVersionAbsPath)
 		return nil, err
 	}
 
@@ -830,7 +852,7 @@ func (s *DBProductSpaceService) saveRestoredVersion(
 	ctx context.Context,
 	item *object.ProductSpaceItem,
 	restoredVersion int,
-	currentAbsPath, content string,
+	versionAbsPath, content string,
 	sizeBytes int64,
 	oldBytes []byte,
 	userID string,
@@ -850,7 +872,7 @@ func (s *DBProductSpaceService) saveRestoredVersion(
 			id, doc_id, version, title, file_path, file_ext, mime_type, size_bytes, change_summary, created_by, created_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, versionID, item.ID, nextVersion, item.Title, currentAbsPath,
+	`, versionID, item.ID, nextVersion, item.Title, versionAbsPath,
 		item.FileExt, item.MimeType, sizeBytes, changeSummary, userID, now,
 	); err != nil {
 		return fmt.Errorf("insert restored version failed: %w", err)
