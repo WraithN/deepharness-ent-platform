@@ -581,6 +581,26 @@ func (s *DBProductSpaceService) itemExistsByPath(ctx context.Context, workspaceI
 	return true, nil
 }
 
+// folderHasItems 检查指定分类/文件夹下是否仍有 product_docs 记录。
+// 用于 DeleteFolder 在删除磁盘目录前确认不会遗留孤儿数据库记录。
+func (s *DBProductSpaceService) folderHasItems(ctx context.Context, workspaceID, userID, category, folder string) (bool, error) {
+	const folderHasItemsQuery = `
+		SELECT id FROM product_docs
+		WHERE workspace_id = $1 AND user_id = $2 AND relative_path LIKE $3
+		LIMIT 1
+	`
+	prefix := buildRelativePath(category, folder, "", "") + "/"
+	var id string
+	err := s.db.QueryRowContext(ctx, folderHasItemsQuery, workspaceID, userID, prefix+"%").Scan(&id)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // fetchVersionWithExecer 按文档 ID、工作空间、用户与版本号获取版本记录，支持传入 *sql.DB 或 *sql.Tx。
 func (s *DBProductSpaceService) fetchVersionWithExecer(ctx context.Context, q queryRowContextExecer, workspaceID, userID, itemID string, version int) (*object.ProductSpaceVersion, error) {
 	var v object.ProductSpaceVersion
@@ -1288,6 +1308,14 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, relativePath)
 	if err != nil {
 		return err
+	}
+
+	hasItems, err := s.folderHasItems(ctx, workspaceID, userID, req.Category, folder)
+	if err != nil {
+		return fmt.Errorf("check folder items failed: %w", err)
+	}
+	if hasItems {
+		return errors.New(errMsgFolderNotEmpty)
 	}
 
 	entries, err := os.ReadDir(absPath)
