@@ -83,7 +83,7 @@ func requireSuperAdmin(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// requireWorkspaceAdmin 校验当前请求用户是否为超级管理员或当前工作空间管理员。
+// requireWorkspaceAdmin 校验当前请求用户是否为超级管理员、同租户租户管理员或当前工作空间管理员。
 func requireWorkspaceAdmin(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
@@ -101,6 +101,13 @@ func requireWorkspaceAdmin(w http.ResponseWriter, r *http.Request, workspaceID s
 	}
 	if user.PlatformRole == identity.PlatformRoleSuperAdmin {
 		return true
+	}
+	// 租户管理员可管理同租户工作空间（包括成员权限）。
+	if user.PlatformRole == identity.PlatformRoleTenantAdmin {
+		ws, err := defaultService.GetWorkspace(workspaceID)
+		if err == nil && ws.TenantID == user.TenantID {
+			return true
+		}
 	}
 	role, err := defaultService.GetMemberRole(workspaceID, userID)
 	if err != nil || role != service.MemberRoleSpaceAdmin {
@@ -355,6 +362,29 @@ func MemberByID(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodPut:
+		// 查询目标成员当前角色，空间管理员之间的角色互改需要租户管理员/超级管理员权限。
+		targetRole, err := defaultService.GetMemberRole(workspaceID, userID)
+		if err != nil {
+			handler.HandleServiceError(w, err, "member not found", "failed to get member role")
+			return
+		}
+		if targetRole == service.MemberRoleSpaceAdmin {
+			currentUserID, ok := middleware.UserIDFromContext(r.Context())
+			if !ok {
+				handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+				return
+			}
+			currentUser, err := defaultUserService.GetByID(currentUserID)
+			if err != nil {
+				handler.WriteJSONError(w, http.StatusUnauthorized, 2, "failed to authenticate user")
+				return
+			}
+			if currentUser.PlatformRole != identity.PlatformRoleSuperAdmin && currentUser.PlatformRole != identity.PlatformRoleTenantAdmin {
+				handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: only tenant admin can modify space admin")
+				return
+			}
+		}
+
 		var req updateMemberRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return

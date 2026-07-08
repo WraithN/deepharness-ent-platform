@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # DeepHarness Platform - Development Startup Script
-# Starts: DH Backend → Frontend Web App
+# 一键启动：Agent Stub（dh gateway）→ DH Backend → Frontend Web App
+# 同时检查外部 ent-desktop gatewayd（2346）是否运行并给出提示。
 
 set -e
 
@@ -12,15 +13,25 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Ports
+# 默认端口
+AGENT_STUB_PORT="${AGENT_STUB_PORT:-8090}"
 DH_BACKEND_PORT="${DH_BACKEND_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-8888}"
+GATEWAYD_PORT="${GATEWAYD_PORT:-2346}"
 
-# Base URLs
+# 基础 URL
+AGENT_STUB_URL="http://localhost:${AGENT_STUB_PORT}"
 API_BASE_URL="http://localhost:${DH_BACKEND_PORT}"
+GATEWAYD_URL="http://localhost:${GATEWAYD_PORT}"
+
+# 服务二进制路径
+AGENT_STUB_DIR="apps/agent-stub"
+AGENT_STUB_BIN="${AGENT_STUB_DIR}/dist/agent-stub"
+DH_BACKEND_DIR="apps/dh-backend"
+DH_BACKEND_BIN="${DH_BACKEND_DIR}/dist/dh-backend"
 
 # PIDs
-declare -a PIDS=()
+ declare -a PIDS=()
 
 # Cleanup function
 cleanup() {
@@ -92,15 +103,52 @@ kill_port() {
     fi
 }
 
+build_if_needed() {
+    local source_file=$1
+    local binary_file=$2
+    local service_name=$3
+
+    if [ ! -f "$binary_file" ] || [ "$source_file" -nt "$binary_file" ]; then
+        log_info "Building ${service_name}..."
+        local dir
+        dir=$(dirname "$binary_file")
+        mkdir -p "$dir"
+        local module_dir
+        module_dir=$(dirname "$source_file")
+        local relative_output
+        relative_output=${binary_file#${module_dir}/}
+        (cd "$module_dir" && go build -o "$relative_output" .)
+        log_success "${service_name} built"
+    fi
+}
+
 build_services() {
     log_info "Building services..."
+    build_if_needed "${AGENT_STUB_DIR}/main.go" "$AGENT_STUB_BIN" "agent-stub"
+    build_if_needed "${DH_BACKEND_DIR}/main.go" "$DH_BACKEND_BIN" "dh-backend"
+}
 
-    if [ ! -f "apps/dh-backend/dist/dh-backend" ] || [ "apps/dh-backend/main.go" -nt "apps/dh-backend/dist/dh-backend" ]; then
-        log_info "Building dh-backend..."
-        cd apps/dh-backend
-        go build -o dist/dh-backend .
-        cd ../..
-        log_success "dh-backend built"
+# Start Agent Stub (DH Gateway)
+start_agent_stub() {
+    log_info "Starting Agent Stub (DH Gateway) on port $AGENT_STUB_PORT..."
+
+    if check_port "$AGENT_STUB_PORT"; then
+        log_warn "Port $AGENT_STUB_PORT is in use, killing existing process..."
+        kill_port "$AGENT_STUB_PORT"
+    fi
+
+    cd "$AGENT_STUB_DIR"
+    PORT=$AGENT_STUB_PORT ./dist/agent-stub > /tmp/agent-stub.log 2>&1 &
+    local pid=$!
+    PIDS+=("$pid")
+    cd ../..
+
+    if wait_for_service "${AGENT_STUB_URL}/health" "Agent Stub"; then
+        log_success "Agent Stub running (PID: $pid, log: /tmp/agent-stub.log)"
+    else
+        log_error "Agent Stub failed to start"
+        cat /tmp/agent-stub.log
+        exit 1
     fi
 }
 
@@ -113,13 +161,13 @@ start_dh_backend() {
         kill_port "$DH_BACKEND_PORT"
     fi
 
-    cd apps/dh-backend
+    cd "$DH_BACKEND_DIR"
     PORT=$DH_BACKEND_PORT ./dist/dh-backend > /tmp/dh-backend.log 2>&1 &
     local pid=$!
     PIDS+=("$pid")
     cd ../..
 
-    if wait_for_service "http://localhost:${DH_BACKEND_PORT}/health" "DH Backend"; then
+    if wait_for_service "${API_BASE_URL}/health" "DH Backend"; then
         log_success "DH Backend running (PID: $pid, log: /tmp/dh-backend.log)"
     else
         log_error "DH Backend failed to start"
@@ -138,7 +186,7 @@ start_frontend() {
     fi
 
     cd apps/dh-frontend
-    pnpm dev --port $FRONTEND_PORT > /tmp/frontend.log 2>&1 &
+    pnpm dev --port "$FRONTEND_PORT" > /tmp/frontend.log 2>&1 &
     local pid=$!
     PIDS+=("$pid")
     cd ../..
@@ -162,13 +210,25 @@ start_frontend() {
     exit 1
 }
 
+# 检查外部 ent-desktop gatewayd（AI Agent 运行时）是否已启动
+check_external_gatewayd() {
+    log_info "Checking external ent-desktop gatewayd on port $GATEWAYD_PORT..."
+    if curl -s "${GATEWAYD_URL}/health" >/dev/null 2>&1; then
+        log_success "External gatewayd is reachable at ${GATEWAYD_URL}"
+    else
+        log_warn "External gatewayd is NOT reachable at ${GATEWAYD_URL}"
+        log_warn "Chat/agent features will fallback or fail until you start ent-desktop gatewayd."
+        log_warn "Run: dh gwd help   (or: ent-desktop gatewayd --port ${GATEWAYD_PORT})"
+    fi
+}
+
 # Main
 main() {
     echo -e "${GREEN}🚀 DeepHarness Platform - Development Mode${NC}"
     echo ""
 
     # Check if we're in the right directory
-    if [ ! -f "package.json" ] || [ ! -d "apps/dh-backend" ]; then
+    if [ ! -f "package.json" ] || [ ! -d "apps/dh-backend" ] || [ ! -d "apps/agent-stub" ]; then
         log_error "Please run this script from the project root directory"
         exit 1
     fi
@@ -186,19 +246,24 @@ main() {
 
     build_services
 
+    start_agent_stub
     start_dh_backend
     start_frontend
+    check_external_gatewayd
 
     echo ""
-    echo -e "${GREEN}✅ All services started successfully!${NC}"
+    echo -e "${GREEN}✅ All local services started successfully!${NC}"
     echo ""
     echo -e "${BLUE}Service URLs:${NC}"
     echo -e "  Frontend:     ${GREEN}http://localhost:${FRONTEND_PORT}${NC}"
     echo -e "  DH Backend:   ${GREEN}http://localhost:${DH_BACKEND_PORT}${NC}"
+    echo -e "  Agent Stub:   ${GREEN}http://localhost:${AGENT_STUB_PORT}${NC} (DH Gateway)"
+    echo -e "  Gatewayd:     ${YELLOW}${GATEWAYD_URL}${NC} (external ent-desktop, see warning above)"
     echo ""
     echo -e "${BLUE}Logs:${NC}"
     echo -e "  Frontend:     /tmp/frontend.log"
     echo -e "  DH Backend:   /tmp/dh-backend.log"
+    echo -e "  Agent Stub:   /tmp/agent-stub.log"
     echo ""
     echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}"
     echo ""

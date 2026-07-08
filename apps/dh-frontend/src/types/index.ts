@@ -212,6 +212,7 @@ export interface WorkspaceMember {
   displayId: string;
   name: string;
   email: string;
+  platformRole: PlatformRole;
   role: SpaceRole;
   subRole?: SubRole;
   joinedAt: string;

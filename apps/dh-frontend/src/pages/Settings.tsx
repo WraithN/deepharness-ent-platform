@@ -35,7 +35,7 @@ import { useSearchParams } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useClientPagination } from '@/hooks/use-client-pagination';
 import { useAuth } from '@/contexts/AuthContext';
-import { PLATFORM_ROLE, SPACE_ROLE, SUB_ROLE, getSubRoleLabel } from '@/lib/role-constants';
+import { PLATFORM_ROLE, SPACE_ROLE, SUB_ROLE, getPlatformRoleLabel, getSubRoleLabel, type PlatformRole, type SpaceRole, type SubRole } from '@/lib/role-constants';
 import { formatDateTime } from '@/lib/utils';
 
 // 工作空间设置的初始空配置，真实数据由 useEffect 从 workspaceApi 加载填充。
@@ -148,44 +148,29 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, loc
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">{config.modelSource === 'custom' ? '模型名称' : '选择模型'}</Label>
-                {config.modelSource === 'custom' ? (
-                  <Input
-                    disabled={disabled}
-                    placeholder="例如: custom-model-v1"
-                    value={config.model}
-                    onChange={e => updateField('model', e.target.value)}
-                  />
-                ) : (
-                  <Select
-                    disabled={disabled}
-                    value={config.model}
-                    onValueChange={val => updateField('model', val)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="选择内置模型" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {builtinModels.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">温度 (Temperature)</Label>
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">{config.modelSource === 'custom' ? '模型名称' : '选择模型'}</Label>
+              {config.modelSource === 'custom' ? (
                 <Input
                   disabled={disabled}
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="2"
-                  value={config.temperature ?? ''}
-                  onChange={e => updateField('temperature', e.target.value ? parseFloat(e.target.value) : undefined)}
+                  placeholder="例如: custom-model-v1"
+                  value={config.model}
+                  onChange={e => updateField('model', e.target.value)}
                 />
-              </div>
+              ) : (
+                <Select
+                  disabled={disabled}
+                  value={config.model}
+                  onValueChange={val => updateField('model', val)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="选择内置模型" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {builtinModels.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
 
             {config.modelSource === 'custom' && (
@@ -219,7 +204,7 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, loc
                 </Button>
               </CollapsibleTrigger>
               <CollapsibleContent className="space-y-4 pt-2">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <div className="space-y-2">
                     <Label className="text-xs text-muted-foreground">最大 Token 数</Label>
                     <Input
@@ -243,16 +228,16 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, loc
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground">Top P</Label>
+                    <Label className="text-xs text-muted-foreground">温度 (Temperature)</Label>
                     <Input
                       disabled={disabled}
                       type="number"
                       step="0.1"
                       min="0"
-                      max="1"
-                      placeholder="例如: 1.0"
-                      value={config.advancedConfig?.topP ?? ''}
-                      onChange={e => updateAdvanced('topP', e.target.value ? parseFloat(e.target.value) : undefined)}
+                      max="2"
+                      placeholder="例如: 0.7"
+                      value={config.temperature ?? ''}
+                      onChange={e => updateField('temperature', e.target.value ? parseFloat(e.target.value) : undefined)}
                     />
                   </div>
                   <div className="space-y-2">
@@ -264,6 +249,19 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, loc
                       placeholder="例如: 50"
                       value={config.advancedConfig?.topK ?? ''}
                       onChange={e => updateAdvanced('topK', e.target.value ? parseInt(e.target.value, 10) : undefined)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">Top P</Label>
+                    <Input
+                      disabled={disabled}
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="1"
+                      placeholder="例如: 1.0"
+                      value={config.advancedConfig?.topP ?? ''}
+                      onChange={e => updateAdvanced('topP', e.target.value ? parseFloat(e.target.value) : undefined)}
                     />
                   </div>
                 </div>
@@ -301,6 +299,7 @@ export const Settings: React.FC = () => {
   const [promptPage, setPromptPage] = useState(1);
   const [promptDetailOpen, setPromptDetailOpen] = useState(false);
   const [selectedPrompt, setSelectedPrompt] = useState<WorkspacePrompt | null>(null);
+  const [promptDetailCategoryIds, setPromptDetailCategoryIds] = useState<string[]>([]);
   const [categoryToDelete, setCategoryToDelete] = useState<{ id: string; name: string; type: 'prompt' | 'skill' } | null>(null);
   const [categoryDeleteConfirmOpen, setCategoryDeleteConfirmOpen] = useState(false);
 
@@ -602,13 +601,28 @@ export const Settings: React.FC = () => {
 
   const openPromptDetail = (prompt: WorkspacePrompt) => {
     setSelectedPrompt(prompt);
+    setPromptDetailCategoryIds(prompt.categories.map(c => c.id));
     setPromptDetailOpen(true);
   };
 
   const closePromptDetail = () => {
     setPromptDetailOpen(false);
     setSelectedPrompt(null);
+    setPromptDetailCategoryIds([]);
   };
+
+  const handleSavePromptCategories = async () => {
+    if (!selectedPrompt) return;
+    await handleUpdatePromptCategories(selectedPrompt.id, promptDetailCategoryIds);
+  };
+
+  // 判断提示词详情弹窗中的分类是否发生过变更，用于控制保存按钮可用状态。
+  const hasPromptCategoryChanges = React.useMemo(() => {
+    if (!selectedPrompt) return false;
+    const currentIds = new Set(promptDetailCategoryIds);
+    const originalIds = new Set(selectedPrompt.categories.map(c => c.id));
+    return currentIds.size !== originalIds.size || [...currentIds].some(id => !originalIds.has(id));
+  }, [promptDetailCategoryIds, selectedPrompt]);
 
   const handleCreateCategory = async () => {
     const name = newCategoryName.trim();
@@ -914,11 +928,23 @@ export const Settings: React.FC = () => {
     }
   };
 
-  const displayUsers = workspaceMembers.map(m => ({
+  type DisplayMember = {
+    id: string;
+    displayId: string;
+    name: string;
+    email: string;
+    platformRole: PlatformRole;
+    spaceRole: SpaceRole;
+    subRole?: SubRole;
+    joinedAt: string;
+  };
+
+  const displayUsers: DisplayMember[] = workspaceMembers.map(m => ({
     id: m.userId,
     displayId: m.displayId,
     name: m.name || m.displayId,
     email: m.email,
+    platformRole: m.platformRole,
     spaceRole: m.role,
     subRole: m.subRole,
     joinedAt: m.joinedAt,
@@ -928,6 +954,7 @@ export const Settings: React.FC = () => {
     user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
     getSubRoleLabel(user.subRole).toLowerCase().includes(searchTerm.toLowerCase()) ||
+    getPlatformRoleLabel(user.platformRole).toLowerCase().includes(searchTerm.toLowerCase()) ||
     user.spaceRole.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -1017,6 +1044,41 @@ export const Settings: React.FC = () => {
       .catch(() => toast.error('删除成员失败'))
       .finally(() => setIsProcessing(false));
   };
+
+  // 渲染成员列表操作下拉菜单。
+  // 规则：租户管理员可取消空间管理员；空间管理员不能相互取消。
+  function renderMemberActions(member: DisplayMember) {
+    if (user?.id === member.id) {
+      return <DropdownMenuItem disabled>当前登录用户</DropdownMenuItem>;
+    }
+
+    const canManageMembers = !isReadOnly || isTenantAdmin;
+    if (!canManageMembers) {
+      return <DropdownMenuItem disabled>无操作权限</DropdownMenuItem>;
+    }
+
+    const isTargetSpaceAdmin = member.spaceRole === SPACE_ROLE.SPACE_ADMIN;
+    const canCancelSpaceAdmin = isTenantAdmin;
+    const showSpaceAdminAction = !isTargetSpaceAdmin || canCancelSpaceAdmin;
+
+    return (
+      <>
+        {showSpaceAdminAction && (
+          <DropdownMenuItem onClick={() => handleSetAdmin(member, !isTargetSpaceAdmin)}>
+            {isTargetSpaceAdmin ? '取消空间管理员' : '设为空间管理员'}
+          </DropdownMenuItem>
+        )}
+        {showSpaceAdminAction && <DropdownMenuSeparator />}
+        <DropdownMenuItem
+          className="text-destructive focus:text-destructive"
+          onClick={() => handleDeleteMember(member)}
+        >
+          <Trash2 className="h-4 w-4 mr-2" />
+          删除成员
+        </DropdownMenuItem>
+      </>
+    );
+  }
 
   return (
     <div className="flex-1 space-y-6 w-full pb-12">
@@ -1580,54 +1642,60 @@ export const Settings: React.FC = () => {
 
         {/* 提示词详情弹窗 -- 查看完整内容并管理分类 */}
         <Dialog open={promptDetailOpen} onOpenChange={(open) => { if (!open) closePromptDetail(); }}>
-          <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-hidden flex flex-col p-0">
             {selectedPrompt && (
               <>
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                    <FileText className="h-5 w-5 text-primary" />
+                <DialogHeader className="px-6 py-4 border-b">
+                  <DialogTitle className="flex items-center gap-2.5">
+                    <div className="w-6 h-6 rounded bg-primary/10 flex items-center justify-center">
+                      <FileText className="h-4 w-4 text-primary" />
+                    </div>
                     <span className="line-clamp-1">{selectedPrompt.name}</span>
                   </DialogTitle>
                 </DialogHeader>
-                <div className="flex-1 overflow-y-auto space-y-4 py-2 pr-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm text-muted-foreground">分类：</span>
+                <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+                  <div className="flex flex-col gap-2">
+                    {selectedPrompt.description && (
+                      <label className="text-sm text-muted-foreground">{selectedPrompt.description}</label>
+                    )}
+                    <Textarea
+                      value={selectedPrompt.content}
+                      readOnly
+                      className="min-h-[224px] resize-none bg-muted/30 border-input rounded-lg text-sm transition-all hover:border-input/80 focus:border-ring focus:bg-background focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <label className="text-sm text-muted-foreground">分类</label>
                     {canManageWorkspacePrompts ? (
-                      <div className="min-w-[200px] flex-1">
-                        <MultiSelect
-                          options={sortedPromptCategories.map(c => ({ value: c.id, label: c.name }))}
-                          value={selectedPrompt.categories.map(c => c.id)}
-                          onChange={(values) => handleUpdatePromptCategories(selectedPrompt.id, values)}
-                        />
-                      </div>
+                      <MultiSelect
+                        options={sortedPromptCategories.map(c => ({ value: c.id, label: c.name }))}
+                        value={promptDetailCategoryIds}
+                        onChange={setPromptDetailCategoryIds}
+                        dropdownPosition="top"
+                      />
                     ) : (
-                      <>
+                      <div className="flex flex-wrap items-center gap-2 min-h-[44px] px-3 py-2 rounded-lg border border-input bg-background">
                         {selectedPrompt.categories.length > 0 ? selectedPrompt.categories.map(c => (
                           <Badge key={c.id} variant="outline" className="text-xs h-6">{c.name}</Badge>
                         )) : (
                           <Badge variant="outline" className="text-xs h-6">{UNCATEGORIZED_NAME}</Badge>
                         )}
-                      </>
+                      </div>
                     )}
                   </div>
-                  {selectedPrompt.description && (
-                    <p className="text-sm text-muted-foreground">{selectedPrompt.description}</p>
-                  )}
-                  <div className="relative">
-                    <Textarea
-                      value={selectedPrompt.content}
-                      readOnly
-                      className="min-h-[240px] resize-none font-mono text-sm"
-                    />
-                  </div>
                 </div>
-                <div className="flex justify-end gap-2 pt-2 border-t shrink-0">
+                <div className="px-6 py-3.5 border-t bg-muted/30 flex justify-end gap-2 shrink-0">
                   <Button variant="outline" onClick={() => {
                     navigator.clipboard.writeText(selectedPrompt.content).then(() => toast.success('内容已复制到剪贴板'));
                   }}>
                     <Copy className="h-4 w-4 mr-2" /> 复制
                   </Button>
                   <Button variant="outline" onClick={closePromptDetail}>关闭</Button>
+                  {canManageWorkspacePrompts && (
+                    <Button onClick={handleSavePromptCategories} disabled={!hasPromptCategoryChanges}>
+                      保存
+                    </Button>
+                  )}
                 </div>
               </>
             )}
@@ -1795,7 +1863,8 @@ export const Settings: React.FC = () => {
                         <TableHead>ID</TableHead>
                         <TableHead className="w-[220px]">成员信息</TableHead>
                         <TableHead>成员角色</TableHead>
-                        <TableHead>是否管理员</TableHead>
+                        <TableHead>是否空间管理员</TableHead>
+                        <TableHead>是否租户管理员</TableHead>
                         <TableHead>加入时间</TableHead>
                         <TableHead className="text-right">操作</TableHead>
                       </TableRow>
@@ -1823,6 +1892,13 @@ export const Settings: React.FC = () => {
                               <Badge variant="outline">否</Badge>
                             )}
                           </TableCell>
+                          <TableCell>
+                            {member.platformRole === PLATFORM_ROLE.TENANT_ADMIN || member.platformRole === PLATFORM_ROLE.SUPER_ADMIN ? (
+                              <Badge className="bg-primary">是</Badge>
+                            ) : (
+                              <Badge variant="outline">否</Badge>
+                            )}
+                          </TableCell>
                           <TableCell className="text-muted-foreground whitespace-nowrap">
                             {formatDateTime(member.joinedAt)}
                           </TableCell>
@@ -1834,32 +1910,7 @@ export const Settings: React.FC = () => {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                {user?.id !== member.id && !isReadOnly && (
-                                  <>
-                                    {member.spaceRole === SPACE_ROLE.SPACE_ADMIN ? (
-                                      <DropdownMenuItem onClick={() => handleSetAdmin(member, false)}>
-                                        取消空间管理员
-                                      </DropdownMenuItem>
-                                    ) : (
-                                      <DropdownMenuItem onClick={() => handleSetAdmin(member, true)}>
-                                        设为空间管理员
-                                      </DropdownMenuItem>
-                                    )}
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem
-                                      className="text-destructive focus:text-destructive"
-                                      onClick={() => handleDeleteMember(member)}
-                                    >
-                                      <Trash2 className="h-4 w-4 mr-2" />
-                                      删除成员
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
-                                {(user?.id === member.id || isReadOnly) && (
-                                  <DropdownMenuItem disabled>
-                                    {user?.id === member.id ? '当前登录用户' : '无操作权限'}
-                                  </DropdownMenuItem>
-                                )}
+                                {renderMemberActions(member)}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </TableCell>
@@ -1867,7 +1918,7 @@ export const Settings: React.FC = () => {
                       ))}
                       {filteredUsers.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                             未找到匹配的成员
                           </TableCell>
                         </TableRow>
@@ -1928,79 +1979,107 @@ export const Settings: React.FC = () => {
 
       {/* 技能市场弹窗 */}
       <Dialog open={skillMarketOpen} onOpenChange={setSkillMarketOpen}>
-        <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle>去市场添加技能</DialogTitle>
+        <DialogContent className="sm:max-w-[680px] max-h-[85vh] overflow-hidden flex flex-col p-0">
+          <DialogHeader className="px-6 py-4 border-b shrink-0">
+            <DialogTitle className="text-xl font-semibold">去市场添加技能</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-2 flex-1 overflow-hidden flex flex-col min-h-0">
-            <div className="flex items-center gap-2 shrink-0">
-              <div className="relative flex-1">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="搜索技能..."
-                  className="pl-8 h-9"
-                  value={skillSearch}
-                  onChange={e => setSkillSearch(e.target.value)}
-                />
-              </div>
-              <Select value={skillCategory} onValueChange={setSkillCategory}>
-                <SelectTrigger className="w-[140px] h-9">
-                  <SelectValue placeholder="分类" />
-                </SelectTrigger>
-                <SelectContent>
-                  {marketSkillCategoryOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                </SelectContent>
-              </Select>
+
+          {/* 搜索筛选栏 */}
+          <div className="px-6 pt-5 flex gap-3 shrink-0">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="搜索技能..."
+                className="w-full pl-9 pr-3 py-2.5 h-10 rounded-lg border-input bg-background transition-all hover:border-input/80 focus:border-ring focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]"
+                value={skillSearch}
+                onChange={e => setSkillSearch(e.target.value)}
+              />
             </div>
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-              {marketSkillsLoading && (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-              )}
-              {!marketSkillsLoading && filteredMarketSkills.length === 0 && (
-                <div className="text-center py-8 text-sm text-muted-foreground">未找到匹配的技能</div>
-              )}
-              {!marketSkillsLoading && filteredMarketSkills.map(skill => (
-                <div
+            <Select value={skillCategory} onValueChange={setSkillCategory}>
+              <SelectTrigger className="min-w-[120px] w-[120px] h-10 rounded-lg border-input bg-background px-3 py-2.5 transition-all hover:border-input/80 focus:ring-0 focus:border-ring focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]">
+                <SelectValue placeholder="分类" />
+              </SelectTrigger>
+              <SelectContent>
+                {marketSkillCategoryOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* 技能列表区域 */}
+          <div className="px-6 py-4 flex-1 overflow-y-auto min-h-0 flex flex-col gap-2">
+            {marketSkillsLoading && (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            )}
+            {!marketSkillsLoading && filteredMarketSkills.length === 0 && (
+              <div className="text-center py-8 text-sm text-muted-foreground">未找到匹配的技能</div>
+            )}
+            {!marketSkillsLoading && filteredMarketSkills.map(skill => {
+              const isSelected = selectedSkillIds.includes(skill.id);
+              return (
+                <label
                   key={skill.id}
-                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedSkillIds.includes(skill.id) ? 'border-primary bg-primary/5' : 'border-border/50 hover:border-primary/30 hover:bg-muted/30'}`}
-                  onClick={() => {
+                  className={`flex gap-3 p-3.5 rounded-lg border cursor-pointer transition-all hover:border-input hover:shadow-sm ${
+                    isSelected ? 'border-primary bg-primary/5' : 'border-border'
+                  }`}
+                  onClick={(e) => {
+                    // 避免点击 Checkbox 本身时重复切换
+                    if ((e.target as HTMLElement).closest('[data-slot="checkbox"]')) return;
                     setSelectedSkillIds(prev =>
                       prev.includes(skill.id) ? prev.filter(id => id !== skill.id) : [...prev, skill.id]
                     );
                   }}
                 >
-                  <Checkbox checked={selectedSkillIds.includes(skill.id)} className="mt-0.5 shrink-0" />
+                  <Checkbox checked={isSelected} className="mt-1 h-4 w-4 shrink-0 border-input data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground" />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-sm">{skill.name}</span>
-                      <Badge variant="outline" className="text-[10px] h-5">{skill.category}</Badge>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-foreground">{skill.name}</span>
+                      <Badge variant="secondary" className="text-xs h-5 px-2 py-0.5">{skill.category}</Badge>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{skill.description}</p>
-                    <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
-                      <span className="flex items-center gap-0.5"><Star className="h-3 w-3 fill-amber-400 text-amber-400" /> {skill.rating}</span>
-                      <span className="flex items-center gap-0.5"><Download className="h-3 w-3" /> {skill.downloads.toLocaleString()}</span>
+                    <p className="text-sm text-muted-foreground mb-2 line-clamp-2">{skill.description}</p>
+                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                        {skill.rating}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Download className="h-3.5 w-3.5" />
+                        {skill.downloads.toLocaleString()}
+                      </span>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-            
-            <div className="flex items-center justify-between pt-2 border-t text-sm shrink-0">
-              <span className="text-muted-foreground">共 {filteredMarketSkills.length} 条</span>
-              <div className="flex items-center gap-1">
-                <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => {}} disabled><ChevronLeft className="h-4 w-4" /></Button>
-                <div className="h-8 flex items-center justify-center px-3 border border-border/50 rounded-md bg-muted/30">1</div>
-                <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => {}} disabled><ChevronRight className="h-4 w-4" /></Button>
-              </div>
-            </div>
-
+                </label>
+              );
+            })}
           </div>
-          <div className="flex justify-end gap-2 pt-2 border-t shrink-0">
-            <Button variant="outline" onClick={() => setSkillMarketOpen(false)}>取消</Button>
+
+          {/* 分页行 */}
+          <div className="px-6 pb-3 flex justify-between items-center shrink-0">
+            <span className="text-sm text-muted-foreground">共 {filteredMarketSkills.length} 条</span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" className="h-8 w-8 p-0 rounded-md border-input bg-background hover:bg-muted" onClick={() => {}} disabled>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="h-8 w-8 flex items-center justify-center rounded-md bg-primary text-primary-foreground text-sm">1</span>
+              <Button variant="outline" size="sm" className="h-8 w-8 p-0 rounded-md border-input bg-background hover:bg-muted" onClick={() => {}} disabled>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+
+          {/* 底部按钮栏 */}
+          <div className="px-6 py-4 border-t bg-muted/30 flex justify-end gap-3 shrink-0">
+            <Button
+              variant="outline"
+              className="px-5 py-2 h-10 rounded-lg border-input bg-background text-foreground hover:bg-muted hover:border-input/80 transition-all"
+              onClick={() => setSkillMarketOpen(false)}
+            >
+              取消
+            </Button>
             <Button
               disabled={selectedSkillIds.length === 0}
+              className="px-5 py-2 h-10 rounded-lg transition-all"
               onClick={() => {
                 Promise.all(selectedSkillIds.map(id => teamApi.updateSkillInstalled(id, true)))
                   .then(() => {
@@ -2077,31 +2156,35 @@ export const Settings: React.FC = () => {
 
       {/* 提示词市场弹窗 -- 用于从市场添加已上架提示词到当前空间 */}
       <Dialog open={promptMarketOpen} onOpenChange={setPromptMarketOpen}>
-        <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle>添加提示词</DialogTitle>
+        <DialogContent className="sm:max-w-[620px] max-h-[85vh] overflow-hidden flex flex-col p-0">
+          <DialogHeader className="px-6 py-4 border-b shrink-0">
+            <DialogTitle className="text-xl font-semibold">添加提示词</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-2 flex-1 overflow-hidden flex flex-col min-h-0">
-            <div className="flex items-center gap-2 shrink-0">
-              <div className="relative flex-1">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="搜索提示词..."
-                  className="pl-8 h-9"
-                  value={promptMarketSearch}
-                  onChange={e => setPromptMarketSearch(e.target.value)}
-                />
-              </div>
-              <Select value={promptMarketCategory} onValueChange={setPromptMarketCategory}>
-                <SelectTrigger className="w-[140px] h-9">
-                  <SelectValue placeholder="分类" />
-                </SelectTrigger>
-                <SelectContent>
-                  {marketPromptCategories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                </SelectContent>
-              </Select>
+
+          {/* 搜索筛选行 */}
+          <div className="px-6 pt-5 flex gap-3 items-center shrink-0">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="搜索提示词..."
+                className="w-full pl-9 pr-3 py-2.5 h-10 rounded-lg border-input bg-background transition-all hover:border-input/80 focus:border-ring focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]"
+                value={promptMarketSearch}
+                onChange={e => setPromptMarketSearch(e.target.value)}
+              />
             </div>
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+            <Select value={promptMarketCategory} onValueChange={setPromptMarketCategory}>
+              <SelectTrigger className="min-w-[130px] w-[130px] h-10 rounded-lg border-input bg-background px-3 py-2.5 transition-all hover:border-input/80 focus:ring-0 focus:border-ring focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]">
+                <SelectValue placeholder="分类" />
+              </SelectTrigger>
+              <SelectContent>
+                {marketPromptCategories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* 列表内容区 */}
+          <div className="px-6 py-4 flex-1 overflow-y-auto min-h-0">
+            <div className="space-y-3">
               {marketPromptsLoading && (
                 <div className="text-center py-8 text-sm text-muted-foreground">加载中...</div>
               )}
@@ -2111,29 +2194,47 @@ export const Settings: React.FC = () => {
               {!marketPromptsLoading && filteredPromptsMarket.map(prompt => (
                 <div
                   key={prompt.id}
-                  className="flex items-start gap-3 p-3 rounded-lg border border-border/50 hover:border-primary/30 hover:bg-muted/30 transition-colors"
+                  className="border border-border rounded-lg p-4 transition-all hover:border-input hover:shadow-sm"
                 >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-sm">{prompt.name}</span>
-                      <Badge variant="outline" className="text-[10px] h-5">{prompt.useCase}</Badge>
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex gap-2 items-center mb-2">
+                        <span className="text-base font-medium text-foreground">{prompt.name}</span>
+                        <Badge variant="secondary" className="text-xs h-5 px-2 py-0.5">{prompt.useCase}</Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-2 line-clamp-2">{prompt.description}</p>
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Download className="h-3.5 w-3.5" />
+                        {prompt.usageCount.toLocaleString()} 次使用
+                      </div>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{prompt.description}</p>
-                    <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
-                      <span className="flex items-center gap-0.5"><Download className="h-3 w-3" /> {prompt.usageCount.toLocaleString()} 次使用</span>
-                    </div>
+                    <Button
+                      size="sm"
+                      className="shrink-0 px-4 py-2 h-9 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all font-medium"
+                      onClick={() => handleAddMarketPrompt(prompt.id)}
+                    >
+                      添加
+                    </Button>
                   </div>
-                  <Button size="sm" onClick={() => handleAddMarketPrompt(prompt.id)}>添加</Button>
                 </div>
               ))}
             </div>
 
-            <div className="flex items-center justify-between pt-2 border-t text-sm shrink-0">
-              <span className="text-muted-foreground">共 {filteredPromptsMarket.length} 条</span>
-            </div>
+            {/* 统计文案 */}
+            {!marketPromptsLoading && (
+              <div className="mt-4 text-sm text-muted-foreground">共 {filteredPromptsMarket.length} 条</div>
+            )}
           </div>
-          <div className="flex justify-end gap-2 pt-2 border-t shrink-0">
-            <Button variant="outline" onClick={() => setPromptMarketOpen(false)}>关闭</Button>
+
+          {/* 底部操作栏 */}
+          <div className="px-6 py-4 border-t bg-muted/30 flex justify-end shrink-0">
+            <Button
+              variant="outline"
+              className="px-5 py-2 h-10 rounded-lg border-input bg-background text-foreground hover:bg-muted hover:border-input/80 transition-all"
+              onClick={() => setPromptMarketOpen(false)}
+            >
+              关闭
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

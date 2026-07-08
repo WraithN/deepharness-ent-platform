@@ -15,6 +15,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/identity"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workspace"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -429,7 +430,7 @@ func (s *DBWorkspaceService) ListMembers(workspaceID string) ([]workspace.Member
 	}
 	rows, err := s.db.Query(`
 		SELECT m.workspace_id, m.user_id, m.display_id, COALESCE(u.name, ''), COALESCE(u.email, ''),
-			m.role, m.sub_role, m.joined_at
+			m.role, m.sub_role, COALESCE(u.platform_role, ''), m.joined_at
 		FROM workspace_members m
 		LEFT JOIN users u ON u.id = m.user_id
 		WHERE m.workspace_id = $1
@@ -443,13 +444,17 @@ func (s *DBWorkspaceService) ListMembers(workspaceID string) ([]workspace.Member
 	result := make([]workspace.Member, 0)
 	for rows.Next() {
 		var m workspace.Member
-		var name, email, subRole sql.NullString
-		if err := rows.Scan(&m.WorkspaceID, &m.UserID, &m.DisplayID, &name, &email, &m.Role, &subRole, &m.JoinedAt); err != nil {
+		var name, email, subRole, platformRole sql.NullString
+		if err := rows.Scan(&m.WorkspaceID, &m.UserID, &m.DisplayID, &name, &email, &m.Role, &subRole, &platformRole, &m.JoinedAt); err != nil {
 			return nil, fmt.Errorf("scan member failed: %w", err)
 		}
 		m.Name = sqlutil.ScanNullString(name)
 		m.Email = sqlutil.ScanNullString(email)
 		m.SubRole = sqlutil.ScanNullString(subRole)
+		m.PlatformRole = sqlutil.ScanNullString(platformRole)
+		if m.PlatformRole == "" {
+			m.PlatformRole = string(identity.PlatformRoleUser)
+		}
 		result = append(result, m)
 	}
 	if err := rows.Err(); err != nil {
