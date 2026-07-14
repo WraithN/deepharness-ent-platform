@@ -244,15 +244,15 @@ const DOC_REF_HEADER = '[引用的产品文档（相对工作目录路径，请�
 // @提及 在输入框中的完整文本形式（@标题+尾随空格），作为一个原子块整体插入/删除。
 const docMentionToken = (title: string) => `@${title} `;
 
-// 查找光标所处（或紧邻）的 @提及 块区间；mode 区分退格/前删的边界判定，找不到返回 null。
-const findMentionRange = (
+// 查找光标所处（或紧邻）的原子块区间（@文档提及 /code 指令 token 共用）；
+// mode 区分退格/前删的边界判定，找不到返回 null。
+const findAtomicRange = (
   text: string,
   cursor: number,
-  docs: ReferencedDoc[],
+  tokens: string[],
   mode: 'backspace' | 'delete',
 ): { start: number; end: number } | null => {
-  for (const d of docs) {
-    const token = docMentionToken(d.title);
+  for (const token of tokens) {
     let idx = text.indexOf(token);
     while (idx !== -1) {
       const end = idx + token.length;
@@ -459,6 +459,9 @@ export const Chat: React.FC = () => {
   // 按职能子角色选择欢迎页快捷卡片（无子角色时使用默认）
   const welcomeCards =
     (membership?.subRole && WELCOME_CARDS_BY_ROLE[membership.subRole]) || WELCOME_CARDS_DEFAULT;
+  // 文档引用仅面向产品职能（文档是产品空间的产物，其他角色无文档概念）；
+  // 无子角色（管理员等场景）沿用产品默认视图，与欢迎卡片回退逻辑一致。
+  const canUseDocs = !membership?.subRole || membership.subRole === SUB_ROLE.PM;
   const [input, setInput] = useState('');
 
   // Input toolbar dropdowns
@@ -947,28 +950,41 @@ export const Chat: React.FC = () => {
   // 文档按钮角标：输入框中仍存在的 @提及 数量（随整体删除实时变化）
   const activeRefCount = referencedDocs.filter(d => input.includes(docMentionToken(d.title))).length;
 
-  // 输入框高亮渲染：仍存在的 @提及 包成高亮+阴影片段，其余为普通文本。
+  // 指令原子块 token 列表（/code 形式，尾随空格保证前缀安全，如 /code 不会误匹配 /code-review）。
+  const commandTokens = useMemo(() => commandConfigs.map(c => `${c.cmd} `), [commandConfigs]);
+  // 所有原子块 token：@文档提及 + 指令；用于整体删除判定。
+  const atomicTokens = useMemo(
+    () => [...referencedDocs.map(d => docMentionToken(d.title)), ...commandTokens],
+    [referencedDocs, commandTokens],
+  );
+
+  // 输入框高亮渲染：仍存在的 @提及（主色）与指令块（紫色）包成高亮+阴影片段，其余为普通文本。
   // 叠放在透明文字的 textarea 下方，二者字体/内边距保持一致以对齐字形。
   // 注意：高亮 span 用 px-0.5 + -mx-0.5 组合，获得视觉留白的同时不改变文本步进宽度，
   // 否则提及块后的文字会与 textarea 光标位置错位（光标看起来落在字中间）。
   const highlightedInput = useMemo((): React.ReactNode => {
-    const ranges: { start: number; end: number }[] = [];
-    for (const d of referencedDocs) {
-      const token = docMentionToken(d.title);
+    const ranges: { start: number; end: number; kind: 'mention' | 'command' }[] = [];
+    const collectRanges = (token: string, kind: 'mention' | 'command') => {
       let idx = input.indexOf(token);
       while (idx !== -1) {
-        ranges.push({ start: idx, end: idx + token.length });
+        ranges.push({ start: idx, end: idx + token.length, kind });
         idx = input.indexOf(token, idx + 1);
       }
-    }
+    };
+    for (const d of referencedDocs) collectRanges(docMentionToken(d.title), 'mention');
+    for (const token of commandTokens) collectRanges(token, 'command');
     ranges.sort((a, b) => a.start - b.start);
     const nodes: React.ReactNode[] = [];
     let pos = 0;
     for (const r of ranges) {
       if (r.start < pos) continue; // 防御：重叠区间跳过
       if (r.start > pos) nodes.push(input.slice(pos, r.start));
+      const cls =
+        r.kind === 'mention'
+          ? 'bg-primary/10 text-primary shadow-[0_1px_3px_hsl(var(--primary)/0.35)]'
+          : 'bg-violet-500/10 text-violet-600 dark:text-violet-400 shadow-[0_1px_3px_rgba(139,92,246,0.35)]';
       nodes.push(
-        <span key={r.start} className="bg-primary/10 text-primary rounded-md px-0.5 -mx-0.5 shadow-[0_1px_3px_hsl(var(--primary)/0.35)]">
+        <span key={r.start} className={`rounded-md px-0.5 -mx-0.5 ${cls}`}>
           {input.slice(r.start, r.end)}
         </span>,
       );
@@ -976,7 +992,7 @@ export const Chat: React.FC = () => {
     }
     if (pos < input.length) nodes.push(input.slice(pos));
     return nodes;
-  }, [input, referencedDocs]);
+  }, [input, referencedDocs, commandTokens]);
 
   // 选中文档：先落盘拿到 agent 可读路径，再在输入框插入 @文档名 原子块。
   // 重复判定以输入框中是否仍存在该原子块为准（删除后可重新引用）。
@@ -1021,6 +1037,7 @@ export const Chat: React.FC = () => {
     }
   };
   // 插入指令到输入框开头（斜杠指令通常作为前缀），若已有内容则追加空格分隔。
+  // 指令成为原子块（/code 整体删除），插入后光标定位到块尾。
   // 若指令不支持代码库且当前已选代码库，提示用户并清空选择。
   const insertCommand = (cmd: string) => {
     setInput(p => p.trimEnd() ? `${cmd} ${p}` : `${cmd} `);
@@ -1031,6 +1048,13 @@ export const Chat: React.FC = () => {
       setSelectedRepos([]);
     }
     toast.success(`已插入指令：${cmd}`);
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.focus();
+      const pos = `${cmd} `.length;
+      ta.setSelectionRange(pos, pos);
+    });
   };
 
   // 输入框斜杠指令：过滤后的指令列表。
@@ -1040,10 +1064,10 @@ export const Chat: React.FC = () => {
     return commandConfigs.filter(c => c.cmd.startsWith(`/${query}`));
   }, [slashMenuOpen, input, commandConfigs]);
 
-  // 选择斜杠菜单中的指令：替换输入框内容为 {cmd} ，保留后面的内容。
+  // 选择斜杠菜单中的指令：替换输入框内容为 {cmd} 原子块，保留后面的内容，光标定位到块尾。
   const selectSlashCommand = (cmd: string) => {
-    const rest = input.replace(/^\/\S*/, '');
-    setInput(`${cmd} ${rest}`.trim());
+    const rest = input.replace(/^\/\S*/, '').trimStart();
+    setInput(rest ? `${cmd} ${rest}` : `${cmd} `);
     setSlashMenuOpen(false);
     setSlashIndex(0);
     const cfg = commandConfigs.find(c => c.cmd === cmd);
@@ -1051,6 +1075,13 @@ export const Chat: React.FC = () => {
       toast.warning(`指令 ${cmd} 不支持代码库，已清空选择`);
       setSelectedRepos([]);
     }
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.focus();
+      const pos = `${cmd} `.length;
+      ta.setSelectionRange(pos, pos);
+    });
   };
 
   // textarea onChange：检测 "/" 开头且无空格时打开斜杠菜单；检测 @ 触发内联文档菜单。
@@ -1071,7 +1102,7 @@ export const Chat: React.FC = () => {
     const atQuery = atIdx >= 0 ? beforeCursor.slice(atIdx + 1) : '';
     // 已完成的引用块（@标题 ）中的 @ 不再重复触发菜单
     const isCompletedMention = atIdx >= 0 && referencedDocs.some(d => val.startsWith(docMentionToken(d.title), atIdx));
-    if (atIdx >= 0 && atPrevOk && !/\s/.test(atQuery) && !isCompletedMention) {
+    if (canUseDocs && atIdx >= 0 && atPrevOk && !/\s/.test(atQuery) && !isCompletedMention) {
       setDocMention({ start: atIdx, end: cursor, query: atQuery });
       setDocMentionIndex(0);
       setDocMenuOpen(false);
@@ -1126,11 +1157,11 @@ export const Chat: React.FC = () => {
         return;
       }
     }
-    // @提及 原子删除：光标在引用块内部或紧邻边界时，Backspace/Delete 整体移除该块
-    if ((e.key === 'Backspace' || e.key === 'Delete') && referencedDocs.length > 0) {
+    // 原子块整体删除（@文档提及 /code 指令）：光标在块内部或紧邻边界时，Backspace/Delete 整体移除该块
+    if ((e.key === 'Backspace' || e.key === 'Delete') && atomicTokens.length > 0) {
       const ta = e.currentTarget;
       const range = ta.selectionStart === ta.selectionEnd
-        ? findMentionRange(input, ta.selectionStart, referencedDocs, e.key === 'Backspace' ? 'backspace' : 'delete')
+        ? findAtomicRange(input, ta.selectionStart, atomicTokens, e.key === 'Backspace' ? 'backspace' : 'delete')
         : null;
       if (range) {
         e.preventDefault();
@@ -2191,7 +2222,8 @@ export const Chat: React.FC = () => {
                   )}
                 </div>
 
-                {/* 文档：引用产品空间文档，发送时附带落盘路径供 agent 读取 */}
+                {/* 文档：引用产品空间文档，发送时附带落盘路径供 agent 读取（仅产品职能可见） */}
+                {canUseDocs && (
                 <div className="relative" ref={docMenuRef}>
                   <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', showPreview ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setDocMenuOpen(!docMenuOpen); setDocMention(null); setTaskMenuOpen(false); setCmdMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); }}>
                     <BookOpen className={cn('mr-1.5', showPreview ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{showPreview ? '' : '文档'}
@@ -2240,6 +2272,7 @@ export const Chat: React.FC = () => {
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* 代码库 / 指令 / 提示词 / 技能 */}
                 {showPreview ? (
