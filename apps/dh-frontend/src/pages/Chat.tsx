@@ -1,71 +1,75 @@
 import '@/lib/patch-assistant-ui';
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-
-import { Checkbox } from '@/components/ui/checkbox';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { Label } from '@/components/ui/label';
+import { AssistantRuntimeProvider, type ThreadMessageLike } from '@assistant-ui/react';
 import {
-  Send,
+  BookOpen,
   Bot,
-  Code2,
   Box,
-  ListTodo,
-  ChevronRight,
-  Wand2,
-  Paperclip,
+  Bug,
+  Check, 
   CheckCircle,
-  UploadCloud,
-  Puzzle,
-  X,
-  GitBranch,
-  FileText,
   ChevronDown,
   ChevronLeft,
-  LayoutTemplate,
-  Info,
-  Bug,
-  FlaskConical,
-  SlidersHorizontal,
-  Plus,
+  ChevronRight,
   Clock,
-  MessageSquarePlus,
-  Search,
+  Code2,
+  Compass,
+  FileText,
+  FlaskConical,
+  GitBranch,
+  Info,
+  LayoutTemplate,
+  ListTodo,
   Loader2,
+  MessageSquarePlus,
+  Paperclip,
+  Plus,
+  Puzzle,
   RefreshCw,
+  Search,
+  Send,
+  SlidersHorizontal,
   Terminal,
-  Compass
+  UploadCloud,
+  Wand2,
+  X
 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Textarea } from '@/components/ui/textarea';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ImperativePanelHandle } from 'react-resizable-panels';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
-import { fileApi } from '@/lib/file-api';
-import { teamApi } from '@/lib/team-api';
-import { workspaceApi } from '@/lib/workspace-api';
-import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
-import { agentConfigApi } from '@/lib/agent-config-api';
-import { sortPromptCategoriesByBuiltin } from '@/lib/prompt-categories';
-import type { WorkItemDTO, AgentSessionDTO } from '@/lib/api-types';
-import type { Skill, WorkspacePrompt, WorkspaceAgent, AvailableAgent, PromptCategory } from '@/types';
-import { AssistantRuntimeProvider, type ThreadMessageLike } from '@assistant-ui/react';
-import { useAgUiChat, type SendContext } from '@/hooks/use-ag-ui-chat';
 import { ChatThread } from '@/components/chat/ChatThread';
 import { InlineFilePreview } from '@/components/chat/InlineFilePreview';
 import { LivePreview, type PreviewMode } from '@/components/chat/LivePreview';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
-import type { ImperativePanelHandle } from 'react-resizable-panels';
-import { cn } from '@/lib/utils';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import { useAuth } from '@/contexts/AuthContext';
+import { type SendContext, useAgUiChat } from '@/hooks/use-ag-ui-chat';
+import { agentConfigApi } from '@/lib/agent-config-api';
+import { api } from '@/lib/api';
+import type { AgentSessionDTO, WorkItemDTO } from '@/lib/api-types';
 import { PROTO_MAKE_PENDING_KEY } from '@/lib/constants';
+import { fileApi } from '@/lib/file-api';
+import { type ProductDoc, productDocApi } from '@/lib/productdoc-api';
+import { sortPromptCategoriesByBuiltin } from '@/lib/prompt-categories';
+import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
+import { SUB_ROLE, type SubRole } from '@/lib/role-constants';
+import { teamApi } from '@/lib/team-api';
+import { cn } from '@/lib/utils';
+import { workspaceApi } from '@/lib/workspace-api';
+import type { AvailableAgent, PromptCategory, Skill, WorkspaceAgent, WorkspacePrompt } from '@/types';
 
 // ──────────────── Types ────────────────
-type RequirementStatus = 'backlog' | 'todo' | 'in-progress' | 'done';
+type RequirementStatus = 'todo' | 'in-progress' | 'done' | 'cancelled' | 'on-hold';
 type DefectStatus = 'open' | 'in-progress' | 'fixed' | 'closed';
 type DefectSeverity = 'critical' | 'high' | 'medium' | 'low';
 type CaseStatus = 'draft' | 'ready' | 'passed' | 'failed' | 'blocked';
@@ -118,7 +122,7 @@ const MOCK_REQUIREMENTS: ReqItem[] = [
   { id: 'REQ-001', title: '实现多租户登录功能', description: '支持不同租户间的数据隔离和单点登录，需要实现OAuth2.0协议和JWT Token验证机制。', status: 'done', assigneeId: 'u1', reporter: '产品小红', createdAt: '2026-05-20' },
   { id: 'REQ-002', title: '数据大盘图表展示', description: '集成ECharts实现多维度数据可视化，支持折线图、柱状图、饼图等常见图表类型。', status: 'in-progress', assigneeId: 'u1', reporter: '产品小红', createdAt: '2026-05-22' },
   { id: 'REQ-003', title: 'UI设计对话助手', description: '基于自然语言理解，自动生成UI组件建议和设计方案，支持多轮对话迭代。', status: 'todo', assigneeId: 'u1', reporter: '设计小李', createdAt: '2026-05-25' },
-  { id: 'REQ-004', title: '智能评审结果展示', description: '将代码评审结果以结构化方式展示，支持按严重程度和文件分组。', status: 'backlog', assigneeId: 'u1', reporter: '设计小李', createdAt: '2026-05-27' },
+  { id: 'REQ-004', title: '智能评审结果展示', description: '将代码评审结果以结构化方式展示，支持按严重程度和文件分组。', status: 'todo', assigneeId: 'u1', reporter: '设计小李', createdAt: '2026-05-27' },
   { id: 'REQ-005', title: 'API 网关限流配置', description: '基于令牌桶算法实现API限流，支持按用户、IP、接口维度配置限流规则。', status: 'todo', assigneeId: 'u1', reporter: '产品小红', createdAt: '2026-05-28' },
 ];
 
@@ -183,12 +187,83 @@ const COMMAND_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   '/review': CheckCircle,
 };
 
+/** 欢迎页快捷指令卡片定义。 */
+interface WelcomeCard {
+  cmd: string;
+  title: string;
+  desc: string;
+}
+
+/** 默认快捷卡片（产品经理视角，兼容无子角色/管理员场景）。 */
+const WELCOME_CARDS_DEFAULT: WelcomeCard[] = [
+  { cmd: '/prd-write', title: '撰写 PRD', desc: '根据需求生成产品需求文档' },
+  { cmd: '/prd-research', title: '需求调研', desc: '对需求主题进行深度调研分析' },
+  { cmd: '/proto-make', title: '制作原型', desc: '根据文档生成可预览的原型工程' },
+  { cmd: '/code', title: '编写代码', desc: '基于需求和代码库编写实现代码' },
+];
+
+/** 按职能子角色定制的快捷卡片；未命中的角色回退到默认卡片。 */
+const WELCOME_CARDS_BY_ROLE: Partial<Record<SubRole, WelcomeCard[]>> = {
+  [SUB_ROLE.DEVELOPER]: [
+    { cmd: '/code', title: '编写代码', desc: '基于需求和代码库编写实现代码' },
+    { cmd: '/debug', title: 'BUG 解决', desc: '定位并修复代码中的缺陷' },
+    { cmd: '/review', title: '代码评审', desc: '对变更代码进行智能评审' },
+    { cmd: '/proto-make', title: '制作原型', desc: '根据文档生成可预览的原型工程' },
+  ],
+  [SUB_ROLE.TESTER]: [
+    { cmd: '/debug', title: 'BUG 定位', desc: '分析现象并定位缺陷根因' },
+    { cmd: '/review', title: '代码评审', desc: '对变更代码进行智能评审' },
+    { cmd: '/prd-research', title: '需求调研', desc: '对需求主题进行深度调研分析' },
+    { cmd: '/code', title: '编写测试脚本', desc: '基于需求编写自动化测试代码' },
+  ],
+  [SUB_ROLE.DESIGNER]: [
+    { cmd: '/proto-make', title: '制作原型', desc: '根据文档生成可预览的原型工程' },
+    { cmd: '/prd-research', title: '需求调研', desc: '对需求主题进行深度调研分析' },
+    { cmd: '/prd-write', title: '撰写 PRD', desc: '根据需求生成产品需求文档' },
+    { cmd: '/code', title: '编写代码', desc: '基于需求和代码库编写实现代码' },
+  ],
+};
+
 // 排队输入项。
 interface InputQueueItem {
   id: string;
   text: string;
   context?: SendContext;
 }
+
+/** 聊天中引用的产品文档（落盘后的工作目录相对路径）。 */
+interface ReferencedDoc {
+  docId: string;
+  title: string;
+  path: string;
+}
+
+// 发送消息时附加的引用文档说明头，引导 agent 先读文档再按用户要求处理。
+const DOC_REF_HEADER = '[引用的产品文档（相对工作目录路径，请先读取文档内容，再按用户要求修改或处理）]';
+
+// @提及 在输入框中的完整文本形式（@标题+尾随空格），作为一个原子块整体插入/删除。
+const docMentionToken = (title: string) => `@${title} `;
+
+// 查找光标所处（或紧邻）的 @提及 块区间；mode 区分退格/前删的边界判定，找不到返回 null。
+const findMentionRange = (
+  text: string,
+  cursor: number,
+  docs: ReferencedDoc[],
+  mode: 'backspace' | 'delete',
+): { start: number; end: number } | null => {
+  for (const d of docs) {
+    const token = docMentionToken(d.title);
+    let idx = text.indexOf(token);
+    while (idx !== -1) {
+      const end = idx + token.length;
+      // backspace：光标在块内或紧邻块尾；delete：光标在块内或紧邻块首
+      const hit = mode === 'backspace' ? cursor > idx && cursor <= end : cursor >= idx && cursor < end;
+      if (hit) return { start: idx, end };
+      idx = text.indexOf(token, idx + 1);
+    }
+  }
+  return null;
+};
 
 // 智能体 tab 项。每个 tab 对应一个独立的后端 session（一个智能体实例），
 // 不同实例之间的会话完全隔离。
@@ -260,13 +335,18 @@ function getLastAssistantTimestamp(messages: ThreadMessageLike[]): string | unde
 }
 
 // ──────────────── Label / Color Maps ────────────────
-const REQ_STATUS_LABELS: Record<RequirementStatus, string> = { backlog: '待办', todo: '待处理', 'in-progress': '进行中', done: '已完成' };
+// 需求状态文案：与产品空间看板一致的五个状态
+const REQ_STATUS_LABELS: Record<RequirementStatus, string> = { todo: '待处理', 'in-progress': '进行中', done: '已完成', cancelled: '已取消', 'on-hold': '已挂起' };
 const DEF_STATUS_LABELS: Record<DefectStatus, string> = { open: '待修复', 'in-progress': '修复中', fixed: '已修复', closed: '已关闭' };
 const CASE_STATUS_LABELS: Record<CaseStatus, string> = { draft: '草稿', ready: '待执行', passed: '通过', failed: '失败', blocked: '阻塞' };
 const SEVERITY_LABELS: Record<DefectSeverity, string> = { critical: '致命', high: '严重', medium: '一般', low: '轻微' };
 
 // 后端状态使用下划线（如 in_progress），前端 UI 使用连字符（如 in-progress）。
-const toUiStatus = (status: string): string => status.replace(/_/g, '-');
+// 待办（backlog）已合并到待处理（todo）。
+const toUiStatus = (status: string): string => {
+  const ui = status.replace(/_/g, '-');
+  return ui === 'backlog' ? 'todo' : ui;
+};
 const toApiStatus = (status: string): string => status.replace(/-/g, '_');
 
 // 根据后端优先级/严重度映射为前端严重度。
@@ -282,6 +362,8 @@ const STATUS_COLORS: Record<string, string> = {
   todo: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800/50',
   'in-progress': 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800/50',
   done: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-800/50',
+  cancelled: 'bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700',
+  'on-hold': 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800/50',
   open: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-800/50',
   fixed: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-800/50',
   closed: 'bg-muted text-muted-foreground border-muted-foreground/30',
@@ -300,8 +382,11 @@ const SEVERITY_COLORS: Record<DefectSeverity, string> = {
 
 // Kanban columns
 const REQ_KANBAN_COLS: { key: RequirementStatus; label: string }[] = [
-  { key: 'backlog', label: '待办' }, { key: 'todo', label: '待处理' },
-  { key: 'in-progress', label: '进行中' }, { key: 'done', label: '已完成' },
+  { key: 'todo', label: '待处理' },
+  { key: 'in-progress', label: '进行中' },
+  { key: 'done', label: '已完成' },
+  { key: 'cancelled', label: '已取消' },
+  { key: 'on-hold', label: '已挂起' },
 ];
 const DEF_KANBAN_COLS: { key: DefectStatus; label: string }[] = [
   { key: 'open', label: '待修复' }, { key: 'in-progress', label: '修复中' },
@@ -321,32 +406,59 @@ const getColColor = (colKey: string) => {
   return baseColor;
 };
 
+  // 看板列头配色（对齐 DESIGN.md §5.8）：pastel 背景 + 同色标题 + 实心圆形计数
   const getColColorStyle = (colKey: string) => {
     const base = getColColor(colKey);
-    if (base === 'muted') return 'bg-muted/50 border-border/40 text-foreground';
-    if (base === 'blue') return 'bg-blue-100/50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/50 text-blue-700 dark:text-blue-300';
-    if (base === 'amber') return 'bg-amber-100/50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800/50 text-amber-700 dark:text-amber-300';
-    if (base === 'green') return 'bg-green-100/50 dark:bg-green-900/20 border-green-200 dark:border-green-800/50 text-green-700 dark:text-green-300';
-    if (base === 'red') return 'bg-red-100/50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-300';
-    if (base === 'orange') return 'bg-orange-100/50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800/50 text-orange-700 dark:text-orange-300';
-    return 'bg-muted/50 border-border/40 text-foreground';
+    if (base === 'blue') return 'bg-blue-100/70 dark:bg-blue-900/25';
+    if (base === 'amber') return 'bg-amber-100/70 dark:bg-amber-900/25';
+    if (base === 'green') return 'bg-green-100/70 dark:bg-green-900/25';
+    if (base === 'red') return 'bg-red-100/70 dark:bg-red-900/25';
+    if (base === 'orange') return 'bg-orange-100/70 dark:bg-orange-900/25';
+    if (base === 'zinc') return 'bg-zinc-100/70 dark:bg-zinc-800/40';
+    return 'bg-muted/60';
+  };
+
+  const getColTitleStyle = (colKey: string) => {
+    const base = getColColor(colKey);
+    if (base === 'blue') return 'text-blue-700 dark:text-blue-300';
+    if (base === 'amber') return 'text-amber-700 dark:text-amber-300';
+    if (base === 'green') return 'text-green-700 dark:text-green-300';
+    if (base === 'red') return 'text-red-700 dark:text-red-300';
+    if (base === 'orange') return 'text-orange-700 dark:text-orange-300';
+    if (base === 'zinc') return 'text-zinc-600 dark:text-zinc-300';
+    return 'text-foreground';
   };
 
   const getColCountStyle = (colKey: string) => {
     const base = getColColor(colKey);
-    if (base === 'muted') return 'border-border/40 text-muted-foreground';
-    if (base === 'blue') return 'border-blue-200 dark:border-blue-800/50 text-blue-700 dark:text-blue-300';
-    if (base === 'amber') return 'border-amber-200 dark:border-amber-800/50 text-amber-700 dark:text-amber-300';
-    if (base === 'green') return 'border-green-200 dark:border-green-800/50 text-green-700 dark:text-green-300';
-    if (base === 'red') return 'border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-300';
-    if (base === 'orange') return 'border-orange-200 dark:border-orange-800/50 text-orange-700 dark:text-orange-300';
-    return 'border-border/40 text-muted-foreground';
+    if (base === 'blue') return 'bg-blue-600';
+    if (base === 'amber') return 'bg-amber-500';
+    if (base === 'green') return 'bg-green-500';
+    if (base === 'red') return 'bg-red-500';
+    if (base === 'orange') return 'bg-orange-500';
+    if (base === 'zinc') return 'bg-zinc-500';
+    return 'bg-muted-foreground';
   };
+
+// 完成态状态：卡片降低不透明度且标题划线
+const KANBAN_DONE_STATUSES = ['done', 'closed', 'passed', 'cancelled'];
+
+// 缺陷严重度对应的卡片左侧优先级条颜色
+const SEVERITY_BAR_COLORS: Record<string, string> = {
+  critical: 'bg-red-500',
+  high: 'bg-orange-500',
+  medium: 'bg-amber-500',
+  low: 'bg-blue-500',
+};
 
 // ──────────────── Component ────────────────
 export const Chat: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { membership } = useAuth();
+  // 按职能子角色选择欢迎页快捷卡片（无子角色时使用默认）
+  const welcomeCards =
+    (membership?.subRole && WELCOME_CARDS_BY_ROLE[membership.subRole]) || WELCOME_CARDS_DEFAULT;
   const [input, setInput] = useState('');
 
   // Input toolbar dropdowns
@@ -530,6 +642,15 @@ export const Chat: React.FC = () => {
   const [promptMenuOpen, setPromptMenuOpen] = useState(false);
   const [taskMenuOpen, setTaskMenuOpen] = useState(false);
   const [cmdMenuOpen, setCmdMenuOpen] = useState(false);
+  const [docMenuOpen, setDocMenuOpen] = useState(false);
+  const [docMenuSearch, setDocMenuSearch] = useState('');
+  // @ 触发的内联文档菜单：start/end 为 @query 在输入框中的区间，query 为检索词
+  const [docMention, setDocMention] = useState<{ start: number; end: number; query: string } | null>(null);
+  const [docMentionIndex, setDocMentionIndex] = useState(0);
+  // 产品空间文档菜单数据与已引用文档（发送时附带路径）
+  const [availableDocs, setAvailableDocs] = useState<ProductDoc[]>([]);
+  const [referencedDocs, setReferencedDocs] = useState<ReferencedDoc[]>([]);
+  const [materializingDocId, setMaterializingDocId] = useState<string | null>(null);
   const [commandConfigs, setCommandConfigs] = useState<CommandConfig[]>([]);
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
@@ -542,6 +663,10 @@ export const Chat: React.FC = () => {
   const skillMenuRef = useRef<HTMLDivElement>(null);
   const taskMenuRef = useRef<HTMLDivElement>(null);
   const cmdMenuRef = useRef<HTMLDivElement>(null);
+  const docMenuRef = useRef<HTMLDivElement>(null);
+  const docMentionMenuRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const mentionOverlayRef = useRef<HTMLDivElement>(null);
   const compactPlusRef = useRef<HTMLDivElement>(null);
 
   // Sidebar panels expand state
@@ -557,7 +682,7 @@ export const Chat: React.FC = () => {
 
   // Filter configuration
   const [filterConfig, setFilterConfig] = useState({
-    reqStatuses: ['todo', 'backlog', 'in-progress', 'done'] as RequirementStatus[],
+    reqStatuses: ['todo', 'in-progress', 'done', 'cancelled', 'on-hold'] as RequirementStatus[],
     defectStatuses: ['open', 'in-progress', 'fixed', 'closed'] as DefectStatus[],
     caseStatuses: ['draft', 'ready', 'passed', 'failed', 'blocked'] as CaseStatus[]
   });
@@ -621,6 +746,11 @@ export const Chat: React.FC = () => {
       if (skillMenuRef.current && !skillMenuRef.current.contains(t)) setSkillPopoverOpen(false);
       if (taskMenuRef.current && !taskMenuRef.current.contains(t)) setTaskMenuOpen(false);
       if (cmdMenuRef.current && !cmdMenuRef.current.contains(t)) setCmdMenuOpen(false);
+      if (docMenuRef.current && !docMenuRef.current.contains(t)) setDocMenuOpen(false);
+      // @ 内联菜单：点击菜单与输入框以外区域时关闭（输入框内点击由 onChange 重新判定）
+      if (docMentionMenuRef.current && !docMentionMenuRef.current.contains(t) && !textareaRef.current?.contains(t)) {
+        setDocMention(null);
+      }
       if (queueMenuRef.current && !queueMenuRef.current.contains(t)) setQueueMenuOpen(false);
       if (agentMenuRef.current && !agentMenuRef.current.contains(t)) setAgentMenuOpen(false);
       if (compactPlusRef.current && !compactPlusRef.current.contains(t)) {
@@ -716,12 +846,15 @@ export const Chat: React.FC = () => {
       teamApi.listSkills(1, 100).then(res => res.list),
       workspaceApi.listPrompts(workspaceId).catch((): WorkspacePrompt[] => []),
       workspaceApi.listPromptCategories(workspaceId).catch((): PromptCategory[] => []),
+      // 产品空间文档（后端已按 updated_at 倒序）
+      productDocApi.list(workspaceId).catch((): ProductDoc[] => []),
     ])
-      .then(([loadedSkills, loadedPrompts, loadedCategories]) => {
+      .then(([loadedSkills, loadedPrompts, loadedCategories, loadedDocs]) => {
         if (cancelled) return;
         setAvailableSkills(loadedSkills);
         setAvailablePrompts(loadedPrompts);
         setPromptCategories(loadedCategories);
+        setAvailableDocs(loadedDocs);
       })
       .catch(err => {
         if (cancelled) return;
@@ -763,7 +896,18 @@ export const Chat: React.FC = () => {
     Puzzle,
   };
 
-  const insertPrompt = (c: string) => { setInput(p => p.trimEnd() ? p.trimEnd() + '\n' + c : c); setPromptMenuOpen(false); setCompactPlusSubmenu(null); setCompactPlusOpen(false); toast.success('已插入提示词'); };
+  // 插入提示词到输入框，并上报使用次数（空间提示词 +1；市场来源则市场提示词同步 +1）。
+  // 上报为 fire-and-forget：失败不影响插入动作本身。
+  const insertPrompt = (p: WorkspacePrompt) => {
+    const c = p.content || p.description;
+    setInput(prev => prev.trimEnd() ? prev.trimEnd() + '\n' + c : c);
+    setPromptMenuOpen(false); setCompactPlusSubmenu(null); setCompactPlusOpen(false);
+    toast.success('已插入提示词');
+    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    workspaceApi.recordPromptUsage(workspaceId, p.id)
+      .then(updated => setAvailablePrompts(prev => prev.map(item => item.id === updated.id ? updated : item)))
+      .catch(err => console.warn('上报提示词使用次数失败:', err));
+  };
 
   const filteredAvailablePrompts = useMemo(() => {
     const term = promptMenuSearch.toLowerCase().trim();
@@ -790,6 +934,92 @@ export const Chat: React.FC = () => {
 
   const toggleRepo = (repo: {id: string; name: string}) => setSelectedRepos(prev => prev.find(r => r.id === repo.id) ? prev.filter(r => r.id !== repo.id) : [...prev, repo]);
   const appendSkillTag = (name: string) => { setInput(p => p.trimEnd() ? p.trimEnd() + ` #${name} ` : `#${name} `); toast.success(`已选择：${name}`); };
+
+  // 文档菜单：按标题搜索过滤（列表已由后端按修改时间倒序）。
+  // @ 内联触发时检索词来自输入框 @ 后的文本，按钮触发时来自菜单内搜索框。
+  const docFilterQuery = docMention ? docMention.query : docMenuSearch;
+  const filteredDocs = useMemo(() => {
+    const q = docFilterQuery.trim().toLowerCase();
+    if (!q) return availableDocs;
+    return availableDocs.filter(d => d.title.toLowerCase().includes(q));
+  }, [availableDocs, docFilterQuery]);
+
+  // 文档按钮角标：输入框中仍存在的 @提及 数量（随整体删除实时变化）
+  const activeRefCount = referencedDocs.filter(d => input.includes(docMentionToken(d.title))).length;
+
+  // 输入框高亮渲染：仍存在的 @提及 包成高亮+阴影片段，其余为普通文本。
+  // 叠放在透明文字的 textarea 下方，二者字体/内边距保持一致以对齐字形。
+  // 注意：高亮 span 用 px-0.5 + -mx-0.5 组合，获得视觉留白的同时不改变文本步进宽度，
+  // 否则提及块后的文字会与 textarea 光标位置错位（光标看起来落在字中间）。
+  const highlightedInput = useMemo((): React.ReactNode => {
+    const ranges: { start: number; end: number }[] = [];
+    for (const d of referencedDocs) {
+      const token = docMentionToken(d.title);
+      let idx = input.indexOf(token);
+      while (idx !== -1) {
+        ranges.push({ start: idx, end: idx + token.length });
+        idx = input.indexOf(token, idx + 1);
+      }
+    }
+    ranges.sort((a, b) => a.start - b.start);
+    const nodes: React.ReactNode[] = [];
+    let pos = 0;
+    for (const r of ranges) {
+      if (r.start < pos) continue; // 防御：重叠区间跳过
+      if (r.start > pos) nodes.push(input.slice(pos, r.start));
+      nodes.push(
+        <span key={r.start} className="bg-primary/10 text-primary rounded-md px-0.5 -mx-0.5 shadow-[0_1px_3px_hsl(var(--primary)/0.35)]">
+          {input.slice(r.start, r.end)}
+        </span>,
+      );
+      pos = r.end;
+    }
+    if (pos < input.length) nodes.push(input.slice(pos));
+    return nodes;
+  }, [input, referencedDocs]);
+
+  // 选中文档：先落盘拿到 agent 可读路径，再在输入框插入 @文档名 原子块。
+  // 重复判定以输入框中是否仍存在该原子块为准（删除后可重新引用）。
+  const handleSelectDoc = async (doc: ProductDoc) => {
+    const token = docMentionToken(doc.title);
+    if (input.includes(token)) {
+      toast.info('该文档已引用');
+      setDocMenuOpen(false);
+      setDocMention(null);
+      return;
+    }
+    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    setMaterializingDocId(doc.id);
+    try {
+      const res = await productDocApi.materializeDoc(workspaceId, doc.id);
+      // 同一文档重新引用时替换旧记录，避免重复
+      setReferencedDocs(prev => [...prev.filter(d => d.docId !== doc.id), { docId: doc.id, title: doc.title, path: res.path }]);
+      let cursorPos: number;
+      if (docMention) {
+        // @ 触发：用原子块替换输入中的 @query 区间，光标定位到块尾（块外）
+        setInput(p => p.slice(0, docMention.start) + token + p.slice(docMention.end));
+        cursorPos = docMention.start + token.length;
+        setDocMention(null);
+      } else {
+        // 按钮触发：追加到输入框末尾，光标定位到末尾
+        setInput(p => (p.trimEnd() ? p.trimEnd() + ` ${token}` : token));
+        cursorPos = (input.trimEnd() ? input.trimEnd().length + 1 : 0) + token.length;
+        setDocMenuOpen(false);
+      }
+      toast.success(`已引用文档：${doc.title}`);
+      // 等 React 提交新值后恢复焦点并定位光标到提及块之外
+      requestAnimationFrame(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        ta.focus();
+        ta.setSelectionRange(cursorPos, cursorPos);
+      });
+    } catch {
+      toast.error('文档落盘失败，无法引用');
+    } finally {
+      setMaterializingDocId(null);
+    }
+  };
   // 插入指令到输入框开头（斜杠指令通常作为前缀），若已有内容则追加空格分隔。
   // 若指令不支持代码库且当前已选代码库，提示用户并清空选择。
   const insertCommand = (cmd: string) => {
@@ -823,7 +1053,7 @@ export const Chat: React.FC = () => {
     }
   };
 
-  // textarea onChange：检测 "/" 开头且无空格时打开斜杠菜单。
+  // textarea onChange：检测 "/" 开头且无空格时打开斜杠菜单；检测 @ 触发内联文档菜单。
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setInput(val);
@@ -833,9 +1063,24 @@ export const Chat: React.FC = () => {
     } else {
       setSlashMenuOpen(false);
     }
+    // @ 文档提及：光标前最后一个 @ 与光标之间无空白、且 @ 位于行首或空白后时触发
+    const cursor = e.target.selectionStart;
+    const beforeCursor = val.slice(0, cursor);
+    const atIdx = beforeCursor.lastIndexOf('@');
+    const atPrevOk = atIdx === 0 || /\s/.test(val[atIdx - 1] ?? '');
+    const atQuery = atIdx >= 0 ? beforeCursor.slice(atIdx + 1) : '';
+    // 已完成的引用块（@标题 ）中的 @ 不再重复触发菜单
+    const isCompletedMention = atIdx >= 0 && referencedDocs.some(d => val.startsWith(docMentionToken(d.title), atIdx));
+    if (atIdx >= 0 && atPrevOk && !/\s/.test(atQuery) && !isCompletedMention) {
+      setDocMention({ start: atIdx, end: cursor, query: atQuery });
+      setDocMentionIndex(0);
+      setDocMenuOpen(false);
+    } else {
+      setDocMention(null);
+    }
   };
 
-  // textarea onKeyDown：斜杠菜单打开时的键盘导航。
+  // textarea onKeyDown：斜杠/@ 菜单键盘导航、@提及 原子删除、Enter 发送。
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (slashMenuOpen && filteredSlashCommands.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -856,6 +1101,44 @@ export const Chat: React.FC = () => {
       if (e.key === 'Escape') {
         e.preventDefault();
         setSlashMenuOpen(false);
+        return;
+      }
+    }
+    if (docMention && filteredDocs.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setDocMentionIndex(i => (i + 1) % filteredDocs.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setDocMentionIndex(i => (i - 1 + filteredDocs.length) % filteredDocs.length);
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSelectDoc(filteredDocs[docMentionIndex]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setDocMention(null);
+        return;
+      }
+    }
+    // @提及 原子删除：光标在引用块内部或紧邻边界时，Backspace/Delete 整体移除该块
+    if ((e.key === 'Backspace' || e.key === 'Delete') && referencedDocs.length > 0) {
+      const ta = e.currentTarget;
+      const range = ta.selectionStart === ta.selectionEnd
+        ? findMentionRange(input, ta.selectionStart, referencedDocs, e.key === 'Backspace' ? 'backspace' : 'delete')
+        : null;
+      if (range) {
+        e.preventDefault();
+        const nextInput = input.slice(0, range.start) + input.slice(range.end);
+        setInput(nextInput);
+        // 同步清理已不在输入框中的引用记录，使该文档可再次引用
+        setReferencedDocs(prev => prev.filter(d => nextInput.includes(docMentionToken(d.title))));
+        requestAnimationFrame(() => ta.setSelectionRange(range.start, range.start));
         return;
       }
     }
@@ -920,6 +1203,15 @@ export const Chat: React.FC = () => {
         ? { quotedCard: quotedCard ?? undefined, selectedRepos: effectiveRepos }
         : undefined;
 
+    // 引用文档：仅保留输入框中仍存在 @标签 的文档，将其落盘路径附在消息尾部，
+    // agent 收到后按路径读取文档内容再执行用户指令。
+    const activeRefDocs = referencedDocs.filter(d => input.includes(docMentionToken(d.title)));
+    let finalInput = input;
+    if (activeRefDocs.length > 0) {
+      const docLines = activeRefDocs.map(d => `- ${d.title}: ${d.path}`).join('\n');
+      finalInput = `${input}\n\n${DOC_REF_HEADER}\n${docLines}`;
+    }
+
     const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
     // 仅在 AI 正在处理上一条用户消息时才排队；如果已经看到 AI 回复（最后一条为 assistant），
     // 说明当前没有需要等待的回复，直接发送即可，避免 isRunning 残留导致误排队。
@@ -933,18 +1225,20 @@ export const Chat: React.FC = () => {
       }
       const item: InputQueueItem = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        text: input,
+        text: finalInput,
         context,
       };
       setInputQueue(prev => [...prev, item]);
       toast.info('已加入排队');
     } else {
-      sendMessage(input, context);
+      sendMessage(finalInput, context);
     }
 
     setInput('');
     setQuotedCard(null);
     setSelectedRepos([]);
+    setReferencedDocs([]);
+    setDocMention(null);
   };
 
   // 当前对话结束后，自动发送排队中的下一条输入。
@@ -1656,34 +1950,23 @@ export const Chat: React.FC = () => {
                   我可以帮你撰写 PRD、调研需求、制作原型、编写代码。选择下方指令快速开始，或直接输入你的问题。
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
-                  <Button variant="outline" className="h-auto py-3 justify-start text-left bg-background/50 hover:bg-background" onClick={() => insertCommand('/prd-write')}>
-                    <FileText className="h-4 w-4 mr-2 text-primary shrink-0" />
-                    <div className="flex flex-col items-start">
-                      <span className="text-sm font-medium">撰写 PRD</span>
-                      <span className="text-xs text-muted-foreground">根据需求生成产品需求文档</span>
-                    </div>
-                  </Button>
-                  <Button variant="outline" className="h-auto py-3 justify-start text-left bg-background/50 hover:bg-background" onClick={() => insertCommand('/prd-research')}>
-                    <Compass className="h-4 w-4 mr-2 text-primary shrink-0" />
-                    <div className="flex flex-col items-start">
-                      <span className="text-sm font-medium">需求调研</span>
-                      <span className="text-xs text-muted-foreground">对需求主题进行深度调研分析</span>
-                    </div>
-                  </Button>
-                  <Button variant="outline" className="h-auto py-3 justify-start text-left bg-background/50 hover:bg-background" onClick={() => insertCommand('/proto-make')}>
-                    <Code2 className="h-4 w-4 mr-2 text-primary shrink-0" />
-                    <div className="flex flex-col items-start">
-                      <span className="text-sm font-medium">制作原型</span>
-                      <span className="text-xs text-muted-foreground">根据文档生成可预览的原型工程</span>
-                    </div>
-                  </Button>
-                  <Button variant="outline" className="h-auto py-3 justify-start text-left bg-background/50 hover:bg-background" onClick={() => insertCommand('/code')}>
-                    <Terminal className="h-4 w-4 mr-2 text-primary shrink-0" />
-                    <div className="flex flex-col items-start">
-                      <span className="text-sm font-medium">编写代码</span>
-                      <span className="text-xs text-muted-foreground">基于需求和代码库编写实现代码</span>
-                    </div>
-                  </Button>
+                  {welcomeCards.map(card => {
+                    const Icon = COMMAND_ICON_MAP[card.cmd] ?? Terminal;
+                    return (
+                      <Button
+                        key={card.cmd}
+                        variant="outline"
+                        className="h-auto py-3 justify-start text-left bg-background/50 hover:bg-background"
+                        onClick={() => insertCommand(card.cmd)}
+                      >
+                        <Icon className="h-4 w-4 mr-2 text-primary shrink-0" />
+                        <div className="flex flex-col items-start">
+                          <span className="text-sm font-medium">{card.title}</span>
+                          <span className="text-xs text-muted-foreground">{card.desc}</span>
+                        </div>
+                      </Button>
+                    );
+                  })}
                 </div>
               </div>
             ) : (
@@ -1785,12 +2068,22 @@ export const Chat: React.FC = () => {
               </div>
             )}
             <div className="relative">
+            {/* @提及 高亮层：与 textarea 同字体/内边距叠放；textarea 文字透明仅显示光标与选区 */}
+            <div
+              ref={mentionOverlayRef}
+              aria-hidden
+              className={cn('pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-5 text-base md:text-sm', showPreview ? 'py-3 text-sm' : 'py-4')}
+            >
+              {highlightedInput}
+            </div>
             <Textarea
+              ref={textareaRef}
               placeholder="你想让 AI 助手做什么？ 例如：开发一个小游戏、实现一个新功能、做数据分析..."
-              className={cn('w-full resize-none border-0 focus-visible:ring-0 px-5 py-4 shadow-none bg-transparent', showPreview ? 'min-h-[60px] text-sm py-3' : 'min-h-[100px] text-base')}
+              className={cn('relative w-full resize-none border-0 focus-visible:ring-0 px-5 py-4 shadow-none bg-transparent text-transparent caret-foreground', showPreview ? 'min-h-[60px] text-sm py-3' : 'min-h-[100px] text-base')}
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleInputKeyDown}
+              onScroll={e => { if (mentionOverlayRef.current) mentionOverlayRef.current.scrollTop = e.currentTarget.scrollTop; }}
             />
             {slashMenuOpen && filteredSlashCommands.length > 0 && (
               <div className="absolute bottom-full left-4 mb-1 w-64 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
@@ -1813,6 +2106,32 @@ export const Chat: React.FC = () => {
                     </div>
                   );
                 })}
+              </div>
+            )}
+            {/* @ 内联文档菜单：检索词即输入框中 @ 后的文本，上下键选择、回车确认 */}
+            {docMention && (
+              <div ref={docMentionMenuRef} className="absolute bottom-full left-4 mb-1 w-72 max-h-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2">
+                <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-b border-border/50 shrink-0">选择要引用的文档</div>
+                <div className="overflow-y-auto py-1">
+                  {filteredDocs.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-4">无匹配文档</p>
+                  ) : (
+                    filteredDocs.map((doc, idx) => (
+                      <div
+                        key={doc.id}
+                        className={cn('flex items-center gap-2 px-3 py-2 cursor-pointer text-foreground transition-colors', idx === docMentionIndex ? 'bg-accent' : 'hover:bg-accent')}
+                        onClick={() => handleSelectDoc(doc)}
+                      >
+                        {materializingDocId === doc.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+                        ) : (
+                          <BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+                        )}
+                        <span className="flex-1 truncate text-sm">{doc.title}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             )}
             </div>
@@ -1868,6 +2187,56 @@ export const Chat: React.FC = () => {
                           {activeTaskTab === 'case' && renderTaskList('case', visibleCases)}
                         </div>
                       </Tabs>
+                    </div>
+                  )}
+                </div>
+
+                {/* 文档：引用产品空间文档，发送时附带落盘路径供 agent 读取 */}
+                <div className="relative" ref={docMenuRef}>
+                  <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', showPreview ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setDocMenuOpen(!docMenuOpen); setDocMention(null); setTaskMenuOpen(false); setCmdMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); }}>
+                    <BookOpen className={cn('mr-1.5', showPreview ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{showPreview ? '' : '文档'}
+                    {activeRefCount > 0 && (
+                      <span className="ml-1.5 h-4 min-w-4 px-1 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center">
+                        {activeRefCount}
+                      </span>
+                    )}
+                  </Button>
+                  {docMenuOpen && (
+                    <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
+                      <div className="p-2 border-b border-border/50 shrink-0">
+                        <Input
+                          placeholder="搜索文档..."
+                          value={docMenuSearch}
+                          onChange={e => setDocMenuSearch(e.target.value)}
+                          className="h-8 text-sm"
+                          autoFocus
+                        />
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-1">
+                        {filteredDocs.length === 0 ? (
+                          <p className="text-xs text-muted-foreground text-center py-6">暂无文档</p>
+                        ) : (
+                          filteredDocs.map(doc => {
+                            const referenced = referencedDocs.some(d => d.docId === doc.id);
+                            return (
+                              <button
+                                key={doc.id}
+                                disabled={materializingDocId === doc.id}
+                                className={cn('flex items-center gap-2 w-full px-2.5 py-2 rounded-lg text-left text-sm transition-colors', referenced ? 'opacity-50 cursor-default' : 'hover:bg-accent')}
+                                onClick={() => handleSelectDoc(doc)}
+                              >
+                                {materializingDocId === doc.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+                                ) : (
+                                  <BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+                                )}
+                                <span className="flex-1 truncate">{doc.title}</span>
+                                {referenced && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1979,7 +2348,7 @@ export const Chat: React.FC = () => {
                             <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配提示词</div>
                           )}
                           {filteredAvailablePrompts.map(p => (
-                            <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => { insertPrompt(p.content || p.description); setCompactPlusSubmenu(null); setCompactPlusOpen(false); }}>
+                            <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => { insertPrompt(p); setCompactPlusSubmenu(null); setCompactPlusOpen(false); }}>
                               <span className="font-medium text-sm mb-1">{p.name}</span>
                               <span className="text-xs text-muted-foreground line-clamp-2">{p.content || p.description}</span>
                             </div>
@@ -2150,7 +2519,7 @@ export const Chat: React.FC = () => {
                               <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配提示词</div>
                             )}
                             {filteredAvailablePrompts.map(p => (
-                              <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => insertPrompt(p.content || p.description)}>
+                              <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => insertPrompt(p)}>
                                 <span className="font-medium text-sm mb-1">{p.name}</span>
                                 <span className="text-xs text-muted-foreground line-clamp-2">{p.content || p.description}</span>
                               </div>
@@ -2280,7 +2649,7 @@ export const Chat: React.FC = () => {
               <div className="space-y-2">
                 <Label className="text-sm font-semibold">需求状态</Label>
                 <div className="space-y-1.5">
-                  {(['todo', 'backlog', 'in-progress', 'done'] as RequirementStatus[]).map(status => (
+                  {(['todo', 'in-progress', 'done', 'cancelled', 'on-hold'] as RequirementStatus[]).map(status => (
                     <div key={status} className="flex items-center gap-2">
                       <Checkbox
                         id={`req-${status}`}
@@ -2552,26 +2921,28 @@ export const Chat: React.FC = () => {
                     else items = cases.filter(c => c.status === col.key);
                     return (
                       <div key={col.key} className="flex flex-col w-56 shrink-0">
-                        <div className={`flex items-center justify-between px-3 py-2 mb-2 rounded-lg border shrink-0 ${getColColorStyle(col.key)}`}>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-xs font-semibold">{col.label}</span>
-                          </div>
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full border bg-background/80 ${getColCountStyle(col.key)}`}>{items.length}</span>
+                        <div className={`flex items-center justify-between px-3 py-2.5 mb-3 rounded-xl shrink-0 ${getColColorStyle(col.key)}`}>
+                          <span className={`text-sm font-semibold ${getColTitleStyle(col.key)}`}>{col.label}</span>
+                          <span className={`h-6 w-6 rounded-full grid place-items-center text-xs font-bold text-white ${getColCountStyle(col.key)}`}>{items.length}</span>
                         </div>
-                        <div className="flex flex-col gap-2 flex-1 overflow-y-auto pb-2">
+                        <div className="flex flex-col gap-2.5 flex-1 overflow-y-auto pb-2">
                           {items.map(item => {
                             const isHighlight = item.id === kanbanHighlightId;
+                            const isDone = KANBAN_DONE_STATUSES.includes(item.status);
                             return (
                               <div
                                 key={item.id}
                                 ref={el => { kanbanItemRefs.current[item.id] = el; }}
-                                className={`p-3 rounded-xl border bg-card cursor-pointer transition-all ${isHighlight ? 'border-primary shadow-md ring-2 ring-primary/30' : 'border-border/50 hover:border-primary/50 hover:shadow-sm'}`}
+                                className={`relative p-3 pl-4 rounded-xl border bg-card cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:shadow-md ${isHighlight ? 'border-primary shadow-md ring-2 ring-primary/30' : 'border-border/50'} ${isDone ? 'opacity-75' : ''}`}
                                 onClick={() => {
                                   setKanbanHighlightId(item.id);
                                   openDetail(kanbanType, item.id);
                                 }}
                               >
-                                <p className="text-xs font-medium text-foreground leading-snug mb-2">{item.title}</p>
+                                {'severity' in item && (
+                                  <span className={`absolute left-0 top-0 h-full w-1 rounded-l-xl ${SEVERITY_BAR_COLORS[(item as DefectItem).severity] ?? 'bg-muted-foreground/40'}`} />
+                                )}
+                                <p className={`text-xs font-medium leading-snug mb-2 ${isDone ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{item.title}</p>
                                 <div className="flex items-center justify-between">
                                   <span className="text-[10px] text-muted-foreground">{item.id}</span>
                                   {'severity' in item && (

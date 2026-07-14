@@ -34,7 +34,21 @@ type ProductSpaceVersion struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+// PrototypeComment 是原型页面的批注评论。
+// UserName 通过 LEFT JOIN users 解析，用户记录缺失时为空字符串。
+type PrototypeComment struct {
+	ID          string    `json:"id"`
+	ItemID      string    `json:"itemId"`
+	WorkspaceID string    `json:"workspaceId"`
+	UserID      string    `json:"userId"`
+	UserName    string    `json:"userName"`
+	Content     string    `json:"content"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
 type ProductSpaceTreeNode struct {
+	// ID 仅文件节点有值，为条目 ID（product_docs.id），文件夹节点为空。
+	ID       string                 `json:"id,omitempty"`
 	Name     string                 `json:"name"`
 	Path     string                 `json:"path"`
 	Type     string                 `json:"type"` // folder | doc | prototype
@@ -59,6 +73,10 @@ type UpdateContentRequest struct {
 type CreateFolderRequest struct {
 	Category string `json:"category" validate:"required,oneof=docs prototypes"`
 	Name     string `json:"name" validate:"required,max=500"` // 文件夹相对路径，支持多级，如 "a/b"
+}
+
+type AddCommentRequest struct {
+	Content string `json:"content"`
 }
 
 type DeleteFolderRequest struct {

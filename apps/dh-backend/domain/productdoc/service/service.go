@@ -20,4 +20,23 @@ type ProductDocService interface {
 	DeleteDoc(id string) error
 	ListVersions(docID string) ([]object.ProductDocVersion, error)
 	PublishVersion(docID string, req object.PublishProductDocRequest) (object.ProductDocVersion, error)
+	ListWorkspaceVersions(workspaceID string, filter object.WorkspaceVersionFilter) (*object.WorkspaceVersionList, error)
+	RestoreVersion(workspaceID, docID string, version int, userID string) (*object.ProductDocVersion, error)
+	DeleteVersion(workspaceID, docID string, version int, userID string) error
+	UpdateVersionSummary(workspaceID, docID string, version int, summary string, userID string) error
+
+	ListFolders(workspaceID string) ([]object.ProductDocFolder, error)
+	CreateFolder(req object.CreateFolderRequest) (object.ProductDocFolder, error)
+	UpdateFolder(id string, req object.UpdateFolderRequest) (object.ProductDocFolder, error)
+	DeleteFolder(id string) error
+
+	MaterializeDoc(workspaceID, userID, docID string) (string, error)
+
+	CreateShare(workspaceID, docID string) (object.ProductDocShare, error)
+	GetSharedDoc(token string) (object.SharedDocView, error)
+
+	ListShareCommentsByToken(token string) ([]object.ShareComment, error)
+	AddShareComment(token string, req object.AddShareCommentRequest) (*object.ShareComment, error)
+	ListDocShareComments(workspaceID, docID string) ([]object.ShareComment, error)
+	ResolveShareComment(workspaceID, docID, commentID, userID string) (*object.ShareComment, error)
 }

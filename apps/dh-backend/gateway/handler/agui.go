@@ -60,6 +60,12 @@ func NewAGUIHandler(adminURL, pluginKey string, sessions chat.SessionStore, mess
 	}
 }
 
+// QuickComplete 将 prompt 转发给 agent 运行时做一次同步短文本补全，返回纯文本结果。
+// 供非流式场景复用（如意图识别、规范智能生成）。
+func (h *AGUIHandler) QuickComplete(ctx context.Context, prompt string) (string, error) {
+	return h.aguiClient.QuickComplete(ctx, prompt)
+}
+
 // AgentRun 是 POST /api/v1/agent 处理器。
 // 接收 RunAgentInput，转发到 ent-desktop gatewayd，并以 SSE 流回传 AG-UI 事件。
 func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {

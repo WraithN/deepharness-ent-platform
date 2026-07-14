@@ -7,6 +7,7 @@ import { Terminal, Github, Mail, ArrowRight, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { PLATFORM_ROLE } from '@/lib/role-constants';
+import { ApiError } from '@/lib/api';
 
 const SLOGAN_SLIDE_INTERVAL_MS = 5000;
 
@@ -40,8 +41,10 @@ export const Login: React.FC = () => {
       toast.success('登录成功', { description: `欢迎回到 DeepHarness Platform` });
       // 超级管理员进入超管后台，其余进入工作空间智能会话
       navigate(isAdmin ? '/admin/dashboard' : '/chat');
-    } catch {
-      toast.error('登录失败', { description: '邮箱或密码错误' });
+    } catch (err) {
+      // 区分后端业务错误（如密码错误）与网络/服务不可用错误，避免误导用户
+      const description = err instanceof ApiError ? err.message : '无法连接服务器，请确认服务已启动';
+      toast.error('登录失败', { description });
     } finally {
       setIsLoading(false);
     }

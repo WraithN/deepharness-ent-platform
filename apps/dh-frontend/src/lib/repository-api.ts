@@ -1,5 +1,5 @@
-import { api } from './api';
 import type { WorkspaceRepository } from '@/types';
+import { api } from './api';
 import type { BranchInfoDTO } from './api-types';
 
 export interface CreateRepositoryRequest {
@@ -32,6 +32,18 @@ export interface UserRepoStatus {
   synced: boolean;
   syncStatus: string;
   progress: number;
+}
+
+/** 仓库规范文件（AGENTS.md / DESIGN.md）状态与内容。 */
+export interface RepoStandardFiles {
+  cloned: boolean;
+  hasFrontend: boolean;
+  hasAgentsMd: boolean;
+  hasDesignMd: boolean;
+  agentsMd?: string;
+  designMd?: string;
+  /** 智能检测/生成过程中单个文件失败的降级提示。 */
+  warnings?: string[];
 }
 
 export const repositoryApi = {
@@ -68,4 +80,16 @@ export const repositoryApi = {
    */
   refreshBranches: (workspaceId: string, repoId: string) =>
     api.post<BranchInfoDTO[]>(`/v1/workspaces/${workspaceId}/repositories/${repoId}/branches/refresh`),
+  /** 获取仓库规范文件（AGENTS.md / DESIGN.md）状态与内容。 */
+  standardFiles: (workspaceId: string, repoId: string) =>
+    api.get<RepoStandardFiles>(`/v1/workspaces/${workspaceId}/repositories/${repoId}/standard-files`),
+  /** 智能检测/生成：确保克隆后调用 agent init 生成 AGENTS.md 与 DESIGN.md，返回最新状态。 */
+  initStandardFiles: (workspaceId: string, repoId: string) =>
+    api.post<RepoStandardFiles>(`/v1/workspaces/${workspaceId}/repositories/${repoId}/standard-files/init`),
+  /** 保存仓库内单个文件（不提交）。 */
+  saveFileContent: (workspaceId: string, repoId: string, path: string, content: string) =>
+    api.post<{ status: string; path: string }>(`/v1/workspaces/${workspaceId}/repositories/${repoId}/save`, { path, content }),
+  /** 提交仓库工作区全部更改（git add . + commit）。 */
+  commit: (workspaceId: string, repoId: string, message: string) =>
+    api.post<{ hash: string; message: string }>(`/v1/workspaces/${workspaceId}/repositories/${repoId}/commit`, { message }),
 };

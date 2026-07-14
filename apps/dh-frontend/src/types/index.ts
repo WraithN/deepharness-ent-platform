@@ -1,5 +1,5 @@
-import type { PlatformRole, SubRole, SpaceRole } from '@/lib/role-constants';
 import type { RepoType } from '@/lib/api-types';
+import type { PlatformRole, SpaceRole, SubRole } from '@/lib/role-constants';
 
 export interface PaginatedList<T> {
   list: T[];
@@ -40,12 +40,15 @@ export interface Skill {
   name: string;
   description: string;
   category: string;
+  /** 多分类链接（team_skill_category_links），为空时回退展示 category 单分类 */
+  categoryIds?: string[];
   tags?: string[];
   downloads: number;
   rating: number;
   installed: boolean;
   icon?: string;
   phase?: string;
+  status?: PromptStatus;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -66,11 +69,14 @@ export interface Prompt {
   name: string;
   description: string;
   useCase: string;
+  /** 多分类链接（team_prompt_category_links），为空时回退展示 useCase */
+  categoryIds?: string[];
   usageCount: number;
   addedToSpace?: boolean;
   content?: string;
   status?: PromptStatus;
   createdBy?: string;
+  createdByName?: string;
   reviewedBy?: string;
   reviewedAt?: string;
   createdAt?: string;
@@ -148,6 +154,10 @@ export interface WorkspacePrompt {
   isCustom: boolean;
   addedToSpace: boolean;
   enabled: boolean;
+  createdBy?: string;
+  createdByName?: string;
+  sharedPromptId?: string;
+  shareStatus?: PromptStatus;
   createdAt: string;
   updatedAt: string;
 }
@@ -171,7 +181,8 @@ export interface DashboardStats {
 }
 
 export interface SettingsConfig {
-  meegoProject: string;
+  /** 需求管理平台的项目标识（Meego 项目 ID / Jira 项目 Key / PingCode 项目 ID）。 */
+  reqProjectId: string;
   gitlabUrl: string;
   codingStandard: string;
   designStandard: string;
@@ -225,6 +236,14 @@ export interface WorkitemProject {
   externalKey: string;
   name: string;
   config?: Record<string, unknown>;
+}
+
+/** 需求管理平台元信息（后端 config.yaml workitem.platforms 配置驱动）。 */
+export interface WorkitemPlatform {
+  key: string;
+  name: string;
+  needsProjectId: boolean;
+  projectIdPlaceholder: string;
 }
 
 export interface WorkspaceStandard {

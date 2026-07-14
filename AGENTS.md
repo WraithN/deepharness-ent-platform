@@ -119,6 +119,7 @@
 - **表单**：`react-hook-form` + `zod`（通过 `@hookform/resolvers`）
 - **通知**：`sonner`
 - **图表**：`recharts`
+- **富文本编辑**：`@wangeditor/editor` + `@wangeditor/editor-for-react`（文档可视化编辑，内容以 Markdown 存储，经 `remark`/`remark-html`/`turndown` 双向转换）
 - **内部插件**：`miaoda-sc-plugin`
 
 ### 后端

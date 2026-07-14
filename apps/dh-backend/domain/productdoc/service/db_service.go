@@ -12,13 +12,15 @@ import (
 )
 
 // DBProductDocService 是基于 PostgreSQL 的 ProductDocService 实现。
+// workspaceRoot 为 agent 会话工作目录根路径（{root}/{wsID}/{userID}），用于文档按需落盘。
 type DBProductDocService struct {
-	db *sql.DB
+	db            *sql.DB
+	workspaceRoot string
 }
 
 // NewDBProductDocService 创建 PostgreSQL 实现的产品文档服务。
-func NewDBProductDocService(db *sql.DB) *DBProductDocService {
-	return &DBProductDocService{db: db}
+func NewDBProductDocService(db *sql.DB, workspaceRoot string) *DBProductDocService {
+	return &DBProductDocService{db: db, workspaceRoot: workspaceRoot}
 }
 
 // ListDocs 返回满足过滤条件的产品文档列表。
@@ -43,7 +45,7 @@ func (s *DBProductDocService) ListDocs(filter ProductDocFilter) ([]object.Produc
 		argIdx++
 	}
 
-	query := `SELECT id, workspace_id, title, slug, content, status, category, created_by, created_at, updated_at
+	query := `SELECT id, workspace_id, title, slug, content, status, category, COALESCE(folder_id, ''), created_by, created_at, updated_at
 		FROM product_docs`
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
@@ -62,7 +64,7 @@ func (s *DBProductDocService) ListDocs(filter ProductDocFilter) ([]object.Produc
 		var content, category, createdBy sql.NullString
 		err := rows.Scan(
 			&doc.ID, &doc.WorkspaceID, &doc.Title, &doc.Slug,
-			&content, &doc.Status, &category, &createdBy,
+			&content, &doc.Status, &category, &doc.FolderID, &createdBy,
 			&doc.CreatedAt, &doc.UpdatedAt,
 		)
 		if err != nil {
@@ -87,11 +89,11 @@ func (s *DBProductDocService) GetDoc(id string) (object.ProductDoc, error) {
 	var doc object.ProductDoc
 	var content, category, createdBy sql.NullString
 	err := s.db.QueryRow(`
-		SELECT id, workspace_id, title, slug, content, status, category, created_by, created_at, updated_at
+		SELECT id, workspace_id, title, slug, content, status, category, COALESCE(folder_id, ''), created_by, created_at, updated_at
 		FROM product_docs WHERE id = $1
 	`, id).Scan(
 		&doc.ID, &doc.WorkspaceID, &doc.Title, &doc.Slug,
-		&content, &doc.Status, &category, &createdBy,
+		&content, &doc.Status, &category, &doc.FolderID, &createdBy,
 		&doc.CreatedAt, &doc.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -137,12 +139,12 @@ func (s *DBProductDocService) CreateDoc(req object.CreateProductDocRequest) (obj
 	var doc object.ProductDoc
 	var content, category, createdBy sql.NullString
 	err := s.db.QueryRow(`
-		INSERT INTO product_docs (id, workspace_id, user_id, title, slug, relative_path, content, status, type, category, current_version, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-		RETURNING id, workspace_id, title, slug, content, status, category, created_by, created_at, updated_at
-	`, id, req.WorkspaceID, userID, req.Title, req.Slug, relativePath, req.Content, string(req.Status), "doc", req.Category, 1, req.CreatedBy, now, now).Scan(
+		INSERT INTO product_docs (id, workspace_id, user_id, title, slug, relative_path, content, status, type, category, folder_id, current_version, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''), $12, $13, $14, $15)
+		RETURNING id, workspace_id, title, slug, content, status, category, COALESCE(folder_id, ''), created_by, created_at, updated_at
+	`, id, req.WorkspaceID, userID, req.Title, req.Slug, relativePath, req.Content, string(req.Status), "doc", req.Category, req.FolderID, 1, req.CreatedBy, now, now).Scan(
 		&doc.ID, &doc.WorkspaceID, &doc.Title, &doc.Slug,
-		&content, &doc.Status, &category, &createdBy,
+		&content, &doc.Status, &category, &doc.FolderID, &createdBy,
 		&doc.CreatedAt, &doc.UpdatedAt,
 	)
 	if err != nil {
@@ -187,6 +189,12 @@ func (s *DBProductDocService) UpdateDoc(id string, req object.UpdateProductDocRe
 		args = append(args, *req.Category)
 		argIdx++
 	}
+	// FolderID 非 nil 表示移动文档：空字符串回到根目录（NULL），否则迁入目标目录
+	if req.FolderID != nil {
+		setClauses = append(setClauses, fmt.Sprintf("folder_id = NULLIF($%d, '')", argIdx))
+		args = append(args, *req.FolderID)
+		argIdx++
+	}
 
 	if len(setClauses) == 0 {
 		return s.GetDoc(id)
@@ -196,7 +204,7 @@ func (s *DBProductDocService) UpdateDoc(id string, req object.UpdateProductDocRe
 	args = append(args, now)
 	argIdx++
 
-	query := fmt.Sprintf("UPDATE product_docs SET %s WHERE id = $%d RETURNING id, workspace_id, title, slug, content, status, category, created_by, created_at, updated_at",
+	query := fmt.Sprintf("UPDATE product_docs SET %s WHERE id = $%d RETURNING id, workspace_id, title, slug, content, status, category, COALESCE(folder_id, ''), created_by, created_at, updated_at",
 		strings.Join(setClauses, ", "), argIdx)
 	args = append(args, id)
 
@@ -204,7 +212,7 @@ func (s *DBProductDocService) UpdateDoc(id string, req object.UpdateProductDocRe
 	var content, category, createdBy sql.NullString
 	err := s.db.QueryRow(query, args...).Scan(
 		&doc.ID, &doc.WorkspaceID, &doc.Title, &doc.Slug,
-		&content, &doc.Status, &category, &createdBy,
+		&content, &doc.Status, &category, &doc.FolderID, &createdBy,
 		&doc.CreatedAt, &doc.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {

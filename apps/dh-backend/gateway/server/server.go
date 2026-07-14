@@ -20,15 +20,14 @@ import (
 	auditservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity"
 	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
-	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant"
 	paservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/service"
-	psHandler "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace"
-	psService "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/service"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc"
-	productdocservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent"
 	pragentservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc"
+	productdocservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/service"
+	psHandler "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace"
+	psService "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository"
 	repositoryservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team"
@@ -39,6 +38,7 @@ import (
 	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	sdkpostgres "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/postgres"
 	"github.com/redis/go-redis/v9"
 )
@@ -72,7 +72,7 @@ func New(cfg config.Config) http.Handler {
 	initAgentConfigService(db, cfg.CodingAgents, cfg.CodingAgentModels)
 	initWorkspacePromptService(db)
 	initRepositoryService(db, cfg)
-	initProductDocService(db)
+	initProductDocService(db, cfg.WorkspaceRoot)
 	initTeamService(db, userService)
 
 	// Handlers
@@ -94,7 +94,11 @@ func New(cfg config.Config) http.Handler {
 	sessionHandler := handler.NewSessionHandler(sessions, messages, agentClient, workspaceService, defaultAgentConfigService, cfg, sseBuffer)
 	// 为 agentconfig 模块注入会话存储与 gatewayd 客户端，用于配置保存后向运行时同步。
 	agentconfig.InitRuntimeSync(sessions, agentClient)
+	// 注入配置文件中启用的需求管理平台列表，供空间设置的平台下拉框读取。
+	workitem.InitPlatforms(cfg.WorkitemPlatformWhitelist)
 	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, sessions, messages, sseBuffer, workItemSvc)
+	// 为 workspace 模块注入同步补全能力，用于规范的智能生成。
+	workspace.InitStandardCompleter(aguiHandler.QuickComplete)
 	sseReplayHandler := handler.NewSSEReplayHandler(sseBuffer)
 	statsHandler := handler.NewStatsHandler(sessions, cfg.WorkspaceRoot)
 
@@ -105,7 +109,8 @@ func New(cfg config.Config) http.Handler {
 	// Routes
 	mux.HandleFunc("/health", handler.HealthCheck)
 	mux.HandleFunc("/api/v1/agent", aguiHandler.AgentRun)
-	mux.HandleFunc("/api/v1/sessions", sessionHandler.Sessions)
+	// 会话创建需登录态：handler 内 UserIDFromContext 依赖 auth 中间件注入的 userID
+	mux.Handle("/api/v1/sessions", middleware.Auth(http.HandlerFunc(sessionHandler.Sessions)))
 	mux.HandleFunc("/api/v1/sessions/{id}", sessionHandler.DeleteSession)
 	mux.HandleFunc("/api/v1/sessions/{id}/messages", sessionHandler.GetMessages)
 	mux.HandleFunc("/api/v1/sessions/{id}/sse", sseReplayHandler.ServeSSE)
@@ -138,6 +143,7 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/tenants/{id}/members/{userId}", middleware.Auth(http.HandlerFunc(identity.TenantMemberByID)))
 
 	mux.HandleFunc("/api/v1/workitems", workitem.WorkItems)
+	mux.HandleFunc("/api/v1/workitem-platforms", workitem.Platforms)
 	mux.HandleFunc("/api/v1/workitems/{id}", workitem.WorkItemByID)
 	mux.HandleFunc("/api/v1/workitems/{id}/status", workitem.UpdateWorkItemStatus)
 	mux.HandleFunc("/api/v1/review/review", pragent.Reviews)
@@ -173,10 +179,12 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/workspaces/{id}/agent-configs/{key}", middleware.Auth(http.HandlerFunc(agentconfig.WorkspaceAgentConfigByKey)))
 	mux.Handle("/api/v1/workspaces/{id}/available-agents", middleware.Auth(http.HandlerFunc(agentconfig.AvailableAgents)))
 	mux.HandleFunc("/api/v1/workspaces/{id}/standards", workspace.WorkspaceStandards)
+	mux.Handle("/api/v1/workspaces/{id}/standards/generate", middleware.Auth(http.HandlerFunc(workspace.StandardGenerate)))
 	mux.HandleFunc("/api/v1/workspaces/{id}/standards/{standardId}", workspace.WorkspaceStandardByID)
 	mux.HandleFunc("/api/v1/workspaces/{id}/cicd", workspace.WorkspaceCICD)
 	mux.Handle("/api/v1/workspaces/{id}/prompts", middleware.Auth(http.HandlerFunc(workspace.Prompts)))
 	mux.Handle("/api/v1/workspaces/{id}/prompts/{promptId}", middleware.Auth(http.HandlerFunc(workspace.PromptByID)))
+	mux.Handle("/api/v1/workspaces/{id}/prompts/{promptId}/{action}", middleware.Auth(http.HandlerFunc(workspace.PromptAction)))
 	mux.Handle("/api/v1/workspaces/{id}/prompt-categories", middleware.Auth(http.HandlerFunc(workspace.PromptCategories)))
 	mux.Handle("/api/v1/workspaces/{id}/prompt-categories/{categoryId}", middleware.Auth(http.HandlerFunc(workspace.PromptCategoryByID)))
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories", repository.Repositories)
@@ -185,6 +193,8 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/workspaces/{id}/user-repos", middleware.Auth(http.HandlerFunc(repository.UserRepos)))
 	mux.Handle("/api/v1/workspaces/{id}/user-repos/{repoId}/sync", middleware.Auth(http.HandlerFunc(repository.SyncUserRepo)))
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}", repository.RepositoryByID)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/standard-files", repository.StandardFiles)
+	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/standard-files/init", repository.StandardFilesInit)
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/sync", repository.SyncRepository)
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/details", repository.RepositoryDetails)
 	mux.HandleFunc("/api/v1/workspaces/{id}/repositories/{repoId}/branches", repository.RepositoryBranches)
@@ -200,7 +210,23 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/workspaces/{id}/product-docs", productdoc.ProductDocs)
 	mux.HandleFunc("/api/v1/workspaces/{id}/product-docs/{docId}", productdoc.ProductDocByID)
 	mux.HandleFunc("/api/v1/workspaces/{id}/product-docs/{docId}/versions", productdoc.ProductDocVersions)
+	mux.HandleFunc("/api/v1/workspaces/{id}/product-doc-versions", productdoc.ProductDocWorkspaceVersions)
+	// 版本写操作（备注编辑/删除/回滚）需登录态，userID 由 auth 中间件注入用于审计
+	mux.Handle("/api/v1/workspaces/{id}/product-docs/{docId}/versions/{version}", middleware.Auth(http.HandlerFunc(productdoc.ProductDocVersionByVersion)))
+	mux.Handle("/api/v1/workspaces/{id}/product-docs/{docId}/versions/{version}/restore", middleware.Auth(http.HandlerFunc(productdoc.ProductDocVersionRestore)))
 	mux.HandleFunc("/api/v1/workspaces/{id}/product-docs/{docId}/publish", productdoc.PublishProductDoc)
+	mux.HandleFunc("/api/v1/workspaces/{id}/product-doc-folders", productdoc.ProductDocFolders)
+	mux.HandleFunc("/api/v1/workspaces/{id}/product-doc-folders/{folderId}", productdoc.ProductDocFolderByID)
+	mux.HandleFunc("/api/v1/workspaces/{id}/product-docs/{docId}/share", productdoc.ShareProductDoc)
+	// 文档按需落盘需登录态：userID 决定 agent 工作目录下的落盘位置
+	mux.Handle("/api/v1/workspaces/{id}/product-docs/{docId}/materialize", middleware.Auth(http.HandlerFunc(productdoc.MaterializeProductDoc)))
+	// 分享批注管理（列表/解决）需登录态，userID 由 auth 中间件注入用于审计
+	mux.Handle("/api/v1/workspaces/{id}/product-docs/{docId}/share-comments", middleware.Auth(http.HandlerFunc(productdoc.ProductDocShareComments)))
+	mux.Handle("/api/v1/workspaces/{id}/product-docs/{docId}/share-comments/{commentId}/resolve", middleware.Auth(http.HandlerFunc(productdoc.ProductDocShareCommentResolve)))
+	// 分享落地页公开接口：无需登录
+	mux.HandleFunc("/api/v1/shares/{token}", productdoc.SharedDoc)
+	// 分享页批注公开接口：访客免登录查看/新增批注
+	mux.HandleFunc("/api/v1/shares/{token}/comments", productdoc.ShareDocComments)
 
 	// Product space module
 	psH := psHandler.NewHandler(productSpaceService)
@@ -211,17 +237,22 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}/versions", middleware.Auth(http.HandlerFunc(psH.ListVersions)))
 	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}/versions/{version}/restore", middleware.Auth(http.HandlerFunc(psH.RestoreVersion)))
 	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}/download", middleware.Auth(http.HandlerFunc(psH.DownloadVersion)))
+	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}/comments", middleware.Auth(http.HandlerFunc(psH.Comments)))
 	mux.Handle("/api/v1/workspaces/{id}/product-space/folders", middleware.Auth(http.HandlerFunc(psH.Folders)))
 
 	// Team skills / prompts
 	mux.HandleFunc("/api/v1/team/skills", team.Skills)
 	mux.HandleFunc("/api/v1/team/skills/{id}", team.SkillByID)
+	mux.Handle("/api/v1/team/skills/{id}/review", middleware.Auth(http.HandlerFunc(team.ReviewSkill)))
+	mux.Handle("/api/v1/team/skills/{id}/categories", middleware.Auth(http.HandlerFunc(team.SkillCategoriesUpdate)))
 	mux.Handle("/api/v1/team/skill-categories", middleware.Auth(http.HandlerFunc(team.SkillCategories)))
 	mux.Handle("/api/v1/team/skill-categories/{id}", middleware.Auth(http.HandlerFunc(team.SkillCategoryByID)))
 
 	mux.Handle("/api/v1/team/prompts", middleware.Auth(http.HandlerFunc(team.Prompts)))
 	mux.Handle("/api/v1/team/prompts/{id}", middleware.Auth(http.HandlerFunc(team.PromptByID)))
 	mux.Handle("/api/v1/team/prompts/{id}/review", middleware.Auth(http.HandlerFunc(team.ReviewPrompt)))
+	mux.Handle("/api/v1/team/prompts/{id}/categories", middleware.Auth(http.HandlerFunc(team.PromptCategoriesUpdate)))
+	mux.Handle("/api/v1/team/prompts/{id}/use", middleware.Auth(http.HandlerFunc(team.PromptUsage)))
 	mux.Handle("/api/v1/team/prompt-categories", middleware.Auth(http.HandlerFunc(team.PromptCategories)))
 	mux.Handle("/api/v1/team/prompt-categories/{id}", middleware.Auth(http.HandlerFunc(team.PromptCategoryByID)))
 	mux.Handle("/api/v1/team/skills/stats", middleware.Auth(http.HandlerFunc(team.SkillStats)))
@@ -334,9 +365,9 @@ func initWorkspacePromptService(db *sql.DB) {
 	workspace.InitPromptService(svc)
 }
 
-func initProductDocService(db *sql.DB) {
-	log.Println("[ProductDoc] using postgres storage")
-	productdoc.Init(productdocservice.NewDBProductDocService(db))
+func initProductDocService(db *sql.DB, workspaceRoot string) {
+	log.Printf("[ProductDoc] using postgres storage, workspaceRoot=%s", workspaceRoot)
+	productdoc.Init(productdocservice.NewDBProductDocService(db, workspaceRoot))
 }
 
 func initProductSpaceService(db *sql.DB, workspaceRoot string, workspaceService workspaceservice.WorkspaceService) {

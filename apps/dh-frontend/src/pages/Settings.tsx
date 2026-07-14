@@ -1,18 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
-import { Save, UserPlus, Search, MoreHorizontal, Shield, Puzzle, FileText, Trash2, Plus, Code2, Copy, Check, CheckCircle, UploadCloud, Box, ListTodo, Camera, UserCircle, SlidersHorizontal, Wand2, Star, Download, X, ChevronLeft, ChevronRight, Bot, ChevronDown, Loader2, MessageSquareQuote, AlertCircle, Lock } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Switch } from '@/components/ui/switch';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { AlertCircle, Bot, Box, Camera, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Code2, Copy, Download, FileText, ListTodo, Loader2, Lock, MessageSquareQuote, MoreHorizontal, Plus, Puzzle, Save, Search, Share2, Shield, SlidersHorizontal, Star, Trash2, UploadCloud, UserCircle, UserPlus, Wand2, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { toast } from 'sonner';
+import { MarkdownEditor } from '@/components/MarkdownEditor';
+import { RecordPaginationBar } from '@/components/RecordPaginationBar';
+import { RepoStandardsDialog } from '@/components/RepoStandardsDialog';
+import { StandardGenerateDialog } from '@/components/StandardGenerateDialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,27 +20,45 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import MultiSelect from '@/components/ui/multi-select';
-import { PaginationBar } from '@/components/admin/PaginationBar';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { teamApi } from '@/lib/team-api';
-import { workspaceApi } from '@/lib/workspace-api';
-import { ApiError } from '@/lib/api';
-import { repositoryApi } from '@/lib/repository-api';
-import { agentConfigApi } from '@/lib/agent-config-api';
-import { isBuiltinPromptCategoryName, sortPromptCategoriesByBuiltin } from '@/lib/prompt-categories';
-import { toast } from 'sonner';
-import type { Skill, SkillCategory, Prompt, WorkspacePrompt, PromptCategory, Workspace, WorkspaceMember, WorkitemProject, WorkspaceStandard, WorkspaceCICD, WorkspaceRepository, SettingsConfig, WorkspaceAgentConfig, AgentType } from '@/types';
-import { useSearchParams } from 'react-router-dom';
-import { usePermissions } from '@/hooks/use-permissions';
-import { useClientPagination } from '@/hooks/use-client-pagination';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
-import { PLATFORM_ROLE, SPACE_ROLE, SUB_ROLE, getPlatformRoleLabel, getSubRoleLabel, type PlatformRole, type SpaceRole, type SubRole } from '@/lib/role-constants';
+import { useClientPagination } from '@/hooks/use-client-pagination';
+import { usePermissions } from '@/hooks/use-permissions';
+import { agentConfigApi } from '@/lib/agent-config-api';
+import { ApiError } from '@/lib/api';
+import { isBuiltinPromptCategoryName, sortPromptCategoriesByBuiltin } from '@/lib/prompt-categories';
+import { repositoryApi } from '@/lib/repository-api';
+import { getPlatformRoleLabel, getSubRoleLabel, PLATFORM_ROLE, type PlatformRole, SPACE_ROLE, type SpaceRole, SUB_ROLE, type SubRole } from '@/lib/role-constants';
+import { CODING_STANDARD_TEMPLATES, DESIGN_STANDARD_TEMPLATES } from '@/lib/standard-templates';
+import { teamApi } from '@/lib/team-api';
 import { formatDateTime } from '@/lib/utils';
+import { workspaceApi } from '@/lib/workspace-api';
+import type { AgentType, Prompt, PromptCategory, SettingsConfig, Skill, SkillCategory, WorkitemPlatform, WorkitemProject, Workspace, WorkspaceAgentConfig, WorkspaceCICD, WorkspaceMember, WorkspacePrompt, WorkspaceRepository, WorkspaceStandard } from '@/types';
+
+// 空间提示词分享审核状态展示配置（取值与后端 team_prompts.status 对齐）。
+const PROMPT_SHARE_STATUS_LABELS: Record<string, string> = {
+  pending_review: '审核中',
+  on_shelf: '已上架',
+  off_shelf: '已下架',
+  rejected: '已拒绝',
+};
+const PROMPT_SHARE_STATUS_CLASS: Record<string, string> = {
+  pending_review: 'border-amber-300 text-amber-600',
+  on_shelf: 'border-green-300 text-green-600',
+  rejected: 'border-destructive/50 text-destructive',
+  off_shelf: 'border-muted-foreground/40 text-muted-foreground',
+};
 
 // 工作空间设置的初始空配置，真实数据由 useEffect 从 workspaceApi 加载填充。
 const DEFAULT_SETTINGS: SettingsConfig = {
-  meegoProject: '',
+  reqProjectId: '',
   gitlabUrl: '',
   codingStandard: '',
   designStandard: '',
@@ -54,6 +72,13 @@ const DEFAULT_SETTINGS: SettingsConfig = {
 
 // 尚未入库的本地仓库行 ID 前缀，保存时据此调用 create 而非 update。
 const LOCAL_REPO_ID_PREFIX = 'local-';
+
+// 需求管理平台接口失败时的回退列表，保证下拉框始终可用。
+const DEFAULT_WORKITEM_PLATFORMS: WorkitemPlatform[] = [
+  { key: 'meego', name: 'Meego', needsProjectId: true, projectIdPlaceholder: '输入 Meego 项目 ID...' },
+  { key: 'jira', name: 'Jira', needsProjectId: true, projectIdPlaceholder: '输入 Jira 项目 Key（如 PROJ）...' },
+  { key: 'pingcode', name: 'PingCode', needsProjectId: true, projectIdPlaceholder: '输入 PingCode 项目 ID...' },
+];
 
 const BUILTIN_MODELS: Record<string, string[]> = {
   'opencode': ['gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'],
@@ -432,7 +457,8 @@ export const Settings: React.FC = () => {
       workspaceApi.listStandards(workspaceId).catch((): WorkspaceStandard[] => []),
       workspaceApi.getCICD(workspaceId).catch((): WorkspaceCICD | null => null),
       repositoryApi.list(workspaceId).catch((): WorkspaceRepository[] => []),
-    ]).then(([ws, mems, wp, stds, cicdCfg, repos]) => {
+      workspaceApi.listWorkitemPlatforms().catch((): WorkitemPlatform[] => []),
+    ]).then(([ws, mems, wp, stds, cicdCfg, repos, platforms]) => {
       if (cancelled) return;
       setWorkspace(ws);
       setWorkspaceMembers(mems);
@@ -445,8 +471,13 @@ export const Settings: React.FC = () => {
         setCicdScript(cicdCfg.script || 'npm run build\nnpm run test\nnpm run deploy');
       }
       if (wp) {
-        setSettings(prev => ({ ...prev, meegoProject: wp.externalKey || '' }));
-        setReqPlatform(wp.platform || 'meego');
+        setSettings(prev => ({ ...prev, reqProjectId: wp.externalKey || '' }));
+        setReqPlatform(wp.platform || '');
+      }
+      setWorkitemPlatforms(platforms);
+      // 未配置过需求平台时默认选中配置列表中的第一个平台。
+      if (!wp?.platform && platforms.length > 0) {
+        setReqPlatform(platforms[0].key);
       }
       setGitRepos(repos as WorkspaceRepository[]);
       if (stds.length > 0) {
@@ -488,6 +519,8 @@ export const Settings: React.FC = () => {
   const [isAddingSkillCategory, setIsAddingSkillCategory] = useState(false);
   const [newSkillCategoryName, setNewSkillCategoryName] = useState('');
   const SKILL_PAGE_SIZE = 12;
+  // 成员列表每页条数（客户端分页，搜索词变化时重置到第 1 页）
+  const MEMBER_PAGE_SIZE = 10;
 
   const [createSkillOpen, setCreateSkillOpen] = useState(false);
   const [createSkillPrompt, setCreateSkillPrompt] = useState('');
@@ -500,6 +533,15 @@ export const Settings: React.FC = () => {
   const [promptMarketOpen, setPromptMarketOpen] = useState(false);
   const [promptMarketSearch, setPromptMarketSearch] = useState('');
   const [promptMarketCategory, setPromptMarketCategory] = useState('全部');
+  // 提示词市场弹窗多选状态与批量添加中标志（防止重复点击重复计数）。
+  const [selectedPromptIds, setSelectedPromptIds] = useState<string[]>([]);
+  const [isAddingMarketPrompts, setIsAddingMarketPrompts] = useState(false);
+  // 复制/分享操作中的提示词 ID（按钮 loading 态，兼作防抖）。
+  const [copyingPromptId, setCopyingPromptId] = useState<string | null>(null);
+  const [sharingPromptId, setSharingPromptId] = useState<string | null>(null);
+  // 提示词详情弹窗编辑态：仅自定义提示词（非市场来源）可编辑内容。
+  const [promptEditForm, setPromptEditForm] = useState({ name: '', description: '', content: '' });
+  const [isSavingPromptContent, setIsSavingPromptContent] = useState(false);
 
   const marketSkillCategoryOptions = ['全部', ...skillCategories.map(c => c.name)];
   const marketPromptCategories = ['全部', ...Array.from(new Set(marketPrompts.map(p => p.useCase)))];
@@ -536,6 +578,9 @@ export const Settings: React.FC = () => {
   const openPromptMarket = async () => {
     setPromptMarketOpen(true);
     setMarketPromptsLoading(true);
+    setPromptMarketSearch('');
+    setPromptMarketCategory('全部');
+    setSelectedPromptIds([]);
     try {
       const res = await teamApi.listPrompts(1, 100);
       const existingIds = new Set(prompts.map(p => p.libraryPromptId).filter(Boolean));
@@ -548,15 +593,32 @@ export const Settings: React.FC = () => {
     }
   };
 
-  const handleAddMarketPrompt = async (promptId: string) => {
+  // 批量将市场提示词加入空间：每次加入会使市场提示词使用次数 +1（后端处理）。
+  // 逐条结算，部分失败时保留未成功的条目供重试。
+  const handleAddSelectedPrompts = async () => {
+    if (selectedPromptIds.length === 0) return;
     const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    setIsAddingMarketPrompts(true);
     try {
-      const added = await workspaceApi.addPrompt(wsId, promptId);
-      setPrompts(prev => [added, ...prev]);
-      setMarketPrompts(prev => prev.filter(p => p.id !== promptId));
-      toast.success('已添加到空间');
-    } catch {
-      toast.error('添加失败');
+      const results = await Promise.allSettled(selectedPromptIds.map(id => workspaceApi.addPrompt(wsId, id)));
+      const added = results
+        .filter((r): r is PromiseFulfilledResult<WorkspacePrompt> => r.status === 'fulfilled')
+        .map(r => r.value);
+      const failedCount = results.length - added.length;
+      if (added.length > 0) {
+        setPrompts(prev => [...added, ...prev]);
+        const addedLibIds = new Set(added.map(p => p.libraryPromptId));
+        setMarketPrompts(prev => prev.filter(p => !addedLibIds.has(p.id)));
+      }
+      setSelectedPromptIds([]);
+      if (failedCount > 0) {
+        toast.error(`${failedCount} 个提示词添加失败，请重试`);
+      } else {
+        toast.success(`已将 ${added.length} 个提示词添加到空间`);
+        setPromptMarketOpen(false);
+      }
+    } finally {
+      setIsAddingMarketPrompts(false);
     }
   };
 
@@ -599,9 +661,71 @@ export const Settings: React.FC = () => {
     }
   };
 
+  // 复制为空间自定义副本：市场来源提示词不可直接修改，复制生成 is_custom 副本后可编辑。
+  // copyingPromptId 作为按钮 loading 态兼防抖，避免重复点击导致市场使用次数重复 +1。
+  const handleCopyWorkspacePrompt = async (prompt: WorkspacePrompt) => {
+    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    setCopyingPromptId(prompt.id);
+    try {
+      const copy = await workspaceApi.copyPrompt(wsId, prompt.id);
+      setPrompts(prev => [copy, ...prev]);
+      toast.success('已复制为空间提示词，可自由编辑');
+      // 在详情弹窗中复制时，直接切换到副本并同步编辑态。
+      if (selectedPrompt?.id === prompt.id) {
+        setSelectedPrompt(copy);
+        setPromptDetailCategoryIds(copy.categories.map(c => c.id));
+        setPromptEditForm({ name: copy.name, description: copy.description, content: copy.content });
+      }
+    } catch {
+      toast.error('复制失败');
+    } finally {
+      setCopyingPromptId(null);
+    }
+  };
+
+  // 分享自定义提示词到市场：创建 pending_review 审核条目，由超管在市场页审核。
+  const handleShareWorkspacePrompt = async (promptId: string) => {
+    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    setSharingPromptId(promptId);
+    try {
+      const updated = await workspaceApi.sharePrompt(wsId, promptId);
+      setPrompts(prev => prev.map(p => p.id === promptId ? updated : p));
+      if (selectedPrompt?.id === promptId) {
+        setSelectedPrompt(updated);
+      }
+      toast.success('已分享到市场，等待管理员审核');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : '分享失败');
+    } finally {
+      setSharingPromptId(null);
+    }
+  };
+
+  const handleSavePromptContent = async () => {
+    if (!selectedPrompt) return;
+    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    setIsSavingPromptContent(true);
+    try {
+      const updated = await workspaceApi.updatePromptContent(wsId, selectedPrompt.id, {
+        name: promptEditForm.name.trim(),
+        description: promptEditForm.description.trim(),
+        content: promptEditForm.content,
+        useCase: selectedPrompt.useCase,
+      });
+      setPrompts(prev => prev.map(p => p.id === updated.id ? updated : p));
+      setSelectedPrompt(updated);
+      toast.success('提示词已保存');
+    } catch {
+      toast.error('保存失败');
+    } finally {
+      setIsSavingPromptContent(false);
+    }
+  };
+
   const openPromptDetail = (prompt: WorkspacePrompt) => {
     setSelectedPrompt(prompt);
     setPromptDetailCategoryIds(prompt.categories.map(c => c.id));
+    setPromptEditForm({ name: prompt.name, description: prompt.description, content: prompt.content });
     setPromptDetailOpen(true);
   };
 
@@ -611,11 +735,6 @@ export const Settings: React.FC = () => {
     setPromptDetailCategoryIds([]);
   };
 
-  const handleSavePromptCategories = async () => {
-    if (!selectedPrompt) return;
-    await handleUpdatePromptCategories(selectedPrompt.id, promptDetailCategoryIds);
-  };
-
   // 判断提示词详情弹窗中的分类是否发生过变更，用于控制保存按钮可用状态。
   const hasPromptCategoryChanges = React.useMemo(() => {
     if (!selectedPrompt) return false;
@@ -623,6 +742,25 @@ export const Settings: React.FC = () => {
     const originalIds = new Set(selectedPrompt.categories.map(c => c.id));
     return currentIds.size !== originalIds.size || [...currentIds].some(id => !originalIds.has(id));
   }, [promptDetailCategoryIds, selectedPrompt]);
+
+  // 判断详情弹窗中的内容是否发生过变更（仅自定义提示词可编辑内容）。
+  const hasPromptContentChanges = React.useMemo(() => {
+    if (!selectedPrompt || selectedPrompt.libraryPromptId) return false;
+    return promptEditForm.name !== selectedPrompt.name
+      || promptEditForm.description !== selectedPrompt.description
+      || promptEditForm.content !== selectedPrompt.content;
+  }, [promptEditForm, selectedPrompt]);
+
+  // 保存按钮统一提交内容变更与分类变更（市场来源提示词仅允许改分类）。
+  const handleSavePromptDetail = async () => {
+    if (!selectedPrompt) return;
+    if (hasPromptContentChanges) {
+      await handleSavePromptContent();
+    }
+    if (hasPromptCategoryChanges) {
+      await handleUpdatePromptCategories(selectedPrompt.id, promptDetailCategoryIds);
+    }
+  };
 
   const handleCreateCategory = async () => {
     const name = newCategoryName.trim();
@@ -774,7 +912,11 @@ export const Settings: React.FC = () => {
     return matchSearch && matchCategory;
   });
   
-  const [reqPlatform, setReqPlatform] = useState('meego');
+  const [reqPlatform, setReqPlatform] = useState('');
+  const [workitemPlatforms, setWorkitemPlatforms] = useState<WorkitemPlatform[]>([]);
+  // 平台接口异常时回退内置列表；当前选中平台的元信息驱动项目 ID 输入框的展示与占位。
+  const effectivePlatforms = workitemPlatforms.length > 0 ? workitemPlatforms : DEFAULT_WORKITEM_PLATFORMS;
+  const selectedPlatform = effectivePlatforms.find(p => p.key === reqPlatform);
   const [gitRepos, setGitRepos] = useState<WorkspaceRepository[]>([]);
 
   const handleGitUrlChange = (id: string, url: string) => {
@@ -858,8 +1000,8 @@ export const Settings: React.FC = () => {
     try {
       await workspaceApi.setWorkitemProject(wsId, {
         platform: reqPlatform,
-        externalKey: settings.meegoProject,
-        name: workspace?.name || settings.meegoProject,
+        externalKey: settings.reqProjectId,
+        name: workspace?.name || settings.reqProjectId,
       });
       toast.success('需求管理配置已保存');
     } catch {
@@ -958,6 +1100,15 @@ export const Settings: React.FC = () => {
     user.spaceRole.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const {
+    currentPage: memberPage,
+    totalPages: memberTotalPages,
+    onPageChange: onMemberPageChange,
+    startIndex: memberStart,
+    endIndex: memberEnd,
+  } = useClientPagination({ pageSize: MEMBER_PAGE_SIZE, total: filteredUsers.length, resetDeps: [searchTerm] });
+  const paginatedMembers = filteredUsers.slice(memberStart, memberEnd);
+
   // 代码仓库客户端分页
   const gitRepoPagination = useClientPagination({
     pageSize: GIT_REPO_PAGE_SIZE,
@@ -969,11 +1120,11 @@ export const Settings: React.FC = () => {
   const getSubRoleBadge = (subRole?: string) => {
     const label = getSubRoleLabel(subRole);
     switch (subRole) {
-      case SUB_ROLE.PM: return <Badge variant="secondary">{label}</Badge>;
-      case SUB_ROLE.DESIGNER: return <Badge variant="secondary" className="bg-fuchsia-100 text-fuchsia-700 hover:bg-fuchsia-200 dark:bg-fuchsia-900/30 dark:text-fuchsia-300">{label}</Badge>;
-      case SUB_ROLE.DEVELOPER: return <Badge variant="secondary" className="bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300">{label}</Badge>;
-      case SUB_ROLE.TESTER: return <Badge variant="secondary" className="bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300">{label}</Badge>;
-      default: return <Badge variant="outline">{label || '成员'}</Badge>;
+      case SUB_ROLE.PM: return <Badge variant="secondary" className="rounded-lg px-3 py-1.5 font-medium">{label}</Badge>;
+      case SUB_ROLE.DESIGNER: return <Badge variant="secondary" className="rounded-lg px-3 py-1.5 font-medium bg-fuchsia-100 text-fuchsia-700 hover:bg-fuchsia-200 dark:bg-fuchsia-900/30 dark:text-fuchsia-300">{label}</Badge>;
+      case SUB_ROLE.DEVELOPER: return <Badge variant="secondary" className="rounded-lg px-3 py-1.5 font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300">{label}</Badge>;
+      case SUB_ROLE.TESTER: return <Badge variant="secondary" className="rounded-lg px-3 py-1.5 font-medium bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300">{label}</Badge>;
+      default: return <Badge variant="outline" className="rounded-lg px-3 py-1.5">{label || '成员'}</Badge>;
     }
   };
 
@@ -998,7 +1149,8 @@ export const Settings: React.FC = () => {
     }
     const workspaceId = workspace?.id || 'ws-default';
     // inviteRole 取值：pm | designer | developer | tester
-    const role = inviteAsAdmin ? SPACE_ROLE.SPACE_ADMIN : SPACE_ROLE.MEMBER;
+    // 设置空间管理员仅租户管理员可操作（前端隐藏勾选框，此处再兜底一次）
+    const role = inviteAsAdmin && isTenantAdmin ? SPACE_ROLE.SPACE_ADMIN : SPACE_ROLE.MEMBER;
     const subRole = inviteRole;
     workspaceApi.addMember(workspaceId, { userId: inviteEmail, role, subRole })
       .then(() => {
@@ -1046,7 +1198,8 @@ export const Settings: React.FC = () => {
   };
 
   // 渲染成员列表操作下拉菜单。
-  // 规则：租户管理员可取消空间管理员；空间管理员不能相互取消。
+  // 规则：所有人可查看成员；空间管理员可删除普通成员；
+  // 租户管理员（含超级管理员）额外可删除空间管理员、设置/取消空间管理员。
   function renderMemberActions(member: DisplayMember) {
     if (user?.id === member.id) {
       return <DropdownMenuItem disabled>当前登录用户</DropdownMenuItem>;
@@ -1058,24 +1211,28 @@ export const Settings: React.FC = () => {
     }
 
     const isTargetSpaceAdmin = member.spaceRole === SPACE_ROLE.SPACE_ADMIN;
-    const canCancelSpaceAdmin = isTenantAdmin;
-    const showSpaceAdminAction = !isTargetSpaceAdmin || canCancelSpaceAdmin;
+    // 空间管理员任免仅租户管理员可操作；空间管理员只能删除普通成员
+    const canDeleteMember = !isTargetSpaceAdmin || isTenantAdmin;
 
     return (
       <>
-        {showSpaceAdminAction && (
+        {isTenantAdmin && (
           <DropdownMenuItem onClick={() => handleSetAdmin(member, !isTargetSpaceAdmin)}>
             {isTargetSpaceAdmin ? '取消空间管理员' : '设为空间管理员'}
           </DropdownMenuItem>
         )}
-        {showSpaceAdminAction && <DropdownMenuSeparator />}
-        <DropdownMenuItem
-          className="text-destructive focus:text-destructive"
-          onClick={() => handleDeleteMember(member)}
-        >
-          <Trash2 className="h-4 w-4 mr-2" />
-          删除成员
-        </DropdownMenuItem>
+        {isTenantAdmin && canDeleteMember && <DropdownMenuSeparator />}
+        {canDeleteMember ? (
+          <DropdownMenuItem
+            className="text-destructive focus:text-destructive"
+            onClick={() => handleDeleteMember(member)}
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            删除成员
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuItem disabled>无操作权限</DropdownMenuItem>
+        )}
       </>
     );
   }
@@ -1110,21 +1267,21 @@ export const Settings: React.FC = () => {
                         <SelectValue placeholder="选择平台" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="meego">Meego</SelectItem>
-                        <SelectItem value="jira">Jira</SelectItem>
-                        <SelectItem value="pingcode">PingCode</SelectItem>
+                        {effectivePlatforms.map(p => (
+                          <SelectItem key={p.key} value={p.key}>{p.name}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
-                  {reqPlatform === 'meego' && (
+                  {selectedPlatform?.needsProjectId && (
                     <div className="space-y-2">
-                      <Label htmlFor="meego">项目 ID</Label>
-                      <Input 
+                      <Label htmlFor="reqProjectId">项目 ID</Label>
+                      <Input
                         disabled={isReadOnly}
-                        id="meego" 
-                        placeholder="输入项目ID..."
-                        value={settings.meegoProject} 
-                        onChange={e => setSettings({...settings, meegoProject: e.target.value})} 
+                        id="reqProjectId"
+                        placeholder={selectedPlatform.projectIdPlaceholder || '输入项目ID...'}
+                        value={settings.reqProjectId}
+                        onChange={e => setSettings({...settings, reqProjectId: e.target.value})}
                       />
                     </div>
                   )}
@@ -1180,33 +1337,7 @@ export const Settings: React.FC = () => {
                         </Select>
                       </div>
                       <div className="flex items-center gap-0.5 shrink-0">
-                        <Dialog>
-                          <DialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground" disabled={isReadOnly} title="设置规范">
-                              <SlidersHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-3xl h-[80vh] flex flex-col">
-                            <DialogHeader>
-                              <DialogTitle>仓库规范配置 ({repo.name || '未命名'})</DialogTitle>
-                            </DialogHeader>
-                            <Tabs defaultValue="engineering" className="flex-1 flex flex-col mt-4 min-h-0">
-                              <TabsList className="grid w-full grid-cols-2">
-                                <TabsTrigger value="engineering">工程规范</TabsTrigger>
-                                <TabsTrigger value="design">设计规范</TabsTrigger>
-                              </TabsList>
-                              <TabsContent value="engineering" className="flex-1 min-h-0 mt-4">
-                                <Textarea className="w-full h-full font-mono text-sm resize-none" placeholder="输入工程规范 (Markdown 格式)..." disabled={isReadOnly} defaultValue="# 工程规范\n\n1. 目录结构\n2. 命名规范" />
-                              </TabsContent>
-                              <TabsContent value="design" className="flex-1 min-h-0 mt-4">
-                                <Textarea className="w-full h-full font-mono text-sm resize-none" placeholder="输入设计规范 (Markdown 格式)..." disabled={isReadOnly} defaultValue="# 设计规范\n\n1. 组件设计\n2. 主题配置" />
-                              </TabsContent>
-                            </Tabs>
-                            <div className="flex justify-end mt-4 pt-4 border-t border-border/50">
-                              <Button disabled={isReadOnly} onClick={() => toast.success('规范已保存')}>保存规范</Button>
-                            </div>
-                          </DialogContent>
-                        </Dialog>
+                        <RepoStandardsDialog workspaceId={workspaceId} repo={repo} isReadOnly={isReadOnly} />
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
                             <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" disabled={isReadOnly} title="删除仓库">
@@ -1231,13 +1362,12 @@ export const Settings: React.FC = () => {
                   ))}
                 </div>
               </div>
-              {gitRepos.length > 0 && (
-                <PaginationBar
-                  currentPage={gitRepoPagination.currentPage}
-                  totalPages={gitRepoPagination.totalPages}
-                  onPageChange={gitRepoPagination.onPageChange}
-                />
-              )}
+              <RecordPaginationBar
+                total={gitRepos.length}
+                currentPage={gitRepoPagination.currentPage}
+                totalPages={gitRepoPagination.totalPages}
+                onPageChange={gitRepoPagination.onPageChange}
+              />
               {!isReadOnly && gitRepos.length > 0 && (
                 <Button onClick={handleSaveRepos} className="mt-6"><Save className="mr-2 h-4 w-4" /> 保存仓库配置</Button>
               )}
@@ -1258,26 +1388,40 @@ export const Settings: React.FC = () => {
                   <TabsTrigger value="design">设计规范</TabsTrigger>
                 </TabsList>
                 <TabsContent value="coding">
-                  <div className="space-y-2">
-                    <Textarea 
-                      className="min-h-[400px] text-sm bg-muted/20 font-mono resize-y"
-                      placeholder="请输入编码规范 (Markdown 格式)..."
-                      disabled={isReadOnly}
-                      value={settings.codingStandard}
-                      onChange={e => setSettings({...settings, codingStandard: e.target.value})}
-                    />
-                  </div>
+                  {!isReadOnly && (
+                    <div className="mb-2 flex justify-end">
+                      <StandardGenerateDialog
+                        kind="coding"
+                        workspaceId={workspaceId}
+                        onGenerated={content => setSettings(prev => ({ ...prev, codingStandard: content }))}
+                      />
+                    </div>
+                  )}
+                  <MarkdownEditor
+                    value={settings.codingStandard}
+                    onChange={value => setSettings({ ...settings, codingStandard: value })}
+                    placeholder="请输入编码规范（支持 Markdown）..."
+                    readOnly={isReadOnly}
+                    templates={CODING_STANDARD_TEMPLATES}
+                  />
                 </TabsContent>
                 <TabsContent value="design">
-                  <div className="space-y-2">
-                    <Textarea 
-                      className="min-h-[400px] text-sm bg-muted/20 font-mono resize-y"
-                      placeholder="请输入设计规范 (Markdown 格式)..."
-                      disabled={isReadOnly}
-                      value={settings.designStandard}
-                      onChange={e => setSettings({...settings, designStandard: e.target.value})}
-                    />
-                  </div>
+                  {!isReadOnly && (
+                    <div className="mb-2 flex justify-end">
+                      <StandardGenerateDialog
+                        kind="design"
+                        workspaceId={workspaceId}
+                        onGenerated={content => setSettings(prev => ({ ...prev, designStandard: content }))}
+                      />
+                    </div>
+                  )}
+                  <MarkdownEditor
+                    value={settings.designStandard}
+                    onChange={value => setSettings({ ...settings, designStandard: value })}
+                    placeholder="请输入设计规范（支持 Markdown）..."
+                    readOnly={isReadOnly}
+                    templates={DESIGN_STANDARD_TEMPLATES}
+                  />
                 </TabsContent>
               </Tabs>
               {!isReadOnly && (
@@ -1476,7 +1620,8 @@ export const Settings: React.FC = () => {
                     {displaySkills.length === 0 && (
                       <div className="text-center py-10 text-sm text-muted-foreground">未找到匹配的技能</div>
                     )}
-                    <PaginationBar
+                    <RecordPaginationBar
+                      total={skillTotal}
                       currentPage={skillPage}
                       totalPages={Math.max(1, Math.ceil(skillTotal / SKILL_PAGE_SIZE))}
                       onPageChange={loadSkills}
@@ -1599,6 +1744,9 @@ export const Settings: React.FC = () => {
                           <div className="min-w-0">
                             <h4 className="font-medium text-sm truncate">{prompt.name}</h4>
                             <div className="flex flex-wrap gap-1 mt-0.5">
+                              {prompt.libraryPromptId && (
+                                <Badge variant="secondary" className="text-[10px] h-5">市场</Badge>
+                              )}
                               {prompt.categories.length > 0 ? prompt.categories.slice(0, 4).map(c => (
                                 <Badge key={c.id} variant="outline" className="text-[10px] h-5">{c.name}</Badge>
                               )) : (
@@ -1621,8 +1769,43 @@ export const Settings: React.FC = () => {
                       <p className="text-xs text-muted-foreground mt-3 line-clamp-2 flex-1">{prompt.content}</p>
                       <div className="flex items-center gap-3 mt-3 text-[10px] text-muted-foreground">
                         <span className="flex items-center gap-0.5"><MessageSquareQuote className="h-3 w-3" /> {prompt.usageCount.toLocaleString()}</span>
-                        <span className="ml-auto">{prompt.enabled ? '已启用' : '未启用'}</span>
+                        {prompt.createdByName && (
+                          <span className="flex items-center gap-0.5 truncate"><UserCircle className="h-3 w-3 shrink-0" /> {prompt.createdByName}</span>
+                        )}
+                        <span className="ml-auto shrink-0">{prompt.enabled ? '已启用' : '未启用'}</span>
                       </div>
+                      {canManageWorkspacePrompts && (
+                        <div className="flex items-center gap-2 mt-2" onClick={(e) => e.stopPropagation()}>
+                          {prompt.libraryPromptId ? (
+                            // 市场来源提示词不可直接修改，复制为空间自定义副本后可编辑
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs px-2"
+                              disabled={copyingPromptId === prompt.id}
+                              onClick={() => handleCopyWorkspacePrompt(prompt)}
+                            >
+                              {copyingPromptId === prompt.id ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Copy className="h-3 w-3 mr-1" />}
+                              复制为副本
+                            </Button>
+                          ) : prompt.shareStatus ? (
+                            <Badge variant="outline" className={`text-[10px] h-5 ${PROMPT_SHARE_STATUS_CLASS[prompt.shareStatus] ?? ''}`}>
+                              {PROMPT_SHARE_STATUS_LABELS[prompt.shareStatus] ?? prompt.shareStatus}
+                            </Badge>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs px-2"
+                              disabled={sharingPromptId === prompt.id}
+                              onClick={() => handleShareWorkspacePrompt(prompt.id)}
+                            >
+                              {sharingPromptId === prompt.id ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Share2 className="h-3 w-3 mr-1" />}
+                              分享到市场
+                            </Button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                   {paginatedPrompts.length === 0 && (
@@ -1630,7 +1813,8 @@ export const Settings: React.FC = () => {
                   )}
                 </div>
 
-                <PaginationBar
+                <RecordPaginationBar
+                  total={filteredWorkspacePrompts.length}
                   currentPage={promptPage}
                   totalPages={promptTotalPages}
                   onPageChange={setPromptPage}
@@ -1654,16 +1838,56 @@ export const Settings: React.FC = () => {
                   </DialogTitle>
                 </DialogHeader>
                 <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-                  <div className="flex flex-col gap-2">
-                    {selectedPrompt.description && (
-                      <label className="text-sm text-muted-foreground">{selectedPrompt.description}</label>
-                    )}
-                    <Textarea
-                      value={selectedPrompt.content}
-                      readOnly
-                      className="min-h-[224px] resize-none bg-muted/30 border-input rounded-lg text-sm transition-all hover:border-input/80 focus:border-ring focus:bg-background focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]"
-                    />
-                  </div>
+                  {canManageWorkspacePrompts ? (
+                    // 市场来源提示词（libraryPromptId 非空）控件全部灰化禁用，只能查看，复制为副本后可编辑
+                    <div className="flex flex-col gap-3">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-sm text-muted-foreground">名称</label>
+                        <Input
+                          value={promptEditForm.name}
+                          onChange={(e) => setPromptEditForm(prev => ({ ...prev, name: e.target.value }))}
+                          className="h-9"
+                          disabled={!!selectedPrompt.libraryPromptId}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-sm text-muted-foreground">描述</label>
+                        <Input
+                          value={promptEditForm.description}
+                          onChange={(e) => setPromptEditForm(prev => ({ ...prev, description: e.target.value }))}
+                          className="h-9"
+                          placeholder="简要描述该提示词的用途"
+                          disabled={!!selectedPrompt.libraryPromptId}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-sm text-muted-foreground">内容</label>
+                        <Textarea
+                          value={promptEditForm.content}
+                          onChange={(e) => setPromptEditForm(prev => ({ ...prev, content: e.target.value }))}
+                          className="min-h-[224px] resize-none border-input rounded-lg text-sm transition-all hover:border-input/80 focus:border-ring focus:bg-background focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]"
+                          readOnly={!!selectedPrompt.libraryPromptId}
+                          disabled={!!selectedPrompt.libraryPromptId}
+                        />
+                      </div>
+                      {selectedPrompt.libraryPromptId && (
+                        <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <Lock className="h-3 w-3" /> 市场提示词不可修改，点击下方「复制为副本」后可编辑
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {selectedPrompt.description && (
+                        <label className="text-sm text-muted-foreground">{selectedPrompt.description}</label>
+                      )}
+                      <Textarea
+                        value={selectedPrompt.content}
+                        readOnly
+                        className="min-h-[224px] resize-none bg-muted/30 border-input rounded-lg text-sm transition-all hover:border-input/80 focus:border-ring focus:bg-background focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]"
+                      />
+                    </div>
+                  )}
                   <div className="flex flex-col gap-2">
                     <label className="text-sm text-muted-foreground">分类</label>
                     {canManageWorkspacePrompts ? (
@@ -1672,6 +1896,7 @@ export const Settings: React.FC = () => {
                         value={promptDetailCategoryIds}
                         onChange={setPromptDetailCategoryIds}
                         dropdownPosition="top"
+                        disabled={!!selectedPrompt.libraryPromptId}
                       />
                     ) : (
                       <div className="flex flex-wrap items-center gap-2 min-h-[44px] px-3 py-2 rounded-lg border border-input bg-background">
@@ -1690,9 +1915,23 @@ export const Settings: React.FC = () => {
                   }}>
                     <Copy className="h-4 w-4 mr-2" /> 复制
                   </Button>
+                  {selectedPrompt.libraryPromptId && canManageWorkspacePrompts && (
+                    <Button
+                      variant="outline"
+                      disabled={copyingPromptId === selectedPrompt.id}
+                      onClick={() => handleCopyWorkspacePrompt(selectedPrompt)}
+                    >
+                      {copyingPromptId === selectedPrompt.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Copy className="h-4 w-4 mr-2" />}
+                      复制为副本
+                    </Button>
+                  )}
                   <Button variant="outline" onClick={closePromptDetail}>关闭</Button>
                   {canManageWorkspacePrompts && (
-                    <Button onClick={handleSavePromptCategories} disabled={!hasPromptCategoryChanges}>
+                    <Button
+                      onClick={handleSavePromptDetail}
+                      disabled={!!selectedPrompt.libraryPromptId || isSavingPromptContent || (!hasPromptCategoryChanges && !hasPromptContentChanges)}
+                    >
+                      {isSavingPromptContent && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                       保存
                     </Button>
                   )}
@@ -1782,11 +2021,11 @@ export const Settings: React.FC = () => {
           <div className="space-y-4">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
-                <h3 className="text-lg font-medium">成员管理</h3>
-                <p className="text-sm text-muted-foreground mt-1">管理当前工作空间的成员权限与角色。</p>
+                <h3 className="text-2xl font-semibold tracking-tight">成员管理</h3>
+                <p className="text-muted-foreground mt-1">管理当前工作空间的成员权限与角色。</p>
               </div>
-              {!isReadOnly && (
-                <Button onClick={handleInvite}>
+              {(!isReadOnly || isTenantAdmin) && (
+                <Button onClick={handleInvite} className="shadow-md">
                   <UserPlus className="mr-2 h-4 w-4" /> 添加成员
                 </Button>
               )}
@@ -1821,16 +2060,19 @@ export const Settings: React.FC = () => {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="invite-admin"
-                      checked={inviteAsAdmin}
-                      onCheckedChange={checked => setInviteAsAdmin(checked === true)}
-                    />
-                    <Label htmlFor="invite-admin" className="text-sm font-normal cursor-pointer">
-                      同时设置为空间管理员
-                    </Label>
-                  </div>
+                  {/* 设置空间管理员仅租户管理员（含超级管理员）可操作 */}
+                  {isTenantAdmin && (
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="invite-admin"
+                        checked={inviteAsAdmin}
+                        onCheckedChange={checked => setInviteAsAdmin(checked === true)}
+                      />
+                      <Label htmlFor="invite-admin" className="text-sm font-normal cursor-pointer">
+                        同时设置为空间管理员
+                      </Label>
+                    </div>
+                  )}
                 </div>
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" onClick={() => setIsInviteOpen(false)}>取消</Button>
@@ -1839,73 +2081,71 @@ export const Settings: React.FC = () => {
               </DialogContent>
             </Dialog>
 
-            <Card className="soft-shadow border-none overflow-hidden">
-              <CardHeader className="py-4 border-b bg-muted/10">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                  <CardTitle className="text-base">空间成员 ({displayUsers.length})</CardTitle>
-                  <div className="relative w-full sm:w-64">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Card className="soft-shadow border border-border/50 rounded-xl overflow-hidden bg-card">
+              <CardContent className="p-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-5">
+                  <h4 className="text-xl font-semibold text-foreground">空间成员 ({displayUsers.length})</h4>
+                  <div className="relative w-full sm:w-80">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       type="search"
                       placeholder="搜索成员姓名或角色..."
-                      className="pl-8 bg-background"
+                      className="pl-10 bg-muted/30 rounded-lg"
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
                     />
                   </div>
                 </div>
-              </CardHeader>
-              <CardContent className="p-0">
-                <div className="overflow-x-auto">
-                  <Table className="min-w-max">
+                <div className="overflow-x-auto rounded-lg border border-border/50">
+                  <Table className="min-w-max text-[15px]">
                     <TableHeader className="bg-muted/30">
-                      <TableRow>
-                        <TableHead>ID</TableHead>
-                        <TableHead className="w-[220px]">成员信息</TableHead>
-                        <TableHead>成员角色</TableHead>
-                        <TableHead>是否空间管理员</TableHead>
-                        <TableHead>是否租户管理员</TableHead>
-                        <TableHead>加入时间</TableHead>
-                        <TableHead className="text-right">操作</TableHead>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="px-4 py-4 font-medium text-muted-foreground">ID</TableHead>
+                        <TableHead className="px-4 py-4 font-medium text-muted-foreground w-[240px]">成员信息</TableHead>
+                        <TableHead className="px-4 py-4 font-medium text-muted-foreground">成员角色</TableHead>
+                        <TableHead className="px-4 py-4 font-medium text-muted-foreground">是否空间管理员</TableHead>
+                        <TableHead className="px-4 py-4 font-medium text-muted-foreground">是否租户管理员</TableHead>
+                        <TableHead className="px-4 py-4 font-medium text-muted-foreground">加入时间</TableHead>
+                        <TableHead className="px-4 py-4 font-medium text-muted-foreground text-right">操作</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredUsers.map((member) => (
-                        <TableRow key={member.id}>
-                          <TableCell className="font-mono text-xs text-muted-foreground">{member.displayId}</TableCell>
-                          <TableCell>
+                      {paginatedMembers.map((member) => (
+                        <TableRow key={member.id} className="transition-colors hover:bg-primary/5">
+                          <TableCell className="px-4 py-5 font-mono text-xs text-muted-foreground">{member.displayId}</TableCell>
+                          <TableCell className="px-4 py-5">
                             <div className="flex items-center gap-3">
-                              <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium">
+                              <div className="h-10 w-10 shrink-0 rounded-full bg-primary/15 flex items-center justify-center text-primary font-medium">
                                 {member.name.charAt(0)}
                               </div>
                               <div>
-                                <div className="font-medium">{member.name}</div>
-                                <div className="text-xs text-muted-foreground">{member.email}</div>
+                                <div className="font-medium text-foreground">{member.name}</div>
+                                <div className="text-sm text-muted-foreground mt-0.5">{member.email}</div>
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell>{getSubRoleBadge(member.subRole)}</TableCell>
-                          <TableCell>
+                          <TableCell className="px-4 py-5">{getSubRoleBadge(member.subRole)}</TableCell>
+                          <TableCell className="px-4 py-5">
                             {member.spaceRole === SPACE_ROLE.SPACE_ADMIN ? (
-                              <Badge className="bg-primary">是</Badge>
+                              <Badge className="bg-primary rounded-lg px-3 py-1.5 font-medium">是</Badge>
                             ) : (
-                              <Badge variant="outline">否</Badge>
+                              <Badge variant="outline" className="rounded-lg px-3 py-1.5">否</Badge>
                             )}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="px-4 py-5">
                             {member.platformRole === PLATFORM_ROLE.TENANT_ADMIN || member.platformRole === PLATFORM_ROLE.SUPER_ADMIN ? (
-                              <Badge className="bg-primary">是</Badge>
+                              <Badge className="bg-primary rounded-lg px-3 py-1.5 font-medium">是</Badge>
                             ) : (
-                              <Badge variant="outline">否</Badge>
+                              <Badge variant="outline" className="rounded-lg px-3 py-1.5">否</Badge>
                             )}
                           </TableCell>
-                          <TableCell className="text-muted-foreground whitespace-nowrap">
+                          <TableCell className="px-4 py-5 text-muted-foreground whitespace-nowrap">
                             {formatDateTime(member.joinedAt)}
                           </TableCell>
-                          <TableCell className="text-right whitespace-nowrap">
+                          <TableCell className="px-4 py-5 text-right whitespace-nowrap">
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
+                                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground hover:bg-muted rounded-md">
                                   <MoreHorizontal className="h-4 w-4" />
                                 </Button>
                               </DropdownMenuTrigger>
@@ -1926,6 +2166,12 @@ export const Settings: React.FC = () => {
                     </TableBody>
                   </Table>
                 </div>
+                <RecordPaginationBar
+                  total={filteredUsers.length}
+                  currentPage={memberPage}
+                  totalPages={memberTotalPages}
+                  onPageChange={onMemberPageChange}
+                />
               </CardContent>
             </Card>
 
@@ -2017,21 +2263,19 @@ export const Settings: React.FC = () => {
             )}
             {!marketSkillsLoading && filteredMarketSkills.map(skill => {
               const isSelected = selectedSkillIds.includes(skill.id);
+              // 勾选状态统一由 Checkbox 的 onCheckedChange 驱动（同提示词市场弹窗，避免 label 双触发）。
+              const toggleSelected = () =>
+                setSelectedSkillIds(prev =>
+                  prev.includes(skill.id) ? prev.filter(id => id !== skill.id) : [...prev, skill.id]
+                );
               return (
                 <label
                   key={skill.id}
                   className={`flex gap-3 p-3.5 rounded-lg border cursor-pointer transition-all hover:border-input hover:shadow-sm ${
                     isSelected ? 'border-primary bg-primary/5' : 'border-border'
                   }`}
-                  onClick={(e) => {
-                    // 避免点击 Checkbox 本身时重复切换
-                    if ((e.target as HTMLElement).closest('[data-slot="checkbox"]')) return;
-                    setSelectedSkillIds(prev =>
-                      prev.includes(skill.id) ? prev.filter(id => id !== skill.id) : [...prev, skill.id]
-                    );
-                  }}
                 >
-                  <Checkbox checked={isSelected} className="mt-1 h-4 w-4 shrink-0 border-input data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground" />
+                  <Checkbox checked={isSelected} onCheckedChange={toggleSelected} className="mt-1 h-4 w-4 shrink-0 border-input data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="font-medium text-foreground">{skill.name}</span>
@@ -2191,33 +2435,44 @@ export const Settings: React.FC = () => {
               {!marketPromptsLoading && filteredPromptsMarket.length === 0 && (
                 <div className="text-center py-8 text-sm text-muted-foreground">未找到可添加的提示词</div>
               )}
-              {!marketPromptsLoading && filteredPromptsMarket.map(prompt => (
-                <div
-                  key={prompt.id}
-                  className="border border-border rounded-lg p-4 transition-all hover:border-input hover:shadow-sm"
-                >
-                  <div className="flex justify-between items-start gap-4">
+              {!marketPromptsLoading && filteredPromptsMarket.map(prompt => {
+                const isSelected = selectedPromptIds.includes(prompt.id);
+                // 勾选状态统一由 Checkbox 的 onCheckedChange 驱动：label 点击会原生转发到内部 button，
+                // 若同时在 label 上挂 onClick 会导致一次点击触发两次切换（互相抵消）。
+                const toggleSelected = () =>
+                  setSelectedPromptIds(prev =>
+                    prev.includes(prompt.id) ? prev.filter(id => id !== prompt.id) : [...prev, prompt.id]
+                  );
+                return (
+                  <label
+                    key={prompt.id}
+                    className={`flex gap-3 p-3.5 rounded-lg border cursor-pointer transition-all hover:border-input hover:shadow-sm ${
+                      isSelected ? 'border-primary bg-primary/5' : 'border-border'
+                    }`}
+                  >
+                    <Checkbox checked={isSelected} onCheckedChange={toggleSelected} className="mt-1 h-4 w-4 shrink-0 border-input data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground" />
                     <div className="flex-1 min-w-0">
                       <div className="flex gap-2 items-center mb-2">
                         <span className="text-base font-medium text-foreground">{prompt.name}</span>
                         <Badge variant="secondary" className="text-xs h-5 px-2 py-0.5">{prompt.useCase}</Badge>
                       </div>
                       <p className="text-sm text-muted-foreground mb-2 line-clamp-2">{prompt.description}</p>
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <Download className="h-3.5 w-3.5" />
-                        {prompt.usageCount.toLocaleString()} 次使用
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Download className="h-3.5 w-3.5" />
+                          {prompt.usageCount.toLocaleString()} 次使用
+                        </span>
+                        {prompt.createdByName && (
+                          <span className="flex items-center gap-1">
+                            <UserCircle className="h-3.5 w-3.5" />
+                            {prompt.createdByName}
+                          </span>
+                        )}
                       </div>
                     </div>
-                    <Button
-                      size="sm"
-                      className="shrink-0 px-4 py-2 h-9 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all font-medium"
-                      onClick={() => handleAddMarketPrompt(prompt.id)}
-                    >
-                      添加
-                    </Button>
-                  </div>
-                </div>
-              ))}
+                  </label>
+                );
+              })}
             </div>
 
             {/* 统计文案 */}
@@ -2227,13 +2482,21 @@ export const Settings: React.FC = () => {
           </div>
 
           {/* 底部操作栏 */}
-          <div className="px-6 py-4 border-t bg-muted/30 flex justify-end shrink-0">
+          <div className="px-6 py-4 border-t bg-muted/30 flex justify-end gap-3 shrink-0">
             <Button
               variant="outline"
               className="px-5 py-2 h-10 rounded-lg border-input bg-background text-foreground hover:bg-muted hover:border-input/80 transition-all"
               onClick={() => setPromptMarketOpen(false)}
             >
-              关闭
+              取消
+            </Button>
+            <Button
+              disabled={selectedPromptIds.length === 0 || isAddingMarketPrompts}
+              className="px-5 py-2 h-10 rounded-lg transition-all"
+              onClick={handleAddSelectedPrompts}
+            >
+              {isAddingMarketPrompts && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              添加 ({selectedPromptIds.length})
             </Button>
           </div>
         </DialogContent>

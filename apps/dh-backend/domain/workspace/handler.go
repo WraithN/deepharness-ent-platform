@@ -117,6 +117,63 @@ func requireWorkspaceAdmin(w http.ResponseWriter, r *http.Request, workspaceID s
 	return true
 }
 
+// requireSuperOrTenantAdmin 校验当前请求用户是否为超级管理员或租户管理员。
+// 空间管理员的任免仅允许该级别操作。
+func requireSuperOrTenantAdmin(w http.ResponseWriter, r *http.Request) bool {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return false
+	}
+	if defaultUserService == nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "user service not initialized")
+		return false
+	}
+	user, err := defaultUserService.GetByID(userID)
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "failed to authenticate user")
+		return false
+	}
+	if user.PlatformRole != identity.PlatformRoleSuperAdmin && user.PlatformRole != identity.PlatformRoleTenantAdmin {
+		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin required")
+		return false
+	}
+	return true
+}
+
+// requireWorkspaceMember 校验当前请求用户是否可查看工作空间成员：
+// 超级管理员、同租户租户管理员或该空间任意成员（含普通成员）均可查看。
+func requireWorkspaceMember(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return false
+	}
+	if defaultUserService == nil || defaultService == nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "service not initialized")
+		return false
+	}
+	user, err := defaultUserService.GetByID(userID)
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "failed to authenticate user")
+		return false
+	}
+	if user.PlatformRole == identity.PlatformRoleSuperAdmin {
+		return true
+	}
+	if user.PlatformRole == identity.PlatformRoleTenantAdmin {
+		ws, err := defaultService.GetWorkspace(workspaceID)
+		if err == nil && ws.TenantID == user.TenantID {
+			return true
+		}
+	}
+	if _, err := defaultService.GetMemberRole(workspaceID, userID); err != nil {
+		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: workspace member required")
+		return false
+	}
+	return true
+}
+
 // requireTenantAdmin 校验当前请求用户是否为租户管理员或超级管理员，返回租户 ID。
 func requireTenantAdmin(w http.ResponseWriter, r *http.Request) (string, bool) {
 	userID, ok := middleware.UserIDFromContext(r.Context())
@@ -278,17 +335,19 @@ func WorkspaceByID(w http.ResponseWriter, r *http.Request) {
 }
 
 // Members 处理 GET /api/v1/workspaces/{id}/members 与 POST /api/v1/workspaces/{id}/members。
+// 权限：GET 列表对所有空间成员开放；POST 添加需空间管理员/租户管理员，
+// 且添加为空间管理员时仅租户管理员（含超级管理员）可操作。
 func Members(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := handler.PathValueOr404(w, r, "id")
 	if !ok {
 		return
 	}
-	if !requireWorkspaceAdmin(w, r, workspaceID) {
-		return
-	}
 
 	switch r.Method {
 	case http.MethodGet:
+		if !requireWorkspaceMember(w, r, workspaceID) {
+			return
+		}
 		members, err := defaultService.ListMembers(workspaceID)
 		if err != nil {
 			handler.HandleServiceError(w, err, "workspace not found", "failed to list members")
@@ -297,6 +356,9 @@ func Members(w http.ResponseWriter, r *http.Request) {
 		handler.SetJSONHeader(w)
 		json.NewEncoder(w).Encode(members)
 	case http.MethodPost:
+		if !requireWorkspaceAdmin(w, r, workspaceID) {
+			return
+		}
 		var req addMemberRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
@@ -311,6 +373,10 @@ func Members(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.SubRole != "" && !isValidMemberSubRole(req.SubRole) {
 			handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid subRole")
+			return
+		}
+		// 添加为空间管理员仅租户管理员（含超级管理员）可操作
+		if req.Role == service.MemberRoleSpaceAdmin && !requireSuperOrTenantAdmin(w, r) {
 			return
 		}
 
@@ -355,6 +421,11 @@ func MemberByID(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodDelete:
+		// 删除空间管理员仅租户管理员（含超级管理员）可操作；空间管理员只能删除普通成员
+		targetRole, err := defaultService.GetMemberRole(workspaceID, userID)
+		if err == nil && targetRole == service.MemberRoleSpaceAdmin && !requireSuperOrTenantAdmin(w, r) {
+			return
+		}
 		assetAssigneeID := r.URL.Query().Get("assetAssigneeId")
 		if err := defaultService.RemoveMember(workspaceID, userID, assetAssigneeID); err != nil {
 			handler.HandleServiceError(w, err, "member not found", "failed to remove member")
@@ -368,21 +439,8 @@ func MemberByID(w http.ResponseWriter, r *http.Request) {
 			handler.HandleServiceError(w, err, "member not found", "failed to get member role")
 			return
 		}
-		if targetRole == service.MemberRoleSpaceAdmin {
-			currentUserID, ok := middleware.UserIDFromContext(r.Context())
-			if !ok {
-				handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
-				return
-			}
-			currentUser, err := defaultUserService.GetByID(currentUserID)
-			if err != nil {
-				handler.WriteJSONError(w, http.StatusUnauthorized, 2, "failed to authenticate user")
-				return
-			}
-			if currentUser.PlatformRole != identity.PlatformRoleSuperAdmin && currentUser.PlatformRole != identity.PlatformRoleTenantAdmin {
-				handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: only tenant admin can modify space admin")
-				return
-			}
+		if targetRole == service.MemberRoleSpaceAdmin && !requireSuperOrTenantAdmin(w, r) {
+			return
 		}
 
 		var req updateMemberRequest
@@ -395,6 +453,10 @@ func MemberByID(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.SubRole != "" && !isValidMemberSubRole(req.SubRole) {
 			handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid subRole")
+			return
+		}
+		// 新角色设为空间管理员同样仅租户管理员（含超级管理员）可操作
+		if req.Role == service.MemberRoleSpaceAdmin && !requireSuperOrTenantAdmin(w, r) {
 			return
 		}
 		if err := defaultService.UpdateMemberRole(workspaceID, userID, req.Role, req.SubRole); err != nil {

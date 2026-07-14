@@ -249,6 +249,140 @@ func ReviewPrompt(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(prompt)
 }
 
+// ReviewSkill 处理 POST /api/v1/team/skills/{id}/review（仅超管）。
+func ReviewSkill(w http.ResponseWriter, r *http.Request) {
+	handler.SetJSONHeader(w)
+	id, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+
+	_, isSuperAdmin, authOk := currentUser(r)
+	if !authOk {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return
+	}
+	if !isSuperAdmin {
+		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		return
+	}
+
+	var req service.ReviewPromptRequest
+	if !handler.DecodeJSONBody(w, r, &req) {
+		return
+	}
+	userID, _ := middleware.UserIDFromContext(r.Context())
+	skill, err := defaultService.ReviewSkill(id, req.Action, userID)
+	if err != nil {
+		handler.HandleServiceError(w, err, "skill not found", "failed to review skill")
+		return
+	}
+	json.NewEncoder(w).Encode(skill)
+}
+
+// SkillCategoriesUpdate 处理 PUT /api/v1/team/skills/{id}/categories（仅超管）。
+func SkillCategoriesUpdate(w http.ResponseWriter, r *http.Request) {
+	handler.SetJSONHeader(w)
+	id, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+
+	if r.Method != http.MethodPut {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+
+	if !requireSuperAdmin(w, r) {
+		return
+	}
+
+	var req service.UpdateCategoriesRequest
+	if !handler.DecodeJSONBody(w, r, &req) {
+		return
+	}
+	skill, err := defaultService.UpdateSkillCategories(id, req.CategoryIDs)
+	if err != nil {
+		handler.HandleServiceError(w, err, "skill not found", "failed to update skill categories")
+		return
+	}
+	json.NewEncoder(w).Encode(skill)
+}
+
+// PromptCategoriesUpdate 处理 PUT /api/v1/team/prompts/{id}/categories（仅超管）。
+func PromptCategoriesUpdate(w http.ResponseWriter, r *http.Request) {
+	handler.SetJSONHeader(w)
+	id, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+
+	if r.Method != http.MethodPut {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+
+	if !requireSuperAdmin(w, r) {
+		return
+	}
+
+	var req service.UpdateCategoriesRequest
+	if !handler.DecodeJSONBody(w, r, &req) {
+		return
+	}
+	prompt, err := defaultService.UpdatePromptCategories(id, req.CategoryIDs)
+	if err != nil {
+		handler.HandleServiceError(w, err, "prompt not found", "failed to update prompt categories")
+		return
+	}
+	json.NewEncoder(w).Encode(prompt)
+}
+
+// requireSuperAdmin 校验当前请求为已认证超级管理员（规则6：三个新 handler 共用鉴权逻辑）。
+func requireSuperAdmin(w http.ResponseWriter, r *http.Request) bool {
+	_, isSuperAdmin, authOk := currentUser(r)
+	if !authOk {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return false
+	}
+	if !isSuperAdmin {
+		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		return false
+	}
+	return true
+}
+
+// PromptUsage 处理 POST /api/v1/team/prompts/{id}/use。
+// 复制提示词内容时上报：同一用户同一提示词每天只计数一次（服务层去重）。
+func PromptUsage(w http.ResponseWriter, r *http.Request) {
+	handler.SetJSONHeader(w)
+	id, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+	userID, authOk := requireAuth(w, r)
+	if !authOk {
+		return
+	}
+
+	prompt, err := defaultService.RecordPromptUsage(id, userID)
+	if err != nil {
+		handler.HandleServiceError(w, err, "prompt not found", "failed to record prompt usage")
+		return
+	}
+	json.NewEncoder(w).Encode(prompt)
+}
+
 // SkillCategories 处理 GET /api/v1/team/skill-categories 与 POST /api/v1/team/skill-categories。
 func SkillCategories(w http.ResponseWriter, r *http.Request) {
 	handler.SetJSONHeader(w)

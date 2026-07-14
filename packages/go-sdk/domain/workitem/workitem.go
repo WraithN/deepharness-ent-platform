@@ -38,6 +38,8 @@ const (
 	StatusTodo       Status = "todo"
 	StatusInProgress Status = "in_progress"
 	StatusDone       Status = "done"
+	StatusCancelled  Status = "cancelled"
+	StatusOnHold     Status = "on_hold"
 	StatusOpen       Status = "open"
 	StatusFixed      Status = "fixed"
 	StatusClosed     Status = "closed"

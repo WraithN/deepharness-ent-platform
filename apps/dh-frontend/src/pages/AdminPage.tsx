@@ -1,28 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { Bot, ChevronDown, Lock, LockOpen, MoreHorizontal, Plus, Power, Save, Trash2, Users } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
-import { Plus, Save, Power, Bot, Trash2, ChevronDown, Users, Lock, LockOpen, MoreHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { agentConfigApi } from '@/lib/agent-config-api';
-import { tenantApi } from '@/lib/tenant-api';
-import { useAuth } from '@/contexts/AuthContext';
-import { formatDateTime } from '@/lib/utils';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Checkbox } from '@/components/ui/checkbox';
-import { PaginationBar } from '@/components/admin/PaginationBar';
-import { SkillManagement } from '@/components/admin/SkillManagement';
 import { PromptManagement } from '@/components/admin/PromptManagement';
+import { SkillManagement } from '@/components/admin/SkillManagement';
+import { RecordPaginationBar } from '@/components/RecordPaginationBar';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,8 +16,27 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import type { AgentType, Tenant, TenantMember, AgentPolicy, WorkspaceAgentConfig } from '@/types';
-import { PLATFORM_ROLE, getPlatformRoleLabel } from '@/lib/role-constants';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import { useAuth } from '@/contexts/AuthContext';
+import { useClientPagination } from '@/hooks/use-client-pagination';
+import { agentConfigApi } from '@/lib/agent-config-api';
+import { getPlatformRoleLabel, PLATFORM_ROLE } from '@/lib/role-constants';
+import { tenantApi } from '@/lib/tenant-api';
+import { formatDateTime } from '@/lib/utils';
+import type { AgentPolicy, AgentType, Tenant, TenantMember, WorkspaceAgentConfig } from '@/types';
 
 // AgentPolicyForm 用于超管在租户新建/编辑时配置智能体策略。
 interface AgentPolicyFormProps {
@@ -330,6 +331,9 @@ export const AdminPage: React.FC = () => {
   // ── 租户管理状态 ──
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [tenantsLoading, setTenantsLoading] = useState(false);
+  // 租户列表客户端分页（遵循 DESIGN.md 5.7 底部分页规范）。
+  const tenantPagination = useClientPagination({ total: tenants.length });
+  const paginatedTenants = tenants.slice(tenantPagination.startIndex, tenantPagination.endIndex);
 
   const [newTenantOpen, setNewTenantOpen] = useState(false);
   const [newTenantName, setNewTenantName] = useState('');
@@ -517,11 +521,14 @@ export const AdminPage: React.FC = () => {
   return (
     <div className="space-y-6 pb-12">
       {location.pathname === '/admin/tenants' && (
-        <Card className="soft-shadow border-none">
-          <CardHeader className="flex flex-row items-center justify-between pb-2 border-b">
-            <div>
-              <CardTitle className="text-base">租户列表</CardTitle>
-            </div>
+        <>
+        <Card className="soft-shadow border border-border/50 rounded-xl overflow-hidden bg-card">
+          <CardContent className="p-6">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-5">
+              <div>
+                <h4 className="text-xl font-semibold text-foreground">租户列表 ({tenants.length})</h4>
+                <p className="text-muted-foreground mt-1 text-sm">管理平台租户及其智能体策略</p>
+              </div>
             <Dialog open={newTenantOpen} onOpenChange={setNewTenantOpen}>
               <DialogTrigger asChild>
                 <Button><Plus className="h-4 w-4 mr-2"/>新增租户</Button>
@@ -552,48 +559,48 @@ export const AdminPage: React.FC = () => {
                 </div>
               </DialogContent>
             </Dialog>
-          </CardHeader>
-          <CardContent className="p-0">
+            </div>
             {tenantsLoading ? (
-              <div className="p-6 text-center text-sm text-muted-foreground">加载中...</div>
+              <div className="py-8 text-center text-sm text-muted-foreground">加载中...</div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>展示ID</TableHead>
-                    <TableHead>租户ID</TableHead>
-                    <TableHead>租户名称</TableHead>
-                    <TableHead>允许的智能体</TableHead>
-                    <TableHead>创建时间</TableHead>
-                    <TableHead className="text-right">操作</TableHead>
+              <div className="overflow-x-auto rounded-lg border border-border/50">
+              <Table className="min-w-max text-[15px]">
+                <TableHeader className="bg-muted/30">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="px-4 py-4 font-medium text-muted-foreground">展示ID</TableHead>
+                    <TableHead className="px-4 py-4 font-medium text-muted-foreground">租户ID</TableHead>
+                    <TableHead className="px-4 py-4 font-medium text-muted-foreground">租户名称</TableHead>
+                    <TableHead className="px-4 py-4 font-medium text-muted-foreground">允许的智能体</TableHead>
+                    <TableHead className="px-4 py-4 font-medium text-muted-foreground">创建时间</TableHead>
+                    <TableHead className="px-4 py-4 font-medium text-muted-foreground text-right">操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {tenants.length === 0 && (
+                  {paginatedTenants.length === 0 && (
                     <TableRow>
-                       <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
+                       <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                         暂无租户
                       </TableCell>
                     </TableRow>
                   )}
-                  {tenants.map(t => {
+                  {paginatedTenants.map(t => {
                     const isAgentLocked = (key: string) => t.agentConfigLocked || (t.lockedAgentKeys ?? []).includes(key);
                     return (
-                    <TableRow key={t.id}>
+                    <TableRow key={t.id} className="transition-colors hover:bg-primary/5">
                       <TableCell
-                        className="font-mono text-xs cursor-pointer hover:underline"
+                        className="px-4 py-5 font-mono text-xs cursor-pointer hover:underline whitespace-nowrap"
                         onClick={() => viewTenant(t)}
                       >{t.displayId || '-'}</TableCell>
                       <TableCell
-                        className="font-mono text-xs text-muted-foreground cursor-pointer hover:underline"
+                        className="px-4 py-5 font-mono text-xs text-muted-foreground cursor-pointer hover:underline whitespace-nowrap"
                         title={t.id}
                         onClick={() => viewTenant(t)}
                       >{t.id.slice(0, 12)}...</TableCell>
-                      <TableCell className="font-medium">{t.name}</TableCell>
-                      <TableCell>
+                      <TableCell className="px-4 py-5 font-medium">{t.name}</TableCell>
+                      <TableCell className="px-4 py-5">
                         <div className="flex flex-wrap gap-1">
                           {(t.allowedAgentKeys ?? []).map(k => (
-                            <Badge key={k} variant="outline" className="text-xs flex items-center gap-0.5">
+                            <Badge key={k} variant="outline" className="rounded-lg px-3 py-1.5 text-xs flex items-center gap-0.5">
                               {isAgentLocked(k) && <Lock className="h-2.5 w-2.5 text-orange-500" />}
                               {k}
                             </Badge>
@@ -606,11 +613,11 @@ export const AdminPage: React.FC = () => {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell>{formatDateTime(t.createdAt)}</TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="px-4 py-5 text-muted-foreground whitespace-nowrap">{formatDateTime(t.createdAt)}</TableCell>
+                      <TableCell className="px-4 py-5 text-right whitespace-nowrap">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm">
+                            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground hover:bg-muted rounded-md">
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
@@ -626,8 +633,16 @@ export const AdminPage: React.FC = () => {
                   })}
                 </TableBody>
               </Table>
+              </div>
             )}
+            <RecordPaginationBar
+              total={tenants.length}
+              currentPage={tenantPagination.currentPage}
+              totalPages={tenantPagination.totalPages}
+              onPageChange={tenantPagination.onPageChange}
+            />
           </CardContent>
+        </Card>
 
           <Dialog open={editTenantOpen} onOpenChange={(v) => { if (!v) closeEditDialog(); else setEditTenantOpen(v); }}>
             <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
@@ -745,7 +760,7 @@ export const AdminPage: React.FC = () => {
               </div>
             </DialogContent>
           </Dialog>
-        </Card>
+        </>
       )}
 
       {location.pathname === '/admin/prompts' && <PromptManagement />}
@@ -806,53 +821,60 @@ export const AdminPage: React.FC = () => {
           </TabsContent>
           
           <TabsContent value="agents" className="pt-4">
-            <Card className="soft-shadow border-none">
-              <CardHeader className="pb-2 border-b">
-                <div className="flex items-center gap-2">
-                  <Bot className="h-5 w-5 text-primary" />
-                  <CardTitle className="text-base">智能体范围配置</CardTitle>
+            {/* 列表样式遵循 DESIGN.md 5.7 列表/表格统一格式 */}
+            <Card className="soft-shadow border border-border/50 rounded-xl overflow-hidden bg-card">
+              <CardContent className="p-6">
+                <div className="mb-5">
+                  <h4 className="text-xl font-semibold text-foreground flex items-center gap-2">
+                    <Bot className="h-5 w-5 text-primary" /> 智能体范围配置
+                  </h4>
+                  <p className="text-muted-foreground mt-1 text-sm">控制平台内各智能体是否可供租户使用。</p>
                 </div>
-                <CardDescription>控制平台内各智能体是否可供租户使用。</CardDescription>
-              </CardHeader>
-              <CardContent className="p-0">
                 {agentTypesLoading ? (
                   <p className="py-8 text-center text-muted-foreground">加载中...</p>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>智能体</TableHead>
-                        <TableHead>标识</TableHead>
-                        <TableHead>描述</TableHead>
-                        <TableHead>状态</TableHead>
-                        <TableHead className="text-right">操作</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {agentTypes.map(at => (
-                        <TableRow key={at.key}>
-                          <TableCell className="font-medium">{at.name}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{at.key}</Badge>
-                          </TableCell>
-                          <TableCell className="max-w-[300px] truncate text-muted-foreground">{at.description}</TableCell>
-                          <TableCell>
-                            {at.enabled ? (
-                              <Badge className="bg-green-100 text-green-700 hover:bg-green-100">已启用</Badge>
-                            ) : (
-                              <Badge variant="secondary">已禁用</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Switch
-                              checked={at.enabled}
-                              onCheckedChange={(checked) => toggleAgentType(at.key, checked)}
-                            />
-                          </TableCell>
+                  <div className="overflow-x-auto rounded-lg border border-border/50">
+                    <Table className="min-w-max text-[15px]">
+                      <TableHeader className="bg-muted/30">
+                        <TableRow className="hover:bg-transparent">
+                          <TableHead className="px-4 py-4 font-medium text-muted-foreground">智能体</TableHead>
+                          <TableHead className="px-4 py-4 font-medium text-muted-foreground">标识</TableHead>
+                          <TableHead className="px-4 py-4 font-medium text-muted-foreground">描述</TableHead>
+                          <TableHead className="px-4 py-4 font-medium text-muted-foreground">状态</TableHead>
+                          <TableHead className="px-4 py-4 font-medium text-muted-foreground text-right">操作</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {agentTypes.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={5} className="text-center text-muted-foreground py-8">暂无智能体</TableCell>
+                          </TableRow>
+                        )}
+                        {agentTypes.map(at => (
+                          <TableRow key={at.key} className="transition-colors hover:bg-primary/5">
+                            <TableCell className="px-4 py-5 font-medium">{at.name}</TableCell>
+                            <TableCell className="px-4 py-5">
+                              <Badge variant="outline" className="rounded-lg px-3 py-1.5">{at.key}</Badge>
+                            </TableCell>
+                            <TableCell className="px-4 py-5 max-w-[300px] truncate text-muted-foreground">{at.description}</TableCell>
+                            <TableCell className="px-4 py-5">
+                              {at.enabled ? (
+                                <Badge className="rounded-lg px-3 py-1.5 font-medium bg-green-100 text-green-700 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400">已启用</Badge>
+                              ) : (
+                                <Badge variant="outline" className="rounded-lg px-3 py-1.5">已禁用</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="px-4 py-5 text-right">
+                              <Switch
+                                checked={at.enabled}
+                                onCheckedChange={(checked) => toggleAgentType(at.key, checked)}
+                              />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </CardContent>
             </Card>

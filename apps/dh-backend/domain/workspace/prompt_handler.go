@@ -82,11 +82,12 @@ func Prompts(w http.ResponseWriter, r *http.Request) {
 			handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or space admin required")
 			return
 		}
+		userID, _ := middleware.UserIDFromContext(r.Context())
 		var req service.AddWorkspacePromptRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
-		p, err := defaultPromptService.Add(workspaceID, req)
+		p, err := defaultPromptService.Add(workspaceID, req, userID)
 		if err != nil {
 			handler.HandleServiceError(w, err, "prompt not found", "failed to add prompt")
 			return
@@ -132,6 +133,17 @@ func PromptByID(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(p)
 			return
 		}
+		// 存在 content 字段时更新自定义提示词内容（市场来源快照不可改，服务层会拒绝）。
+		var contentReq service.UpdateWorkspacePromptContentRequest
+		if err := json.Unmarshal(body, &contentReq); err == nil && contentReq.Content != "" {
+			p, err := defaultPromptService.UpdateContent(workspaceID, promptID, contentReq)
+			if err != nil {
+				handler.HandleServiceError(w, err, "prompt not found or not editable", "failed to update prompt content")
+				return
+			}
+			json.NewEncoder(w).Encode(p)
+			return
+		}
 		var req service.UpdateWorkspacePromptCategoryRequest
 		if err := json.Unmarshal(body, &req); err != nil {
 			handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid request body")
@@ -139,6 +151,11 @@ func PromptByID(w http.ResponseWriter, r *http.Request) {
 		}
 		p, err := defaultPromptService.UpdateCategories(workspaceID, promptID, req)
 		if err != nil {
+			// 市场来源提示词分类锁定等业务校验错误直接透传原因。
+			if !strings.Contains(err.Error(), "not found") {
+				handler.WriteJSONError(w, http.StatusBadRequest, 3, err.Error())
+				return
+			}
 			handler.HandleServiceError(w, err, "prompt not found", "failed to update prompt categories")
 			return
 		}
@@ -155,6 +172,71 @@ func PromptByID(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+	}
+}
+
+// PromptAction 处理 POST /api/v1/workspaces/{id}/prompts/{promptId}/{action}。
+// action 取值：use（使用次数 +1，任意登录用户）、copy（复制为可编辑副本，任意登录用户）、
+// share（分享到市场审核，需空间/租户管理员）。
+func PromptAction(w http.ResponseWriter, r *http.Request) {
+	handler.SetJSONHeader(w)
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	promptID, ok := handler.PathValueOr404(w, r, "promptId")
+	if !ok {
+		return
+	}
+	action, ok := handler.PathValueOr404(w, r, "action")
+	if !ok {
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+	userID, authOk := middleware.UserIDFromContext(r.Context())
+	if !authOk {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return
+	}
+
+	switch action {
+	case "use":
+		p, err := defaultPromptService.RecordUsage(workspaceID, promptID)
+		if err != nil {
+			handler.HandleServiceError(w, err, "prompt not found", "failed to record prompt usage")
+			return
+		}
+		json.NewEncoder(w).Encode(p)
+	case "copy":
+		p, err := defaultPromptService.Copy(workspaceID, promptID, userID)
+		if err != nil {
+			handler.HandleServiceError(w, err, "prompt not found", "failed to copy prompt")
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(p)
+	case "share":
+		if !canManageSpacePrompts(r, workspaceID) {
+			handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or space admin required")
+			return
+		}
+		p, err := defaultPromptService.Share(workspaceID, promptID, userID)
+		if err != nil {
+			// 业务校验错误（市场来源不可分享/已分享）直接透传原因，便于前端提示。
+			if !strings.Contains(err.Error(), "not found") {
+				handler.WriteJSONError(w, http.StatusBadRequest, 3, err.Error())
+				return
+			}
+			handler.HandleServiceError(w, err, "prompt not found", "failed to share prompt")
+			return
+		}
+		json.NewEncoder(w).Encode(p)
+	default:
+		handler.WriteJSONError(w, http.StatusNotFound, 1, "unknown action")
 	}
 }
 

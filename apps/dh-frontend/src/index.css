@@ -471,3 +471,49 @@ html {
     color: hsl(60 30% 96%);
   }
 }
+
+/* ── WangEditor 富文本编辑器样式适配 ── */
+@layer components {
+  /* 工具栏：去除默认边框，融入卡片背景 */
+  .w-e-toolbar {
+    border: none !important;
+    background: transparent !important;
+    flex-wrap: wrap;
+    padding: 4px 12px !important;
+  }
+
+  .w-e-text-container {
+    border: none !important;
+  }
+
+  /* 编辑区内边距与行高，与 Markdown 预览区保持一致 */
+  .w-e-text {
+    padding: 16px 24px !important;
+    line-height: 1.8 !important;
+  }
+
+  .w-e-text-placeholder {
+    top: 16px !important;
+    left: 24px !important;
+  }
+
+  /* 暗色模式：编辑区保持浅色纸张观感，仅工具栏图标提亮 */
+  .dark .w-e-toolbar .w-e-bar-item button,
+  .dark .w-e-toolbar .w-e-bar-item svg {
+    color: hsl(60 30% 96%);
+    fill: hsl(60 30% 96%);
+  }
+
+  .dark .w-e-toolbar .w-e-bar-item button:hover {
+    background-color: hsl(231 15% 25%);
+  }
+
+  .dark .w-e-bar-divider {
+    background-color: hsl(231 15% 30%);
+  }
+
+  .dark .w-e-text-container [data-slate-editor] {
+    background-color: hsl(231 15% 14%);
+    color: hsl(60 30% 96%);
+  }
+}

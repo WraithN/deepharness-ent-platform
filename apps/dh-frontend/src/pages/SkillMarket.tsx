@@ -1,16 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { Search, Download, Star, CheckCircle, Plus, Sparkles, Loader2, Puzzle } from 'lucide-react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { teamApi } from '@/lib/team-api';
+import { CheckCircle, Download, Loader2, Plus, Puzzle, Search, Sparkles, Star } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import type { Skill } from '@/types';
+import { RecordPaginationBar } from '@/components/RecordPaginationBar';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { PaginationBar } from '@/components/admin/PaginationBar';
 import { useClientPagination } from '@/hooks/use-client-pagination';
+import { teamApi } from '@/lib/team-api';
+import type { Skill } from '@/types';
 
 const CATEGORIES = ['全部', '研发', '测试', '产品', '设计'];
 const SKILL_MARKET_PAGE_SIZE = 12;
@@ -205,13 +205,12 @@ export const SkillMarket: React.FC = () => {
         )}
       </div>
 
-      {filteredSkills.length > 0 && (
-        <PaginationBar
-          currentPage={currentPage}
-          totalPages={totalPages}
-          onPageChange={onPageChange}
-        />
-      )}
+      <RecordPaginationBar
+        total={filteredSkills.length}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={onPageChange}
+      />
     </div>
   );
 };

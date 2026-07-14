@@ -20,4 +20,4 @@ const (
 )
 
 var AllowedDocExts = map[string]bool{"md": true, "txt": true}
-var AllowedPrototypeExts = map[string]bool{"png": true, "jpg": true, "jpeg": true, "pdf": true}
+var AllowedPrototypeExts = map[string]bool{"png": true, "jpg": true, "jpeg": true, "pdf": true, "html": true}

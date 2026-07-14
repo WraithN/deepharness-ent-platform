@@ -20,9 +20,38 @@ CREATE TABLE IF NOT EXISTS team_skills (
     installed BOOLEAN NOT NULL DEFAULT FALSE,
     icon VARCHAR(50) NOT NULL DEFAULT 'Puzzle',
     phase VARCHAR(50) NOT NULL DEFAULT '代码开发',
+    status VARCHAR(20) NOT NULL DEFAULT 'on_shelf' CHECK (status IN ('pending_review', 'on_shelf', 'off_shelf', 'rejected')),
+    reviewed_by VARCHAR(36),
+    reviewed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+COMMENT ON COLUMN team_skills.status IS '审核生命周期状态：pending_review/on_shelf/off_shelf/rejected';
+COMMENT ON COLUMN team_skills.reviewed_by IS '审核操作人用户 ID';
+COMMENT ON COLUMN team_skills.reviewed_at IS '审核操作时间';
+
+-- 技能-分类多对多链接表
+CREATE TABLE IF NOT EXISTS team_skill_category_links (
+    skill_id VARCHAR(36) NOT NULL REFERENCES team_skills (id) ON DELETE CASCADE,
+    category_id VARCHAR(36) NOT NULL REFERENCES team_skill_categories (id) ON DELETE CASCADE,
+    PRIMARY KEY (skill_id, category_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_skill_cat_links_cat ON team_skill_category_links (category_id);
+
+COMMENT ON TABLE team_skill_category_links IS '技能-分类多对多链接';
+
+-- 提示词-分类多对多链接表
+CREATE TABLE IF NOT EXISTS team_prompt_category_links (
+    prompt_id VARCHAR(36) NOT NULL REFERENCES team_prompts (id) ON DELETE CASCADE,
+    category_id VARCHAR(36) NOT NULL REFERENCES team_prompt_categories (id) ON DELETE CASCADE,
+    PRIMARY KEY (prompt_id, category_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_prompt_cat_links_cat ON team_prompt_category_links (category_id);
+
+COMMENT ON TABLE team_prompt_category_links IS '提示词-分类多对多链接';
 
 COMMENT ON TABLE team_skills IS '团队技能';
 COMMENT ON COLUMN team_skills.name IS '技能名称';
@@ -78,6 +107,19 @@ CREATE INDEX IF NOT EXISTS idx_use_case ON team_prompts (use_case);
 CREATE INDEX IF NOT EXISTS idx_added_to_space ON team_prompts (added_to_space);
 CREATE INDEX IF NOT EXISTS idx_team_prompts_status ON team_prompts (status);
 CREATE INDEX IF NOT EXISTS idx_team_prompts_created_by ON team_prompts (created_by);
+
+-- 提示词复制使用去重表：同一用户同一提示词每天（按数据库当前日期）只计数一次。
+CREATE TABLE IF NOT EXISTS team_prompt_usage_daily (
+    prompt_id VARCHAR(36) NOT NULL,
+    user_id VARCHAR(36) NOT NULL,
+    usage_date DATE NOT NULL,
+    PRIMARY KEY (prompt_id, user_id, usage_date)
+);
+
+COMMENT ON TABLE team_prompt_usage_daily IS '提示词使用计数去重表（每用户每提示词每日一条）';
+COMMENT ON COLUMN team_prompt_usage_daily.prompt_id IS '市场提示词 ID（team_prompts.id）';
+COMMENT ON COLUMN team_prompt_usage_daily.user_id IS '使用用户 ID';
+COMMENT ON COLUMN team_prompt_usage_daily.usage_date IS '使用日期（用于按天去重）';
 
 DROP TRIGGER IF EXISTS trigger_team_prompts_updated_at ON team_prompts;
 CREATE TRIGGER trigger_team_prompts_updated_at

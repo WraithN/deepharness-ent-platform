@@ -11,6 +11,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// 市场提示词审核状态常量（与 team/service 的 PromptStatus 取值保持一致，避免跨包循环依赖）。
+const (
+	PromptStatusPendingReview = "pending_review"
+	PromptStatusOnShelf       = "on_shelf"
+)
+
 // WorkspacePrompt 表示某个工作空间下的提示词引用或自定义提示词。
 type WorkspacePrompt struct {
 	ID              string           `json:"id"`
@@ -25,8 +31,14 @@ type WorkspacePrompt struct {
 	IsCustom        bool             `json:"isCustom"`
 	AddedToSpace    bool             `json:"addedToSpace"`
 	Enabled         bool             `json:"enabled"`
-	CreatedAt       time.Time        `json:"createdAt"`
-	UpdatedAt       time.Time        `json:"updatedAt"`
+	// CreatedBy/CreatedByName 记录将该提示词加入空间的用户（市场快照为添加人，自定义/副本为创建人）。
+	CreatedBy     string `json:"createdBy,omitempty"`
+	CreatedByName string `json:"createdByName,omitempty"`
+	// SharedPromptID/ShareStatus 记录该提示词分享到市场后的审核条目与状态（pending_review/on_shelf/rejected/off_shelf）。
+	SharedPromptID *string   `json:"sharedPromptId,omitempty"`
+	ShareStatus    string    `json:"shareStatus,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 // PromptCategory 表示某个工作空间下的提示词分类，每个空间独立管理。
@@ -54,13 +66,29 @@ type UpdateWorkspacePromptEnabledRequest struct {
 	Enabled *bool `json:"enabled"`
 }
 
+// UpdateWorkspacePromptContentRequest 更新空间自定义提示词内容的请求。
+// 仅允许修改非市场来源（library_prompt_id 为空）的自定义提示词。
+type UpdateWorkspacePromptContentRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Content     string `json:"content"`
+	UseCase     string `json:"useCase"`
+}
+
 // WorkspacePromptService 定义工作空间提示词服务接口。
 type WorkspacePromptService interface {
 	List(workspaceID string) ([]WorkspacePrompt, error)
-	Add(workspaceID string, req AddWorkspacePromptRequest) (WorkspacePrompt, error)
+	Add(workspaceID string, req AddWorkspacePromptRequest, userID string) (WorkspacePrompt, error)
 	Remove(workspaceID, promptID string) error
 	UpdateCategories(workspaceID, promptID string, req UpdateWorkspacePromptCategoryRequest) (WorkspacePrompt, error)
 	UpdateEnabled(workspaceID, promptID string, req UpdateWorkspacePromptEnabledRequest) (WorkspacePrompt, error)
+	UpdateContent(workspaceID, promptID string, req UpdateWorkspacePromptContentRequest) (WorkspacePrompt, error)
+	// RecordUsage 记录一次使用：空间提示词 usage_count +1；若来源于市场，关联市场提示词 usage_count 同步 +1。
+	RecordUsage(workspaceID, promptID string) (WorkspacePrompt, error)
+	// Copy 将市场来源的提示词复制为空间内可编辑的自定义副本，原市场提示词 usage_count +1。
+	Copy(workspaceID, promptID, userID string) (WorkspacePrompt, error)
+	// Share 将空间自定义提示词分享到市场，创建 pending_review 审核条目。
+	Share(workspaceID, promptID, userID string) (WorkspacePrompt, error)
 
 	ListCategories(workspaceID string) ([]PromptCategory, error)
 	CreateCategory(workspaceID, name string) (PromptCategory, error)
@@ -77,14 +105,18 @@ func NewDBWorkspacePromptService(db *sql.DB) *DBWorkspacePromptService {
 	return &DBWorkspacePromptService{db: db}
 }
 
-// List 返回工作空间下的提示词列表（包含关联的多个分类）。
+// List 返回工作空间下的提示词列表（包含关联的多个分类、创建人姓名与分享审核状态）。
+// LEFT JOIN users/team_prompts 均为容错关联：创建人删除或未分享时返回空值。
 func (s *DBWorkspacePromptService) List(workspaceID string) ([]WorkspacePrompt, error) {
 	rows, err := s.db.Query(`
-		SELECT id, workspace_id, library_prompt_id, name, description, content, use_case,
-		       usage_count, is_custom, added_to_space, enabled, created_at, updated_at
-		FROM workspace_prompts
-		WHERE workspace_id = $1
-		ORDER BY created_at DESC
+		SELECT p.id, p.workspace_id, p.library_prompt_id, p.name, p.description, p.content, p.use_case,
+		       p.usage_count, p.is_custom, p.added_to_space, p.enabled, p.created_by, COALESCE(u.name, ''),
+		       p.shared_prompt_id, COALESCE(tp.status, ''), p.created_at, p.updated_at
+		FROM workspace_prompts p
+		LEFT JOIN users u ON u.id = p.created_by
+		LEFT JOIN team_prompts tp ON tp.id = p.shared_prompt_id
+		WHERE p.workspace_id = $1
+		ORDER BY p.created_at DESC
 	`, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list workspace prompts failed: %w", err)
@@ -95,15 +127,17 @@ func (s *DBWorkspacePromptService) List(workspaceID string) ([]WorkspacePrompt, 
 	promptIDs := make([]string, 0)
 	for rows.Next() {
 		var p WorkspacePrompt
-		var libID sql.NullString
-		var desc sql.NullString
+		var libID, desc, createdBy, sharedPromptID sql.NullString
 		err := rows.Scan(&p.ID, &p.WorkspaceID, &libID, &p.Name, &desc, &p.Content, &p.UseCase,
-			&p.UsageCount, &p.IsCustom, &p.AddedToSpace, &p.Enabled, &p.CreatedAt, &p.UpdatedAt)
+			&p.UsageCount, &p.IsCustom, &p.AddedToSpace, &p.Enabled, &createdBy, &p.CreatedByName,
+			&sharedPromptID, &p.ShareStatus, &p.CreatedAt, &p.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("scan workspace prompt failed: %w", err)
 		}
 		p.LibraryPromptID = sqlutil.ScanNullStringPtr(libID)
 		p.Description = sqlutil.ScanNullString(desc)
+		p.CreatedBy = sqlutil.ScanNullString(createdBy)
+		p.SharedPromptID = sqlutil.ScanNullStringPtr(sharedPromptID)
 		p.Categories = []PromptCategory{}
 		prompts = append(prompts, p)
 		promptIDs = append(promptIDs, p.ID)
@@ -162,8 +196,9 @@ func (s *DBWorkspacePromptService) listCategoriesForPrompts(promptIDs []string) 
 	return result, rows.Err()
 }
 
-// Add 从 team_prompts 添加一个已上架提示词到工作空间。
-func (s *DBWorkspacePromptService) Add(workspaceID string, req AddWorkspacePromptRequest) (WorkspacePrompt, error) {
+// Add 从 team_prompts 添加一个已上架提示词到工作空间，同时市场提示词使用次数 +1。
+// userID 记录为 created_by，用于卡片展示创建人。
+func (s *DBWorkspacePromptService) Add(workspaceID string, req AddWorkspacePromptRequest, userID string) (WorkspacePrompt, error) {
 	if req.LibraryPromptID == "" {
 		return WorkspacePrompt{}, errors.New("libraryPromptId is required")
 	}
@@ -174,7 +209,7 @@ func (s *DBWorkspacePromptService) Add(workspaceID string, req AddWorkspacePromp
 		SELECT name, description, content, use_case
 		FROM team_prompts
 		WHERE id = $1 AND status = $2
-	`, req.LibraryPromptID, "on_shelf").Scan(&name, &desc, &content, &useCase)
+	`, req.LibraryPromptID, PromptStatusOnShelf).Scan(&name, &desc, &content, &useCase)
 	if errors.Is(err, sql.ErrNoRows) {
 		return WorkspacePrompt{}, errors.New("library prompt not found or not on shelf")
 	}
@@ -208,20 +243,46 @@ func (s *DBWorkspacePromptService) Add(workspaceID string, req AddWorkspacePromp
 		UsageCount:      0,
 		IsCustom:        false,
 		AddedToSpace:    true,
+		CreatedBy:       userID,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
 
-	_, err = s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO workspace_prompts (id, workspace_id, library_prompt_id, name, description, content, use_case,
-		                               usage_count, is_custom, added_to_space, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		                               usage_count, is_custom, added_to_space, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	`, p.ID, p.WorkspaceID, p.LibraryPromptID, p.Name, p.Description, p.Content, p.UseCase,
-		p.UsageCount, p.IsCustom, p.AddedToSpace, p.CreatedAt, p.UpdatedAt)
+		p.UsageCount, p.IsCustom, p.AddedToSpace, p.CreatedBy, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return WorkspacePrompt{}, fmt.Errorf("insert workspace prompt failed: %w", err)
 	}
-	return p, nil
+
+	// 从市场加入空间视为一次复制使用，市场提示词 usage_count +1。
+	if err := incrementLibraryPromptUsage(tx, req.LibraryPromptID); err != nil {
+		return WorkspacePrompt{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("commit failed: %w", err)
+	}
+	// 重新查询以返回完整的 enabled 默认值、创建人姓名等数据库侧字段。
+	return s.get(workspaceID, p.ID)
+}
+
+// incrementLibraryPromptUsage 将市场提示词（team_prompts）使用次数 +1。
+func incrementLibraryPromptUsage(tx *sql.Tx, libraryPromptID string) error {
+	if _, err := tx.Exec(`
+		UPDATE team_prompts SET usage_count = usage_count + 1, updated_at = $1 WHERE id = $2
+	`, time.Now().UTC(), libraryPromptID); err != nil {
+		return fmt.Errorf("increment library prompt usage failed: %w", err)
+	}
+	return nil
 }
 
 // Remove 从工作空间移除提示词引用。
@@ -250,10 +311,15 @@ func (s *DBWorkspacePromptService) Remove(workspaceID, promptID string) error {
 }
 
 // UpdateCategories 更新空间提示词的分类关联（支持多个）。
+// 市场来源提示词（library_prompt_id 非空）分类同样锁定只读，需先 Copy 为自定义副本。
 func (s *DBWorkspacePromptService) UpdateCategories(workspaceID, promptID string, req UpdateWorkspacePromptCategoryRequest) (WorkspacePrompt, error) {
-	// 校验提示词存在。
-	if _, err := s.get(workspaceID, promptID); err != nil {
+	// 校验提示词存在，且非市场来源。
+	p, err := s.get(workspaceID, promptID)
+	if err != nil {
 		return WorkspacePrompt{}, err
+	}
+	if p.LibraryPromptID != nil && *p.LibraryPromptID != "" {
+		return WorkspacePrompt{}, errors.New("library prompt categories cannot be modified")
 	}
 
 	// 校验所有 category_id 都属于当前空间。
@@ -332,17 +398,162 @@ func (s *DBWorkspacePromptService) UpdateEnabled(workspaceID, promptID string, r
 	return s.get(workspaceID, promptID)
 }
 
+// UpdateContent 更新空间自定义提示词的名称/描述/内容/场景。
+// 市场来源提示词（library_prompt_id 非空）为只读快照，禁止修改，需先 Copy 为自定义副本。
+func (s *DBWorkspacePromptService) UpdateContent(workspaceID, promptID string, req UpdateWorkspacePromptContentRequest) (WorkspacePrompt, error) {
+	if strings.TrimSpace(req.Name) == "" {
+		return WorkspacePrompt{}, errors.New("name is required")
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		return WorkspacePrompt{}, errors.New("content is required")
+	}
+	res, err := s.db.Exec(`
+		UPDATE workspace_prompts
+		SET name = $1, description = $2, content = $3, use_case = $4, updated_at = $5
+		WHERE workspace_id = $6 AND id = $7 AND library_prompt_id IS NULL
+	`, req.Name, req.Description, req.Content, req.UseCase, time.Now().UTC(), workspaceID, promptID)
+	if err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("update workspace prompt content failed: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return WorkspacePrompt{}, errors.New("workspace prompt not found or not editable")
+	}
+	return s.get(workspaceID, promptID)
+}
+
+// RecordUsage 记录一次提示词使用：空间提示词 usage_count +1；
+// 若该提示词来源于市场（library_prompt_id 非空），同事务内将市场提示词 usage_count +1。
+func (s *DBWorkspacePromptService) RecordUsage(workspaceID, promptID string) (WorkspacePrompt, error) {
+	p, err := s.get(workspaceID, promptID)
+	if err != nil {
+		return WorkspacePrompt{}, err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		UPDATE workspace_prompts SET usage_count = usage_count + 1, updated_at = $1
+		WHERE workspace_id = $2 AND id = $3
+	`, time.Now().UTC(), workspaceID, promptID); err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("increment workspace prompt usage failed: %w", err)
+	}
+
+	if p.LibraryPromptID != nil && *p.LibraryPromptID != "" {
+		if err := incrementLibraryPromptUsage(tx, *p.LibraryPromptID); err != nil {
+			return WorkspacePrompt{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("commit failed: %w", err)
+	}
+	return s.get(workspaceID, promptID)
+}
+
+// Copy 将空间内提示词复制为可编辑的自定义副本（is_custom=true, library_prompt_id=NULL），
+// 并复制原提示词的分类关联；若原提示词来源于市场，市场提示词 usage_count +1（每复制一次计一次）。
+func (s *DBWorkspacePromptService) Copy(workspaceID, promptID, userID string) (WorkspacePrompt, error) {
+	src, err := s.get(workspaceID, promptID)
+	if err != nil {
+		return WorkspacePrompt{}, err
+	}
+
+	now := time.Now().UTC()
+	copyID := uuid.New().String()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		INSERT INTO workspace_prompts (id, workspace_id, library_prompt_id, name, description, content, use_case,
+		                               usage_count, is_custom, added_to_space, created_by, created_at, updated_at)
+		VALUES ($1, $2, NULL, $3, $4, $5, $6, 0, TRUE, TRUE, $7, $8, $9)
+	`, copyID, workspaceID, src.Name, src.Description, src.Content, src.UseCase, userID, now, now); err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("insert copied workspace prompt failed: %w", err)
+	}
+
+	// 复制原提示词的分类关联，保持副本与原提示词分类一致。
+	if _, err := tx.Exec(`
+		INSERT INTO workspace_prompt_category_links (prompt_id, category_id)
+		SELECT $1, category_id FROM workspace_prompt_category_links WHERE prompt_id = $2
+	`, copyID, promptID); err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("copy prompt category links failed: %w", err)
+	}
+
+	if src.LibraryPromptID != nil && *src.LibraryPromptID != "" {
+		if err := incrementLibraryPromptUsage(tx, *src.LibraryPromptID); err != nil {
+			return WorkspacePrompt{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("commit failed: %w", err)
+	}
+	return s.get(workspaceID, copyID)
+}
+
+// Share 将空间自定义提示词分享到市场：在 team_prompts 创建 pending_review 审核条目，
+// 并回写 workspace_prompts.shared_prompt_id。仅允许自定义（非市场来源）且未分享过的提示词。
+func (s *DBWorkspacePromptService) Share(workspaceID, promptID, userID string) (WorkspacePrompt, error) {
+	p, err := s.get(workspaceID, promptID)
+	if err != nil {
+		return WorkspacePrompt{}, err
+	}
+	if p.LibraryPromptID != nil && *p.LibraryPromptID != "" {
+		return WorkspacePrompt{}, errors.New("library prompt cannot be shared")
+	}
+	if p.SharedPromptID != nil && *p.SharedPromptID != "" {
+		return WorkspacePrompt{}, errors.New("prompt already shared")
+	}
+
+	now := time.Now().UTC()
+	sharedID := uuid.New().String()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 审核条目初始状态为 pending_review，由超级管理员在提示词市场审核后上架。
+	if _, err := tx.Exec(`
+		INSERT INTO team_prompts (id, name, description, content, use_case, usage_count, added_to_space,
+		                         status, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, 0, TRUE, $6, $7, $8, $9)
+	`, sharedID, p.Name, p.Description, p.Content, p.UseCase, PromptStatusPendingReview, userID, now, now); err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("insert shared team prompt failed: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		UPDATE workspace_prompts SET shared_prompt_id = $1, updated_at = $2
+		WHERE workspace_id = $3 AND id = $4
+	`, sharedID, now, workspaceID, promptID); err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("update workspace prompt shared id failed: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return WorkspacePrompt{}, fmt.Errorf("commit failed: %w", err)
+	}
+	return s.get(workspaceID, promptID)
+}
+
 func (s *DBWorkspacePromptService) get(workspaceID, promptID string) (WorkspacePrompt, error) {
 	var p WorkspacePrompt
-	var libID sql.NullString
-	var desc sql.NullString
+	var libID, desc, createdBy, sharedPromptID sql.NullString
 	err := s.db.QueryRow(`
-		SELECT id, workspace_id, library_prompt_id, name, description, content, use_case,
-		       usage_count, is_custom, added_to_space, enabled, created_at, updated_at
-		FROM workspace_prompts
-		WHERE workspace_id = $1 AND id = $2
+		SELECT p.id, p.workspace_id, p.library_prompt_id, p.name, p.description, p.content, p.use_case,
+		       p.usage_count, p.is_custom, p.added_to_space, p.enabled, p.created_by, COALESCE(u.name, ''),
+		       p.shared_prompt_id, COALESCE(tp.status, ''), p.created_at, p.updated_at
+		FROM workspace_prompts p
+		LEFT JOIN users u ON u.id = p.created_by
+		LEFT JOIN team_prompts tp ON tp.id = p.shared_prompt_id
+		WHERE p.workspace_id = $1 AND p.id = $2
 	`, workspaceID, promptID).Scan(&p.ID, &p.WorkspaceID, &libID, &p.Name, &desc, &p.Content, &p.UseCase,
-		&p.UsageCount, &p.IsCustom, &p.AddedToSpace, &p.Enabled, &p.CreatedAt, &p.UpdatedAt)
+		&p.UsageCount, &p.IsCustom, &p.AddedToSpace, &p.Enabled, &createdBy, &p.CreatedByName,
+		&sharedPromptID, &p.ShareStatus, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return WorkspacePrompt{}, errors.New("workspace prompt not found")
 	}
@@ -351,6 +562,8 @@ func (s *DBWorkspacePromptService) get(workspaceID, promptID string) (WorkspaceP
 	}
 	p.LibraryPromptID = sqlutil.ScanNullStringPtr(libID)
 	p.Description = sqlutil.ScanNullString(desc)
+	p.CreatedBy = sqlutil.ScanNullString(createdBy)
+	p.SharedPromptID = sqlutil.ScanNullStringPtr(sharedPromptID)
 	p.Categories = []PromptCategory{}
 
 	categoriesMap, err := s.listCategoriesForPrompts([]string{p.ID})

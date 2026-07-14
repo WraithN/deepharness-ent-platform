@@ -17,12 +17,16 @@ const API_STATUS_TO_UI: Record<string, string> = {
   todo: '待处理',
   in_progress: '进行中',
   done: '已完成',
+  cancelled: '已取消',
+  on_hold: '已挂起',
 };
 
 const UI_STATUS_TO_API: Record<string, string> = {
   '待处理': 'todo',
   '进行中': 'in_progress',
   '已完成': 'done',
+  '已取消': 'cancelled',
+  '已挂起': 'on_hold',
 };
 
 const API_PRIORITY_TO_UI: Record<string, string> = {
@@ -31,7 +35,7 @@ const API_PRIORITY_TO_UI: Record<string, string> = {
   high: '高',
 };
 
-const STATUSES = ['待处理', '进行中', '已完成'];
+const STATUSES = ['待处理', '进行中', '已完成', '已取消', '已挂起'];
 const REQUIREMENT_PAGE_SIZE = 10;
 
 interface ReqRow {
@@ -114,6 +118,8 @@ export const Requirements: React.FC = () => {
     switch (status) {
       case '已完成': return <Badge className="bg-green-100 text-green-700 hover:bg-green-200 border-green-200 shadow-none">已完成</Badge>;
       case '进行中': return <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-200 border-blue-200 shadow-none">进行中</Badge>;
+      case '已取消': return <Badge className="bg-zinc-100 text-zinc-700 hover:bg-zinc-200 border-zinc-200 shadow-none">已取消</Badge>;
+      case '已挂起': return <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-200 border-orange-200 shadow-none">已挂起</Badge>;
       default: return <Badge className="bg-zinc-100 text-zinc-700 hover:bg-zinc-200 border-zinc-200 shadow-none">待处理</Badge>;
     }
   };

@@ -297,6 +297,8 @@ CREATE TABLE IF NOT EXISTS workspace_prompts (
     is_custom BOOLEAN NOT NULL DEFAULT FALSE,
     added_to_space BOOLEAN NOT NULL DEFAULT TRUE,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by VARCHAR(36),
+    shared_prompt_id VARCHAR(36),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -313,10 +315,13 @@ COMMENT ON COLUMN workspace_prompts.usage_count IS '使用次数';
 COMMENT ON COLUMN workspace_prompts.is_custom IS '是否为自定义提示词';
 COMMENT ON COLUMN workspace_prompts.added_to_space IS '是否已添加到空间常用列表';
 COMMENT ON COLUMN workspace_prompts.enabled IS '是否启用，未启用时不展示在会话输入框下拉菜单';
+COMMENT ON COLUMN workspace_prompts.created_by IS '创建人用户 ID（加入空间的操作人/副本创建人）';
+COMMENT ON COLUMN workspace_prompts.shared_prompt_id IS '分享到市场后关联的 team_prompts 审核条目 ID';
 COMMENT ON COLUMN workspace_prompts.created_at IS '创建时间';
 COMMENT ON COLUMN workspace_prompts.updated_at IS '更新时间';
 
 CREATE INDEX IF NOT EXISTS idx_workspace_prompts_library_prompt_id ON workspace_prompts (library_prompt_id);
+CREATE INDEX IF NOT EXISTS idx_workspace_prompts_shared_prompt_id ON workspace_prompts (shared_prompt_id);
 CREATE INDEX IF NOT EXISTS idx_workspace_prompts_use_case ON workspace_prompts (workspace_id, use_case);
 CREATE INDEX IF NOT EXISTS idx_workspace_prompts_added ON workspace_prompts (workspace_id, added_to_space);
 CREATE INDEX IF NOT EXISTS idx_workspace_prompts_enabled ON workspace_prompts (workspace_id, enabled);

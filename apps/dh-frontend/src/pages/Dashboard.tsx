@@ -1,15 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { BarChart3, Box, CheckSquare, Clock, Code2, FileText, LineChart as LineChartIcon, ListTodo, MessageSquare, PieChart as PieChartIcon, Wand2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { toast } from 'sonner';
+import { RecordPaginationBar } from '@/components/RecordPaginationBar';
 import { Badge } from '@/components/ui/badge';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
-import { mockDashboardStats } from '@/mock/data';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
 import type { UserDTO } from '@/lib/api-types';
-import { MessageSquare, CheckSquare, Clock, Box, Code2, ListTodo, Wand2, FileText, BarChart3, LineChart as LineChartIcon, PieChart as PieChartIcon } from 'lucide-react';
-import { toast } from 'sonner';
+import { mockDashboardStats } from '@/mock/data';
 
 /** /v1/stats/summary 响应类型。 */
 interface SummaryResponse {
@@ -228,22 +229,22 @@ export const Dashboard: React.FC = () => {
             </div>
           </CardContent>
         </Card>
-        <Card className="col-span-1 lg:col-span-2 soft-shadow border border-border/50 overflow-hidden">
-          <CardHeader className="bg-muted/10 border-b border-border/50">
-            <CardTitle>成员会话轨迹</CardTitle>
-            <CardDescription>团队成员近期在智能会话中的活动记录</CardDescription>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="w-full max-w-full overflow-x-auto bg-card rounded-b-xl">
-              <Table className="min-w-max">
-                <TableHeader className="bg-muted/10">
-                  <TableRow>
-                    <TableHead>成员</TableHead>
-                    <TableHead>会话主题</TableHead>
-                    <TableHead>类型</TableHead>
-                    <TableHead>消息数</TableHead>
-                    <TableHead>会话时长</TableHead>
-                    <TableHead className="text-right">时间</TableHead>
+        <Card className="col-span-1 lg:col-span-2 soft-shadow border border-border/50 rounded-xl overflow-hidden bg-card">
+          <CardContent className="p-6">
+            <div className="mb-5">
+              <h3 className="text-xl font-semibold text-foreground">成员会话轨迹</h3>
+              <p className="text-muted-foreground mt-1">团队成员近期在智能会话中的活动记录</p>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-border/50">
+              <Table className="min-w-max text-[15px]">
+                <TableHeader className="bg-muted/30">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="px-4 py-4 font-medium text-muted-foreground">成员</TableHead>
+                    <TableHead className="px-4 py-4 font-medium text-muted-foreground">会话主题</TableHead>
+                    <TableHead className="px-4 py-4 font-medium text-muted-foreground">类型</TableHead>
+                    <TableHead className="px-4 py-4 font-medium text-muted-foreground">消息数</TableHead>
+                    <TableHead className="px-4 py-4 font-medium text-muted-foreground">会话时长</TableHead>
+                    <TableHead className="px-4 py-4 font-medium text-muted-foreground">时间</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -257,34 +258,34 @@ export const Dashboard: React.FC = () => {
                     paginatedSessions.map((trail) => (
                       <TableRow
                         key={trail.id}
-                        className="cursor-pointer hover:bg-muted/50"
+                        className="cursor-pointer transition-colors hover:bg-primary/5"
                         onClick={() => setSelectedUserSession(trail)}
                       >
-                        <TableCell className="whitespace-nowrap">
+                        <TableCell className="px-4 py-5 whitespace-nowrap">
                           <div className="flex items-center gap-2">
-                            <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium text-xs">
+                            <div className="h-6 w-6 rounded-full bg-primary/15 flex items-center justify-center text-primary font-medium text-xs shrink-0">
                               {trail.user.name.charAt(0)}
                             </div>
-                            <span className="text-sm font-medium">{trail.user.name}</span>
+                            <span className="font-medium">{trail.user.name}</span>
                           </div>
                         </TableCell>
-                        <TableCell className="whitespace-nowrap">
+                        <TableCell className="px-4 py-5 whitespace-nowrap">
                           {trail.title}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap">
-                          {trail.type === 'ui' && <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200"><Box className="w-3 h-3 mr-1"/> UI设计</Badge>}
-                          {trail.type === 'code' && <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200"><Code2 className="w-3 h-3 mr-1"/> 代码编写</Badge>}
-                          {trail.type === 'requirement' && <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200"><ListTodo className="w-3 h-3 mr-1"/> 需求分析</Badge>}
-                          {(trail.type !== 'ui' && trail.type !== 'code' && trail.type !== 'requirement') && <Badge variant="outline"><MessageSquare className="w-3 h-3 mr-1"/> 会话</Badge>}
+                        <TableCell className="px-4 py-5 whitespace-nowrap">
+                          {trail.type === 'ui' && <Badge variant="outline" className="rounded-md px-3 py-1 bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800/50"><Box className="w-3 h-3 mr-1"/> UI设计</Badge>}
+                          {trail.type === 'code' && <Badge variant="outline" className="rounded-md px-3 py-1 bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-300 dark:border-green-800/50"><Code2 className="w-3 h-3 mr-1"/> 代码编写</Badge>}
+                          {trail.type === 'requirement' && <Badge variant="outline" className="rounded-md px-3 py-1 bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800/50"><ListTodo className="w-3 h-3 mr-1"/> 需求分析</Badge>}
+                          {(trail.type !== 'ui' && trail.type !== 'code' && trail.type !== 'requirement') && <Badge variant="outline" className="rounded-md px-3 py-1"><MessageSquare className="w-3 h-3 mr-1"/> 会话</Badge>}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-muted-foreground">
+                        <TableCell className="px-4 py-5 whitespace-nowrap">
                           {trail.messageCount} 条
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-muted-foreground">
+                        <TableCell className="px-4 py-5 whitespace-nowrap">
                           {trail.duration}
                         </TableCell>
-                        <TableCell className="text-right whitespace-nowrap text-muted-foreground">
-                          <div className="flex items-center justify-end gap-1">
+                        <TableCell className="px-4 py-5 whitespace-nowrap text-muted-foreground">
+                          <div className="flex items-center gap-1">
                             <Clock className="w-3 h-3" />
                             {trail.time}
                           </div>
@@ -295,42 +296,12 @@ export const Dashboard: React.FC = () => {
                 </TableBody>
               </Table>
             </div>
-            <div className="flex items-center justify-between px-4 py-3 border-t border-border/50">
-              <span className="text-xs text-muted-foreground">
-                共 {sessionTrails.length} 条记录，第 {sessionPage}/{totalSessionPages || 1} 页
-              </span>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                  disabled={sessionPage <= 1}
-                  onClick={() => setSessionPage(p => Math.max(1, p - 1))}
-                >
-                  上一页
-                </Button>
-                {Array.from({ length: totalSessionPages }, (_, i) => i + 1).map(p => (
-                  <Button
-                    key={p}
-                    variant={sessionPage === p ? 'default' : 'outline'}
-                    size="sm"
-                    className="h-7 w-7 p-0 text-xs"
-                    onClick={() => setSessionPage(p)}
-                  >
-                    {p}
-                  </Button>
-                ))}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                  disabled={sessionPage >= totalSessionPages}
-                  onClick={() => setSessionPage(p => Math.min(totalSessionPages, p + 1))}
-                >
-                  下一页
-                </Button>
-              </div>
-            </div>
+            <RecordPaginationBar
+              total={sessionTrails.length}
+              currentPage={sessionPage}
+              totalPages={totalSessionPages}
+              onPageChange={setSessionPage}
+            />
           </CardContent>
         </Card>
       </div>

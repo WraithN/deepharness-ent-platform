@@ -1,5 +1,5 @@
+import type { PaginatedList, Prompt, PromptStats, Skill, SkillCategory, SkillStats, TeamPromptCategory } from '@/types';
 import { api } from './api';
-import type { Skill, Prompt, PaginatedList, SkillCategory, TeamPromptCategory, SkillStats, PromptStats } from '@/types';
 
 export interface CreateSkillRequest {
   name: string;
@@ -26,6 +26,12 @@ export const teamApi = {
   updateSkillInstalled: (id: string, installed: boolean) =>
     api.patch<Skill>(`/v1/team/skills/${id}`, { installed }),
   deleteSkill: (id: string) => api.delete<void>(`/v1/team/skills/${id}`),
+  // 技能审核：approve 上架 / reject 拒绝 / unshelf 下架（仅超管）
+  reviewSkill: (id: string, action: 'approve' | 'reject' | 'unshelf') =>
+    api.post<Skill>(`/v1/team/skills/${id}/review`, { action }),
+  // 技能多分类更新（替换语义，仅超管）
+  updateSkillCategories: (id: string, categoryIds: string[]) =>
+    api.put<Skill>(`/v1/team/skills/${id}/categories`, { categoryIds }),
 
   // 提示词
   listPrompts: (page = 1, pageSize = 10) =>
@@ -38,6 +44,12 @@ export const teamApi = {
   deletePrompt: (id: string) => api.delete<void>(`/v1/team/prompts/${id}`),
   reviewPrompt: (id: string, action: 'approve' | 'reject' | 'unshelf') =>
     api.post<Prompt>(`/v1/team/prompts/${id}/review`, { action }),
+  // 复制使用上报：同一用户同一提示词每天只计数一次（后端去重）
+  recordPromptUsage: (id: string) =>
+    api.post<Prompt>(`/v1/team/prompts/${id}/use`),
+  // 提示词多分类更新（替换语义，仅超管）
+  updatePromptCategories: (id: string, categoryIds: string[]) =>
+    api.put<Prompt>(`/v1/team/prompts/${id}/categories`, { categoryIds }),
 
   // 技能分类
   listSkillCategories: () => api.get<SkillCategory[]>('/v1/team/skill-categories'),

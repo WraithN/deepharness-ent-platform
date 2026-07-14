@@ -2,9 +2,9 @@
  * @file Custom multi-select dropdown component
  */
 
+import { Check, ChevronUp, X } from "lucide-react";
 import type React from "react";
-import { useEffect, useState, useRef } from "react";
-import { ChevronUp, Check, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 interface Option {
   value: string;
@@ -93,7 +93,11 @@ const MultiSelect: React.FC<MultiSelectProps> = ({
       {/* 触发框 */}
       <div
         onClick={toggleDropdown}
-        className="group flex min-h-[44px] w-full cursor-pointer items-center justify-between gap-2 rounded-lg border border-input bg-background px-3 py-2 shadow-sm transition-all hover:border-input/80 focus-within:border-ring focus-within:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]"
+        className={`group flex min-h-[44px] w-full items-center justify-between gap-2 rounded-lg border border-input bg-background px-3 py-2 shadow-sm transition-all ${
+          disabled
+            ? 'cursor-not-allowed opacity-50'
+            : 'cursor-pointer hover:border-input/80 focus-within:border-ring focus-within:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]'
+        }`}
       >
         <div className="flex flex-wrap items-center gap-2 flex-1">
           {selectedValuesText.length > 0 ? (
@@ -103,16 +107,18 @@ const MultiSelect: React.FC<MultiSelectProps> = ({
                 className="inline-flex items-center gap-1.5 rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
               >
                 {text}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeOption(selectedOptions[index]);
-                  }}
-                  className="text-primary/70 hover:text-primary transition-colors"
-                >
-                  <X className="h-3 w-3" />
-                </button>
+                {!disabled && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeOption(selectedOptions[index]);
+                    }}
+                    className="text-primary/70 hover:text-primary transition-colors"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
               </span>
             ))
           ) : (

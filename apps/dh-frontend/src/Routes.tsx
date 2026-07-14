@@ -16,6 +16,7 @@ import { PersonalAssistantPage } from "@/pages/PersonalAssistantPage";
 import { PersonalAssistantChat } from "@/pages/PersonalAssistantChat";
 import { FileView } from "@/pages/FileView";
 import { PrdView } from "@/pages/PrdView";
+import { ShareDoc } from "@/pages/ShareDoc";
 import { AdminPage } from "@/pages/AdminPage";
 
 import { Profile } from "@/pages/Profile";
@@ -24,6 +25,8 @@ import { AdminDashboard } from "@/pages/AdminDashboard";
 
 export const routes: RouteObject[] = [
   { path: "/login", element: <Login /> },
+  // 分享文档落地页：免登录访问
+  { path: "/s/:token", element: <ShareDoc /> },
   {
     path: "/profile",
     element: <RequireAuth><Profile /></RequireAuth>,

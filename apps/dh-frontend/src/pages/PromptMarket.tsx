@@ -1,22 +1,24 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Copy, CheckCircle, Plus, Sparkles, Loader2, Eye, EyeOff, XCircle, Check } from 'lucide-react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
+import { Check, CheckCircle, Copy, Eye, EyeOff, Loader2, Plus, Search, Sparkles, XCircle } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { toast } from 'sonner';
+import { RecordPaginationBar } from '@/components/RecordPaginationBar';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { useAuth } from '@/contexts/AuthContext';
+import { useClientPagination } from '@/hooks/use-client-pagination';
+import { PLATFORM_ROLE, SPACE_ROLE } from '@/lib/role-constants';
 import { teamApi } from '@/lib/team-api';
 import { workspaceApi } from '@/lib/workspace-api';
-import { toast } from 'sonner';
 import type { Prompt, PromptStatus } from '@/types';
-import { useAuth } from '@/contexts/AuthContext';
-import { PLATFORM_ROLE, SPACE_ROLE } from '@/lib/role-constants';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Textarea } from '@/components/ui/textarea';
-import { PaginationBar } from '@/components/admin/PaginationBar';
-import { useClientPagination } from '@/hooks/use-client-pagination';
 
 const CATEGORIES = ['全部', '研发', '测试', '产品', '设计'];
 const PROMPT_MARKET_PAGE_SIZE = 12;
+// 复制按钮防抖冷却时长（毫秒）：点击后 5 秒内不可再次复制同一提示词。
+const COPY_COOLDOWN_MS = 5000;
 
 const PROMPT_STATUS_LABEL: Record<PromptStatus, string> = {
   pending_review: '审核中',
@@ -48,6 +50,10 @@ export const PromptMarket: React.FC = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createPrompt, setCreatePrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  // 添加到空间操作中的提示词 ID（按钮 loading 态兼防抖，避免重复点击重复计数）。
+  const [addingPromptId, setAddingPromptId] = useState<string | null>(null);
+  // 复制按钮冷却截止时间戳（按提示词 ID），冷却期内按钮禁用，实现 5 秒防抖。
+  const [copyCooldownUntil, setCopyCooldownUntil] = useState<Record<string, number>>({});
 
   const loadPrompts = useCallback(async () => {
     setLoading(true);
@@ -87,18 +93,40 @@ export const PromptMarket: React.FC = () => {
   });
   const paginatedPrompts = filteredPrompts.slice(startIndex, endIndex);
 
-  const handleCopy = (content: string) => {
-    navigator.clipboard.writeText(content).then(() => toast.success('提示词内容已复制到剪贴板'));
+  // 复制提示词内容到剪贴板，并上报一次复制使用（后端按用户+天去重计数）。
+  // 前端 5 秒冷却防抖：冷却期内重复点击直接忽略并提示。
+  const handleCopy = (prompt: Prompt) => {
+    if (Date.now() < (copyCooldownUntil[prompt.id] ?? 0)) {
+      toast.info('操作过于频繁，请 5 秒后再试');
+      return;
+    }
+    setCopyCooldownUntil(prev => ({ ...prev, [prompt.id]: Date.now() + COPY_COOLDOWN_MS }));
+    // 冷却结束后清除记录以触发重渲染，恢复按钮可用态。
+    setTimeout(() => {
+      setCopyCooldownUntil(prev => {
+        const next = { ...prev };
+        delete next[prompt.id];
+        return next;
+      });
+    }, COPY_COOLDOWN_MS);
+    navigator.clipboard.writeText(prompt.content || prompt.description).then(() => toast.success('提示词内容已复制到剪贴板'));
+    teamApi.recordPromptUsage(prompt.id)
+      .then(updated => setPrompts(prev => prev.map(p => p.id === updated.id ? { ...p, usageCount: updated.usageCount } : p)))
+      .catch(err => console.warn('上报提示词复制次数失败:', err));
   };
 
+  // 添加到空间即视为一次复制使用，后端会将市场提示词使用次数 +1。
   const handleAddToWorkspace = async (prompt: Prompt) => {
-    if (!prompt.id) return;
+    if (!prompt.id || addingPromptId) return;
+    setAddingPromptId(prompt.id);
     try {
       await workspaceApi.addPrompt(currentWorkspaceId, prompt.id);
-      setPrompts(prompts.map(p => p.id === prompt.id ? { ...p, addedToSpace: true } : p));
+      setPrompts(prev => prev.map(p => p.id === prompt.id ? { ...p, addedToSpace: true, usageCount: p.usageCount + 1 } : p));
       toast.success('提示词已添加到当前空间');
     } catch {
       toast.error('添加失败');
+    } finally {
+      setAddingPromptId(null);
     }
   };
 
@@ -222,25 +250,28 @@ export const PromptMarket: React.FC = () => {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="flex-1">
-                  <div className="text-sm text-muted-foreground bg-muted/30 p-2 rounded-md">
-                    使用次数: {(prompt.usageCount / 1000).toFixed(1)}k
+                  <div className="text-sm text-muted-foreground bg-muted/30 p-2 rounded-md space-y-1">
+                    <div>使用次数: {prompt.usageCount.toLocaleString()}</div>
+                    <div>创建人: {prompt.createdByName || '系统'}</div>
                   </div>
                 </CardContent>
                 <CardFooter className="shrink-0 pt-0 gap-2 flex-wrap">
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     className="flex-1"
-                    onClick={() => handleCopy(prompt.content || prompt.description)}
+                    disabled={Date.now() < (copyCooldownUntil[prompt.id] ?? 0)}
+                    onClick={() => handleCopy(prompt)}
                   >
                     <Copy className="mr-2 h-4 w-4" /> 复制
                   </Button>
                   {canAddToWorkspace && status === 'on_shelf' && (
-                    <Button 
-                      variant={prompt.addedToSpace ? "secondary" : "default"} 
+                    <Button
+                      variant={prompt.addedToSpace ? "secondary" : "default"}
                       className="flex-1"
-                      disabled={prompt.addedToSpace}
+                      disabled={prompt.addedToSpace || addingPromptId === prompt.id}
                       onClick={() => handleAddToWorkspace(prompt)}
                     >
+                      {addingPromptId === prompt.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                       {prompt.addedToSpace ? '已添加' : '添加到空间'}
                     </Button>
                   )}
@@ -281,13 +312,12 @@ export const PromptMarket: React.FC = () => {
         </div>
       )}
 
-      {filteredPrompts.length > 0 && (
-        <PaginationBar
-          currentPage={currentPage}
-          totalPages={totalPages}
-          onPageChange={onPageChange}
-        />
-      )}
+      <RecordPaginationBar
+        total={filteredPrompts.length}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={onPageChange}
+      />
     </div>
   );
 };
