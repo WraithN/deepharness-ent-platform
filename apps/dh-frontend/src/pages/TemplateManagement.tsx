@@ -86,6 +86,7 @@ export const TemplateManagement: React.FC = () => {
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSaveRef = useRef<{ category: TemplateCategory; key: string; content: string } | null>(null);
+  const listRequestIdRef = useRef(0);
 
   const clearTimeoutRef = () => {
     if (saveTimerRef.current) {
@@ -119,24 +120,30 @@ export const TemplateManagement: React.FC = () => {
     await saveContent(category, key, content);
   }, []);
 
-  const loadList = useCallback(async (category: TemplateCategory) => {
+  const loadList = useCallback(async (category: TemplateCategory, requestId: number) => {
     setListLoading(true);
     try {
       const list = await templateApi.list(category);
+      // 忽略已过期请求的结果，避免快速切换分类时旧数据覆盖新分类
+      if (requestId !== listRequestIdRef.current) return;
       setTemplates(list);
       setSelectedKey(list.length > 0 ? list[0].key : null);
     } catch (err) {
+      if (requestId !== listRequestIdRef.current) return;
       toast.error(getErrorMessage(err, '加载模板列表失败'));
       setTemplates([]);
       setSelectedKey(null);
     } finally {
-      setListLoading(false);
+      if (requestId === listRequestIdRef.current) {
+        setListLoading(false);
+      }
     }
   }, []);
 
   // 切换分类时重新加载对应模板池，并默认选中第一项
   useEffect(() => {
-    loadList(activeCategory);
+    listRequestIdRef.current += 1;
+    loadList(activeCategory, listRequestIdRef.current);
   }, [activeCategory, loadList]);
 
   // 切换分类时取消未执行的保存，避免内容被写入错误分类
@@ -205,7 +212,7 @@ export const TemplateManagement: React.FC = () => {
       toast.success('模板已创建');
       setNewLabel('');
       setCreateOpen(false);
-      await loadList(activeCategory);
+      await loadList(activeCategory, listRequestIdRef.current);
       setSelectedKey(key);
     } catch (err) {
       toast.error(getErrorMessage(err, '创建模板失败'));
@@ -217,7 +224,7 @@ export const TemplateManagement: React.FC = () => {
     try {
       await templateApi.delete(activeCategory, key);
       toast.success('模板已删除');
-      await loadList(activeCategory);
+      await loadList(activeCategory, listRequestIdRef.current);
     } catch (err) {
       toast.error(getErrorMessage(err, '删除模板失败'));
     } finally {
@@ -323,15 +330,15 @@ export const TemplateManagement: React.FC = () => {
                         : 'text-secondary-foreground hover:bg-muted',
                     )}
                   >
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
                       <FileText className="h-4 w-4 shrink-0" />
-                      <span className="truncate">{tpl.label}</span>
+                      <span className="truncate flex-1">{tpl.label}</span>
                       {tpl.published ? (
-                        <Badge variant="default" className="text-[10px] px-1 py-0 h-4">
+                        <Badge variant="default" className="text-[10px] px-1 py-0 h-4 shrink-0 whitespace-nowrap">
                           已发布
                         </Badge>
                       ) : (
-                        <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4">
+                        <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 shrink-0 whitespace-nowrap">
                           未发布
                         </Badge>
                       )}
