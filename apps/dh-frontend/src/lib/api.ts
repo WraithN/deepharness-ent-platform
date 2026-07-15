@@ -49,7 +49,16 @@ async function request<T>(
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
-    throw new ApiError(res.status, res.statusText, text);
+    let message = text;
+    try {
+      const data = JSON.parse(text);
+      if (typeof data.message === "string" && data.message) {
+        message = data.message;
+      }
+    } catch {
+      // 非 JSON 错误响应，使用原始文本
+    }
+    throw new ApiError(res.status, res.statusText, message);
   }
 
   // 204 No Content / 202 Accepted（响应无 JSON body）

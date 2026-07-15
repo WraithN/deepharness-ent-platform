@@ -342,6 +342,7 @@ export interface DocTemplate {
   key: string;
   label: string;
   content: string;
+  sortOrder?: number;
 }
 
 /** 模板分类。 */

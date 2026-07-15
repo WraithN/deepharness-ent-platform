@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/platformtemplate/object"
@@ -17,6 +18,7 @@ type PlatformTemplateService interface {
 	Create(tmpl object.PlatformTemplate) (object.PlatformTemplate, error)
 	Update(key, category string, tmpl object.PlatformTemplate) (object.PlatformTemplate, error)
 	Delete(key, category string) error
+	UpdateOrder(category string, keys []string) error
 }
 
 // DBPlatformTemplateService 是基于 PostgreSQL 的 PlatformTemplateService 实现。
@@ -49,11 +51,11 @@ func (s *DBPlatformTemplateService) seed() error {
 		return nil
 	}
 
-	for _, tmpl := range defaultTemplates() {
+	for i, tmpl := range defaultTemplates() {
 		if _, err := s.db.Exec(`
-			INSERT INTO platform_templates (category, key, label, content)
-			VALUES ($1, $2, $3, $4)
-		`, tmpl.Category, tmpl.Key, tmpl.Label, tmpl.Content); err != nil {
+			INSERT INTO platform_templates (category, key, label, content, sort_order)
+			VALUES ($1, $2, $3, $4, $5)
+		`, tmpl.Category, tmpl.Key, tmpl.Label, tmpl.Content, i+1); err != nil {
 			return fmt.Errorf("seed platform template %s/%s failed: %w", tmpl.Category, tmpl.Key, err)
 		}
 	}
@@ -79,10 +81,10 @@ func (s *DBPlatformTemplateService) ListByCategory(category string) ([]object.Pl
 	}
 
 	rows, err := s.db.Query(`
-		SELECT id, category, key, label, content, created_at, updated_at
+		SELECT id, category, key, label, content, sort_order, created_at, updated_at
 		FROM platform_templates
 		WHERE category = $1
-		ORDER BY id
+		ORDER BY sort_order ASC, id ASC
 	`, category)
 	if err != nil {
 		return nil, fmt.Errorf("list templates by category failed: %w", err)
@@ -92,7 +94,7 @@ func (s *DBPlatformTemplateService) ListByCategory(category string) ([]object.Pl
 	result := make([]object.PlatformTemplate, 0)
 	for rows.Next() {
 		var t object.PlatformTemplate
-		if err := rows.Scan(&t.ID, &t.Category, &t.Key, &t.Label, &t.Content, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Category, &t.Key, &t.Label, &t.Content, &t.SortOrder, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan template failed: %w", err)
 		}
 		result = append(result, t)
@@ -115,13 +117,36 @@ func (s *DBPlatformTemplateService) Create(tmpl object.PlatformTemplate) (object
 		return object.PlatformTemplate{}, errors.New("label is required")
 	}
 
+	count, err := s.countByCategory(tmpl.Category)
+	if err != nil {
+		return object.PlatformTemplate{}, err
+	}
+	if count >= object.MaxTemplatesPerCategory {
+		return object.PlatformTemplate{}, errors.New("category template limit reached")
+	}
+
+	if exists, err := s.labelExists(tmpl.Category, tmpl.Label, ""); err != nil {
+		return object.PlatformTemplate{}, err
+	} else if exists {
+		return object.PlatformTemplate{}, errors.New("template label already exists")
+	}
+
+	var nextSortOrder int
+	if err := s.db.QueryRow(`
+		SELECT COALESCE(MAX(sort_order), 0) + 1
+		FROM platform_templates
+		WHERE category = $1
+	`, tmpl.Category).Scan(&nextSortOrder); err != nil {
+		return object.PlatformTemplate{}, fmt.Errorf("compute sort order failed: %w", err)
+	}
+
 	var created object.PlatformTemplate
-	err := s.db.QueryRow(`
-		INSERT INTO platform_templates (category, key, label, content)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, category, key, label, content, created_at, updated_at
-	`, tmpl.Category, tmpl.Key, tmpl.Label, tmpl.Content).Scan(
-		&created.ID, &created.Category, &created.Key, &created.Label, &created.Content, &created.CreatedAt, &created.UpdatedAt,
+	err = s.db.QueryRow(`
+		INSERT INTO platform_templates (category, key, label, content, sort_order)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, category, key, label, content, sort_order, created_at, updated_at
+	`, tmpl.Category, tmpl.Key, tmpl.Label, tmpl.Content, nextSortOrder).Scan(
+		&created.ID, &created.Category, &created.Key, &created.Label, &created.Content, &created.SortOrder, &created.CreatedAt, &created.UpdatedAt,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -143,15 +168,24 @@ func (s *DBPlatformTemplateService) Update(key, category string, tmpl object.Pla
 	if !isValidCategory(category) {
 		return object.PlatformTemplate{}, errors.New("invalid category")
 	}
+	if tmpl.Label == "" {
+		return object.PlatformTemplate{}, errors.New("label is required")
+	}
+
+	if exists, err := s.labelExists(category, tmpl.Label, key); err != nil {
+		return object.PlatformTemplate{}, err
+	} else if exists {
+		return object.PlatformTemplate{}, errors.New("template label already exists")
+	}
 
 	var updated object.PlatformTemplate
 	err := s.db.QueryRow(`
 		UPDATE platform_templates
 		SET label = $1, content = $2
 		WHERE category = $3 AND key = $4
-		RETURNING id, category, key, label, content, created_at, updated_at
+		RETURNING id, category, key, label, content, sort_order, created_at, updated_at
 	`, tmpl.Label, tmpl.Content, category, key).Scan(
-		&updated.ID, &updated.Category, &updated.Key, &updated.Label, &updated.Content, &updated.CreatedAt, &updated.UpdatedAt,
+		&updated.ID, &updated.Category, &updated.Key, &updated.Label, &updated.Content, &updated.SortOrder, &updated.CreatedAt, &updated.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return object.PlatformTemplate{}, errors.New("template not found")
@@ -180,6 +214,81 @@ func (s *DBPlatformTemplateService) Delete(key, category string) error {
 		return errors.New("template not found")
 	}
 	return nil
+}
+
+// UpdateOrder 更新同一分类下模板的排序，keys 顺序即为目标顺序。
+func (s *DBPlatformTemplateService) UpdateOrder(category string, keys []string) error {
+	if err := s.ensureSeeded(); err != nil {
+		return err
+	}
+	if !isValidCategory(category) {
+		return errors.New("invalid category")
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	for i, key := range keys {
+		res, err := tx.Exec(`
+			UPDATE platform_templates
+			SET sort_order = $1
+			WHERE category = $2 AND key = $3
+		`, i+1, category, key)
+		if err != nil {
+			return fmt.Errorf("update order for %s failed: %w", key, err)
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return fmt.Errorf("template %s not found", key)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit order update failed: %w", err)
+	}
+	return nil
+}
+
+// countByCategory 返回指定分类下的模板数量。
+func (s *DBPlatformTemplateService) countByCategory(category string) (int, error) {
+	var count int
+	if err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM platform_templates WHERE category = $1
+	`, category).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count templates failed: %w", err)
+	}
+	return count, nil
+}
+
+// labelExists 判断同一分类下是否已存在相同 label 的模板。
+// 传入 excludeKey 可排除自身（更新场景），传空字符串不排除。
+func (s *DBPlatformTemplateService) labelExists(category, label, excludeKey string) (bool, error) {
+	if strings.TrimSpace(label) == "" {
+		return false, nil
+	}
+	var count int
+	var err error
+	if excludeKey == "" {
+		err = s.db.QueryRow(`
+			SELECT COUNT(*) FROM platform_templates
+			WHERE category = $1 AND LOWER(label) = LOWER($2)
+		`, category, label).Scan(&count)
+	} else {
+		err = s.db.QueryRow(`
+			SELECT COUNT(*) FROM platform_templates
+			WHERE category = $1 AND LOWER(label) = LOWER($2) AND key <> $3
+		`, category, label, excludeKey).Scan(&count)
+	}
+	if err != nil {
+		return false, fmt.Errorf("check duplicate label failed: %w", err)
+	}
+	return count > 0, nil
 }
 
 // isUniqueViolation 判断错误是否为唯一约束冲突。

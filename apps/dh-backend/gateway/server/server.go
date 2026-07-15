@@ -147,6 +147,7 @@ func New(cfg config.Config) http.Handler {
 
 	// 平台模板管理（仅超级管理员）
 	mux.Handle("/api/v1/templates", middleware.Auth(http.HandlerFunc(platformtemplate.Templates)))
+	mux.Handle("/api/v1/templates/order", middleware.Auth(http.HandlerFunc(platformtemplate.TemplatesOrder)))
 	mux.Handle("/api/v1/templates/{key}", middleware.Auth(http.HandlerFunc(platformtemplate.TemplateByKey)))
 
 	mux.HandleFunc("/api/v1/workitems", workitem.WorkItems)

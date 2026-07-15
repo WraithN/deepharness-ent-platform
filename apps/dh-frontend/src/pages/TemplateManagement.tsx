@@ -1,4 +1,4 @@
-import { FileText, Loader2, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, FileText, Loader2, Plus, Trash2 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { MarkdownEditor } from '@/components/MarkdownEditor';
@@ -17,7 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { templateApi, TEMPLATE_CATEGORY_LABELS } from '@/lib/template-api';
+import { templateApi, TEMPLATE_CATEGORY_LABELS, MAX_TEMPLATES_PER_CATEGORY } from '@/lib/template-api';
 import type { DocTemplate, TemplateCategory } from '@/types';
 
 /** 分类展示顺序。 */
@@ -46,6 +46,26 @@ const slugifyKey = (label: string, existingKeys: string[]): string => {
   return key;
 };
 
+/** 判断当前分类下是否已存在相同名称的模板。 */
+const isDuplicateLabel = (
+  templates: DocTemplate[],
+  label: string,
+  excludeKey?: string,
+): boolean => {
+  const normalized = label.trim().toLowerCase();
+  if (!normalized) return false;
+  return templates.some(
+    (t) => t.label.trim().toLowerCase() === normalized && t.key !== excludeKey,
+  );
+};
+
+/** 将错误对象转换为可展示的消息文本。 */
+const getErrorMessage = (err: unknown, fallback: string): string => {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  return fallback;
+};
+
 /**
  * 超管模板管理页：统一管理产品规范、设计规范、研发规范三大模板池。
  *
@@ -61,8 +81,42 @@ export const TemplateManagement: React.FC = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [newLabel, setNewLabel] = useState('');
   const [deleteKey, setDeleteKey] = useState<string | null>(null);
+  const [reorderLoading, setReorderLoading] = useState(false);
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSaveRef = useRef<{ category: TemplateCategory; key: string; content: string } | null>(null);
+
+  const clearTimeoutRef = () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+  };
+
+  const clearPendingSave = () => {
+    clearTimeoutRef();
+    pendingSaveRef.current = null;
+  };
+
+  const saveContent = async (category: TemplateCategory, key: string, content: string) => {
+    setSaving(true);
+    try {
+      await templateApi.update(category, key, { content });
+    } catch (err) {
+      toast.error(getErrorMessage(err, '保存模板失败'));
+      // 本地内容已先行更新，失败时不回退，保留用户编辑
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const flushPendingSave = useCallback(async () => {
+    if (!pendingSaveRef.current) return;
+    const { category, key, content } = pendingSaveRef.current;
+    pendingSaveRef.current = null;
+    clearTimeoutRef();
+    await saveContent(category, key, content);
+  }, []);
 
   const loadList = useCallback(async (category: TemplateCategory) => {
     setListLoading(true);
@@ -71,8 +125,7 @@ export const TemplateManagement: React.FC = () => {
       setTemplates(list);
       setSelectedKey(list.length > 0 ? list[0].key : null);
     } catch (err) {
-      const message = err instanceof Error ? err.message : '加载模板列表失败';
-      toast.error(message);
+      toast.error(getErrorMessage(err, '加载模板列表失败'));
       setTemplates([]);
       setSelectedKey(null);
     } finally {
@@ -87,18 +140,18 @@ export const TemplateManagement: React.FC = () => {
 
   // 切换分类时取消未执行的保存，避免内容被写入错误分类
   useEffect(() => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
+    clearPendingSave();
   }, [activeCategory]);
+
+  // 切换选中模板时，先把上一个模板的未保存内容落库，避免丢失
+  useEffect(() => {
+    flushPendingSave();
+  }, [selectedKey, flushPendingSave]);
 
   // 组件卸载时清理未执行的保存定时器
   useEffect(() => {
     return () => {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
+      clearTimeoutRef();
     };
   }, []);
 
@@ -106,19 +159,6 @@ export const TemplateManagement: React.FC = () => {
     () => templates.find((t) => t.key === selectedKey) ?? null,
     [templates, selectedKey],
   );
-
-  const saveContent = async (category: TemplateCategory, key: string, content: string) => {
-    setSaving(true);
-    try {
-      await templateApi.update(category, key, { content });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '保存模板失败';
-      toast.error(message);
-      // 本地内容已先行更新，失败时不回退，保留用户编辑
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const handleContentChange = (content: string) => {
     if (!selectedTemplate) return;
@@ -128,10 +168,12 @@ export const TemplateManagement: React.FC = () => {
     const next = templates.map((t) => (t.key === key ? { ...t, content } : t));
     setTemplates(next);
 
+    pendingSaveRef.current = { category, key, content };
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
     }
     saveTimerRef.current = setTimeout(() => {
+      pendingSaveRef.current = null;
       saveContent(category, key, content);
     }, SAVE_DEBOUNCE_MS);
   };
@@ -139,6 +181,16 @@ export const TemplateManagement: React.FC = () => {
   const handleCreate = async () => {
     const label = newLabel.trim();
     if (!label) return;
+
+    if (templates.length >= MAX_TEMPLATES_PER_CATEGORY) {
+      toast.error(`每个分类最多创建 ${MAX_TEMPLATES_PER_CATEGORY} 个模板`);
+      return;
+    }
+
+    if (isDuplicateLabel(templates, label)) {
+      toast.error('该分类下已存在相同名称的模板');
+      return;
+    }
 
     const existingKeys = templates.map((t) => t.key);
     const key = slugifyKey(label, existingKeys);
@@ -150,29 +202,52 @@ export const TemplateManagement: React.FC = () => {
         content: `# ${label}\n\n${NEW_TEMPLATE_PLACEHOLDER}`,
       });
       toast.success('模板已创建');
+      setNewLabel('');
+      setCreateOpen(false);
       await loadList(activeCategory);
       setSelectedKey(key);
     } catch (err) {
-      const message = err instanceof Error ? err.message : '创建模板失败';
-      toast.error(message);
-    } finally {
-      setNewLabel('');
-      setCreateOpen(false);
+      toast.error(getErrorMessage(err, '创建模板失败'));
     }
   };
 
   const handleDelete = async (key: string) => {
+    clearPendingSave();
     try {
       await templateApi.delete(activeCategory, key);
       toast.success('模板已删除');
       await loadList(activeCategory);
     } catch (err) {
-      const message = err instanceof Error ? err.message : '删除模板失败';
-      toast.error(message);
+      toast.error(getErrorMessage(err, '删除模板失败'));
     } finally {
       setDeleteKey(null);
     }
   };
+
+  const handleMove = async (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= templates.length) return;
+
+    const next = [...templates];
+    [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+    const previous = templates;
+    setTemplates(next);
+    setReorderLoading(true);
+
+    try {
+      await templateApi.reorder(
+        activeCategory,
+        next.map((t) => t.key),
+      );
+    } catch (err) {
+      toast.error(getErrorMessage(err, '排序保存失败'));
+      setTemplates(previous);
+    } finally {
+      setReorderLoading(false);
+    }
+  };
+
+  const isMaxReached = templates.length >= MAX_TEMPLATES_PER_CATEGORY;
 
   return (
     <div className="space-y-6 h-full flex flex-col">
@@ -197,13 +272,20 @@ export const TemplateManagement: React.FC = () => {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-4 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-4 flex-1 min-h-0">
         {/* 左侧模板列表 */}
         <Card className="soft-shadow border border-border/50 rounded-xl overflow-hidden bg-card flex flex-col">
           <CardHeader className="pb-3 border-b border-border/50">
             <CardTitle className="text-base flex items-center justify-between">
-              <span>模板列表 ({templates.length})</span>
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <span>
+                模板列表 ({templates.length}/{MAX_TEMPLATES_PER_CATEGORY})
+              </span>
+              <Button
+                size="sm"
+                onClick={() => setCreateOpen(true)}
+                disabled={isMaxReached}
+                title={isMaxReached ? `每个分类最多 ${MAX_TEMPLATES_PER_CATEGORY} 个模板` : ''}
+              >
                 <Plus className="h-4 w-4 mr-1" />
                 新增
               </Button>
@@ -217,7 +299,7 @@ export const TemplateManagement: React.FC = () => {
               </div>
             ) : (
               <div className="space-y-1">
-                {templates.map((tpl) => (
+                {templates.map((tpl, index) => (
                   <div
                     key={tpl.key}
                     onClick={() => setSelectedKey(tpl.key)}
@@ -232,17 +314,43 @@ export const TemplateManagement: React.FC = () => {
                       <FileText className="h-4 w-4 shrink-0" />
                       <span className="truncate">{tpl.label}</span>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDeleteKey(tpl.key);
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                        disabled={reorderLoading || index === 0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleMove(index, 'up');
+                        }}
+                      >
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                        disabled={reorderLoading || index === templates.length - 1}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleMove(index, 'down');
+                        }}
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteKey(tpl.key);
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
                 {templates.length === 0 && (
@@ -310,7 +418,13 @@ export const TemplateManagement: React.FC = () => {
               />
             </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setNewLabel('');
+                  setCreateOpen(false);
+                }}
+              >
                 取消
               </Button>
               <Button onClick={handleCreate} disabled={!newLabel.trim()}>

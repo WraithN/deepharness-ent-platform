@@ -4,6 +4,9 @@ import type { DocTemplate, TemplateCategory } from '@/types';
 /** 模板 API 基础路径。 */
 const TEMPLATES_API_PATH = '/v1/templates';
 
+/** 每个分类下允许创建的最大模板数量。 */
+export const MAX_TEMPLATES_PER_CATEGORY = 20;
+
 /** 各分类展示名称。 */
 export const TEMPLATE_CATEGORY_LABELS: Record<TemplateCategory, string> = {
   product: '产品规范模板',
@@ -22,6 +25,10 @@ export interface UpdateTemplateRequest {
   content?: string;
 }
 
+export interface ReorderTemplatesRequest {
+  keys: string[];
+}
+
 export const templateApi = {
   list: (category: TemplateCategory) =>
     api.get<DocTemplate[]>(`${TEMPLATES_API_PATH}?category=${encodeURIComponent(category)}`),
@@ -38,5 +45,11 @@ export const templateApi = {
   delete: (category: TemplateCategory, key: string) =>
     api.delete<void>(
       `${TEMPLATES_API_PATH}/${encodeURIComponent(key)}?category=${encodeURIComponent(category)}`,
+    ),
+
+  reorder: (category: TemplateCategory, keys: string[]) =>
+    api.put<void>(
+      `${TEMPLATES_API_PATH}/order?category=${encodeURIComponent(category)}`,
+      { keys },
     ),
 };
