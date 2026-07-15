@@ -30,8 +30,8 @@ interface RepoStandardsDialogProps {
  * 规范文件以仓库内文件为准，保存即 git commit 回项目。
  */
 export function RepoStandardsDialog({ workspaceId, repo, isReadOnly }: RepoStandardsDialogProps) {
-  const codingStandardTemplates = useTemplates('development');
-  const designStandardTemplates = useTemplates('design');
+  const codingStandardTemplates = useTemplates('development', true);
+  const designStandardTemplates = useTemplates('design', true);
 
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);

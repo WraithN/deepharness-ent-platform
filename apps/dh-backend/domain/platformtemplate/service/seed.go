@@ -32,20 +32,21 @@ const DevelopmentGitTemplateContent = "# Git 提交与分支规范\n\n## 一、�
 const DevelopmentReviewTemplateContent = "# 代码评审（Code Review）规范\n\n## 一、评审目标\n\n1. 保证代码正确性、可维护性与团队风格一致\n2. 传播业务与系统知识，避免单点熟悉\n3. 及早发现设计缺陷，降低修复成本\n\n## 二、提交人职责\n\n1. 提交前完成自测与自查（编译、lint、单测、静态检查全通过）\n2. MR 描述清晰：业务背景、主要变更、自测结果、影响面与回滚方案\n3. 控制评审范围：单个 MR 聚焦一个目的，评审时长控制在 20 分钟以内\n4. 及时响应评审意见（建议 1 个工作日内），不阻塞他人工作\n\n## 三、评审人职责\n\n1. 优先评审，不积压；无法及时评审时主动转交\n2. 评审重点：\n   - **正确性**：逻辑错误、边界条件、空指针/越界、并发问题\n   - **完整性**：功能点遗漏、异常路径、日志与监控\n   - **一致性**：是否符合设计文档与团队规范、命名是否清晰\n   - **安全性**：注入、越权、敏感信息泄露\n   - **可维护性**：重复代码、魔法值、过度复杂、注释是否到位\n3. 意见分级：🔴 必须修改（阻断合并）/ 🟡 建议修改 / 💬 探讨，明确标注\n4. 对事不对人，描述问题与理由，给出改进建议\n\n## 四、评审流程\n\n1. 提交 MR → 自动触发 CI 与评审提醒\n2. 评审人提出意见 → 提交人修改并回复 → 评审人确认关闭\n3. 全部 🔴 意见解决且 CI 通过后，由评审人合并\n4. 紧急修复可先行合并，但必须在 24 小时内补充评审\n"
 
 // defaultTemplates 返回平台内置默认模板列表。
+// 内置模板默认已发布，方便业务页面开箱即用。
 func defaultTemplates() []object.PlatformTemplate {
 	return []object.PlatformTemplate{
-		{Category: object.TemplateCategoryProduct, Key: "demand", Label: "📝 产品需求文档", Content: ProductDemandTemplateContent},
-		{Category: object.TemplateCategoryProduct, Key: "meeting", Label: "📅 会议纪要", Content: ProductMeetingTemplateContent},
-		{Category: object.TemplateCategoryProduct, Key: "weekly", Label: "📊 工作周报", Content: ProductWeeklyTemplateContent},
-		{Category: object.TemplateCategoryProduct, Key: "bug", Label: "🐛 Bug反馈单", Content: ProductBugTemplateContent},
-		{Category: object.TemplateCategoryDesign, Key: "ui", Label: "🎨 UI 视觉设计规范", Content: DesignUiTemplateContent},
-		{Category: object.TemplateCategoryDesign, Key: "interaction", Label: "🖱️ 交互设计规范", Content: DesignInteractionTemplateContent},
-		{Category: object.TemplateCategoryDesign, Key: "mobile", Label: "📱 移动端设计规范", Content: DesignMobileTemplateContent},
-		{Category: object.TemplateCategoryDesign, Key: "checklist", Label: "✅ 设计走查清单", Content: DesignChecklistTemplateContent},
-		{Category: object.TemplateCategoryDevelopment, Key: "general", Label: "🔧 通用研发规范", Content: DevelopmentGeneralTemplateContent},
-		{Category: object.TemplateCategoryDevelopment, Key: "frontend", Label: "🎨 前端研发规范", Content: DevelopmentFrontendTemplateContent},
-		{Category: object.TemplateCategoryDevelopment, Key: "backend", Label: "⚙️ 后端研发规范", Content: DevelopmentBackendTemplateContent},
-		{Category: object.TemplateCategoryDevelopment, Key: "git", Label: "🌿 Git 提交与分支规范", Content: DevelopmentGitTemplateContent},
-		{Category: object.TemplateCategoryDevelopment, Key: "review", Label: "🔍 代码评审规范", Content: DevelopmentReviewTemplateContent},
+		{Category: object.TemplateCategoryProduct, Key: "demand", Label: "📝 产品需求文档", Content: ProductDemandTemplateContent, Published: true},
+		{Category: object.TemplateCategoryProduct, Key: "meeting", Label: "📅 会议纪要", Content: ProductMeetingTemplateContent, Published: true},
+		{Category: object.TemplateCategoryProduct, Key: "weekly", Label: "📊 工作周报", Content: ProductWeeklyTemplateContent, Published: true},
+		{Category: object.TemplateCategoryProduct, Key: "bug", Label: "🐛 Bug反馈单", Content: ProductBugTemplateContent, Published: true},
+		{Category: object.TemplateCategoryDesign, Key: "ui", Label: "🎨 UI 视觉设计规范", Content: DesignUiTemplateContent, Published: true},
+		{Category: object.TemplateCategoryDesign, Key: "interaction", Label: "🖱️ 交互设计规范", Content: DesignInteractionTemplateContent, Published: true},
+		{Category: object.TemplateCategoryDesign, Key: "mobile", Label: "📱 移动端设计规范", Content: DesignMobileTemplateContent, Published: true},
+		{Category: object.TemplateCategoryDesign, Key: "checklist", Label: "✅ 设计走查清单", Content: DesignChecklistTemplateContent, Published: true},
+		{Category: object.TemplateCategoryDevelopment, Key: "general", Label: "🔧 通用研发规范", Content: DevelopmentGeneralTemplateContent, Published: true},
+		{Category: object.TemplateCategoryDevelopment, Key: "frontend", Label: "🎨 前端研发规范", Content: DevelopmentFrontendTemplateContent, Published: true},
+		{Category: object.TemplateCategoryDevelopment, Key: "backend", Label: "⚙️ 后端研发规范", Content: DevelopmentBackendTemplateContent, Published: true},
+		{Category: object.TemplateCategoryDevelopment, Key: "git", Label: "🌿 Git 提交与分支规范", Content: DevelopmentGitTemplateContent, Published: true},
+		{Category: object.TemplateCategoryDevelopment, Key: "review", Label: "🔍 代码评审规范", Content: DevelopmentReviewTemplateContent, Published: true},
 	}
 }

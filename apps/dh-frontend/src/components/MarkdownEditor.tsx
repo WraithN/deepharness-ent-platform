@@ -32,6 +32,8 @@ export interface MarkdownEditorProps {
   lastSavedAt?: Date | null;
   /** 「常用模板」菜单的模板列表，默认从平台模板池读取 */
   templates?: DocTemplate[];
+  /** 是否显示右上角「常用模板」快捷填充按钮，默认 true */
+  showTemplatePicker?: boolean;
 }
 
 /** MarkdownEditor 默认使用的模板分类。 */
@@ -146,8 +148,9 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   readOnly = false,
   lastSavedAt = null,
   templates: templatesProp,
+  showTemplatePicker = true,
 }) => {
-  const { templates: defaultTemplates } = useTemplates(DEFAULT_TEMPLATE_CATEGORY);
+  const { templates: defaultTemplates } = useTemplates(DEFAULT_TEMPLATE_CATEGORY, true);
   const templates = templatesProp ?? defaultTemplates;
   const [mode, setMode] = useState<EditorMode>('rich');
   const [editor, setEditor] = useState<IDomEditor | null>(null);
@@ -380,7 +383,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
               ))}
             </div>
           )}
-          {!readOnly && (
+          {!readOnly && showTemplatePicker && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0">

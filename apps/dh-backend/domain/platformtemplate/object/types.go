@@ -21,6 +21,7 @@ type PlatformTemplate struct {
 	Label      string    `json:"label"`
 	Content    string    `json:"content"`
 	SortOrder  int       `json:"sortOrder"`
+	Published  bool      `json:"published"`
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
 }

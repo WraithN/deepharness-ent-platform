@@ -309,8 +309,8 @@ export const Settings: React.FC = () => {
   const { user, membership } = useAuth();
   const workspaceId = membership?.workspaceId ?? '';
 
-  const codingStandardTemplates = useTemplates('development');
-  const designStandardTemplates = useTemplates('design');
+  const codingStandardTemplates = useTemplates('development', true);
+  const designStandardTemplates = useTemplates('design', true);
 
   useEffect(() => {
     const tab = searchParams.get('tab');

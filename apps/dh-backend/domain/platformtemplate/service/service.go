@@ -14,11 +14,12 @@ import (
 
 // PlatformTemplateService 定义平台模板模块的服务接口。
 type PlatformTemplateService interface {
-	ListByCategory(category string) ([]object.PlatformTemplate, error)
+	ListByCategory(category string, publishedOnly bool) ([]object.PlatformTemplate, error)
 	Create(tmpl object.PlatformTemplate) (object.PlatformTemplate, error)
 	Update(key, category string, tmpl object.PlatformTemplate) (object.PlatformTemplate, error)
 	Delete(key, category string) error
 	UpdateOrder(category string, keys []string) error
+	Publish(key, category string, published bool) error
 }
 
 // DBPlatformTemplateService 是基于 PostgreSQL 的 PlatformTemplateService 实现。
@@ -53,9 +54,9 @@ func (s *DBPlatformTemplateService) seed() error {
 
 	for i, tmpl := range defaultTemplates() {
 		if _, err := s.db.Exec(`
-			INSERT INTO platform_templates (category, key, label, content, sort_order)
-			VALUES ($1, $2, $3, $4, $5)
-		`, tmpl.Category, tmpl.Key, tmpl.Label, tmpl.Content, i+1); err != nil {
+			INSERT INTO platform_templates (category, key, label, content, sort_order, published)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, tmpl.Category, tmpl.Key, tmpl.Label, tmpl.Content, i+1, tmpl.Published); err != nil {
 			return fmt.Errorf("seed platform template %s/%s failed: %w", tmpl.Category, tmpl.Key, err)
 		}
 	}
@@ -72,7 +73,9 @@ func isValidCategory(category string) bool {
 }
 
 // ListByCategory 按分类查询平台模板列表，首次调用会自动初始化默认模板。
-func (s *DBPlatformTemplateService) ListByCategory(category string) ([]object.PlatformTemplate, error) {
+// publishedOnly 为 true 时只返回已发布模板，供普通业务页面使用；
+// 为 false 时返回全部模板，供超管管理页使用。
+func (s *DBPlatformTemplateService) ListByCategory(category string, publishedOnly bool) ([]object.PlatformTemplate, error) {
 	if err := s.ensureSeeded(); err != nil {
 		return nil, err
 	}
@@ -80,12 +83,18 @@ func (s *DBPlatformTemplateService) ListByCategory(category string) ([]object.Pl
 		return nil, errors.New("invalid category")
 	}
 
-	rows, err := s.db.Query(`
-		SELECT id, category, key, label, content, sort_order, created_at, updated_at
+	query := `
+		SELECT id, category, key, label, content, sort_order, published, created_at, updated_at
 		FROM platform_templates
 		WHERE category = $1
-		ORDER BY sort_order ASC, id ASC
-	`, category)
+	`
+	args := []any{category}
+	if publishedOnly {
+		query += ` AND published = true`
+	}
+	query += ` ORDER BY sort_order ASC, id ASC`
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list templates by category failed: %w", err)
 	}
@@ -94,7 +103,7 @@ func (s *DBPlatformTemplateService) ListByCategory(category string) ([]object.Pl
 	result := make([]object.PlatformTemplate, 0)
 	for rows.Next() {
 		var t object.PlatformTemplate
-		if err := rows.Scan(&t.ID, &t.Category, &t.Key, &t.Label, &t.Content, &t.SortOrder, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Category, &t.Key, &t.Label, &t.Content, &t.SortOrder, &t.Published, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan template failed: %w", err)
 		}
 		result = append(result, t)
@@ -103,6 +112,7 @@ func (s *DBPlatformTemplateService) ListByCategory(category string) ([]object.Pl
 }
 
 // Create 创建新的平台模板，category/key/label 为必填项。
+// 新建模板默认为未发布状态，需要超管手动发布后才可在业务页面可见。
 func (s *DBPlatformTemplateService) Create(tmpl object.PlatformTemplate) (object.PlatformTemplate, error) {
 	if err := s.ensureSeeded(); err != nil {
 		return object.PlatformTemplate{}, err
@@ -142,11 +152,11 @@ func (s *DBPlatformTemplateService) Create(tmpl object.PlatformTemplate) (object
 
 	var created object.PlatformTemplate
 	err = s.db.QueryRow(`
-		INSERT INTO platform_templates (category, key, label, content, sort_order)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, category, key, label, content, sort_order, created_at, updated_at
-	`, tmpl.Category, tmpl.Key, tmpl.Label, tmpl.Content, nextSortOrder).Scan(
-		&created.ID, &created.Category, &created.Key, &created.Label, &created.Content, &created.SortOrder, &created.CreatedAt, &created.UpdatedAt,
+		INSERT INTO platform_templates (category, key, label, content, sort_order, published)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, category, key, label, content, sort_order, published, created_at, updated_at
+	`, tmpl.Category, tmpl.Key, tmpl.Label, tmpl.Content, nextSortOrder, tmpl.Published).Scan(
+		&created.ID, &created.Category, &created.Key, &created.Label, &created.Content, &created.SortOrder, &created.Published, &created.CreatedAt, &created.UpdatedAt,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -157,7 +167,8 @@ func (s *DBPlatformTemplateService) Create(tmpl object.PlatformTemplate) (object
 	return created, nil
 }
 
-// Update 更新指定 category/key 的平台模板，允许修改 label 与 content。
+// Update 更新指定 category/key 的平台模板。
+// label 与 content 均为可选：传空字符串表示保持原值，避免覆盖历史数据。
 func (s *DBPlatformTemplateService) Update(key, category string, tmpl object.PlatformTemplate) (object.PlatformTemplate, error) {
 	if err := s.ensureSeeded(); err != nil {
 		return object.PlatformTemplate{}, err
@@ -168,24 +179,24 @@ func (s *DBPlatformTemplateService) Update(key, category string, tmpl object.Pla
 	if !isValidCategory(category) {
 		return object.PlatformTemplate{}, errors.New("invalid category")
 	}
-	if tmpl.Label == "" {
-		return object.PlatformTemplate{}, errors.New("label is required")
-	}
 
-	if exists, err := s.labelExists(category, tmpl.Label, key); err != nil {
-		return object.PlatformTemplate{}, err
-	} else if exists {
-		return object.PlatformTemplate{}, errors.New("template label already exists")
+	if tmpl.Label != "" {
+		if exists, err := s.labelExists(category, tmpl.Label, key); err != nil {
+			return object.PlatformTemplate{}, err
+		} else if exists {
+			return object.PlatformTemplate{}, errors.New("template label already exists")
+		}
 	}
 
 	var updated object.PlatformTemplate
 	err := s.db.QueryRow(`
 		UPDATE platform_templates
-		SET label = $1, content = $2
+		SET label = CASE WHEN $1 <> '' THEN $1 ELSE label END,
+		    content = CASE WHEN $2 <> '' THEN $2 ELSE content END
 		WHERE category = $3 AND key = $4
-		RETURNING id, category, key, label, content, sort_order, created_at, updated_at
+		RETURNING id, category, key, label, content, sort_order, published, created_at, updated_at
 	`, tmpl.Label, tmpl.Content, category, key).Scan(
-		&updated.ID, &updated.Category, &updated.Key, &updated.Label, &updated.Content, &updated.SortOrder, &updated.CreatedAt, &updated.UpdatedAt,
+		&updated.ID, &updated.Category, &updated.Key, &updated.Label, &updated.Content, &updated.SortOrder, &updated.Published, &updated.CreatedAt, &updated.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return object.PlatformTemplate{}, errors.New("template not found")
@@ -251,6 +262,30 @@ func (s *DBPlatformTemplateService) UpdateOrder(category string, keys []string) 
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit order update failed: %w", err)
+	}
+	return nil
+}
+
+// Publish 设置指定模板的发布状态。
+func (s *DBPlatformTemplateService) Publish(key, category string, published bool) error {
+	if err := s.ensureSeeded(); err != nil {
+		return err
+	}
+	if key == "" || category == "" {
+		return errors.New("key and category are required")
+	}
+
+	res, err := s.db.Exec(`
+		UPDATE platform_templates
+		SET published = $1
+		WHERE category = $2 AND key = $3
+	`, published, category, key)
+	if err != nil {
+		return fmt.Errorf("publish template failed: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return errors.New("template not found")
 	}
 	return nil
 }

@@ -29,9 +29,18 @@ export interface ReorderTemplatesRequest {
   keys: string[];
 }
 
+export interface PublishTemplateRequest {
+  published: boolean;
+}
+
 export const templateApi = {
-  list: (category: TemplateCategory) =>
-    api.get<DocTemplate[]>(`${TEMPLATES_API_PATH}?category=${encodeURIComponent(category)}`),
+  list: (category: TemplateCategory, publishedOnly = false) => {
+    const params = new URLSearchParams({ category });
+    if (publishedOnly) {
+      params.set('published', 'true');
+    }
+    return api.get<DocTemplate[]>(`${TEMPLATES_API_PATH}?${params.toString()}`);
+  },
 
   create: (category: TemplateCategory, template: CreateTemplateRequest) =>
     api.post<DocTemplate>(TEMPLATES_API_PATH, { category, ...template }),
@@ -50,6 +59,12 @@ export const templateApi = {
   reorder: (category: TemplateCategory, keys: string[]) =>
     api.put<void>(
       `${TEMPLATES_API_PATH}/order?category=${encodeURIComponent(category)}`,
-      { keys },
+      { keys } satisfies ReorderTemplatesRequest,
+    ),
+
+  publish: (category: TemplateCategory, key: string, published: boolean) =>
+    api.put<void>(
+      `${TEMPLATES_API_PATH}/${encodeURIComponent(key)}/publish?category=${encodeURIComponent(category)}`,
+      { published } satisfies PublishTemplateRequest,
     ),
 };

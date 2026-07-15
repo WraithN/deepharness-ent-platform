@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, FileText, Loader2, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Eye, EyeOff, FileText, Loader2, Plus, Trash2 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { MarkdownEditor } from '@/components/MarkdownEditor';
@@ -12,6 +12,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -247,6 +248,18 @@ export const TemplateManagement: React.FC = () => {
     }
   };
 
+  const handlePublish = async (key: string, published: boolean) => {
+    try {
+      await templateApi.publish(activeCategory, key, published);
+      setTemplates((prev) =>
+        prev.map((t) => (t.key === key ? { ...t, published } : t)),
+      );
+      toast.success(published ? '模板已发布' : '模板已下架');
+    } catch (err) {
+      toast.error(getErrorMessage(err, published ? '发布失败' : '下架失败'));
+    }
+  };
+
   const isMaxReached = templates.length >= MAX_TEMPLATES_PER_CATEGORY;
 
   return (
@@ -313,6 +326,15 @@ export const TemplateManagement: React.FC = () => {
                     <div className="flex items-center gap-2 min-w-0">
                       <FileText className="h-4 w-4 shrink-0" />
                       <span className="truncate">{tpl.label}</span>
+                      {tpl.published ? (
+                        <Badge variant="default" className="text-[10px] px-1 py-0 h-4">
+                          已发布
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4">
+                          未发布
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
                       <Button
@@ -369,13 +391,28 @@ export const TemplateManagement: React.FC = () => {
             <>
               <CardHeader className="pb-3 border-b border-border/50 shrink-0">
                 <CardTitle className="text-base flex items-center gap-2">
-                  {selectedTemplate.label}
-                  {saving && (
-                    <span className="text-xs text-muted-foreground flex items-center">
-                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                      保存中...
-                    </span>
-                  )}
+                  <span className="flex items-center gap-2">
+                    {selectedTemplate.label}
+                    {saving && (
+                      <span className="text-xs text-muted-foreground flex items-center">
+                        <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                        保存中...
+                      </span>
+                    )}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant={selectedTemplate.published ? 'outline' : 'default'}
+                    className="ml-auto"
+                    onClick={() => handlePublish(selectedTemplate.key, !selectedTemplate.published)}
+                  >
+                    {selectedTemplate.published ? (
+                      <EyeOff className="h-4 w-4 mr-1" />
+                    ) : (
+                      <Eye className="h-4 w-4 mr-1" />
+                    )}
+                    {selectedTemplate.published ? '下架' : '发布'}
+                  </Button>
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-0 flex-1 min-h-0">
@@ -384,6 +421,7 @@ export const TemplateManagement: React.FC = () => {
                   onChange={handleContentChange}
                   placeholder="在此编辑模板内容..."
                   templates={templates}
+                  showTemplatePicker={false}
                 />
               </CardContent>
             </>

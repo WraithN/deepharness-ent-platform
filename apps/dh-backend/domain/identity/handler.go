@@ -149,6 +149,22 @@ func RequireSuperAdmin(w http.ResponseWriter, r *http.Request) bool {
 	return requireSuperAdmin(w, r)
 }
 
+// IsSuperAdmin 判断当前请求用户是否为超级管理员，不写入响应。
+func IsSuperAdmin(r *http.Request) bool {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		return false
+	}
+	if defaultUserService == nil {
+		return false
+	}
+	user, err := defaultUserService.GetByID(userID)
+	if err != nil {
+		return false
+	}
+	return user.PlatformRole == identity.PlatformRoleSuperAdmin
+}
+
 // requireSuperAdmin 校验当前请求用户是否为超级管理员。
 func requireSuperAdmin(w http.ResponseWriter, r *http.Request) bool {
 	userID, ok := middleware.UserIDFromContext(r.Context())

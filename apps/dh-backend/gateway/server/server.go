@@ -145,9 +145,10 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/tenants/{id}/members", middleware.Auth(http.HandlerFunc(identity.TenantMembers)))
 	mux.Handle("/api/v1/tenants/{id}/members/{userId}", middleware.Auth(http.HandlerFunc(identity.TenantMemberByID)))
 
-	// 平台模板管理（仅超级管理员）
+	// 平台模板：GET 列表已登录即可访问（按角色过滤可见范围），写操作仍需超级管理员
 	mux.Handle("/api/v1/templates", middleware.Auth(http.HandlerFunc(platformtemplate.Templates)))
 	mux.Handle("/api/v1/templates/order", middleware.Auth(http.HandlerFunc(platformtemplate.TemplatesOrder)))
+	mux.Handle("/api/v1/templates/{key}/publish", middleware.Auth(http.HandlerFunc(platformtemplate.TemplatePublish)))
 	mux.Handle("/api/v1/templates/{key}", middleware.Auth(http.HandlerFunc(platformtemplate.TemplateByKey)))
 
 	mux.HandleFunc("/api/v1/workitems", workitem.WorkItems)

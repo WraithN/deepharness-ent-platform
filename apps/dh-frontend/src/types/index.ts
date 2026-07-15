@@ -343,6 +343,7 @@ export interface DocTemplate {
   label: string;
   content: string;
   sortOrder?: number;
+  published?: boolean;
 }
 
 /** 模板分类。 */
