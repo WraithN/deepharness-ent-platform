@@ -88,6 +88,11 @@ export const TemplateManagement: React.FC = () => {
   const pendingSaveRef = useRef<{ category: TemplateCategory; key: string; content: string } | null>(null);
   const listRequestIdRef = useRef(0);
 
+  const generateListRequestId = () => {
+    listRequestIdRef.current += 1;
+    return listRequestIdRef.current;
+  };
+
   const clearTimeoutRef = () => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -142,8 +147,8 @@ export const TemplateManagement: React.FC = () => {
 
   // 切换分类时重新加载对应模板池，并默认选中第一项
   useEffect(() => {
-    listRequestIdRef.current += 1;
-    loadList(activeCategory, listRequestIdRef.current);
+    const currentId = generateListRequestId();
+    loadList(activeCategory, currentId);
   }, [activeCategory, loadList]);
 
   // 切换分类时取消未执行的保存，避免内容被写入错误分类
@@ -212,7 +217,8 @@ export const TemplateManagement: React.FC = () => {
       toast.success('模板已创建');
       setNewLabel('');
       setCreateOpen(false);
-      await loadList(activeCategory, listRequestIdRef.current);
+      const createListId = generateListRequestId();
+      await loadList(activeCategory, createListId);
       setSelectedKey(key);
     } catch (err) {
       toast.error(getErrorMessage(err, '创建模板失败'));
@@ -224,7 +230,8 @@ export const TemplateManagement: React.FC = () => {
     try {
       await templateApi.delete(activeCategory, key);
       toast.success('模板已删除');
-      await loadList(activeCategory, listRequestIdRef.current);
+      const deleteListId = generateListRequestId();
+      await loadList(activeCategory, deleteListId);
     } catch (err) {
       toast.error(getErrorMessage(err, '删除模板失败'));
     } finally {
