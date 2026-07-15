@@ -15,7 +15,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Textarea } from '@/components/ui/textarea';
-import { DOC_TEMPLATES, type DocTemplate } from '@/lib/doc-templates';
+import { useTemplates } from '@/hooks/use-templates';
+import type { DocTemplate, TemplateCategory } from '@/types';
 import { htmlToMarkdown, markdownToHtml } from '@/lib/markdown-html';
 import { cn } from '@/lib/utils';
 
@@ -29,9 +30,12 @@ export interface MarkdownEditorProps {
   readOnly?: boolean;
   /** 最近保存时间，用于底部状态栏展示 */
   lastSavedAt?: Date | null;
-  /** 「常用模板」菜单的模板列表，默认为产品文档模板 DOC_TEMPLATES */
+  /** 「常用模板」菜单的模板列表，默认从平台模板池读取 */
   templates?: DocTemplate[];
 }
+
+/** MarkdownEditor 默认使用的模板分类。 */
+const DEFAULT_TEMPLATE_CATEGORY: TemplateCategory = 'product';
 
 const MODE_TABS: { key: EditorMode; label: string }[] = [
   { key: 'rich', label: '可视化编辑' },
@@ -141,8 +145,10 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   placeholder = '在此编辑文档，支持插入表格、图片、列表…',
   readOnly = false,
   lastSavedAt = null,
-  templates = DOC_TEMPLATES,
+  templates: templatesProp,
 }) => {
+  const { templates: defaultTemplates } = useTemplates(DEFAULT_TEMPLATE_CATEGORY);
+  const templates = templatesProp ?? defaultTemplates;
   const [mode, setMode] = useState<EditorMode>('rich');
   const [editor, setEditor] = useState<IDomEditor | null>(null);
   // 编辑器重建计数器：作为 Editor 的 key，错误恢复时强制重建实例

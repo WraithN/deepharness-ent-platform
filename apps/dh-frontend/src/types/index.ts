@@ -336,3 +336,13 @@ export interface WorkspaceRepository {
   createdAt: string;
   updatedAt: string;
 }
+
+/** 文档模板（Markdown 一键填充）。 */
+export interface DocTemplate {
+  key: string;
+  label: string;
+  content: string;
+}
+
+/** 模板分类。 */
+export type TemplateCategory = 'product' | 'design' | 'development';

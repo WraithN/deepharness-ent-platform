@@ -4,11 +4,9 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { 
   LayoutDashboard, 
   Settings as SettingsIcon,
-  Server,
   Puzzle,
   MessageSquareQuote,
-  FileText,
-  Bot,
+  LayoutTemplate,
   LogOut,
   Terminal,
   Menu,
@@ -25,7 +23,7 @@ const adminNavItems = [
   { path: '/admin/tenants', label: '租户管理', icon: SettingsIcon },
   { path: '/admin/skills', label: '技能管理', icon: Puzzle },
   { path: '/admin/prompts', label: '提示词管理', icon: MessageSquareQuote },
-  { path: '/admin/config', label: '全局配置', icon: FileText },
+  { path: '/admin/templates', label: '模板管理', icon: LayoutTemplate },
 ];
 
 export const AdminLayout: React.FC = () => {
@@ -69,7 +67,7 @@ export const AdminLayout: React.FC = () => {
             {location.pathname === '/admin/tenants' && '管理所有租户、智能体策略与租户管理员'}
             {location.pathname === '/admin/skills' && '审核、上架或禁用系统内的技能'}
             {location.pathname === '/admin/prompts' && '审核、上架或禁用系统内的提示词'}
-            {location.pathname === '/admin/config' && '管理全局的研发规范、智能体与CICD配置'}
+            {location.pathname === '/admin/templates' && '管理平台级需求、设计、研发规范模板'}
           </span>
         </div>
       </div>
@@ -154,7 +152,7 @@ export const AdminLayout: React.FC = () => {
                 {location.pathname === '/admin/tenants' && '管理所有租户、智能体策略与租户管理员'}
                 {location.pathname === '/admin/skills' && '审核、上架或禁用系统内的技能'}
                 {location.pathname === '/admin/prompts' && '审核、上架或禁用系统内的提示词'}
-                {location.pathname === '/admin/config' && '管理全局的研发规范、智能体与CICD配置'}
+                {location.pathname === '/admin/templates' && '管理平台级需求、设计、研发规范模板'}
               </p>
             </div>
           </div>

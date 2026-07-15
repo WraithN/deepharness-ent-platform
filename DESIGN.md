@@ -362,7 +362,7 @@ B 端设置页遵循「导航 Tab 全部左对齐，与内容区左侧基准线�
 
 ### 11.3 超级管理员后台
 
-- **布局**：与主应用类似，但导航项变为管理员专用（数据大盘、空间管理、技能/提示词审核、全局配置）。
+- **布局**：与主应用类似，但导航项变为管理员专用（数据大盘、租户管理、技能管理、提示词管理、模板管理）。
 
 ---
 
@@ -505,6 +505,7 @@ apps/dh-frontend/src/
 | 2026-07-14 | 智能会话斜杠指令改为原子文本块：选中后输入框渲染为紫色高亮块（`bg-violet-500/10 text-violet-600 dark:text-violet-400` + 阴影），光标定位到块尾；Backspace/Delete 在块内部或边界时整体移除该指令块；复用 @文档提及 的 `findAtomicRange` 与叠层高亮对齐方案，指令 token 尾随空格保证前缀匹配安全 | Agent |
 | 2026-07-14 | 全局主题替换为 Aurora 极光配色：浅色改为蓝灰清爽主题，深色改为深空蓝灰分层主题；主品牌色统一为极光蓝 `#3B82F6`，紫色仅用于渐变；同步更新 CodeBlock、Diff、Dashboard 图表、ProjectCode 架构图等组件硬编码颜色 | Agent |
 | 2026-07-14 | 深色主题精修：页面/侧边栏/顶部统一为 `#0F172A`，对话窗口使用 `#1E293B` 面板色并加大阴影，边框统一为带蓝调弱半透明 `#242D40`，顶部标题栏去掉毛玻璃补丁，快捷指令卡片 hover 增加蓝色发光 | Agent |
+| 2026-07-13 | 超管后台移除「全局配置」入口，新增「模板管理」独立页面：集中管理需求规范/设计规范/研发规范三类平台级模板池，模板数据持久化在 `localStorage`，空间设置、仓库规范弹窗与 MarkdownEditor 默认「常用模板」均从统一 `template-store` 读取；原 `/admin/config` 下的规范/CICD/智能体范围配置 tab 全部下线，智能体启用策略下沉到租户管理的 `AgentPolicyForm` | Agent |
 | 2026-07-13 | Aurora 极光质感与动效规范落地：Button/Input/Textarea/Select/Dialog/AlertDialog/Card 统一使用 `transition-all duration-250 ease-smooth`、Hover 上浮 + `shadow-glow`、点击缩放；新增浅色 `--panel` 变量；Chat/Dashboard/Layout/AdminLayout 等核心页面批量应用 `.glass-panel` / `.glass-card` / `.click-card`；DESIGN.md 动效与特效章节同步更新 | Agent |
 | 2026-07-13 | 代码编辑器 IDE 暗色观感重构：`ProjectCode` 代码区/资源管理器/标签栏按 L0~L3 分层（`#0F172A`/`#1E293B`/`#2A374B`/`#334155`）；分割线统一为 `rgba(148,163,184,0.15)`；选中文件左侧品牌色边框、激活标签底部品牌色边框并连通代码区；`CodeBlock` 新增 `auroraDark` 语法高亮主题（关键字蓝/函数紫/字符串绿/类型橙/注释灰）与 `variant="editor"` 沉浸式编辑器模式；DESIGN.md 新增 IDE 规范章节 | Agent |
 | 2026-07-13 | Aurora 统一胶囊标签栏：`ProjectCode` 页一级仓库/分支栏与二级视图模式 Tab 统一为 `.aurora-tab-bar` / `.aurora-tab-item` 胶囊体系，一级深灰蓝玻璃胶囊文字高亮，二级蓝紫渐变实底选中，彻底消除白边描边割裂感；DESIGN.md 新增 5.9 标签栏规范 | Agent |
@@ -516,4 +517,6 @@ apps/dh-frontend/src/
 | 2026-07-14 | MarkdownEditor 三级 Tab 轻量优化：取消厚重胶囊，改为高度 42px、间距 24px 的线型下划线 Tab，选中态使用蓝紫渐变下划线 + 品牌蓝加粗文字；同步通过 CSS 变量重写 WangEditor 亮/暗配色，解决暗色模式下工具栏白底/图标不可见问题；DESIGN.md 5.9 三级规范更新 | Agent |
 | 2026-07-14 | 租户智能体策略配置重构：新建/编辑租户弹窗内「允许使用的 Coding Agent」与「默认模型配置」上下重复列表合并为可折叠 Agent 卡片组，每张卡片头部含启用复选框、状态标签、锁定按钮、展开箭头；卡片体内完成启用开关、自定义模型、温度、Token 数等参数配置；支持单个/多个 Agent 独立锁定，锁定后配置区自动灰化禁用；未启用卡片整体弱化且不可展开；样式沿用 Aurora 卡片规范（`bg-card border-border/50 rounded-xl`）与 0.2s 过渡 | Agent |
 | 2026-07-14 | 超管技能/提示词管理标签样式与空间管理对齐：分类筛选条改为 `rounded-full` 药丸按钮（选中 `default`/未选中 `outline`）；分类管理标签改用 `Badge variant="secondary"` 默认尺寸，删除图标从 `Trash2` 改为 `X`；表格内多分类折叠标签从 `bg-primary/10` 改为 `bg-secondary text-secondary-foreground`；DESIGN.md 5.7 筛选条规范补充药丸分类筛选说明 | Agent |
+| 2026-07-13 | 修复模板管理创建模板后条目消失并自动跳转到下一分类的问题：分类切换器由 Radix `Tabs` 改为自定义按钮组，避免弹窗关闭时的焦点/事件冲突；新增租户行操作「复制」：点击后弹出「复制租户」弹框，自动清空租户名称与成员，保留原租户智能体策略等其他配置，名称必填 | Agent |
+| 2026-07-15 | 平台模板持久化到 PostgreSQL：新增 `platformtemplate` 后端模块与 `platform_templates` 表，超管模板管理页通过 `/api/v1/templates` CRUD 管理三类模板（产品规范/设计规范/研发规范），首次启动自动 seed 默认模板；前端移除 `localStorage` 模板存储，新增 `template-api.ts` 与 `useTemplates` hook，`MarkdownEditor`、`空间设置`、`仓库规范弹窗` 均从后端读取；租户编辑弹框新增「添加成员」功能，可输入邮箱/姓名添加租户成员并指定管理员，默认密码 123456 | Agent |
 | 2026-07-14 | 表格行操作下拉菜单极光玻璃化：统一 `DropdownMenuContent` 为 `bg-popover/95 backdrop-blur-xl border-border/50 rounded-lg shadow-lg`；`DropdownMenuItem` 统一高度 32px、图标+文字、hover 浅蓝底高亮；危险项（删除）使用 `text-destructive focus:bg-destructive/10 focus:text-destructive` 并与普通项用分隔线区隔；触发按钮 `ghost` 增加 hover/open 浅蓝高亮；技能/提示词/租户管理下拉菜单补充图标；DESIGN.md 5.7 行操作规范更新 | Agent |

@@ -11,6 +11,8 @@ export const tenantApi = {
   delete: (id: string) => api.delete<void>(`/v1/tenants/${id}`),
 
   members: (tenantId: string) => api.get<TenantMember[]>(`/v1/tenants/${tenantId}/members`),
+  addMember: (tenantId: string, req: { email: string; name: string }) =>
+    api.post<TenantMember>(`/v1/tenants/${tenantId}/members`, req),
   setAdmin: (tenantId: string, userId: string, isAdmin: boolean) =>
     api.put<void>(`/v1/tenants/${tenantId}/members/${userId}`, { isAdmin }),
 };

@@ -22,6 +22,7 @@ import { AdminPage } from "@/pages/AdminPage";
 import { Profile } from "@/pages/Profile";
 
 import { AdminDashboard } from "@/pages/AdminDashboard";
+import { TemplateManagement } from "@/pages/TemplateManagement";
 
 export const routes: RouteObject[] = [
   { path: "/login", element: <Login /> },
@@ -44,7 +45,7 @@ export const routes: RouteObject[] = [
       { path: "tenants", element: <AdminPage /> },
       { path: "skills", element: <AdminPage /> },
       { path: "prompts", element: <AdminPage /> },
-      { path: "config", element: <AdminPage /> },
+      { path: "templates", element: <TemplateManagement /> },
     ],
   },
   {

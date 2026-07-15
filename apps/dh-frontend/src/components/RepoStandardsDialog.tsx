@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { RepoStandardFiles } from '@/lib/repository-api';
 import { repositoryApi } from '@/lib/repository-api';
-import { CODING_STANDARD_TEMPLATES, DESIGN_STANDARD_TEMPLATES } from '@/lib/standard-templates';
+import { useTemplates } from '@/hooks/use-templates';
 import type { WorkspaceRepository } from '@/types';
 
 /** 规范文件在仓库根目录的路径。 */
@@ -30,6 +30,9 @@ interface RepoStandardsDialogProps {
  * 规范文件以仓库内文件为准，保存即 git commit 回项目。
  */
 export function RepoStandardsDialog({ workspaceId, repo, isReadOnly }: RepoStandardsDialogProps) {
+  const codingStandardTemplates = useTemplates('development');
+  const designStandardTemplates = useTemplates('design');
+
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<RepoStandardFiles | null>(null);
@@ -169,6 +172,12 @@ export function RepoStandardsDialog({ workspaceId, repo, isReadOnly }: RepoStand
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="engineering" className="flex-1 min-h-0 mt-4">
+                  {codingStandardTemplates.loading && (
+                    <div className="mb-2 flex items-center justify-end text-xs text-muted-foreground">
+                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                      加载模板中...
+                    </div>
+                  )}
                   <MarkdownEditor
                     value={agentsMd}
                     onChange={v => {
@@ -177,10 +186,16 @@ export function RepoStandardsDialog({ workspaceId, repo, isReadOnly }: RepoStand
                     }}
                     placeholder="输入工程规范，或点击智能检测由 AI 生成（AGENTS.md）..."
                     readOnly={editorsDisabled}
-                    templates={CODING_STANDARD_TEMPLATES}
+                    templates={codingStandardTemplates.templates}
                   />
                 </TabsContent>
                 <TabsContent value="design" className="flex-1 min-h-0 mt-4">
+                  {designStandardTemplates.loading && (
+                    <div className="mb-2 flex items-center justify-end text-xs text-muted-foreground">
+                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                      加载模板中...
+                    </div>
+                  )}
                   <MarkdownEditor
                     value={designMd}
                     onChange={v => {
@@ -189,7 +204,7 @@ export function RepoStandardsDialog({ workspaceId, repo, isReadOnly }: RepoStand
                     }}
                     placeholder="输入设计规范，或点击智能检测由 AI 生成（DESIGN.md）..."
                     readOnly={editorsDisabled}
-                    templates={DESIGN_STANDARD_TEMPLATES}
+                    templates={designStandardTemplates.templates}
                   />
                 </TabsContent>
               </Tabs>

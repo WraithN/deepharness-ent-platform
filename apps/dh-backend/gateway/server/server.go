@@ -22,6 +22,8 @@ import (
 	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant"
 	paservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/platformtemplate"
+	platformtemplateservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/platformtemplate/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent"
 	pragentservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc"
@@ -73,6 +75,7 @@ func New(cfg config.Config) http.Handler {
 	initWorkspacePromptService(db)
 	initRepositoryService(db, cfg)
 	initProductDocService(db, cfg.WorkspaceRoot)
+	initPlatformTemplateService(db)
 	initTeamService(db, userService)
 
 	// Handlers
@@ -141,6 +144,10 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/tenants/{id}", middleware.Auth(http.HandlerFunc(identity.TenantByID)))
 	mux.Handle("/api/v1/tenants/{id}/members", middleware.Auth(http.HandlerFunc(identity.TenantMembers)))
 	mux.Handle("/api/v1/tenants/{id}/members/{userId}", middleware.Auth(http.HandlerFunc(identity.TenantMemberByID)))
+
+	// 平台模板管理（仅超级管理员）
+	mux.Handle("/api/v1/templates", middleware.Auth(http.HandlerFunc(platformtemplate.Templates)))
+	mux.Handle("/api/v1/templates/{key}", middleware.Auth(http.HandlerFunc(platformtemplate.TemplateByKey)))
 
 	mux.HandleFunc("/api/v1/workitems", workitem.WorkItems)
 	mux.HandleFunc("/api/v1/workitem-platforms", workitem.Platforms)
@@ -368,6 +375,11 @@ func initWorkspacePromptService(db *sql.DB) {
 func initProductDocService(db *sql.DB, workspaceRoot string) {
 	log.Printf("[ProductDoc] using postgres storage, workspaceRoot=%s", workspaceRoot)
 	productdoc.Init(productdocservice.NewDBProductDocService(db, workspaceRoot))
+}
+
+func initPlatformTemplateService(db *sql.DB) {
+	log.Println("[PlatformTemplate] using postgres storage")
+	platformtemplate.Init(platformtemplateservice.NewDBPlatformTemplateService(db))
 }
 
 func initProductSpaceService(db *sql.DB, workspaceRoot string, workspaceService workspaceservice.WorkspaceService) {

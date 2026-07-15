@@ -36,7 +36,7 @@ import { ApiError } from '@/lib/api';
 import { isBuiltinPromptCategoryName, sortPromptCategoriesByBuiltin } from '@/lib/prompt-categories';
 import { repositoryApi } from '@/lib/repository-api';
 import { getPlatformRoleLabel, getSubRoleLabel, PLATFORM_ROLE, type PlatformRole, SPACE_ROLE, type SpaceRole, SUB_ROLE, type SubRole } from '@/lib/role-constants';
-import { CODING_STANDARD_TEMPLATES, DESIGN_STANDARD_TEMPLATES } from '@/lib/standard-templates';
+import { useTemplates } from '@/hooks/use-templates';
 import { teamApi } from '@/lib/team-api';
 import { formatDateTime } from '@/lib/utils';
 import { workspaceApi } from '@/lib/workspace-api';
@@ -308,6 +308,9 @@ export const Settings: React.FC = () => {
   const isReadOnly = !canEditSettings;
   const { user, membership } = useAuth();
   const workspaceId = membership?.workspaceId ?? '';
+
+  const codingStandardTemplates = useTemplates('development');
+  const designStandardTemplates = useTemplates('design');
 
   useEffect(() => {
     const tab = searchParams.get('tab');
@@ -1427,12 +1430,18 @@ export const Settings: React.FC = () => {
                       />
                     </div>
                   )}
+                  {codingStandardTemplates.loading && (
+                    <div className="mb-2 flex items-center justify-end text-xs text-muted-foreground">
+                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                      加载模板中...
+                    </div>
+                  )}
                   <MarkdownEditor
                     value={settings.codingStandard}
                     onChange={value => setSettings({ ...settings, codingStandard: value })}
                     placeholder="请输入编码规范（支持 Markdown）..."
                     readOnly={isReadOnly}
-                    templates={CODING_STANDARD_TEMPLATES}
+                    templates={codingStandardTemplates.templates}
                   />
                 </TabsContent>
                 <TabsContent value="design">
@@ -1445,12 +1454,18 @@ export const Settings: React.FC = () => {
                       />
                     </div>
                   )}
+                  {designStandardTemplates.loading && (
+                    <div className="mb-2 flex items-center justify-end text-xs text-muted-foreground">
+                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                      加载模板中...
+                    </div>
+                  )}
                   <MarkdownEditor
                     value={settings.designStandard}
                     onChange={value => setSettings({ ...settings, designStandard: value })}
                     placeholder="请输入设计规范（支持 Markdown）..."
                     readOnly={isReadOnly}
-                    templates={DESIGN_STANDARD_TEMPLATES}
+                    templates={designStandardTemplates.templates}
                   />
                 </TabsContent>
               </Tabs>

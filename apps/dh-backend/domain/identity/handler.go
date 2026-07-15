@@ -144,6 +144,11 @@ func SaveProfile(w http.ResponseWriter, r *http.Request) {
 
 // ── 租户管理 ──
 
+// RequireSuperAdmin 是 requireSuperAdmin 的导出包装，供其他模块复用超级管理员鉴权。
+func RequireSuperAdmin(w http.ResponseWriter, r *http.Request) bool {
+	return requireSuperAdmin(w, r)
+}
+
 // requireSuperAdmin 校验当前请求用户是否为超级管理员。
 func requireSuperAdmin(w http.ResponseWriter, r *http.Request) bool {
 	userID, ok := middleware.UserIDFromContext(r.Context())
@@ -254,7 +259,7 @@ func TenantByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// TenantMembers 处理 GET /api/v1/tenants/{id}/members。
+// TenantMembers 处理 GET /api/v1/tenants/{id}/members 与 POST /api/v1/tenants/{id}/members。
 func TenantMembers(w http.ResponseWriter, r *http.Request) {
 	if !requireSuperAdmin(w, r) {
 		return
@@ -263,13 +268,42 @@ func TenantMembers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	members, err := defaultUserService.ListTenantMembers(id)
-	if err != nil {
-		handler.HandleServiceError(w, err, "tenant not found", "failed to list tenant members")
-		return
+	switch r.Method {
+	case http.MethodGet:
+		members, err := defaultUserService.ListTenantMembers(id)
+		if err != nil {
+			handler.HandleServiceError(w, err, "tenant not found", "failed to list tenant members")
+			return
+		}
+		handler.SetJSONHeader(w)
+		json.NewEncoder(w).Encode(members)
+	case http.MethodPost:
+		var req struct {
+			Email string `json:"email"`
+			Name  string `json:"name"`
+		}
+		if !handler.DecodeJSONBody(w, r, &req) {
+			return
+		}
+		if req.Email == "" {
+			handler.WriteJSONError(w, http.StatusBadRequest, 1, "email is required")
+			return
+		}
+		if req.Name == "" {
+			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
+			return
+		}
+		member, err := defaultUserService.AddTenantMember(id, req.Email, req.Name)
+		if err != nil {
+			handler.HandleServiceError(w, err, "tenant not found", "failed to add tenant member")
+			return
+		}
+		handler.SetJSONHeader(w)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(member)
+	default:
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
 	}
-	handler.SetJSONHeader(w)
-	json.NewEncoder(w).Encode(members)
 }
 
 // TenantMemberByID 处理 PUT /api/v1/tenants/{id}/members/{userId} — 设置/取消租户管理员。

@@ -1,4 +1,4 @@
-import { Bot, Eye, Lock, MoreHorizontal, Pencil, Plus, Save, Trash2, Users } from 'lucide-react';
+import { Copy, Eye, Lock, MoreHorizontal, Pencil, Plus, Trash2, UserPlus, Users } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -28,8 +28,6 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClientPagination } from '@/hooks/use-client-pagination';
 import { agentConfigApi } from '@/lib/agent-config-api';
@@ -38,23 +36,13 @@ import { tenantApi } from '@/lib/tenant-api';
 import { formatDateTime } from '@/lib/utils';
 import type { AgentType, Tenant, TenantMember } from '@/types';
 
+// 新成员默认密码（与后端 schema 及 AddTenantMember 保持一致）
+const DEFAULT_MEMBER_PASSWORD = '123456';
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 // 空间管理已对接真实 API，不再使用 mock 数据
 export const AdminPage: React.FC = () => {
   const location = useLocation();
-  const [configTab, setConfigTab] = useState('agents');
-  
-  const getTitle = () => {
-    switch (location.pathname) {
-      case '/admin/tenants': return '租户管理';
-      case '/admin/skills': return '技能管理';
-      case '/admin/prompts': return '提示词管理';
-      case '/admin/config': return '全局配置';
-      default: return 'DeepHarness管理后台';
-    }
-  };
-
-  const isConfig = location.pathname === '/admin/config';
-
   const { user } = useAuth();
 
   // ── 租户管理状态 ──
@@ -65,6 +53,7 @@ export const AdminPage: React.FC = () => {
   const paginatedTenants = tenants.slice(tenantPagination.startIndex, tenantPagination.endIndex);
 
   const [newTenantOpen, setNewTenantOpen] = useState(false);
+  const [isCopyingTenant, setIsCopyingTenant] = useState(false);
   const [newTenantName, setNewTenantName] = useState('');
 
   const [editTenantOpen, setEditTenantOpen] = useState(false);
@@ -79,6 +68,9 @@ export const AdminPage: React.FC = () => {
   // 租户成员管理状态（嵌入编辑弹窗）
   const [tenantMembers, setTenantMembers] = useState<TenantMember[]>([]);
   const [tenantMembersLoading, setTenantMembersLoading] = useState(false);
+  const [newMemberEmail, setNewMemberEmail] = useState('');
+  const [newMemberName, setNewMemberName] = useState('');
+  const [isAddingMember, setIsAddingMember] = useState(false);
 
   const defaultAgentPolicy = (): AgentPolicy => ({
     agentConfigLocked: false,
@@ -132,6 +124,19 @@ export const AdminPage: React.FC = () => {
     await openEditTenant(tenant);
   };
 
+  /** 复制租户：清空名称与成员，保留智能体策略等其他配置。 */
+  const duplicateTenant = (tenant: Tenant) => {
+    setNewTenantName('');
+    setNewAgentPolicy({
+      agentConfigLocked: tenant.agentConfigLocked ?? false,
+      lockedAgentKeys: tenant.lockedAgentKeys ?? [],
+      allowedAgentKeys: tenant.allowedAgentKeys ?? [],
+      defaultAgentConfigs: tenant.defaultAgentConfigs ?? {},
+    });
+    setIsCopyingTenant(true);
+    setNewTenantOpen(true);
+  };
+
   const openDeleteTenant = (tenant: Tenant) => {
     setDeletingTenant(tenant);
     setDeleteTenantOpen(true);
@@ -156,6 +161,7 @@ export const AdminPage: React.FC = () => {
       setNewTenantOpen(false);
       setNewTenantName('');
       setNewAgentPolicy(defaultAgentPolicy());
+      setIsCopyingTenant(false);
       await loadTenants();
       await openEditTenant(created);
     } catch {
@@ -222,11 +228,37 @@ export const AdminPage: React.FC = () => {
     }
   };
 
+  const handleAddMember = async () => {
+    if (!editingTenant) return;
+    const email = newMemberEmail.trim();
+    const name = newMemberName.trim();
+    if (!email || !name) {
+      toast.error('邮箱和姓名不能为空');
+      return;
+    }
+    if (!EMAIL_REGEX.test(email)) {
+      toast.error('请输入有效的邮箱地址');
+      return;
+    }
+    setIsAddingMember(true);
+    try {
+      await tenantApi.addMember(editingTenant.id, { email, name });
+      setNewMemberEmail('');
+      setNewMemberName('');
+      await loadTenantMembers(editingTenant.id);
+      toast.success('成员添加成功');
+    } catch {
+      toast.error('添加成员失败');
+    } finally {
+      setIsAddingMember(false);
+    }
+  };
+
   const [agentTypes, setAgentTypes] = useState<AgentType[]>([]);
   const [agentTypesLoading, setAgentTypesLoading] = useState(false);
 
   useEffect(() => {
-    if (location.pathname !== '/admin/config' && location.pathname !== '/admin/tenants') return;
+    if (location.pathname !== '/admin/tenants') return;
     setAgentTypesLoading(true);
     agentConfigApi.listAgentTypes()
       .then(setAgentTypes)
@@ -258,13 +290,22 @@ export const AdminPage: React.FC = () => {
                 <h4 className="text-xl font-semibold text-foreground">租户列表 ({tenants.length})</h4>
                 <p className="text-muted-foreground mt-1 text-sm">管理平台租户及其智能体策略</p>
               </div>
-            <Dialog open={newTenantOpen} onOpenChange={setNewTenantOpen}>
+            <Dialog open={newTenantOpen} onOpenChange={(open) => {
+              if (!open) {
+                setIsCopyingTenant(false);
+              }
+              setNewTenantOpen(open);
+            }}>
               <DialogTrigger asChild>
-                <Button><Plus className="h-4 w-4 mr-2"/>新增租户</Button>
+                <Button onClick={() => {
+                  setIsCopyingTenant(false);
+                  setNewTenantName('');
+                  setNewAgentPolicy(defaultAgentPolicy());
+                }}><Plus className="h-4 w-4 mr-2"/>新增租户</Button>
               </DialogTrigger>
               <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
                 <DialogHeader>
-                  <DialogTitle>新增租户</DialogTitle>
+                  <DialogTitle>{isCopyingTenant ? '复制租户' : '新增租户'}</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
@@ -357,6 +398,9 @@ export const AdminPage: React.FC = () => {
                             <DropdownMenuItem onClick={() => editTenant(t)}>
                               <Pencil className="h-4 w-4" /> 编辑
                             </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => duplicateTenant(t)}>
+                              <Copy className="h-4 w-4" /> 复制
+                            </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               className="text-destructive focus:bg-destructive/10 focus:text-destructive"
@@ -416,6 +460,46 @@ export const AdminPage: React.FC = () => {
                     <div className="flex items-center gap-2 text-sm font-medium">
                       <Users className="h-4 w-4" /> 租户成员与管理员
                     </div>
+                    {!viewMode && (
+                      <div className="space-y-3 rounded-lg border border-border/50 bg-muted/20 p-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <Label htmlFor="new-member-email">邮箱</Label>
+                            <Input
+                              id="new-member-email"
+                              type="email"
+                              placeholder="输入成员邮箱"
+                              value={newMemberEmail}
+                              onChange={e => setNewMemberEmail(e.target.value)}
+                              disabled={isAddingMember}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="new-member-name">姓名</Label>
+                            <Input
+                              id="new-member-name"
+                              placeholder="输入成员姓名"
+                              value={newMemberName}
+                              onChange={e => setNewMemberName(e.target.value)}
+                              disabled={isAddingMember}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                          <Button
+                            onClick={handleAddMember}
+                            disabled={!newMemberEmail.trim() || !newMemberName.trim() || isAddingMember}
+                            size="sm"
+                          >
+                            <UserPlus className="h-4 w-4 mr-2" />
+                            {isAddingMember ? '添加中...' : '添加成员'}
+                          </Button>
+                          <p className="text-xs text-muted-foreground">
+                            新成员默认密码为 {DEFAULT_MEMBER_PASSWORD}，首次登录后建议修改。
+                          </p>
+                        </div>
+                      </div>
+                    )}
                     {tenantMembersLoading ? (
                       <div className="py-4 text-center text-sm text-muted-foreground">加载中...</div>
                     ) : (
@@ -505,121 +589,6 @@ export const AdminPage: React.FC = () => {
       {location.pathname === '/admin/prompts' && <PromptManagement />}
 
       {location.pathname === '/admin/skills' && <SkillManagement />}
-
-      {isConfig && (
-        <Tabs value={configTab} onValueChange={setConfigTab} className="w-full mb-6">
-          <TabsList className="aurora-tab-bar level-1 mb-4">
-            <TabsTrigger value="agents" className="aurora-tab-item level-1">智能体设置</TabsTrigger>
-            <TabsTrigger value="norms" className="aurora-tab-item level-1">规范设置</TabsTrigger>
-            <TabsTrigger value="cicd" className="aurora-tab-item level-1">CICD设置</TabsTrigger>
-          </TabsList>
-          
-          <TabsContent value="norms" className="pt-4">
-            <Card className="soft-shadow border-none">
-              <CardContent className="pt-6 space-y-4">
-                <Tabs defaultValue="coding">
-                  <TabsList className="aurora-tab-bar level-2 mb-4">
-                    <TabsTrigger value="coding" className="aurora-tab-item level-2">编码规范</TabsTrigger>
-                    <TabsTrigger value="design" className="aurora-tab-item level-2">设计规范</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="coding">
-                    <Textarea className="min-h-[300px] font-mono text-sm" defaultValue="# 全局编码规范\n\n1. 所有组件必须使用 TypeScript\n2. 样式使用 Tailwind CSS\n" />
-                  </TabsContent>
-                  <TabsContent value="design">
-                    <Textarea className="min-h-[300px] font-mono text-sm" defaultValue="# 全局设计规范\n\n1. 颜色应遵循 WCAG 2.1 标准\n2. 间距必须为 4px 的倍数\n" />
-                  </TabsContent>
-                </Tabs>
-                <Button onClick={() => toast.success('全局规范保存成功')}><Save className="h-4 w-4 mr-2" /> 保存规范</Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
-          
-          <TabsContent value="cicd" className="pt-4">
-            <Card className="soft-shadow border-none">
-              <CardContent className="pt-6 space-y-4">
-                <div className="space-y-4 max-w-xl">
-                  <div className="space-y-2">
-                    <Label>默认 GitLab API URL</Label>
-                    <Input defaultValue="https://gitlab.com/api/v4" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>全局 Runner 标识 (Tags)</Label>
-                    <Input defaultValue="docker, linux" />
-                  </div>
-                  <div className="flex items-center justify-between p-4 border rounded-lg">
-                    <div>
-                      <h4 className="font-medium text-sm">强制代码审查</h4>
-                      <p className="text-xs text-muted-foreground mt-1">合并到主分支前强制要求至少一次代码审查通过</p>
-                    </div>
-                    <Switch id="force-code-review" defaultChecked />
-                  </div>
-                  <Button onClick={() => toast.success('CICD配置保存成功')}><Save className="h-4 w-4 mr-2" /> 保存配置</Button>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-          
-          <TabsContent value="agents" className="pt-4">
-            {/* 列表样式遵循 DESIGN.md 5.7 列表/表格统一格式 */}
-            <Card className="soft-shadow border border-border/50 rounded-xl overflow-hidden bg-card">
-              <CardContent className="p-6">
-                <div className="mb-5">
-                  <h4 className="text-xl font-semibold text-foreground flex items-center gap-2">
-                    <Bot className="h-5 w-5 text-primary" /> 智能体范围配置
-                  </h4>
-                  <p className="text-muted-foreground mt-1 text-sm">控制平台内各智能体是否可供租户使用。</p>
-                </div>
-                {agentTypesLoading ? (
-                  <p className="py-8 text-center text-muted-foreground">加载中...</p>
-                ) : (
-                  <div className="overflow-x-auto rounded-lg border border-border/50">
-                    <Table className="min-w-max text-[15px]">
-                      <TableHeader className="bg-muted/30">
-                        <TableRow className="hover:bg-transparent">
-                          <TableHead className="px-4 py-4 font-medium text-muted-foreground">智能体</TableHead>
-                          <TableHead className="px-4 py-4 font-medium text-muted-foreground">标识</TableHead>
-                          <TableHead className="px-4 py-4 font-medium text-muted-foreground">描述</TableHead>
-                          <TableHead className="px-4 py-4 font-medium text-muted-foreground">状态</TableHead>
-                          <TableHead className="px-4 py-4 font-medium text-muted-foreground text-right">操作</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {agentTypes.length === 0 && (
-                          <TableRow>
-                            <TableCell colSpan={5} className="text-center text-muted-foreground py-8">暂无智能体</TableCell>
-                          </TableRow>
-                        )}
-                        {agentTypes.map(at => (
-                          <TableRow key={at.key} className="transition-colors hover:bg-primary/5">
-                            <TableCell className="px-4 py-5 font-medium">{at.name}</TableCell>
-                            <TableCell className="px-4 py-5">
-                              <Badge variant="outline" className="rounded-lg px-3 py-1.5">{at.key}</Badge>
-                            </TableCell>
-                            <TableCell className="px-4 py-5 max-w-[300px] truncate text-muted-foreground">{at.description}</TableCell>
-                            <TableCell className="px-4 py-5">
-                              {at.enabled ? (
-                                <Badge className="rounded-lg px-3 py-1.5 font-medium bg-green-100 text-green-700 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400">已启用</Badge>
-                              ) : (
-                                <Badge variant="outline" className="rounded-lg px-3 py-1.5">已禁用</Badge>
-                              )}
-                            </TableCell>
-                            <TableCell className="px-4 py-5 text-right">
-                              <Switch
-                                checked={at.enabled}
-                                onCheckedChange={(checked) => toggleAgentType(at.key, checked)}
-                              />
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      )}
     </div>
   );
 };

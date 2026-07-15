@@ -29,7 +29,8 @@ services:
       - ../database/workspace/schema.sql:/docker-entrypoint-initdb.d/06_workspace.sql:ro
       - ../database/productdoc/schema.sql:/docker-entrypoint-initdb.d/07_productdoc.sql:ro
       - ../database/audit/schema.sql:/docker-entrypoint-initdb.d/08_audit.sql:ro
-      - ../database/productdoc/prototype-comments.sql:/docker-entrypoint-initdb.d/09_prototype_comments.sql:ro
+      - ../database/platform/schema.sql:/docker-entrypoint-initdb.d/09_platform.sql:ro
+      - ../database/productdoc/prototype-comments.sql:/docker-entrypoint-initdb.d/10_prototype_comments.sql:ro
       - ../database/productdoc/share-comments.sql:/docker-entrypoint-initdb.d/10_share_comments.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U deepharness -d deepharness"]

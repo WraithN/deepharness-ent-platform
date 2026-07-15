@@ -17,10 +17,10 @@ import (
 
 // TenantPolicy 表示超管为租户设置的智能体策略。
 type TenantPolicy struct {
-	AgentConfigLocked   bool                                   `json:"agentConfigLocked"`
-	LockedAgentKeys     []string                               `json:"lockedAgentKeys"`
-	AllowedAgentKeys    []string                               `json:"allowedAgentKeys"`
-	DefaultAgentConfigs map[string]AgentConfigSnapshot         `json:"defaultAgentConfigs"`
+	AgentConfigLocked   bool                           `json:"agentConfigLocked"`
+	LockedAgentKeys     []string                       `json:"lockedAgentKeys"`
+	AllowedAgentKeys    []string                       `json:"allowedAgentKeys"`
+	DefaultAgentConfigs map[string]AgentConfigSnapshot `json:"defaultAgentConfigs"`
 }
 
 // AgentConfigSnapshot 表示超管为某个 agent 预设的默认配置快照。
@@ -36,9 +36,9 @@ type AgentConfigSnapshot struct {
 
 // TenantMember 表示租户下的成员信息。
 type TenantMember struct {
-	ID           string               `json:"id"`
-	Name         string               `json:"name"`
-	Email        string               `json:"email"`
+	ID           string                `json:"id"`
+	Name         string                `json:"name"`
+	Email        string                `json:"email"`
 	PlatformRole identity.PlatformRole `json:"platformRole"`
 }
 
@@ -57,6 +57,7 @@ type UserService interface {
 	UpdateTenant(id, name string, policy TenantPolicy) (identity.Tenant, error)
 	DeleteTenant(id string) error
 	ListTenantMembers(tenantID string) ([]TenantMember, error)
+	AddTenantMember(tenantID, email, name string) (TenantMember, error)
 	SetTenantAdmin(tenantID, userID string, isAdmin bool) error
 }
 
@@ -190,7 +191,10 @@ func (s *DBUserService) SaveProfile(userID, name, avatarURL, description, sshKey
 
 // ── 租户管理 ──
 
-const systemTenantID = "__system__"
+const (
+	systemTenantID        = "__system__"
+	defaultMemberPassword = "123456"
+)
 
 func scanTenant(row interface {
 	Scan(dest ...any) error
@@ -328,6 +332,42 @@ func (s *DBUserService) ListTenantMembers(tenantID string) ([]TenantMember, erro
 	return result, rows.Err()
 }
 
+func (s *DBUserService) AddTenantMember(tenantID, email, name string) (TenantMember, error) {
+	var member TenantMember
+	if tenantID == "" {
+		return TenantMember{}, errors.New("tenant id is required")
+	}
+	if tenantID == systemTenantID {
+		return TenantMember{}, errors.New("cannot add member to system tenant")
+	}
+	// 校验目标租户存在
+	if _, err := s.GetTenant(tenantID); err != nil {
+		return TenantMember{}, err
+	}
+	if email == "" {
+		return TenantMember{}, errors.New("email is required")
+	}
+	if name == "" {
+		return TenantMember{}, errors.New("name is required")
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(defaultMemberPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return TenantMember{}, fmt.Errorf("hash password failed: %w", err)
+	}
+
+	id := generateID()
+	err = s.db.QueryRow(`
+		INSERT INTO users (id, tenant_id, email, name, platform_role, password_hash)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, name, email, platform_role
+	`, id, tenantID, email, name, identity.PlatformRoleUser, string(hash)).Scan(&member.ID, &member.Name, &member.Email, &member.PlatformRole)
+	if err != nil {
+		return TenantMember{}, fmt.Errorf("add tenant member failed: %w", err)
+	}
+	return member, nil
+}
+
 func (s *DBUserService) SetTenantAdmin(tenantID, userID string, isAdmin bool) error {
 	if tenantID == systemTenantID {
 		return errors.New("cannot set admin for system tenant")
@@ -351,4 +391,3 @@ func (s *DBUserService) SetTenantAdmin(tenantID, userID string, isAdmin bool) er
 func generateID() string {
 	return strings.ReplaceAll(uuid.New().String(), "-", "")
 }
-
