@@ -162,9 +162,9 @@ export function RepoStandardsDialog({ workspaceId, repo, isReadOnly }: RepoStand
             {/* 未克隆时整体灰化禁用（需求：未 clone 界面灰化） */}
             <div className={`flex-1 flex flex-col min-h-0 mt-2 ${cloned ? '' : 'opacity-50 pointer-events-none'}`}>
               <Tabs defaultValue="engineering" className="flex-1 flex flex-col min-h-0">
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="engineering">工程规范</TabsTrigger>
-                  <TabsTrigger value="design" disabled={!cloned || !hasFrontend} title={cloned && !hasFrontend ? '未检测到前端代码，设计规范不可用' : undefined}>
+                <TabsList className="aurora-tab-bar level-2 w-full">
+                  <TabsTrigger value="engineering" className="aurora-tab-item level-2 flex-1">工程规范</TabsTrigger>
+                  <TabsTrigger value="design" className="aurora-tab-item level-2 flex-1" disabled={!cloned || !hasFrontend} title={cloned && !hasFrontend ? '未检测到前端代码，设计规范不可用' : undefined}>
                     设计规范
                   </TabsTrigger>
                 </TabsList>

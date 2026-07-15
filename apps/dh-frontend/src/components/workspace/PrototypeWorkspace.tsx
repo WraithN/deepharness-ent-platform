@@ -171,10 +171,10 @@ function buildSkeletonHtml(pageName: string): string {
   <title>${pageName}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f7f9fc; color: #1e293b; }
+    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #F8FAFC; color: #1E293B; }
     .page { max-width: 1200px; margin: 0 auto; padding: 48px 24px; }
-    .placeholder { border: 2px dashed #cbd5e1; border-radius: 12px; padding: 64px 24px; text-align: center; color: #94a3b8; }
-    h1 { font-size: 24px; margin-bottom: 12px; color: #2f54eb; }
+    .placeholder { border: 2px dashed #CBD5E1; border-radius: 12px; padding: 64px 24px; text-align: center; color: #94A3B8; }
+    h1 { font-size: 24px; margin-bottom: 12px; color: #3B82F6; }
   </style>
 </head>
 <body>

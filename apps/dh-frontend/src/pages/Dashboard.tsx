@@ -353,7 +353,7 @@ export const Dashboard: React.FC = () => {
                     <div className="flex items-center justify-center w-10 h-10 rounded-full border-4 border-background bg-green-500 text-white shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 shadow">
                       <CheckSquare className="h-4 w-4" />
                     </div>
-                    <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-4 rounded-xl border bg-card shadow-sm flex justify-center">
+                    <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-4 rounded-xl glass-card flex justify-center">
                       <span className="text-sm font-medium text-green-600 dark:text-green-500">会话记录 (历时 {selectedUserSession.duration}，共 {selectedUserSession.messageCount} 条消息)</span>
                     </div>
                   </div>

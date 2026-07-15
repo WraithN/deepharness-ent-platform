@@ -940,7 +940,7 @@ const DocMode: React.FC = () => {
                 placeholder="搜索文档..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="h-7 pl-7 text-xs bg-background/50 border-border/50"
+                className="h-7 pl-7 text-xs"
               />
             </div>
           </div>

@@ -105,7 +105,7 @@ export const SkillMarket: React.FC = () => {
             <Input
               type="search"
               placeholder="搜索技能..."
-              className="pl-8 bg-background"
+              className="pl-8"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />

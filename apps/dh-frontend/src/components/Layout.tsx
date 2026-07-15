@@ -157,7 +157,7 @@ export const Layout: React.FC = () => {
 
       {/* Sidebar */}
       <aside 
-        className={`fixed inset-y-0 left-0 z-50 flex flex-col border-r bg-card transition-all duration-300 ease-in-out lg:static lg:translate-x-0 soft-shadow lg:shadow-none relative group ${
+        className={`fixed inset-y-0 left-0 z-50 flex flex-col border-r border-border bg-background transition-all duration-300 ease-in-out lg:static lg:translate-x-0 relative group ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         } ${isCollapsed ? 'w-14' : 'w-[246px]'}`}
       >
@@ -188,7 +188,7 @@ export const Layout: React.FC = () => {
               </div>
             ) : (
               <div
-                className="flex items-center gap-2 rounded-xl border border-border/50 p-2 bg-card hover:bg-muted/50 cursor-pointer soft-shadow justify-between"
+                className="flex items-center gap-2 rounded-xl p-2 glass-card click-card justify-between"
                 onClick={() => setCreateWorkspaceOpen(true)}
               >
                 <div className="flex items-center gap-2 overflow-hidden w-full">
@@ -218,12 +218,12 @@ export const Layout: React.FC = () => {
                 }}
                 title={isCollapsed ? item.label : undefined}
                 className={({ isActive }) =>
-                  `flex items-center rounded-lg text-sm font-medium transition-all duration-300 overflow-hidden ${
+                  `flex items-center rounded-lg text-sm font-medium transition-all duration-250 ease-smooth overflow-hidden ${
                     isCollapsed ? 'justify-center mx-auto w-9 h-9' : 'gap-3 px-3 py-2.5'
                   } ${
                     isActive
-                      ? 'bg-primary/10 text-primary shadow-sm'
-                      : 'text-muted-foreground hover:bg-secondary/80 hover:text-foreground'
+                      ? 'bg-primary/10 text-primary shadow-glow border border-primary/20'
+                      : 'text-muted-foreground hover:bg-secondary/80 hover:text-foreground hover:shadow-glow'
                   }`
                 }
               >
@@ -234,7 +234,7 @@ export const Layout: React.FC = () => {
           </nav>
         </div>
         
-        <div className="shrink-0 border-t border-border/50 p-3 bg-background flex flex-col gap-2 overflow-hidden">
+        <div className="shrink-0 border-t border-border p-3 bg-background flex flex-col gap-2 overflow-hidden">
           {isCollapsed ? (
             <div className="flex flex-col gap-3">
               <div
@@ -249,7 +249,7 @@ export const Layout: React.FC = () => {
               </Button>
             </div>
           ) : (
-            <div className="flex items-center gap-2 rounded-xl p-2 bg-muted/30 hover:bg-muted/50 transition-colors group">
+            <div className="flex items-center gap-2 rounded-xl p-2 glass-card transition-all duration-250 ease-smooth group hover:border-primary/20">
               <div
                 className="flex items-center gap-3 flex-1 overflow-hidden cursor-pointer"
                 onClick={() => navigate('/profile')}
@@ -286,8 +286,8 @@ export const Layout: React.FC = () => {
       </AlertDialog>
 
       {/* Main Content */}
-      <div className="flex flex-1 flex-col min-w-0 bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-100 dark:bg-background">
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border/50 bg-background/95 backdrop-blur-xl px-4 lg:px-6 sticky top-0 z-10 shadow-sm">
+      <div className="flex flex-1 flex-col min-w-0 bg-background">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-background px-4 lg:px-6 sticky top-0 z-10">
           <div className="flex items-center gap-4 min-w-0">
             <Button variant="ghost" size="icon" className="lg:hidden shrink-0" onClick={toggleSidebar}>
               <Menu className="h-5 w-5" />
@@ -299,10 +299,10 @@ export const Layout: React.FC = () => {
                   key={item.path}
                   to={item.path}
                   className={({ isActive }) =>
-                    `flex items-center gap-2 text-sm font-medium transition-colors rounded-md px-2 py-1.5 ${
+                    `flex items-center gap-2 text-sm font-medium transition-all duration-250 ease-smooth rounded-md px-2 py-1.5 ${
                       isActive
-                        ? 'text-primary bg-primary/5'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
+                        ? 'text-primary bg-primary/5 shadow-glow'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50 hover:shadow-glow'
                     }`
                   }
                 >
@@ -350,7 +350,7 @@ export const Layout: React.FC = () => {
         </header>
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 bg-transparent flex flex-col">
-          <div className="px-4 md:px-6 lg:px-8 py-4 shrink-0 border-b border-border/50 bg-muted/30 backdrop-blur-sm sticky top-0 z-10">
+          <div className="px-4 md:px-6 lg:px-8 py-4 shrink-0 border-b border-border/50 bg-panel/50 backdrop-blur-xl sticky top-0 z-10">
             <div className="flex flex-col min-w-0">
               <h1 className="text-lg sm:text-xl font-bold text-foreground truncate tracking-tight">
                 {location.pathname === '/market/skills' && '技能市场'}

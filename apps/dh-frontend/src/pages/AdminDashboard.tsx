@@ -29,7 +29,7 @@ import { toast } from 'sonner';
 import { teamApi } from '@/lib/team-api';
 import type { SkillStats, PromptStats } from '@/types';
 
-const COLORS = ['#1d4ed8', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#ec4899', '#06b6d4'];
+const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EF4444', '#EC4899', '#06B6D4'];
 
 const mockGlobalData = {
   requirements: [
@@ -80,10 +80,10 @@ export const AdminDashboard: React.FC = () => {
   return (
     <div className="flex-1 space-y-6 w-full pb-12">
       <Tabs defaultValue="overview">
-        <TabsList className="mb-4">
-          <TabsTrigger value="overview">平台概览</TabsTrigger>
-          <TabsTrigger value="skills">技能大盘</TabsTrigger>
-          <TabsTrigger value="prompts">提示词大盘</TabsTrigger>
+        <TabsList className="aurora-tab-bar level-1 mb-4">
+          <TabsTrigger value="overview" className="aurora-tab-item level-1">平台概览</TabsTrigger>
+          <TabsTrigger value="skills" className="aurora-tab-item level-1">技能大盘</TabsTrigger>
+          <TabsTrigger value="prompts" className="aurora-tab-item level-1">提示词大盘</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
@@ -138,17 +138,17 @@ export const AdminDashboard: React.FC = () => {
               </CardHeader>
               <CardContent className="flex-1 min-h-0">
                 <Tabs defaultValue="trend" className="w-full h-full flex flex-col">
-                  <TabsList className="mb-4 shrink-0 bg-muted/50 p-1 inline-flex w-fit">
-                    <TabsTrigger value="trend" className="text-xs px-3">时间趋势</TabsTrigger>
-                    <TabsTrigger value="distribution" className="text-xs px-3">空间分布</TabsTrigger>
+                  <TabsList className="aurora-tab-bar level-2 mb-4 shrink-0">
+                    <TabsTrigger value="trend" className="aurora-tab-item level-2">时间趋势</TabsTrigger>
+                    <TabsTrigger value="distribution" className="aurora-tab-item level-2">空间分布</TabsTrigger>
                   </TabsList>
                   <TabsContent value="trend" className="flex-1 min-h-0 m-0">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={mockGlobalData.requirements}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" className="dark:stroke-[#333]" />
-                        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: '#6b7280' }} dy={10} />
-                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: '#6b7280' }} dx={-10} />
-                        <Tooltip cursor={{ stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dy={10} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dx={-10} />
+                        <Tooltip cursor={{ stroke: 'hsl(var(--border))', strokeWidth: 1, strokeDasharray: '4 4' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
                         <Line type="monotone" dataKey="count" name="完成需求数" stroke={COLORS[0]} strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6, strokeWidth: 0 }} />
                       </LineChart>
                     </ResponsiveContainer>
@@ -177,16 +177,16 @@ export const AdminDashboard: React.FC = () => {
               </CardHeader>
               <CardContent className="flex-1 min-h-0">
                 <Tabs defaultValue="trend" className="w-full h-full flex flex-col">
-                  <TabsList className="mb-4 shrink-0 bg-muted/50 p-1 inline-flex w-fit">
-                    <TabsTrigger value="trend" className="text-xs px-3">数量趋势</TabsTrigger>
-                    <TabsTrigger value="distribution" className="text-xs px-3">端云分布</TabsTrigger>
+                  <TabsList className="aurora-tab-bar level-2 mb-4 shrink-0">
+                    <TabsTrigger value="trend" className="aurora-tab-item level-2">数量趋势</TabsTrigger>
+                    <TabsTrigger value="distribution" className="aurora-tab-item level-2">端云分布</TabsTrigger>
                   </TabsList>
                   <TabsContent value="trend" className="flex-1 min-h-0 m-0">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={mockGlobalData.sessions}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" className="dark:stroke-[#333]" />
-                        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: '#6b7280' }} dy={10} />
-                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: '#6b7280' }} dx={-10} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dy={10} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dx={-10} />
                         <Tooltip cursor={{ fill: 'rgba(0,0,0,0.05)' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
                         <Bar dataKey="count" name="会话总数" fill={COLORS[1]} radius={[4, 4, 0, 0]} maxBarSize={40} />
                       </BarChart>
@@ -216,17 +216,17 @@ export const AdminDashboard: React.FC = () => {
               </CardHeader>
               <CardContent className="flex-1 min-h-0">
                 <Tabs defaultValue="trend" className="w-full h-full flex flex-col">
-                  <TabsList className="mb-4 shrink-0 bg-muted/50 p-1 inline-flex w-fit">
-                    <TabsTrigger value="trend" className="text-xs px-3">消耗趋势</TabsTrigger>
-                    <TabsTrigger value="distribution" className="text-xs px-3">场景分布</TabsTrigger>
+                  <TabsList className="aurora-tab-bar level-2 mb-4 shrink-0">
+                    <TabsTrigger value="trend" className="aurora-tab-item level-2">消耗趋势</TabsTrigger>
+                    <TabsTrigger value="distribution" className="aurora-tab-item level-2">场景分布</TabsTrigger>
                   </TabsList>
                   <TabsContent value="trend" className="flex-1 min-h-0 m-0">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={mockGlobalData.tokens}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" className="dark:stroke-[#333]" />
-                        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: '#6b7280' }} dy={10} />
-                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: '#6b7280' }} tickFormatter={val => `${val / 1000000}M`} dx={-10} />
-                        <Tooltip formatter={(value: number) => `${(value / 1000).toFixed(1)}k tokens`} cursor={{ stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dy={10} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} tickFormatter={val => `${val / 1000000}M`} dx={-10} />
+                        <Tooltip formatter={(value: number) => `${(value / 1000).toFixed(1)}k tokens`} cursor={{ stroke: 'hsl(var(--border))', strokeWidth: 1, strokeDasharray: '4 4' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
                         <Line type="monotone" dataKey="count" name="Token 消耗量" stroke={COLORS[3]} strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6, strokeWidth: 0 }} />
                       </LineChart>
                     </ResponsiveContainer>
@@ -324,7 +324,7 @@ export const AdminDashboard: React.FC = () => {
                           <XAxis type="number" />
                           <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 12 }} />
                           <Tooltip />
-                          <Bar dataKey="downloads" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                          <Bar dataKey="downloads" fill={COLORS[0]} radius={[0, 4, 4, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
                     )}
@@ -409,7 +409,7 @@ export const AdminDashboard: React.FC = () => {
                           <XAxis dataKey="status" />
                           <YAxis />
                           <Tooltip />
-                          <Bar dataKey="count" fill="#10b981" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="count" fill={COLORS[1]} radius={[4, 4, 0, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
                     )}
@@ -431,7 +431,7 @@ export const AdminDashboard: React.FC = () => {
                         <XAxis type="number" />
                         <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 12 }} />
                         <Tooltip />
-                        <Bar dataKey="usageCount" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
+                        <Bar dataKey="usageCount" fill={COLORS[3]} radius={[0, 4, 4, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   )}

@@ -8,78 +8,141 @@ html {
 
 @layer base {
   :root {
-    --background: 216 33% 97%; /* #F7F9FC */
-    --foreground: 222 47% 11%;
+    /* Aurora Light 背景分层 */
+    --background: 210 40% 98%; /* #F8FAFC */
+    --foreground: 217 33% 17%; /* #1E293B */
     --card: 0 0% 100%; /* #FFFFFF */
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 217 33% 17%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 228 82% 55%; /* #2F54EB */
-    --primary-foreground: 210 40% 98%;
-    --secondary: 216 20% 95%; /* Softer secondary */
-    --secondary-foreground: 222 47% 11.2%;
-    --muted: 216 20% 95%;
-    --muted-foreground: 215 16% 47%;
-    --accent: 216 20% 95%;
-    --accent-foreground: 222 47% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 216 20% 90%; /* Slightly softer border */
-    --input: 216 20% 90%;
-    --ring: 228 82% 55%;
-    --radius: 0.5rem; /* Smoother 8px radius */
-    --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 228 82% 55%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 216 33% 97%;
-    --sidebar-accent-foreground: 228 82% 55%;
-    --sidebar-border: 216 20% 90%;
-    --sidebar-ring: 228 82% 55%;
+    --popover-foreground: 217 33% 17%;
 
-    --chart-1: 228 82% 55%;
-    --chart-2: 173 58% 39%;
-    --chart-3: 197 37% 24%;
-    --chart-4: 43 74% 66%;
-    --chart-5: 27 87% 67%;
+    /* 浅色调面板：用于 glass-panel 等半透明浮层 */
+    --panel: 0 0% 100%;
+    --panel-foreground: 217 33% 17%;
+
+    /* 极光蓝主品牌色 */
+    --primary: 217 91% 60%; /* #3B82F6 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%; /* #F1F5F9 */
+    --secondary-foreground: 215 19% 35%; /* #475569 */
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%; /* #64748B */
+    --accent: 214 100% 97%; /* #EFF6FF */
+    --accent-foreground: 217 91% 60%;
+    --destructive: 0 84% 60%; /* #EF4444 */
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 91%; /* #E2E8F0 */
+    --input: 214 32% 91%;
+    --ring: 217 91% 60%;
+    --radius: 0.5rem;
+
+    --sidebar-background: 210 40% 96%;
+    --sidebar-foreground: 215 19% 35%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 100%;
+    --sidebar-accent-foreground: 217 33% 17%;
+    --sidebar-border: 214 32% 91%;
+    --sidebar-ring: 217 91% 60%;
+
+    /* 状态色 */
+    --success: 160 84% 39%; /* #10B981 */
+    --warning: 38 92% 50%; /* #F59E0B */
+    --info: 217 91% 60%; /* #3B82F6 */
+
+    /* 图表色：Aurora 品牌序列 */
+    --chart-1: 217 91% 60%; /* 蓝 */
+    --chart-2: 258 90% 66%; /* 紫 */
+    --chart-3: 160 84% 39%; /* 绿 */
+    --chart-4: 38 92% 50%; /* 橙 */
+    --chart-5: 0 84% 60%; /* 红 */
+
+    /* 渐变与阴影 */
+    --gradient-primary: linear-gradient(90deg, #3B82F6 0%, #8B5CF6 100%);
+    --gradient-card: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 253, 0.95) 100%);
+    --gradient-background: linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%);
+    --shadow-card: 0 4px 14px rgba(15, 23, 42, 0.08);
+    --shadow-hover: 0 4px 12px rgba(15, 23, 42, 0.12);
+    --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.15);
+
+    /* 质感与动效 */
+    --transition-base: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-fast: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    --bg-glow-1: rgba(59, 130, 246, 0.06);
+    --bg-glow-2: rgba(139, 92, 246, 0.04);
+    --glass-opacity: 0.8;
+    --glass-blur: 12px;
+    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    --glass-shadow: 0 8px 32px rgba(15, 23, 42, 0.08);
   }
 
   .dark {
-    /* Dracula Theme */
-    --background: 231 15% 18%; /* #282A36 */
-    --foreground: 60 30% 96%; /* #F8F8F2 */
-    --card: 232 14% 31%; /* #44475A */
-    --card-foreground: 60 30% 96%;
-    --popover: 232 14% 31%;
-    --popover-foreground: 60 30% 96%;
-    --primary: 265 89% 78%; /* #BD93F9 */
-    --primary-foreground: 231 15% 18%;
-    --secondary: 232 14% 31%;
-    --secondary-foreground: 60 30% 96%;
-    --muted: 232 14% 31%;
-    --muted-foreground: 232 18% 55%; /* #6272A4 */
-    --accent: 232 14% 31%;
-    --accent-foreground: 60 30% 96%;
-    --destructive: 0 100% 67%; /* #FF5555 */
-    --destructive-foreground: 60 30% 96%;
-    --border: 232 14% 31%;
-    --input: 232 14% 31%;
-    --ring: 265 89% 78%;
-    --radius: 0.5rem;
-    --sidebar-background: 231 15% 18%;
-    --sidebar-foreground: 60 30% 96%;
-    --sidebar-primary: 265 89% 78%;
-    --sidebar-primary-foreground: 231 15% 18%;
-    --sidebar-accent: 232 14% 31%;
-    --sidebar-accent-foreground: 265 89% 78%;
-    --sidebar-border: 232 14% 31%;
-    --sidebar-ring: 265 89% 78%;
+    /* 深空蓝灰分层：拒绝发灰的藏青，干净通透 */
+    --background: 222 47% 11%; /* #0F172A 页面/侧边栏/顶部导航 */
+    --foreground: 210 40% 96%; /* #F1F5F9 一级文字 */
+    --card: 216 28% 23%; /* #2A374B 卡片/快捷指令卡片 */
+    --card-foreground: 210 40% 96%;
+    --popover: 216 28% 23%;
+    --popover-foreground: 210 40% 96%;
 
-    --chart-1: 265 89% 78%; /* Purple */
-    --chart-2: 135 94% 65%; /* Green */
-    --chart-3: 31 100% 71%; /* Orange */
-    --chart-4: 326 100% 74%; /* Pink */
-    --chart-5: 190 100% 82%; /* Cyan */
+    /* 对话窗口/主面板：比背景提亮一级 */
+    --panel: 217 33% 17%; /* #1E293B */
+    --panel-foreground: 210 40% 96%;
+
+    /* 极光蓝主品牌色 */
+    --primary: 217 91% 60%; /* #3B82F6 */
+    --primary-foreground: 222 47% 11%; /* #0F172A */
+    --secondary: 216 28% 23%; /* #2A374B */
+    --secondary-foreground: 213 27% 84%; /* #CBD5E1 二级文字 */
+    --muted: 215 25% 27%; /* #334155 */
+    --muted-foreground: 215 20% 65%; /* #94A3B8 三级文字 */
+    --accent: 218 24% 32%; /* #3E4C65 */
+    --accent-foreground: 210 40% 96%;
+    --destructive: 0 84% 60%; /* #EF4444 */
+    --destructive-foreground: 0 0% 100%;
+    --border: 221 28% 20%; /* #242D40，接近 rgba(148,163,184,0.16) 在 #0F172A 上的效果 */
+    --input: 215 20% 27%; /* #334155，比背景明显提亮，确保输入框边界在暗色下可见 */
+    --ring: 217 91% 60%;
+    --radius: 0.5rem;
+
+    --sidebar-background: 222 47% 11%; /* #0F172A */
+    --sidebar-foreground: 215 20% 65%; /* #94A3B8 */
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 222 47% 11%;
+    --sidebar-accent: 216 28% 23%;
+    --sidebar-accent-foreground: 210 40% 96%;
+    --sidebar-border: 221 28% 20%;
+    --sidebar-ring: 217 91% 60%;
+
+    /* 状态色 */
+    --success: 160 84% 39%; /* #10B981 */
+    --warning: 38 92% 50%; /* #F59E0B */
+    --info: 217 91% 60%; /* #3B82F6 */
+
+    /* 图表色：Aurora 品牌序列 */
+    --chart-1: 217 91% 60%; /* 蓝 */
+    --chart-2: 258 90% 66%; /* 紫 */
+    --chart-3: 160 84% 39%; /* 绿 */
+    --chart-4: 38 92% 50%; /* 橙 */
+    --chart-5: 0 84% 60%; /* 红 */
+
+    /* 渐变与阴影 */
+    --gradient-primary: linear-gradient(90deg, #3B82F6 0%, #8B5CF6 100%);
+    --gradient-card: linear-gradient(180deg, rgba(30, 41, 59, 0.98) 0%, rgba(15, 23, 42, 0.95) 100%);
+    --gradient-background: linear-gradient(180deg, #0F172A 0%, #0F172A 100%);
+    --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+    --shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.35);
+    --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.25);
+
+    /* 质感与动效 */
+    --transition-base: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-fast: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    --bg-glow-1: rgba(59, 130, 246, 0.08);
+    --bg-glow-2: rgba(139, 92, 246, 0.06);
+    --glass-opacity: 0.7;
+    --glass-blur: 12px;
+    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
   }
 }
 
@@ -99,7 +162,13 @@ html {
     border-radius: 3px;
   }
   body {
-    @apply bg-background text-foreground font-sans antialiased;
+    @apply text-foreground font-sans antialiased;
+    background-color: hsl(var(--background));
+    background-image:
+      radial-gradient(circle at 15% 10%, var(--bg-glow-1), transparent 40%),
+      radial-gradient(circle at 85% 90%, var(--bg-glow-2), transparent 40%);
+    background-attachment: fixed;
+    transition: var(--transition-base);
   }
   code, pre {
     font-family: "JetBrains Mono", monospace;
@@ -126,37 +195,37 @@ html {
 
 @layer utilities {
   .glass-panel {
-    @apply bg-background/80 backdrop-blur-xl border border-white/20 dark:border-white/10 shadow-xl;
+    @apply bg-background/80 backdrop-blur-xl border border-border/30 shadow-xl;
   }
 
   .soft-shadow {
-    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 0 3px rgba(0,0,0,0.02);
+    box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05), 0 0 3px rgba(15, 23, 42, 0.02);
   }
 
   .dark .soft-shadow {
-    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3), 0 0 3px rgba(0,0,0,0.2);
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3), 0 0 3px rgba(0, 0, 0, 0.2);
   }
 
-  /* Claude-style static gradient card */
+  /* Aurora 渐变卡片 */
   .claude-card {
-    background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,253,0.95) 100%);
-    box-shadow: 0 2px 12px -2px rgba(59, 130, 246, 0.08), 0 0 0 1px rgba(59, 130, 246, 0.04);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 253, 0.95) 100%);
+    box-shadow: 0 2px 12px -2px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(59, 130, 246, 0.06);
   }
 
   .dark .claude-card {
-    background: linear-gradient(180deg, rgba(30,35,48,0.98) 0%, rgba(26,30,42,0.95) 100%);
-    box-shadow: 0 2px 12px -2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255,255,255,0.04);
+    background: linear-gradient(180deg, rgba(42, 55, 75, 0.98) 0%, rgba(30, 41, 59, 0.95) 100%);
+    box-shadow: 0 2px 12px -2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(148, 163, 184, 0.08);
   }
 
   /* Tech border for code blocks */
   .tech-border {
     border: 1px solid rgba(59, 130, 246, 0.15);
-    box-shadow: 0 0 20px rgba(59, 130, 246, 0.05), inset 0 1px 0 rgba(255,255,255,0.1);
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.1);
   }
 
   .dark .tech-border {
-    border: 1px solid rgba(189, 147, 249, 0.2);
-    box-shadow: 0 0 20px rgba(189, 147, 249, 0.08), inset 0 1px 0 rgba(255,255,255,0.03);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.03);
   }
 
   /* Scroll-to-bottom button breathe animation */
@@ -171,6 +240,181 @@ html {
 
   .animate-breathe {
     animation: breathe 2s ease-in-out infinite;
+  }
+
+  /* ========== Aurora 玻璃质感与微动效 ========== */
+  .glass-card {
+    background: hsl(var(--card) / var(--glass-opacity));
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid hsl(var(--border));
+    box-shadow: var(--glass-shadow), var(--glass-highlight);
+    transition: var(--transition-base);
+  }
+
+  .glass-panel {
+    background: hsl(var(--panel) / var(--glass-opacity));
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid hsl(var(--border));
+    box-shadow: var(--glass-shadow), var(--glass-highlight);
+    transition: var(--transition-base);
+  }
+
+  .click-card {
+    cursor: pointer;
+    transition: var(--transition-base);
+  }
+
+  .click-card:hover {
+    transform: translateY(-1px);
+    border-color: hsl(var(--primary) / 0.4);
+    box-shadow: var(--shadow-glow), var(--glass-highlight);
+  }
+
+  .click-card:active {
+    transform: translateY(0) scale(0.98);
+    transition: var(--transition-fast);
+  }
+
+  .btn-primary-glow {
+    background: var(--gradient-primary);
+    color: hsl(var(--primary-foreground));
+    transition: var(--transition-base);
+  }
+
+  .btn-primary-glow:hover {
+    box-shadow: var(--shadow-glow);
+    transform: translateY(-1px);
+  }
+
+  .btn-primary-glow:active {
+    transform: translateY(0) scale(0.97);
+    transition: var(--transition-fast);
+  }
+
+  .input-glow {
+    transition: var(--transition-base);
+  }
+
+  .input-glow:focus,
+  .input-glow:focus-visible {
+    border-color: hsl(var(--primary));
+    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15), var(--glass-highlight);
+    outline: none;
+  }
+
+  /* ========== Aurora 统一胶囊标签栏（两级 Tab） ========== */
+  .aurora-tab-bar {
+    @apply flex items-center flex-nowrap overflow-hidden !justify-start !gap-2 !p-0 !h-auto !rounded-xl border !bg-panel/80 backdrop-blur-xl;
+    border-color: hsl(var(--border) / 0.3);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), var(--glass-shadow);
+    transition: var(--transition-base);
+  }
+
+  .dark .aurora-tab-bar {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), var(--glass-shadow);
+  }
+
+  .aurora-tab-bar.level-1 {
+    @apply w-full !h-11 !px-2 !gap-3;
+  }
+
+  .aurora-tab-bar.level-2 {
+    @apply !h-9 !p-1 !gap-1;
+  }
+
+  /* 编辑器内三级小型线型 Tab：轻量、贴工具栏、下划线选中 */
+  .aurora-tab-bar.level-3 {
+    @apply flex items-center flex-nowrap overflow-hidden !justify-start !gap-6 !h-[42px] !p-0 !bg-transparent !border-0 !rounded-none !shadow-none !backdrop-blur-none;
+  }
+
+  .aurora-tab-item.level-3 {
+    @apply relative inline-flex items-center h-full px-1 text-[13px] text-muted-foreground transition-all duration-200 cursor-pointer select-none whitespace-nowrap;
+  }
+
+  .aurora-tab-item.level-3:hover {
+    @apply text-secondary-foreground;
+  }
+
+  .aurora-tab-item.level-3.active,
+  .aurora-tab-item.level-3[data-state="active"] {
+    @apply text-primary font-medium;
+  }
+
+  .aurora-tab-item.level-3.active::after,
+  .aurora-tab-item.level-3[data-state="active"]::after {
+    content: "";
+    @apply absolute left-0 bottom-0 w-full h-0.5 rounded-t;
+    background: var(--gradient-primary);
+  }
+
+  .aurora-tab-item {
+    @apply !inline-flex !shrink-0 !items-center !justify-center !gap-1.5 !rounded-lg !text-sm !transition-all !duration-200 !ease-out !cursor-pointer !select-none;
+  }
+
+  .aurora-tab-item.level-1 {
+    @apply !h-8 !px-3 !text-secondary-foreground;
+  }
+
+  .aurora-tab-item.level-1:hover {
+    @apply !bg-muted !text-foreground;
+  }
+
+  .aurora-tab-item.level-1.active,
+  .aurora-tab-item.level-1[data-state="active"] {
+    background: var(--gradient-primary);
+    @apply !text-white shadow-[0_0_12px_rgba(59,130,246,0.25)];
+  }
+
+  .dark .aurora-tab-item.level-1:hover {
+    @apply !bg-card/80;
+  }
+
+  .aurora-tab-item.level-2 {
+    @apply !h-7 !px-3.5 !text-xs !text-muted-foreground;
+  }
+
+  .aurora-tab-item.level-2:hover {
+    @apply !bg-muted !text-secondary-foreground;
+  }
+
+  .dark .aurora-tab-item.level-2:hover {
+    @apply !bg-card/60;
+  }
+
+  .aurora-tab-item.level-2.active,
+  .aurora-tab-item.level-2[data-state="active"] {
+    background: var(--gradient-primary);
+    @apply !text-white shadow-[0_0_12px_rgba(59,130,246,0.25)];
+  }
+
+  .aurora-tab-select-trigger {
+    @apply !w-auto !border-0 !bg-transparent !shadow-none !justify-start !gap-2 focus:!ring-0 focus:!bg-transparent data-[state=open]:!bg-transparent;
+  }
+
+  .aurora-tab-label {
+    @apply text-muted-foreground mr-1;
+  }
+
+  .aurora-tab-divider {
+    @apply w-px h-5 bg-border/50 shrink-0;
+  }
+
+  .aurora-tab-icon-btn {
+    @apply inline-flex shrink-0 items-center justify-center h-8 w-8 rounded-lg text-secondary-foreground transition-all duration-200;
+  }
+
+  .aurora-tab-icon-btn:hover {
+    @apply bg-muted text-foreground;
+  }
+
+  .dark .aurora-tab-icon-btn:hover {
+    @apply bg-card/80;
+  }
+
+  .aurora-tab-badge {
+    @apply ml-1 px-1.5 py-px rounded text-[11px] font-medium bg-primary/20 text-primary;
   }
 }
 
@@ -192,8 +436,8 @@ html {
     margin-top: 1.5rem;
     margin-bottom: 1rem;
     border-bottom: 2px solid;
-    border-image: linear-gradient(90deg, hsl(228 82% 55%), hsl(199 89% 48%)) 1;
-    background: linear-gradient(90deg, hsl(228 82% 55%), hsl(199 89% 48%));
+    border-image: linear-gradient(90deg, hsl(var(--primary)), hsl(258 90% 66%)) 1;
+    background: linear-gradient(90deg, hsl(var(--primary)), hsl(258 90% 66%));
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -277,8 +521,8 @@ html {
   }
 
   .markdown-preview thead {
-    background: linear-gradient(90deg, hsl(228 82% 55%), hsl(210 80% 50%));
-    color: #fff;
+    background: linear-gradient(90deg, hsl(var(--primary)), hsl(258 90% 66%));
+    color: hsl(var(--primary-foreground));
   }
 
   .markdown-preview th {
@@ -363,47 +607,47 @@ html {
 /* ── 暗色模式适配 ── */
 @layer components {
   .dark .markdown-preview h1 {
-    border-image: linear-gradient(90deg, hsl(265 89% 78%), hsl(190 100% 82%)) 1;
-    background: linear-gradient(90deg, hsl(265 89% 78%), hsl(190 100% 82%));
+    border-image: linear-gradient(90deg, hsl(var(--primary)), hsl(213 100% 72%)) 1;
+    background: linear-gradient(90deg, hsl(var(--primary)), hsl(213 100% 72%));
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
   }
 
   .dark .markdown-preview h2 {
-    border-left-color: hsl(265 89% 78%);
+    border-left-color: hsl(var(--primary));
   }
 
   .dark .markdown-preview strong {
-    color: hsl(60 30% 96%);
+    color: hsl(var(--foreground));
   }
 
   .dark .markdown-preview blockquote {
-    background: hsl(232 14% 31% / 0.5);
-    border-left-color: hsl(265 89% 78% / 0.5);
+    background: hsl(var(--muted) / 0.5);
+    border-left-color: hsl(var(--primary) / 0.5);
   }
 
   .dark .markdown-preview thead {
-    background: linear-gradient(90deg, hsl(265 89% 78%), hsl(190 100% 82%));
-    color: hsl(231 15% 18%);
+    background: linear-gradient(90deg, hsl(var(--primary)), hsl(213 100% 72%));
+    color: hsl(var(--primary-foreground));
   }
 
   .dark .markdown-preview tbody tr:nth-child(even) {
-    background: hsl(232 14% 31% / 0.3);
+    background: hsl(var(--muted) / 0.3);
   }
 
   .dark .markdown-preview tbody tr:hover {
-    background: hsl(265 89% 78% / 0.08);
+    background: hsl(var(--primary) / 0.08);
   }
 
   .dark .markdown-preview code:not(pre code) {
-    background: hsl(265 89% 78% / 0.12);
-    color: hsl(265 89% 78%);
-    border-color: hsl(265 89% 78% / 0.15);
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+    border-color: hsl(var(--primary) / 0.15);
   }
 
   .dark .markdown-preview hr {
-    background: linear-gradient(90deg, transparent, hsl(265 89% 78% / 0.4), transparent);
+    background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.4), transparent);
   }
 }
 
@@ -414,9 +658,9 @@ html {
     font-size: 14px;
     line-height: 1.8;
     padding: 16px 20px;
-    background: #f8fafc;
+    background: hsl(var(--background));
     border-radius: 12px;
-    border-left: 4px solid hsl(228 82% 55%);
+    border-left: 4px solid hsl(var(--primary));
     overflow-x: auto;
     margin: 0.75rem 0;
     box-shadow: 0 1px 8px rgba(0, 0, 0, 0.04);
@@ -430,13 +674,13 @@ html {
 
   /* 连接线（├ └ │ ─）弱化为浅灰色 */
   .markdown-preview pre.tree-dir .tree-indent {
-    color: #cbd5e1;
+    color: hsl(var(--border));
   }
 
   /* 一级模块图标放大 + 主色高亮 */
   .markdown-preview pre.tree-dir .tree-icon {
     font-size: 18px;
-    color: hsl(228 82% 55%);
+    color: hsl(var(--primary));
     margin-right: 2px;
   }
 
@@ -454,36 +698,71 @@ html {
 /* ── 树形块暗色模式适配 ── */
 @layer components {
   .dark .markdown-preview pre.tree-dir {
-    background: hsl(231 15% 18% / 0.6);
-    border-left-color: hsl(265 89% 78%);
+    background: hsl(222 47% 11% / 0.6);
+    border-left-color: hsl(var(--primary));
     box-shadow: 0 1px 8px rgba(0, 0, 0, 0.2);
   }
 
   .dark .markdown-preview pre.tree-dir .tree-indent {
-    color: hsl(232 14% 45%);
+    color: hsl(var(--muted-foreground) / 0.6);
   }
 
   .dark .markdown-preview pre.tree-dir .tree-icon {
-    color: hsl(265 89% 78%);
+    color: hsl(var(--primary));
   }
 
   .dark .markdown-preview pre.tree-dir .tree-text {
-    color: hsl(60 30% 96%);
+    color: hsl(var(--foreground));
   }
 }
 
 /* ── WangEditor 富文本编辑器样式适配 ── */
 @layer components {
-  /* 工具栏：去除默认边框，融入卡片背景 */
-  .w-e-toolbar {
+  /* 工具栏去除默认边框，融入 Aurora 容器；通过 CSS 变量统一接管亮/暗配色 */
+  .w-e-toolbar,
+  .w-e-bar,
+  .w-e-text-container {
     border: none !important;
-    background: transparent !important;
+  }
+
+  .w-e-bar,
+  .w-e-text-container,
+  .w-e-text-container [data-slate-editor] {
+    --w-e-toolbar-bg-color: transparent;
+    --w-e-toolbar-color: hsl(var(--foreground));
+    --w-e-toolbar-border-color: hsl(var(--border));
+    --w-e-toolbar-active-bg-color: hsl(var(--muted));
+    --w-e-toolbar-active-color: hsl(var(--foreground));
+    --w-e-toolbar-disabled-color: hsl(var(--muted-foreground));
+    --w-e-textarea-bg-color: hsl(var(--background));
+    --w-e-textarea-color: hsl(var(--foreground));
+    --w-e-textarea-border-color: hsl(var(--border));
+    --w-e-textarea-slight-color: hsl(var(--muted-foreground));
+    --w-e-textarea-slight-bg-color: hsl(var(--muted));
+    --w-e-textarea-slight-border-color: hsl(var(--border));
+    --w-e-textarea-selected-border-color: hsl(var(--primary));
+  }
+
+  .w-e-bar {
     flex-wrap: wrap;
     padding: 4px 12px !important;
   }
 
-  .w-e-text-container {
-    border: none !important;
+  /* 暗色主题兜底：下拉面板、弹窗等脱离 .w-e-bar 的元素也使用 Aurora 变量 */
+  .dark {
+    --w-e-toolbar-bg-color: hsl(var(--card));
+    --w-e-toolbar-color: hsl(var(--foreground));
+    --w-e-toolbar-border-color: hsl(var(--border));
+    --w-e-toolbar-active-bg-color: hsl(var(--muted));
+    --w-e-toolbar-active-color: hsl(var(--foreground));
+    --w-e-toolbar-disabled-color: hsl(var(--muted-foreground));
+    --w-e-textarea-bg-color: hsl(var(--background));
+    --w-e-textarea-color: hsl(var(--foreground));
+    --w-e-textarea-border-color: hsl(var(--border));
+    --w-e-textarea-slight-color: hsl(var(--muted-foreground));
+    --w-e-textarea-slight-bg-color: hsl(var(--muted));
+    --w-e-textarea-slight-border-color: hsl(var(--border));
+    --w-e-textarea-selected-border-color: hsl(var(--primary));
   }
 
   /* 编辑区内边距与行高，与 Markdown 预览区保持一致 */
@@ -497,23 +776,13 @@ html {
     left: 24px !important;
   }
 
-  /* 暗色模式：编辑区保持浅色纸张观感，仅工具栏图标提亮 */
-  .dark .w-e-toolbar .w-e-bar-item button,
-  .dark .w-e-toolbar .w-e-bar-item svg {
-    color: hsl(60 30% 96%);
-    fill: hsl(60 30% 96%);
+  /* 分隔线使用主题边框色 */
+  .w-e-bar-divider {
+    background-color: hsl(var(--border)) !important;
   }
 
-  .dark .w-e-toolbar .w-e-bar-item button:hover {
-    background-color: hsl(231 15% 25%);
-  }
-
-  .dark .w-e-bar-divider {
-    background-color: hsl(231 15% 30%);
-  }
-
-  .dark .w-e-text-container [data-slate-editor] {
-    background-color: hsl(231 15% 14%);
-    color: hsl(60 30% 96%);
+  /* 工具栏按钮 hover 使用主题 muted 底 */
+  .w-e-toolbar .w-e-bar-item button:hover {
+    background-color: hsl(var(--muted)) !important;
   }
 }

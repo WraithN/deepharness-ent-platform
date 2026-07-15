@@ -434,7 +434,7 @@ def test_ai_generated_case():
                 placeholder="搜索需求、用例或标签..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-8 pl-8 text-xs bg-background/50 border-border/50"
+                className="h-8 pl-8 text-xs"
               />
             </div>
           </CardHeader>
@@ -551,7 +551,7 @@ def test_ai_generated_case():
                   <div className="flex items-center gap-2 min-w-0">
                     <Input
                       defaultValue={selectedInfo.tc.title}
-                      className="h-7 text-sm font-medium bg-transparent border-transparent hover:border-input focus:border-input focus:bg-background px-1.5 w-auto min-w-[200px] max-w-[400px]"
+                      className="h-7 text-sm font-medium bg-transparent border-transparent hover:border-input focus:border-input focus:bg-card px-1.5 w-auto min-w-[200px] max-w-[400px]"
                     />
                     <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" title="编辑标题" onClick={() => toast.info('点击标题输入框即可直接编辑')}>
                       <Pencil className="w-3.5 h-3.5 text-muted-foreground" />

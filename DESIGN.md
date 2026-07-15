@@ -7,7 +7,7 @@
 ## 1. 设计哲学
 
 - **简洁现代**：以清晰的视觉层次和充足的留白为主，避免过度装饰。
-- **端云科技风**：采用偏蓝的科技色调，配合 Dracula 暗色主题，营造专业、高效的开发者氛围。
+- **极光科技风**：采用深空蓝灰分层背景 + 极光蓝主色，暗色模式避免纯黑压抑，亮色模式清爽低疲劳。
 - **高可读性**：正文与背景保持高对比度，代码区域使用等宽字体确保对齐。
 - **一致的体验**：所有交互元素（按钮、输入框、卡片）遵循统一的圆角、阴影和动效规范。
 
@@ -17,63 +17,72 @@
 
 色彩通过 CSS 自定义属性（CSS Variables）定义于 `apps/dh-frontend/src/index.css`，并在 `tailwind.config.js` 中映射为 Tailwind 颜色键。
 
-### 2.1 浅色主题（Light）
+### 2.1 浅色主题（Light / Aurora Light）
 
 | Token | HSL | 色值 | 用途 |
 |-------|-----|------|------|
-| `--background` | `216 33% 97%` | `#F7F9FC` | 页面背景 |
-| `--foreground` | `222 47% 11%` | `#0F172A` | 主文字 |
+| `--background` | `210 40% 98%` | `#F8FAFC` | 页面背景（`--bg-main`） |
+| `--foreground` | `217 33% 17%` | `#1E293B` | 主文字 |
 | `--card` | `0 0% 100%` | `#FFFFFF` | 卡片背景 |
-| `--primary` | `228 82% 55%` | `#2F54EB` | 主品牌色、按钮、链接 |
-| `--primary-foreground` | `210 40% 98%` | `#F8FAFC` | 主色上的文字 |
-| `--secondary` | `216 20% 95%` | `#EDF0F5` | 次要背景、标签 |
-| `--muted` | `216 20% 95%` | `#EDF0F5` | 禁用、次要区域 |
+| `--panel` | `217 33% 17%` | `#1E293B` | 对话窗口/主面板（比背景提亮一级） |
+| `--primary` | `217 91% 60%` | `#3B82F6` | 主品牌色（极光蓝） |
+| `--primary-foreground` | `0 0% 100%` | `#FFFFFF` | 主色上的文字 |
+| `--secondary` | `210 40% 96%` | `#F1F5F9` | 次要背景、标签 |
+| `--muted` | `210 40% 96%` | `#F1F5F9` | 禁用、次要区域 |
 | `--muted-foreground` | `215 16% 47%` | `#64748B` | 辅助文字、描述 |
-| `--border` | `216 20% 90%` | `#E2E8F0` | 边框、分割线 |
-| `--ring` | `228 82% 55%` | `#2F54EB` | 焦点环、outline |
-| `--destructive` | `0 84.2% 60.2%` | `#EF4444` | 危险操作 |
+| `--accent` | `214 100% 97%` | `#EFF6FF` | 高亮/激活态背景 |
+| `--border` | `214 32% 91%` | `#E2E8F0` | 边框、分割线 |
+| `--ring` | `217 91% 60%` | `#3B82F6` | 焦点环、outline |
+| `--destructive` | `0 84% 60%` | `#EF4444` | 危险操作 |
 
 **语义状态色：**
-- `success` → `hsl(var(--success))`（绿色系）
-- `warning` → `hsl(var(--warning))`（橙/黄色系）
-- `info` → `hsl(var(--info))`（蓝色系）
+- `success` → `#10B981`（极光绿）
+- `warning` → `#F59E0B`（暖橙）
+- `info` → `#3B82F6`（极光蓝）
 
 **图表色（Chart）：**
-- `chart-1` → `#2F54EB`
-- `chart-2` → `#2A9D8F`
-- `chart-3` → `#264653`
-- `chart-4` → `#E9C46A`
-- `chart-5` → `#F4A261`
+- `chart-1` → `#3B82F6`（蓝）
+- `chart-2` → `#8B5CF6`（紫）
+- `chart-3` → `#10B981`（绿）
+- `chart-4` → `#F59E0B`（橙）
+- `chart-5` → `#EF4444`（红）
 
-### 2.2 深色主题（Dark / Dracula）
+### 2.2 深色主题（Dark / Aurora Dark）
 
-深色主题采用 **Dracula** 配色方案，通过 `.dark` 类切换。
+深色主题采用 **Aurora 极光暗色** 配色方案，深空蓝灰分层背景，通过 `.dark` 类切换。
 
 | Token | HSL | 色值 | 用途 |
 |-------|-----|------|------|
-| `--background` | `231 15% 18%` | `#282A36` | 页面背景 |
-| `--foreground` | `60 30% 96%` | `#F8F8F2` | 主文字 |
-| `--card` | `232 14% 31%` | `#44475A` | 卡片背景 |
-| `--primary` | `265 89% 78%` | `#BD93F9` | 主品牌色（紫色） |
-| `--muted-foreground` | `232 18% 55%` | `#6272A4` | 辅助文字（灰蓝） |
-| `--destructive` | `0 100% 67%` | `#FF5555` | 危险操作 |
-| `--border` | `232 14% 31%` | `#44475A` | 边框 |
-| `--ring` | `265 89% 78%` | `#BD93F9` | 焦点环 |
+| `--background` | `222 47% 11%` | `#0F172A` | 页面/侧边栏/顶部导航背景 |
+| `--foreground` | `210 40% 96%` | `#F1F5F9` | 主文字 |
+| `--card` | `216 28% 23%` | `#2A374B` | 卡片/快捷指令卡片背景 |
+| `--panel` | `217 33% 17%` | `#1E293B` | 对话窗口/主面板（比背景提亮一级） |
+| `--primary` | `217 91% 60%` | `#3B82F6` | 主品牌色（极光蓝） |
+| `--primary-foreground` | `222 47% 11%` | `#0F172A` | 主色上的文字 |
+| `--secondary` | `216 28% 23%` | `#2A374B` | 次要背景、标签 |
+| `--muted` | `215 25% 27%` | `#334155` | 禁用、次要区域 |
+| `--muted-foreground` | `215 20% 65%` | `#94A3B8` | 辅助文字（灰蓝） |
+| `--accent` | `218 24% 32%` | `#3E4C65` | 高亮/激活态背景 |
+| `--border` | `221 28% 20%` | `#242D40` | 边框、分割线（带蓝调的极弱半透明效果） |
+| `--ring` | `217 91% 60%` | `#3B82F6` | 焦点环 |
+| `--destructive` | `0 84% 60%` | `#EF4444` | 危险操作 |
 
 **图表色（Dark）：**
-- `chart-1` → `#BD93F9`（紫）
-- `chart-2` → `#50FA7B`（绿）
-- `chart-3` → `#FFB86C`（橙）
-- `chart-4` → `#FF79C6`（粉）
-- `chart-5` → `#8BE9FD`（青）
+- `chart-1` → `#3B82F6`（蓝）
+- `chart-2` → `#8B5CF6`（紫）
+- `chart-3` → `#10B981`（绿）
+- `chart-4` → `#F59E0B`（橙）
+- `chart-5` → `#EF4444`（红）
 
 ### 2.3 色彩使用原则
 
-- **主色（Primary）**：用于主要按钮、活跃状态、关键链接、焦点环。浅色为蓝 `#2F54EB`，深色为紫 `#BD93F9`。
-- **背景层级**：页面背景 → 卡片/面板背景 → 输入框背景，每层亮度/暗度递进。
+- **主色（Primary）**：用于主要按钮、活跃状态、关键链接、焦点环。浅色/深色均为极光蓝 `#3B82F6`，紫色 `#8B5CF6` 仅用于渐变点缀。
+- **背景层级（深色）**：`#0F172A` 页面/侧边栏 → `#1E293B` 对话窗口/主面板 → `#2A374B` 卡片/快捷指令卡片 → `#334155` 悬停/次要区域，层层递进，拒绝灰蒙蒙的脏感。
 - **文字层级**：主文字（`foreground`）→ 辅助文字（`muted-foreground`）→ 禁用状态（降低透明度）。
 - **边框**：统一使用柔和的半透明边框，避免生硬的实色分割。
-- **危险色**：统一使用红色系，深浅主题保持一致的情绪传达。
+- **危险色**：统一使用珊瑚红 `#EF4444`，深浅主题保持一致。
+- **渐变**：主按钮、标题等重点元素使用 `linear-gradient(90deg, #3B82F6, #8B5CF6)`。
+- **阴影**：浅色使用 `rgba(15,23,42,0.08)` 系柔和阴影；深色使用 `rgba(0,0,0,0.35)` 系阴影，为对话窗口等大卡片提供浮起深度。
 
 ---
 
@@ -179,10 +188,12 @@
 - **表头行**：`bg-muted/30`，行 `hover:bg-transparent`；表头单元格 `px-4 py-4 font-medium text-muted-foreground`。
 - **数据行**：`transition-colors hover:bg-primary/5`（浅色为淡蓝底纹）；单元格 `px-4 py-5`；长文本列加 `whitespace-nowrap`。
 - **头像**：`rounded-full bg-primary/15 text-primary` 首字母头像，列表行内用 `h-6 w-6 text-xs`，信息密度低的场景（如成员信息列）用 `h-10 w-10`；无头像的资源行（技能、智能体）用同规格圆形图标底 `rounded-full bg-primary/15` + `text-primary` 图标（行内 `h-8 w-8` + `h-4 w-4` 图标）。
-- **筛选条**（可选，位于头部与表格之间）：`flex flex-wrap gap-2 items-center mb-4`，前缀标签 `text-sm text-muted-foreground`，筛选项为 `h-8` 的 `secondary`（选中）/`ghost`（未选中）按钮。
+- **筛选条**（可选，位于头部与表格之间）：`flex flex-wrap gap-2 items-center mb-4`，前缀标签 `text-sm text-muted-foreground`。
+  - 通用列表筛选：筛选项为 `h-8` 的 `secondary`（选中）/`ghost`（未选中）按钮。
+  - 技能/提示词市场的分类筛选：筛选项为 `rounded-full h-8 px-4 whitespace-nowrap` 的 `default`（选中）/`outline`（未选中）药丸按钮，与空间管理中的技能/提示词市场保持一致。
 - **状态/角色徽章**：`rounded-lg px-3 py-1.5 font-medium`；肯定态（如“是”）`bg-primary text-primary-foreground`，否定态 `variant="outline"`；语义分类徽章（角色、会话类型）保留语义色并带 `dark:` 变体。
 - **时间列**：`text-muted-foreground`，配 `Clock` 图标（`w-3 h-3`）。
-- **行操作**：`variant="ghost" size="icon"` + `MoreHorizontal` 图标，`hover:bg-muted rounded-md`，下拉菜单 `align="end"`；行内直接操作可用 Switch（上下架开关）、`variant="outline" size="sm"` 按钮（审核类）或 `ghost size="icon"` 删除按钮（`hover:text-destructive`）。
+- **行操作**：`variant="ghost" size="icon"` + `MoreHorizontal` 图标，`hover:bg-primary/10 hover:text-primary rounded-md`，菜单展开时保持 `data-[state=open]:bg-primary/10 data-[state=open]:text-primary`；下拉菜单容器采用极光玻璃质感：`bg-popover/95 backdrop-blur-xl border-border/50 rounded-lg shadow-lg`；菜单项统一为图标+文字，高度 32px、`rounded-md`，普通项 `text-secondary-foreground` + `focus:bg-primary/10 focus:text-primary`，危险项（删除等）使用 `text-destructive focus:bg-destructive/10 focus:text-destructive`，并与普通项用 `DropdownMenuSeparator` 分隔。
 - **底部分页**：`mt-5 flex flex-wrap justify-between items-center gap-3 text-sm`；左侧「共 N 条记录，第 X/Y 页」`text-muted-foreground`；右侧页码按钮 `h-9 min-w-9 px-3 text-sm rounded-md`，当前页 `variant="default"`，其余 `variant="outline"`。
 - **空状态**：单行 `colSpan` 全宽，`text-center py-8 text-muted-foreground`。
 
@@ -202,6 +213,50 @@
   - **完成态**（已完成/已取消列，及缺陷的已关闭、用例的通过）：卡片 `opacity-75`，标题 `line-through text-muted-foreground`。
   - **拖拽态**（可拖拽看板）：`opacity-50 border-primary`，`active:cursor-grabbing`。
 - **空列占位**：`border border-dashed border-border/40 rounded-xl` + 居中提示文字。
+
+### 5.9 Aurora 统一标签栏体系
+
+B 端设置页遵循「导航 Tab 全部左对齐，与内容区左侧基准线对齐」的阅读动线；居中仅用于空状态、弹窗按钮等少量场景。标签栏按使用场景分为三级，避免层级权重错配。
+
+| 层级 | 定位 | 对齐方式 | 容器 | 选项 | 选中态 |
+|------|------|----------|------|------|--------|
+| 一级 Tab | 页面级导航（基础配置 / 研发规范等） | 左对齐，与下方卡片同宽 | `aurora-tab-bar level-1`，高度 44px，全宽 | `aurora-tab-item level-1`，高度 32px，14px 文字 | 蓝紫渐变实底 + 白色文字 |
+| 二级 Tab | 卡片内分类（编码规范 / 设计规范） | 左对齐，与卡片内容同边距 | `aurora-tab-bar level-2`，高度 36px | `aurora-tab-item level-2`，高度 28px，13px 文字 | 蓝紫渐变实底 + 白色文字 |
+| 三级 Tab | 编辑器内切换（可视化 / Markdown / 预览） | 左对齐，紧贴工具栏 | `aurora-tab-bar level-3`，高度 42px，透明底、无圆角、无阴影 | `aurora-tab-item level-3`，13px 文字，间距 24px | 品牌色文字 + 蓝紫渐变下划线 |
+
+**一/二级容器规范**：
+- `bg-panel/80 backdrop-blur-xl` 磨砂玻璃底
+- `border-border/30` 弱边框
+- 默认 `!justify-start`，所有胶囊栏左对齐
+- 一级栏额外使用 `w-full`，与下方内容区同宽
+- 亮色内阴影 `inset 0 1px 0 rgba(255,255,255,0.9)`，暗色 `inset 0 1px 0 rgba(255,255,255,0.04)`
+- 圆角 `rounded-xl`（12px）
+
+**一/二级选项规范**：
+- 未选中：`text-secondary-foreground`（一级）/ `text-muted-foreground`（二级）
+- Hover：`bg-muted`（亮色）/ `bg-card/80` 或 `bg-card/60`（暗色），文字提亮
+- 选中：`background: linear-gradient(90deg, #3B82F6, #8B5CF6)`，`text-white`，`shadow-[0_0_12px_rgba(59,130,246,0.25)]`
+- 统一过渡 `transition-all duration-200`
+
+**三级（编辑器内）规范**：
+- 容器：透明底、无圆角、无阴影、`border-0`，`gap-6`（24px），高度 42px，与编辑器顶部工具栏同背景/边距
+- 选项：`text-[13px] text-muted-foreground`，hover 时 `text-secondary-foreground`
+- 选中：`text-primary font-medium`，底部 `h-0.5` 蓝紫渐变下划线（`var(--gradient-primary)`），位置 `bottom-0`
+- 不撑满全宽，紧跟左侧工具栏
+
+**辅助元素**：
+- 分隔线：`.aurora-tab-divider`（`w-px h-5 bg-border/50`）
+- 标签徽章：`.aurora-tab-badge`（`bg-primary/20 text-primary`，11px 圆角）
+- 图标按钮：`.aurora-tab-icon-btn`（`h-8 w-8 rounded-lg`，hover 背景提亮）
+- 与 shadcn Select 结合时，使用 `.aurora-tab-select-trigger` 重置默认边框/背景/阴影，再叠加 `.aurora-tab-item.level-1`
+
+**应用示例**：
+- `Settings`：一级（基础/智能体/技能/提示词/规范/CICD/成员）、二级（研发规范内编码/设计规范）、三级（MarkdownEditor 内可视化/Markdown/预览）。
+- `AdminDashboard`：一级（平台概览/技能大盘/提示词大盘）、二级（各卡片内图表趋势/分布切换）。
+- `AdminPage`：一级（智能体/规范/CICD 配置）、二级（规范设置内编码/设计规范）。
+- `ProjectCode`：仓库/分支/刷新栏使用一级样式；代码/图谱/评审/文档/预览/仓库详情使用二级样式。
+- `RepoStandardsDialog`：工程规范/设计规范使用二级样式（弹窗内内容切换）。
+- `Chat`：工作项类型（需求/缺陷/用例）与阶段筛选使用二级样式（抽屉/面板内视图切换）。
 
 ---
 
@@ -230,8 +285,11 @@
 
 | 类名 | 效果 | 适用场景 |
 |------|------|----------|
-| `.glass-panel` | 毛玻璃 + 半透明边框 + 阴影 | 浮层面板、模态框 |
-| `.claude-card` | 顶部亮底部暗的渐变背景 + 微妙边框 | 内容卡片、功能区块 |
+| `.glass-panel` | 毛玻璃 + 半透明边框 + 阴影 | 浮层面板、模态框、主内容区 |
+| `.glass-card` | 基于 `--card` 的半透明毛玻璃 + 高光内阴影 | 内容卡片、功能区块 |
+| `.click-card` | 在 `.glass-card`/`.glass-panel` 上叠加 Hover 上浮、边框发光、点击缩放 | 可点击卡片、菜单项 |
+| `.input-glow` | 聚焦时边框变品牌色并产生柔和光晕 | 输入框、文本域 |
+| `.claude-card` | 顶部亮底部暗的渐变背景 + 微妙边框 | 旧版内容卡片（逐步迁移至 `.glass-card`） |
 | `.tech-border` | 淡色边框 + 外发光 + 内阴影 | 代码块、技术展示区域 |
 
 **暗色模式适配**：以上特效均提供 `.dark` 变体，确保在 Dracula 主题下保持视觉层次。
@@ -249,11 +307,13 @@
 | `accordion-down` | 高度 0 → 内容高度 | 0.2s | `ease-out` |
 | `accordion-up` | 内容高度 → 0 | 0.2s | `ease-out` |
 
-### 8.2 交互过渡
+### 8.2 交互过渡（Aurora 动效规范）
 
-- **按钮 Hover**：`transition-colors duration-200`
-- **卡片 Hover**：轻微上浮或阴影增强
-- **焦点状态**：`ring-2 ring-ring ring-offset-2`，确保键盘导航可见性
+- **全局缓动**：所有交互元素统一使用 `cubic-bezier(0.4, 0, 0.2, 1)`，通过 Tailwind 自定义 `ease-smooth` 与 `duration-250` 应用。
+- **按钮**：`transition-all duration-250 ease-smooth`；Hover 时 `-translate-y-px` + `shadow-glow`；点击时 `scale-[0.98]`（主按钮 `0.97`）。
+- **可点击卡片**：使用 `.click-card`；Hover 时 `translateY(-1px)` + 边框变为 `primary/40` + `shadow-glow`；点击时 `scale(0.98)`。
+- **输入框**：使用 `.input-glow`；聚焦时边框变为 `primary`，并产生 `0 0 0 3px primary/15` 的柔和发光。
+- **焦点状态**：`focus-visible:ring-2 ring-ring/50`，确保键盘导航可见性。
 - **页面切换**：建议使用 `fade-in` 或 `slide-in` 营造流畅感
 
 ---
@@ -339,7 +399,83 @@ apps/dh-frontend/src/
 
 ---
 
-## 14. 变更记录
+## 13. 亮色弹窗规范
+
+亮色模式下弹窗强调「轻、透、干净」的浮层质感，避免厚重白底和灰色脏边框。
+
+### 13.1 容器
+
+- 遮罩层：`bg-[rgba(15,23,42,0.08)] backdrop-blur-[8px]`（暗色模式下保持 `bg-black/80`）。
+- 弹窗盒：
+  - 背景 `bg-white/88` + `backdrop-blur-xl`
+  - 边框 `border-[rgba(148,163,184,0.18)]`
+  - 阴影 `shadow-[0_10px_32px_rgba(15,23,42,0.12),0_0_0_1px_rgba(255,255,255,0.6)_inset]`
+  - 圆角 `rounded-2xl`（16px）
+- 关闭按钮：`absolute right-4 top-4`，`text-[#64748B]`，`hover:bg-[#F1F5F9] hover:text-[#1E293B]`，`rounded-lg`。
+
+### 13.2 表单控件
+
+- 输入框：`bg-background`（`#F8FAFC`）底，`border-input`（`#E2E8F0`）边框；focus 时背景变白、边框变为品牌蓝并产生 `0 0 0 3px primary/15` 光晕。
+- 下拉框：与输入框保持一致的浅色底和焦点态，右侧箭头弱化（`opacity-50`）。
+
+### 13.3 底部按钮
+
+- 取消按钮：`variant="outline"`，`bg-muted`（`#F1F5F9`）、`text-muted-foreground`（`#475569`）、`hover:bg-border`（`#E2E8F0`）、`hover:text-foreground`。
+- 主按钮：保持 default  variant 的蓝紫渐变 + hover 发光 + active 缩放。
+
+---
+
+## 14. IDE / 代码编辑器规范（暗色/亮色自适应）
+
+代码编辑器采用与普通后台**相反**的分层逻辑：核心编辑区最深，周围容器稍亮，形成「编辑区凹陷、面板环绕浮起」的专业 IDE 空间感。
+
+- **暗色模式**：使用深空蓝灰分层（`#0F172A` / `#1E293B` / `#2A374B` / `#334155`），配合 `auroraDark` 语法高亮。
+- **亮色模式**：使用主题变量（`bg-background` 代码区、`bg-panel` 容器、`bg-accent` 高亮），配合 `vs` 浅色语法高亮。
+- 所有硬编码色值已替换为 CSS 变量，确保切换主题时无需额外维护两套代码。
+
+### 13.1 分层色值
+
+| 层级 | 区域 | 色值 | 说明 |
+|------|------|------|------|
+| L0 最深 | 代码编辑区 | `#0F172A` | 纯深空蓝底，护眼，突出代码 |
+| L1 次深 | 资源管理器、标签栏、顶部模式栏、面包屑 | `#1E293B` | 容器层，与编辑区拉开色差 |
+| L2 高亮 | 选中文件、激活标签、悬停行 | `#2A374B` | 交互态提亮 |
+| L3 交互 | 搜索框、按钮 | `#334155` | 可点击元素再提亮一级 |
+
+### 13.2 边框与分割线
+
+- 编辑器内部所有分割线统一使用 `rgba(148, 163, 184, 0.15)`，避免中性灰在深底上发雾发脏。
+- 外层编辑器容器使用 `1px solid rgba(148, 163, 184, 0.15)` + `rounded-xl`。
+
+### 13.3 焦点态
+
+- **左侧选中文件**：`bg-[#2A374B] text-[#F1F5F9] border-l-2 border-primary`。
+- **顶部激活标签**：`bg-[#0F172A] text-[#F1F5F9] border-b-2 border-primary`，背景与代码区连通。
+- **模式切换按钮组**：容器 `bg-[#1E293B]`，选中项 `bg-[#0F172A]` + 底部品牌色边框。
+
+### 13.4 代码高亮（Aurora 语法 Token）
+
+| Token | 色值 | 用途 |
+|-------|------|------|
+| 关键字 | `#3B82F6` | `interface` / `const` / `export` 等 |
+| 函数名 | `#8B5CF6` | 函数调用与定义 |
+| 字符串 | `#10B981` | 字符串字面量 |
+| 类型/类名 | `#F59E0B` | 类型、接口名 |
+| 数字/布尔 | `#F97316` | 数字、布尔值 |
+| 注释 | `#64748B` | 注释，弱化不干扰 |
+| 普通变量/文本 | `#F1F5F9` | 主体文字 |
+| 行号 | `#475569` | 深度弱化 |
+
+实现位于 `CodeBlock.tsx` 的 `auroraDark` Prism 主题，编辑器模式通过 `variant="editor"` 启用无边框圆角、L0/L1 分层背景与顶部内阴影凹陷效果。
+
+### 13.5 动效
+
+- 可点击文件行、标签、按钮统一使用 `transition-all duration-150` / `duration-200`。
+- 悬停状态从 `text-[#94A3B8]` 过渡到 `bg-[#2A374B] text-[#F1F5F9]`。
+
+---
+
+## 15. 变更记录
 
 | 日期 | 变更内容 | 作者 |
 |------|----------|------|
@@ -367,3 +503,17 @@ apps/dh-frontend/src/
 | 2026-07-14 | 超管列表多分类单元格改为折叠态：默认只展示第一个分类标签（`bg-primary/10 text-primary rounded-md`，`max-w-[120px] truncate`）+ 溢出计数徽标（`+N`，`bg-muted text-muted-foreground`），整行保持单行高度（`min-h-[36px]`）；点击单元格展开为完整 MultiSelect 编辑，点击外部自动收起；空态显示「选择分类...」占位 | Agent |
 | 2026-07-14 | 智能会话输入框「文档」引用按钮（含 @ 文档内联提及）改为仅产品职能（subRole=pm）可见：文档是产品空间的产物，研发/测试/设计角色工具栏不再展示文档按钮，@ 输入也不再触发文档菜单；无子角色（管理员等）沿用产品默认视图，与欢迎卡片回退逻辑一致 | Agent |
 | 2026-07-14 | 智能会话斜杠指令改为原子文本块：选中后输入框渲染为紫色高亮块（`bg-violet-500/10 text-violet-600 dark:text-violet-400` + 阴影），光标定位到块尾；Backspace/Delete 在块内部或边界时整体移除该指令块；复用 @文档提及 的 `findAtomicRange` 与叠层高亮对齐方案，指令 token 尾随空格保证前缀匹配安全 | Agent |
+| 2026-07-14 | 全局主题替换为 Aurora 极光配色：浅色改为蓝灰清爽主题，深色改为深空蓝灰分层主题；主品牌色统一为极光蓝 `#3B82F6`，紫色仅用于渐变；同步更新 CodeBlock、Diff、Dashboard 图表、ProjectCode 架构图等组件硬编码颜色 | Agent |
+| 2026-07-14 | 深色主题精修：页面/侧边栏/顶部统一为 `#0F172A`，对话窗口使用 `#1E293B` 面板色并加大阴影，边框统一为带蓝调弱半透明 `#242D40`，顶部标题栏去掉毛玻璃补丁，快捷指令卡片 hover 增加蓝色发光 | Agent |
+| 2026-07-13 | Aurora 极光质感与动效规范落地：Button/Input/Textarea/Select/Dialog/AlertDialog/Card 统一使用 `transition-all duration-250 ease-smooth`、Hover 上浮 + `shadow-glow`、点击缩放；新增浅色 `--panel` 变量；Chat/Dashboard/Layout/AdminLayout 等核心页面批量应用 `.glass-panel` / `.glass-card` / `.click-card`；DESIGN.md 动效与特效章节同步更新 | Agent |
+| 2026-07-13 | 代码编辑器 IDE 暗色观感重构：`ProjectCode` 代码区/资源管理器/标签栏按 L0~L3 分层（`#0F172A`/`#1E293B`/`#2A374B`/`#334155`）；分割线统一为 `rgba(148,163,184,0.15)`；选中文件左侧品牌色边框、激活标签底部品牌色边框并连通代码区；`CodeBlock` 新增 `auroraDark` 语法高亮主题（关键字蓝/函数紫/字符串绿/类型橙/注释灰）与 `variant="editor"` 沉浸式编辑器模式；DESIGN.md 新增 IDE 规范章节 | Agent |
+| 2026-07-13 | Aurora 统一胶囊标签栏：`ProjectCode` 页一级仓库/分支栏与二级视图模式 Tab 统一为 `.aurora-tab-bar` / `.aurora-tab-item` 胶囊体系，一级深灰蓝玻璃胶囊文字高亮，二级蓝紫渐变实底选中，彻底消除白边描边割裂感；DESIGN.md 新增 5.9 标签栏规范 | Agent |
+| 2026-07-13 | Aurora 统一胶囊标签栏全页面落地：移除 `.aurora-tab-bar-primary/.aurora-tab-bar-secondary` 两套独立样式；所有页面视图/内容 Tab（`Settings`/`AdminDashboard`/`AdminPage`/`Chat`/`RepoStandardsDialog`）统一为 `.aurora-tab-bar level-2` 蓝紫渐变选中胶囊，与 `ProjectCode` 代码空间视图 Tab 完全一致；`ProjectCode` 顶部仓库/分支栏保留 `.aurora-tab-bar level-1` 作为全局上下文栏；DESIGN.md 5.9 规范更新 | Agent |
+| 2026-07-14 | `ProjectCode` 代码编辑器主题自适应：亮色模式下不再使用固定暗色，改为 `bg-background`/`bg-panel`/`bg-accent` 主题变量；`CodeBlock` 新增 `darkMode` prop 跟随全局主题；修复顶部仓库/分支下拉框文字拥挤与重复「当前」徽章问题；DESIGN.md IDE 规范更新为自适应说明 | Agent |
+| 2026-07-13 | 亮色弹窗质感优化：`Dialog` / `AlertDialog` 遮罩改为轻透明+8px 模糊，弹窗容器改为半透明白色磨砂玻璃（`bg-white/88 backdrop-blur-xl`）、蓝灰半透明边框、柔和多层阴影+白色内高光；关闭按钮改为圆角灰底悬停；`Button` outline 取消蓝色 hover 发光回归中性灰；`Input`/`SelectTrigger` 在浅色模式下使用 `#F8FAFC` 底并 focus 变白；DESIGN.md 新增亮色弹窗规范章节 | Agent |
+| 2026-07-14 | 暗色模式输入框/下拉框可见性修复：统一 `Input`/`SelectTrigger`/`Textarea` 默认样式，暗色下使用 `bg-card/80` 背景并提升 `--input` 边框色为 `#334155`，移除 `Settings`/`PromptMarket`/`SkillMarket`/`DesignWorkspace`/`ProjectCode`/`SmartTest`/`ProductWorkspace` 中强制 `bg-background` 的覆盖，确保输入框边界在 `#0F172A` 背景下清晰可辨 | Agent |
+| 2026-07-14 | 设置页 Tab 层级与对齐重构：建立一/二/三级 Tab 体系，所有导航 Tab 左对齐；`Settings`/`AdminDashboard`/`AdminPage` 一级页面导航改为 `.aurora-tab-bar level-1` 全宽左对齐蓝紫渐变胶囊，二级卡片内分类保持 `.aurora-tab-bar level-2`，`MarkdownEditor` 内可视化/Markdown/预览改为 `.aurora-tab-bar level-3` 小型线型下划线 Tab；DESIGN.md 5.9 规范升级为三级标签栏体系 | Agent |
+| 2026-07-14 | MarkdownEditor 三级 Tab 轻量优化：取消厚重胶囊，改为高度 42px、间距 24px 的线型下划线 Tab，选中态使用蓝紫渐变下划线 + 品牌蓝加粗文字；同步通过 CSS 变量重写 WangEditor 亮/暗配色，解决暗色模式下工具栏白底/图标不可见问题；DESIGN.md 5.9 三级规范更新 | Agent |
+| 2026-07-14 | 租户智能体策略配置重构：新建/编辑租户弹窗内「允许使用的 Coding Agent」与「默认模型配置」上下重复列表合并为可折叠 Agent 卡片组，每张卡片头部含启用复选框、状态标签、锁定按钮、展开箭头；卡片体内完成启用开关、自定义模型、温度、Token 数等参数配置；支持单个/多个 Agent 独立锁定，锁定后配置区自动灰化禁用；未启用卡片整体弱化且不可展开；样式沿用 Aurora 卡片规范（`bg-card border-border/50 rounded-xl`）与 0.2s 过渡 | Agent |
+| 2026-07-14 | 超管技能/提示词管理标签样式与空间管理对齐：分类筛选条改为 `rounded-full` 药丸按钮（选中 `default`/未选中 `outline`）；分类管理标签改用 `Badge variant="secondary"` 默认尺寸，删除图标从 `Trash2` 改为 `X`；表格内多分类折叠标签从 `bg-primary/10` 改为 `bg-secondary text-secondary-foreground`；DESIGN.md 5.7 筛选条规范补充药丸分类筛选说明 | Agent |
+| 2026-07-14 | 表格行操作下拉菜单极光玻璃化：统一 `DropdownMenuContent` 为 `bg-popover/95 backdrop-blur-xl border-border/50 rounded-lg shadow-lg`；`DropdownMenuItem` 统一高度 32px、图标+文字、hover 浅蓝底高亮；危险项（删除）使用 `text-destructive focus:bg-destructive/10 focus:text-destructive` 并与普通项用分隔线区隔；触发按钮 `ghost` 增加 hover/open 浅蓝高亮；技能/提示词/租户管理下拉菜单补充图标；DESIGN.md 5.7 行操作规范更新 | Agent |

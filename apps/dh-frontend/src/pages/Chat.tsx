@@ -1710,7 +1710,7 @@ export const Chat: React.FC = () => {
   // ──────────────── Render ────────────────
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <div className="h-[calc(100vh-6rem)] md:h-[calc(100vh-4rem)] flex flex-row border-0 md:border md:border-border/50 rounded-none md:rounded-2xl overflow-hidden bg-background soft-shadow max-w-full mx-auto w-full relative">
+      <div className="h-[calc(100vh-6rem)] md:h-[calc(100vh-4rem)] flex flex-row rounded-none md:rounded-2xl overflow-hidden glass-panel max-w-full mx-auto w-full relative">
 
         <ResizablePanelGroup direction="horizontal" className="h-full w-full">
           {/* ── Inline Preview Area ── */}
@@ -1721,15 +1721,15 @@ export const Chat: React.FC = () => {
             collapsible={true}
             collapsedSize={0}
             className={cn(
-              'h-full flex flex-col bg-background overflow-hidden',
+              'h-full flex flex-col glass-panel overflow-hidden',
               !showPreview && 'pointer-events-none'
             )}
           >
             {showPreview && (
-              <div className="h-full flex flex-col border-r border-border/50">
+              <div className="h-full flex flex-col border-r border-border">
                 {/* 预览历史导航栏 */}
                 {(canGoBack || canGoForward) && (
-                  <div className="flex items-center gap-1 px-2 py-1 border-b border-border/30 bg-muted/20 shrink-0">
+                  <div className="flex items-center gap-1 px-2 py-1 border-b border-border bg-muted/20 shrink-0">
                     <button
                       onClick={() => navigatePreview('back')}
                       disabled={!canGoBack}
@@ -1769,10 +1769,10 @@ export const Chat: React.FC = () => {
           <ResizableHandle withHandle className={cn(!showPreview && 'pointer-events-none opacity-0 w-0')} />
 
           {/* ── Main Chat Area ── */}
-          <ResizablePanel defaultSize={100} minSize={25} className="h-full flex flex-col min-w-0 bg-background relative overflow-hidden">
+          <ResizablePanel defaultSize={100} minSize={25} className="h-full flex flex-col min-w-0 relative overflow-hidden">
 
         {/* Chat Header */}
-        <div className="border-b border-border/50 flex flex-col shrink-0 bg-background/80 backdrop-blur-sm z-10 w-full">
+        <div className="border-b border-border flex flex-col shrink-0 bg-panel/80 backdrop-blur-xl z-10 w-full">
           {/* 第一层：助手标题 + 智能体 tabs + 新增智能体 */}
           <div className={cn('flex items-center px-4 gap-2', showPreview ? 'h-10' : 'h-12')}>
             <Bot className={cn('text-primary shrink-0', showPreview ? 'h-3.5 w-3.5' : 'h-4 w-4')} />
@@ -1810,7 +1810,7 @@ export const Chat: React.FC = () => {
                       className={`group flex items-center gap-1.5 pl-2 pr-1.5 h-7 max-w-[180px] rounded-md border text-xs cursor-pointer transition-colors shrink-0 ${
                         isActive
                           ? 'bg-primary/10 border-primary/30 text-primary'
-                          : 'bg-background border-border/50 text-foreground hover:bg-accent'
+                          : 'bg-panel/60 border-border text-foreground hover:bg-accent'
                       }`}
                       title={`${tab.title} · ${AGENT_STATUS_LABELS[tab.status]}${tab.instanceId ? ' · ' + tab.instanceId : ''}`}
                     >
@@ -1863,7 +1863,7 @@ export const Chat: React.FC = () => {
           </div>
 
           {/* 第二层：当前会话标题 + 历史会话 + 新建会话 */}
-          <div className={cn('border-t border-border/50 flex items-center gap-2 bg-muted/20', showPreview ? 'h-8 px-2' : 'h-10 px-4')}>
+          <div className={cn('border-t border-border flex items-center gap-2 bg-muted/20', showPreview ? 'h-8 px-2' : 'h-10 px-4')}>
             <span className={cn('font-medium truncate', showPreview ? 'text-xs' : 'text-sm')}>
               {activeTab
                 ? (activeTab.instanceId ? `${activeTab.title} · ${activeTab.instanceId.slice(0, 6)}` : activeTab.title)
@@ -1887,12 +1887,12 @@ export const Chat: React.FC = () => {
                 </Button>
                 {historyOpen && (
                   <div className="absolute top-full right-0 mt-1 w-72 bg-popover border shadow-xl rounded-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
-                    <div className="p-2 border-b border-border/50">
+                    <div className="p-2 border-b border-border">
                       <div className="relative">
                         <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
                         <Input
                           placeholder="搜索历史会话..."
-                          className="pl-8 h-7 text-xs bg-muted/30 border-border/50 rounded-lg"
+                          className="pl-8 h-7 text-xs bg-muted/30 border-border rounded-lg"
                           value={historySearch}
                           onChange={e => setHistorySearch(e.target.value)}
                           autoFocus
@@ -1969,7 +1969,7 @@ export const Chat: React.FC = () => {
         </div>
 
         {/* Chat Messages */}
-        <ScrollArea id="chat-scroll-area" className={cn('flex-1 bg-[#f8f9fa] dark:bg-card/30', showPreview ? 'p-2' : 'p-4 pr-8')}>
+        <ScrollArea id="chat-scroll-area" className={cn('flex-1', showPreview ? 'p-2' : 'p-4 pr-8')}>
           <div className="space-y-6">
             {messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center pt-20">
@@ -1987,7 +1987,7 @@ export const Chat: React.FC = () => {
                       <Button
                         key={card.cmd}
                         variant="outline"
-                        className="h-auto py-3 justify-start text-left bg-background/50 hover:bg-background"
+                        className="h-auto py-3 justify-start text-left glass-card click-card"
                         onClick={() => insertCommand(card.cmd)}
                       >
                         <Icon className="h-4 w-4 mr-2 text-primary shrink-0" />
@@ -2059,7 +2059,7 @@ export const Chat: React.FC = () => {
 
         {/* Chat Input */}
         <div className={cn('shrink-0 flex justify-center z-10 bg-gradient-to-t from-background via-background/95 to-background/50', showPreview ? 'p-2' : 'p-3 md:p-5')}>
-          <div className="w-full relative flex flex-col rounded-3xl border bg-background/80 backdrop-blur-xl soft-shadow overflow-visible">
+          <div className="w-full relative flex flex-col rounded-3xl border bg-panel/80 backdrop-blur-xl soft-shadow overflow-visible">
             {(quotedCard || selectedRepos.length > 0) && (
               <div className={cn('flex flex-wrap gap-2 border-b border-border/10', showPreview ? 'px-3 pt-2 pb-1.5' : 'px-5 pt-3 pb-2')}>
                 {quotedCard && (
@@ -2142,7 +2142,7 @@ export const Chat: React.FC = () => {
             {/* @ 内联文档菜单：检索词即输入框中 @ 后的文本，上下键选择、回车确认 */}
             {docMention && (
               <div ref={docMentionMenuRef} className="absolute bottom-full left-4 mb-1 w-72 max-h-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2">
-                <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-b border-border/50 shrink-0">选择要引用的文档</div>
+                <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-b border-border shrink-0">选择要引用的文档</div>
                 <div className="overflow-y-auto py-1">
                   {filteredDocs.length === 0 ? (
                     <p className="text-xs text-muted-foreground text-center py-4">无匹配文档</p>
@@ -2181,7 +2181,7 @@ export const Chat: React.FC = () => {
                   {taskMenuOpen && (
                     <div className="absolute bottom-full left-0 mb-2 w-[360px] bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
                       {/* 任务统计与操作 */}
-                      <div className="flex items-center justify-between px-3 py-2 border-b border-border/50 bg-muted/30 shrink-0">
+                      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30 shrink-0">
                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
                           <span>总任务: <span className="font-semibold text-foreground">{allTasks.length}</span></span>
                           <span>已完成: <span className="font-semibold text-green-600 dark:text-green-400">{completedCount}</span></span>
@@ -2206,10 +2206,10 @@ export const Chat: React.FC = () => {
                       </div>
                       <Tabs value={activeTaskTab} onValueChange={(v) => setActiveTaskTab(v as typeof activeTaskTab)} className="w-full flex flex-col flex-1 min-h-0">
                         <div className="px-1 pt-2 bg-muted/30">
-                          <TabsList className="w-full justify-start h-auto bg-transparent p-0 overflow-x-auto flex-nowrap rounded-none border-b">
-                            <TabsTrigger value="req" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2 px-3 text-xs">需求</TabsTrigger>
-                            <TabsTrigger value="defect" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2 px-3 text-xs">缺陷</TabsTrigger>
-                            <TabsTrigger value="case" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2 px-3 text-xs">用例</TabsTrigger>
+                          <TabsList className="aurora-tab-bar level-2 w-full">
+                            <TabsTrigger value="req" className="aurora-tab-item level-2">需求</TabsTrigger>
+                            <TabsTrigger value="defect" className="aurora-tab-item level-2">缺陷</TabsTrigger>
+                            <TabsTrigger value="case" className="aurora-tab-item level-2">用例</TabsTrigger>
                           </TabsList>
                         </div>
                         <div className="flex-1 overflow-y-auto p-2 space-y-1">
@@ -2235,7 +2235,7 @@ export const Chat: React.FC = () => {
                   </Button>
                   {docMenuOpen && (
                     <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
-                      <div className="p-2 border-b border-border/50 shrink-0">
+                      <div className="p-2 border-b border-border shrink-0">
                         <Input
                           placeholder="搜索文档..."
                           value={docMenuSearch}
@@ -2403,9 +2403,9 @@ export const Chat: React.FC = () => {
                                 onChange={(e) => setSkillMenuSearch(e.target.value)}
                               />
                             </div>
-                            <TabsList className="w-full justify-start h-auto bg-transparent p-0 overflow-x-auto flex-nowrap rounded-none">
+                            <TabsList className="aurora-tab-bar level-2 w-full">
                               {['全部', '需求设计', 'UI设计', '代码开发', '测试编写', '需求上线'].map(tab => (
-                                <TabsTrigger key={tab} value={tab} className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2 px-3 text-xs">{tab}</TabsTrigger>
+                                <TabsTrigger key={tab} value={tab} className="aurora-tab-item level-2">{tab}</TabsTrigger>
                               ))}
                             </TabsList>
                           </div>
@@ -2580,9 +2580,9 @@ export const Chat: React.FC = () => {
                                   onChange={(e) => setSkillMenuSearch(e.target.value)}
                                 />
                               </div>
-                              <TabsList className="w-full justify-start h-auto bg-transparent p-0 overflow-x-auto flex-nowrap rounded-none">
+                              <TabsList className="aurora-tab-bar level-2 w-full">
                                 {['全部', '需求设计', 'UI设计', '代码开发', '测试编写', '需求上线'].map(tab => (
-                                  <TabsTrigger key={tab} value={tab} className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2 px-3 text-xs">{tab}</TabsTrigger>
+                                  <TabsTrigger key={tab} value={tab} className="aurora-tab-item level-2">{tab}</TabsTrigger>
                                 ))}
                               </TabsList>
                             </div>
@@ -2755,10 +2755,10 @@ export const Chat: React.FC = () => {
         </Dialog>
 
         {/* ── Detail Drawer ── */}
-        <div className={`absolute inset-y-0 right-0 w-80 bg-background border-l border-border/50 flex flex-col z-50 transition-transform duration-300 ${detailOpen ? 'translate-x-0 shadow-2xl' : 'translate-x-full'}`}>
+        <div className={`absolute inset-y-0 right-0 w-80 bg-background border-l border-border flex flex-col z-50 transition-transform duration-300 ${detailOpen ? 'translate-x-0 shadow-2xl' : 'translate-x-full'}`}>
           {detailOpen && (
             <>
-              <div className="flex items-center gap-2 px-4 py-3 border-b border-border/50 shrink-0">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
                 {detailType === 'req' && <ListTodo className="h-4 w-4 text-primary" />}
                 {detailType === 'defect' && <Bug className="h-4 w-4 text-destructive" />}
                 {detailType === 'case' && <FlaskConical className="h-4 w-4 text-violet-500" />}
@@ -2936,7 +2936,7 @@ export const Chat: React.FC = () => {
         <div className={`absolute inset-0 bg-background z-40 flex flex-col transition-transform duration-300 ${kanbanOpen ? 'translate-x-0' : '-translate-x-full'}`}>
           {kanbanOpen && (
             <>
-              <div className="flex items-center gap-2 px-4 py-3 border-b border-border/50 shrink-0">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
                 <LayoutTemplate className="h-4 w-4 text-primary" />
                 <span className="font-semibold text-sm">
                   {kanbanType === 'req' ? '需求看板' : kanbanType === 'defect' ? '缺陷看板' : '用例看板'}
@@ -2966,7 +2966,7 @@ export const Chat: React.FC = () => {
                               <div
                                 key={item.id}
                                 ref={el => { kanbanItemRefs.current[item.id] = el; }}
-                                className={`relative p-3 pl-4 rounded-xl border bg-card cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:shadow-md ${isHighlight ? 'border-primary shadow-md ring-2 ring-primary/30' : 'border-border/50'} ${isDone ? 'opacity-75' : ''}`}
+                                className={`relative p-3 pl-4 rounded-xl border bg-card cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:shadow-md ${isHighlight ? 'border-primary shadow-md ring-2 ring-primary/30' : 'border-border'} ${isDone ? 'opacity-75' : ''}`}
                                 onClick={() => {
                                   setKanbanHighlightId(item.id);
                                   openDetail(kanbanType, item.id);

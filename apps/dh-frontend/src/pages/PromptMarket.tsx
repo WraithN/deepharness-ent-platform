@@ -177,7 +177,7 @@ export const PromptMarket: React.FC = () => {
             <Input
               type="search"
               placeholder="搜索提示词..."
-              className="pl-8 bg-background"
+              className="pl-8"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />

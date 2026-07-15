@@ -607,24 +607,24 @@ const RollbackDialog: React.FC<RollbackDialogProps> = ({
 // 版本详情弹窗（基础信息 + 任意两版本 Diff 对比 + 备注编辑 + 导出/回滚）
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Diff 配色：对齐设计稿的红色删除 / 绿色新增规范（浅底深字，不刺眼） */
+/** Diff 配色：Aurora 语义色，低饱和底色 + 高饱和文字 */
 const DIFF_VIEWER_STYLES = {
   variables: {
     light: {
-      diffViewerBackground: '#ffffff',
-      addedBackground: '#dcfce7',
-      addedColor: '#166534',
-      removedBackground: '#fee2e2',
-      removedColor: '#991b1b',
-      wordAddedBackground: '#bbf7d0',
-      wordRemovedBackground: '#fecaca',
-      addedGutterBackground: '#dcfce7',
-      removedGutterBackground: '#fee2e2',
-      gutterBackground: '#f9fafb',
-      gutterBackgroundDark: '#f3f4f6',
-      gutterColor: '#94a3b8',
-      codeFoldBackground: '#f9fafb',
-      emptyLineBackground: '#ffffff',
+      diffViewerBackground: 'hsl(var(--card))',
+      addedBackground: 'hsl(var(--success) / 0.12)',
+      addedColor: 'hsl(var(--success))',
+      removedBackground: 'hsl(var(--destructive) / 0.12)',
+      removedColor: 'hsl(var(--destructive))',
+      wordAddedBackground: 'hsl(var(--success) / 0.22)',
+      wordRemovedBackground: 'hsl(var(--destructive) / 0.22)',
+      addedGutterBackground: 'hsl(var(--success) / 0.12)',
+      removedGutterBackground: 'hsl(var(--destructive) / 0.12)',
+      gutterBackground: 'hsl(var(--muted))',
+      gutterBackgroundDark: 'hsl(var(--muted))',
+      gutterColor: 'hsl(var(--muted-foreground))',
+      codeFoldBackground: 'hsl(var(--muted))',
+      emptyLineBackground: 'hsl(var(--card))',
     },
   },
 };
@@ -789,11 +789,11 @@ const VersionDetailDialog: React.FC<VersionDetailDialogProps> = ({
                 {!isUniqueVersion && (
                   <div className="flex gap-6 mt-4 text-sm text-muted-foreground">
                     <span className="inline-flex items-center gap-2">
-                      <span className="w-4 h-4 rounded bg-[#fee2e2] border border-[#fecaca]" />
+                      <span className="w-4 h-4 rounded bg-destructive/12 border border-destructive/12" />
                       红色 = 删除内容
                     </span>
                     <span className="inline-flex items-center gap-2">
-                      <span className="w-4 h-4 rounded bg-[#dcfce7] border border-[#bbf7d0]" />
+                      <span className="w-4 h-4 rounded bg-success/12 border border-success/12" />
                       绿色 = 新增内容
                     </span>
                   </div>

@@ -64,6 +64,10 @@ export default {
                     DEFAULT: 'hsl(var(--card))',
                     foreground: 'hsl(var(--card-foreground))'
                 },
+                panel: {
+                    DEFAULT: 'hsl(var(--panel))',
+                    foreground: 'hsl(var(--panel-foreground))'
+                },
                 education: {
                     blue: 'hsl(var(--education-blue))',
                     green: 'hsl(var(--education-green))'
@@ -102,7 +106,14 @@ export default {
             },
             boxShadow: {
                 card: 'var(--shadow-card)',
-                hover: 'var(--shadow-hover)'
+                hover: 'var(--shadow-hover)',
+                glow: 'var(--shadow-glow)'
+            },
+            transitionDuration: {
+                250: '250ms'
+            },
+            transitionTimingFunction: {
+                smooth: 'cubic-bezier(0.4, 0, 0.2, 1)'
             },
             keyframes: {
                 'accordion-down': {

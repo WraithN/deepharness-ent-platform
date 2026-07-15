@@ -1,4 +1,4 @@
-import { AlertCircle, Bot, Box, Camera, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Code2, Copy, Download, FileText, ListTodo, Loader2, Lock, MessageSquareQuote, MoreHorizontal, Plus, Puzzle, Save, Search, Share2, Shield, SlidersHorizontal, Star, Trash2, UploadCloud, UserCircle, UserPlus, Wand2, X } from 'lucide-react';
+import { AlertCircle, Bot, Box, Camera, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Code2, Copy, Download, FileText, ListTodo, Loader2, Lock, MessageSquareQuote, MoreHorizontal, Palette, Plus, Puzzle, Save, Search, Share2, Shield, SlidersHorizontal, Star, Trash2, UploadCloud, UserCircle, UserPlus, Users, Wand2, X } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -1239,15 +1239,41 @@ export const Settings: React.FC = () => {
 
   return (
     <div className="flex-1 space-y-6 w-full pb-12">
+      <div className="mb-6">
+        <h1 className="text-lg font-semibold text-foreground">空间配置</h1>
+        <p className="text-sm text-muted-foreground mt-1">配置当前空间的基础能力与运行规则</p>
+      </div>
+
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="mb-6 flex-wrap h-auto gap-1 justify-start bg-transparent p-0">
-          <TabsTrigger value="basic" className="data-[state=active]:bg-card data-[state=active]:shadow-sm rounded-full px-4 border border-transparent data-[state=active]:border-border/50">基础配置</TabsTrigger>
-          <TabsTrigger value="agent" className="data-[state=active]:bg-card data-[state=active]:shadow-sm rounded-full px-4 border border-transparent data-[state=active]:border-border/50">智能体配置</TabsTrigger>
-          <TabsTrigger value="skills" className="data-[state=active]:bg-card data-[state=active]:shadow-sm rounded-full px-4 border border-transparent data-[state=active]:border-border/50">技能配置</TabsTrigger>
-          <TabsTrigger value="prompts" className="data-[state=active]:bg-card data-[state=active]:shadow-sm rounded-full px-4 border border-transparent data-[state=active]:border-border/50">提示词配置</TabsTrigger>
-          <TabsTrigger value="standards" className="data-[state=active]:bg-card data-[state=active]:shadow-sm rounded-full px-4 border border-transparent data-[state=active]:border-border/50">研发规范</TabsTrigger>
-          <TabsTrigger value="cicd" className="data-[state=active]:bg-card data-[state=active]:shadow-sm rounded-full px-4 border border-transparent data-[state=active]:border-border/50">CICD配置</TabsTrigger>
-          <TabsTrigger value="members" className="data-[state=active]:bg-card data-[state=active]:shadow-sm rounded-full px-4 border border-transparent data-[state=active]:border-border/50">成员管理</TabsTrigger>
+        <TabsList className="aurora-tab-bar level-1 mb-6">
+          <TabsTrigger value="basic" className="aurora-tab-item level-1">
+            <SlidersHorizontal className="h-4 w-4" />
+            基础配置
+          </TabsTrigger>
+          <TabsTrigger value="agent" className="aurora-tab-item level-1">
+            <Bot className="h-4 w-4" />
+            智能体配置
+          </TabsTrigger>
+          <TabsTrigger value="skills" className="aurora-tab-item level-1">
+            <Puzzle className="h-4 w-4" />
+            技能配置
+          </TabsTrigger>
+          <TabsTrigger value="prompts" className="aurora-tab-item level-1">
+            <MessageSquareQuote className="h-4 w-4" />
+            提示词配置
+          </TabsTrigger>
+          <TabsTrigger value="standards" className="aurora-tab-item level-1">
+            <FileText className="h-4 w-4" />
+            研发规范
+          </TabsTrigger>
+          <TabsTrigger value="cicd" className="aurora-tab-item level-1">
+            <UploadCloud className="h-4 w-4" />
+            CICD配置
+          </TabsTrigger>
+          <TabsTrigger value="members" className="aurora-tab-item level-1">
+            <Users className="h-4 w-4" />
+            成员管理
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="basic">
@@ -1312,7 +1338,6 @@ export const Settings: React.FC = () => {
                           placeholder="仓库地址（如 https://gitlab.com/org/repo.git）"
                           value={repo.url} 
                           onChange={e => handleGitUrlChange(repo.id, e.target.value)} 
-                          className="bg-background"
                           disabled={isReadOnly}
                         />
                       </div>
@@ -1321,13 +1346,12 @@ export const Settings: React.FC = () => {
                           placeholder="main"
                           value={repo.defaultBranch || ''} 
                           onChange={e => handleRepoBranchChange(repo.id, e.target.value)} 
-                          className="bg-background"
                           disabled={isReadOnly}
                         />
                       </div>
                       <div className="w-[110px]">
                         <Select disabled={isReadOnly} value={repo.type} onValueChange={(val) => handleRepoTypeChange(repo.id, val as WorkspaceRepository['type'])}>
-                          <SelectTrigger className="bg-background">
+                          <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -1383,9 +1407,15 @@ export const Settings: React.FC = () => {
             </CardHeader>
             <CardContent className="space-y-6">
               <Tabs defaultValue="coding" className="w-full">
-                <TabsList className="mb-4">
-                  <TabsTrigger value="coding">编码规范</TabsTrigger>
-                  <TabsTrigger value="design">设计规范</TabsTrigger>
+                <TabsList className="aurora-tab-bar level-2 mb-4">
+                  <TabsTrigger value="coding" className="aurora-tab-item level-2">
+                    <Code2 className="h-4 w-4" />
+                    编码规范
+                  </TabsTrigger>
+                  <TabsTrigger value="design" className="aurora-tab-item level-2">
+                    <Palette className="h-4 w-4" />
+                    设计规范
+                  </TabsTrigger>
                 </TabsList>
                 <TabsContent value="coding">
                   {!isReadOnly && (
@@ -1865,7 +1895,7 @@ export const Settings: React.FC = () => {
                         <Textarea
                           value={promptEditForm.content}
                           onChange={(e) => setPromptEditForm(prev => ({ ...prev, content: e.target.value }))}
-                          className="min-h-[224px] resize-none border-input rounded-lg text-sm transition-all hover:border-input/80 focus:border-ring focus:bg-background focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]"
+                          className="min-h-[224px] resize-none rounded-lg text-sm"
                           readOnly={!!selectedPrompt.libraryPromptId}
                           disabled={!!selectedPrompt.libraryPromptId}
                         />
@@ -1884,7 +1914,7 @@ export const Settings: React.FC = () => {
                       <Textarea
                         value={selectedPrompt.content}
                         readOnly
-                        className="min-h-[224px] resize-none bg-muted/30 border-input rounded-lg text-sm transition-all hover:border-input/80 focus:border-ring focus:bg-background focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]"
+                        className="min-h-[224px] resize-none bg-muted/30 rounded-lg text-sm"
                       />
                     </div>
                   )}
@@ -1899,7 +1929,7 @@ export const Settings: React.FC = () => {
                         disabled={!!selectedPrompt.libraryPromptId}
                       />
                     ) : (
-                      <div className="flex flex-wrap items-center gap-2 min-h-[44px] px-3 py-2 rounded-lg border border-input bg-background">
+                      <div className="flex flex-wrap items-center gap-2 min-h-[44px] px-3 py-2 rounded-lg border border-input bg-card/80">
                         {selectedPrompt.categories.length > 0 ? selectedPrompt.categories.map(c => (
                           <Badge key={c.id} variant="outline" className="text-xs h-6">{c.name}</Badge>
                         )) : (
@@ -2236,13 +2266,13 @@ export const Settings: React.FC = () => {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="搜索技能..."
-                className="w-full pl-9 pr-3 py-2.5 h-10 rounded-lg border-input bg-background transition-all hover:border-input/80 focus:border-ring focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]"
+                className="w-full pl-9 pr-3 py-2.5 h-10 rounded-lg"
                 value={skillSearch}
                 onChange={e => setSkillSearch(e.target.value)}
               />
             </div>
             <Select value={skillCategory} onValueChange={setSkillCategory}>
-              <SelectTrigger className="min-w-[120px] w-[120px] h-10 rounded-lg border-input bg-background px-3 py-2.5 transition-all hover:border-input/80 focus:ring-0 focus:border-ring focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]">
+              <SelectTrigger className="min-w-[120px] w-[120px] h-10 rounded-lg px-3 py-2.5">
                 <SelectValue placeholder="分类" />
               </SelectTrigger>
               <SelectContent>
@@ -2411,13 +2441,13 @@ export const Settings: React.FC = () => {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="搜索提示词..."
-                className="w-full pl-9 pr-3 py-2.5 h-10 rounded-lg border-input bg-background transition-all hover:border-input/80 focus:border-ring focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]"
+                className="w-full pl-9 pr-3 py-2.5 h-10 rounded-lg"
                 value={promptMarketSearch}
                 onChange={e => setPromptMarketSearch(e.target.value)}
               />
             </div>
             <Select value={promptMarketCategory} onValueChange={setPromptMarketCategory}>
-              <SelectTrigger className="min-w-[130px] w-[130px] h-10 rounded-lg border-input bg-background px-3 py-2.5 transition-all hover:border-input/80 focus:ring-0 focus:border-ring focus:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]">
+              <SelectTrigger className="min-w-[130px] w-[130px] h-10 rounded-lg px-3 py-2.5">
                 <SelectValue placeholder="分类" />
               </SelectTrigger>
               <SelectContent>

@@ -6,7 +6,7 @@ const SAVE_SUCCESS_MESSAGE = '分类已更新';
 const SAVE_FAILED_MESSAGE = '分类更新失败，请重试';
 const CELL_WIDTH_CLASS = 'w-[200px]';
 const CHIP_CLASS =
-  'inline-flex items-center rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary';
+  'inline-flex items-center rounded-md bg-secondary px-2.5 py-1 text-xs font-semibold text-secondary-foreground';
 const OVERFLOW_CHIP_CLASS =
   'inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground';
 
@@ -84,7 +84,7 @@ export function CategoryMultiCell({ options, value, onSave, disabled }: Category
           type="button"
           disabled={disabled}
           onClick={() => setExpanded(true)}
-          className="flex min-h-[36px] w-full items-center gap-1.5 rounded-lg border border-input bg-background px-3 py-1.5 text-left shadow-sm transition-colors hover:border-input/80 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex min-h-[36px] w-full items-center gap-1.5 rounded-lg border border-input bg-card/80 px-3 py-1.5 text-left shadow-sm transition-colors hover:border-input/80 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {selectedLabels.length === 0 ? (
             <span className="text-sm text-muted-foreground">选择分类...</span>

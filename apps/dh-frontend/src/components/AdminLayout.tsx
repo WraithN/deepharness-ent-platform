@@ -45,7 +45,7 @@ export const AdminLayout: React.FC = () => {
   return (
     <div className="h-screen w-full bg-background flex flex-col md:flex-row overflow-hidden font-sans">
       {/* Mobile Header */}
-      <div className="md:hidden flex flex-col p-4 border-b border-border/50 bg-card z-20 relative gap-2">
+      <div className="md:hidden flex flex-col p-4 border-b border-border bg-background z-20 relative gap-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 font-bold text-lg">
             <Terminal className="h-5 w-5 text-primary" />
@@ -77,10 +77,10 @@ export const AdminLayout: React.FC = () => {
       {/* Sidebar */}
       <aside className={`
         ${mobileMenuOpen ? 'flex' : 'hidden'} 
-        md:flex flex-col w-full md:w-64 border-r border-border/50 bg-card shrink-0
+        md:flex flex-col w-full md:w-64 border-r border-border bg-background shrink-0
         absolute md:relative z-50 h-[calc(100vh-65px)] md:h-screen top-[65px] md:top-0
       `}>
-        <div className="hidden md:flex items-center gap-2 font-bold text-xl p-6 border-b border-border/50 shrink-0">
+        <div className="hidden md:flex items-center gap-2 font-bold text-xl p-6 border-b border-border shrink-0">
           <Terminal className="h-6 w-6 text-primary" />
           <span>DeepHarness管理后台</span>
         </div>
@@ -92,10 +92,10 @@ export const AdminLayout: React.FC = () => {
               to={item.path}
               onClick={() => setMobileMenuOpen(false)}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-250 ease-smooth ${
                   isActive
-                    ? 'bg-primary text-primary-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                    ? 'bg-primary text-primary-foreground shadow-glow'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground hover:shadow-glow'
                 }`
               }
             >
@@ -105,8 +105,8 @@ export const AdminLayout: React.FC = () => {
           ))}
         </nav>
 
-        <div className="shrink-0 border-t border-border/50 p-3 bg-background flex flex-col gap-2 overflow-hidden">
-          <div className="flex items-center gap-2 rounded-xl p-2 bg-muted/30 hover:bg-muted/50 transition-colors group">
+        <div className="shrink-0 border-t border-border p-3 bg-background flex flex-col gap-2 overflow-hidden">
+          <div className="flex items-center gap-2 rounded-xl p-2 glass-card transition-all duration-250 ease-smooth group hover:border-primary/20">
             <div
               className="flex items-center gap-3 flex-1 overflow-hidden cursor-pointer"
               onClick={() => navigate('/profile')}
@@ -144,7 +144,7 @@ export const AdminLayout: React.FC = () => {
       {/* Main Content */}
       <main className="flex-1 overflow-hidden bg-background relative flex flex-col min-w-0 h-[calc(100vh-65px)] md:h-screen">
         <div className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col">
-          <div className="px-4 md:px-8 py-4 shrink-0 border-b border-border/50 bg-muted/30 backdrop-blur-sm sticky top-0 z-10 hidden md:block shadow-sm">
+          <div className="px-4 md:px-8 py-4 shrink-0 border-b border-border/50 bg-panel/50 backdrop-blur-xl sticky top-0 z-10 hidden md:block">
             <div className="flex flex-col min-w-0">
               <h1 className="text-lg sm:text-xl font-bold text-foreground truncate tracking-tight">
                 {adminNavItems.find(item => item.path === location.pathname)?.label || 'DeepHarness管理后台'}

@@ -1,4 +1,4 @@
-import { MoreHorizontal, Puzzle, Search } from 'lucide-react';
+import { ArrowDownFromLine, CheckCircle2, Eye, MoreHorizontal, Puzzle, Search, Trash2, XCircle } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { RecordPaginationBar } from '@/components/RecordPaginationBar';
@@ -175,9 +175,9 @@ export const SkillManagement: React.FC = () => {
             {[ALL_FILTER_VALUE, ...categories.map((c) => c.name)].map((cat) => (
               <Button
                 key={cat}
-                variant={categoryFilter === cat ? 'secondary' : 'ghost'}
+                variant={categoryFilter === cat ? 'default' : 'outline'}
                 size="sm"
-                className="h-8"
+                className="h-8 px-4 rounded-full whitespace-nowrap"
                 onClick={() => setCategoryFilter(cat)}
               >
                 {cat === ALL_FILTER_VALUE ? '全部' : cat}
@@ -240,18 +240,23 @@ export const SkillManagement: React.FC = () => {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => setViewingSkill(s)}>查看</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => setViewingSkill(s)}>
+                                <Eye className="h-4 w-4" /> 查看
+                              </DropdownMenuItem>
                               {reviewActions.map((item) => (
                                 <DropdownMenuItem key={item.action} onClick={() => handleReview(s, item.action)}>
+                                  {item.action === 'approve' && <CheckCircle2 className="h-4 w-4" />}
+                                  {item.action === 'reject' && <XCircle className="h-4 w-4" />}
+                                  {item.action === 'unshelf' && <ArrowDownFromLine className="h-4 w-4" />}
                                   {item.label}
                                 </DropdownMenuItem>
                               ))}
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
-                                className="text-destructive focus:text-destructive"
+                                className="text-destructive focus:bg-destructive/10 focus:text-destructive"
                                 onClick={() => handleDelete(s)}
                               >
-                                删除
+                                <Trash2 className="h-4 w-4" /> 删除
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>

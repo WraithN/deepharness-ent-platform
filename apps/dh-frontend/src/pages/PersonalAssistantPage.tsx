@@ -106,7 +106,7 @@ export const PersonalAssistantPage: React.FC = () => {
   return (
     <div className="flex-1 space-y-6 max-w-7xl mx-auto w-full pb-12">
       {/* Banner */}
-      <div className="relative w-full rounded-2xl overflow-hidden soft-shadow group bg-[#4a72d4]/20">
+      <div className="relative w-full rounded-2xl overflow-hidden soft-shadow group bg-primary/20">
         <img 
           src="https://miaoda-conversation-file.cdn.bcebos.com/user-byc66ang2qrk/app-bycc1mwfyi9t/20260605/jimeng-2026-06-05-7065-保持原图所有内容不变，仅调整图片宽高比例，维持内容完整.png" 
           alt="Lobster Assistant Banner" 

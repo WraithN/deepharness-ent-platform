@@ -1,4 +1,4 @@
-import { Plus, Shield, Trash2 } from 'lucide-react';
+import { Plus, Shield, X } from 'lucide-react';
 import React, { useState } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -84,17 +84,18 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({
             <Badge
               key={cat.id}
               variant="secondary"
-              className="px-3 py-1.5 text-sm flex items-center gap-2"
+              className="inline-flex items-center gap-1"
             >
               {cat.name}
               {cat.builtin && <Shield className="h-3 w-3 text-muted-foreground" />}
               {!cat.builtin && (
                 <button
+                  type="button"
                   onClick={() => handleDelete(cat.id)}
-                  className="ml-1 text-muted-foreground hover:text-destructive"
+                  className="text-muted-foreground hover:text-destructive"
                   title="删除"
                 >
-                  <Trash2 className="h-3 w-3" />
+                  <X className="h-3 w-3" />
                 </button>
               )}
             </Badge>

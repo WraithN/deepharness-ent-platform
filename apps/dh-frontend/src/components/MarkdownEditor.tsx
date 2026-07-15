@@ -343,18 +343,13 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
       {/* 模式切换栏：左侧三模式标签，右侧模板菜单（Markdown 模式附加快捷工具栏） */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border/50 shrink-0 bg-background/90 gap-2">
-        <div className="inline-flex bg-muted/60 p-1 rounded-lg shrink-0">
+      <div className="flex items-center justify-between h-11 px-4 border-b border-border/50 shrink-0 bg-background/90 gap-2">
+        <div className="aurora-tab-bar level-3 shrink-0">
           {MODE_TABS.map(tab => (
             <button
               key={tab.key}
               onClick={() => handleModeChange(tab.key)}
-              className={cn(
-                'px-3 py-1.5 rounded-md text-sm transition-all',
-                mode === tab.key
-                  ? 'bg-background text-primary shadow-sm font-medium'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
+              className={cn('aurora-tab-item level-3', mode === tab.key && 'active')}
             >
               {tab.label}
             </button>

@@ -712,7 +712,7 @@ export const DesignWorkspace: React.FC = () => {
         </div>
         <div className="flex items-center gap-2">
           <Select value={selectedProject} onValueChange={setSelectedProject}>
-            <SelectTrigger className="w-[180px] h-9 text-xs bg-background">
+            <SelectTrigger className="w-[180px] h-9 text-xs">
               <SelectValue placeholder="选择设计项目" />
             </SelectTrigger>
             <SelectContent>
@@ -720,7 +720,7 @@ export const DesignWorkspace: React.FC = () => {
             </SelectContent>
           </Select>
           <Select value={selectedVersion} onValueChange={setSelectedVersion}>
-            <SelectTrigger className="w-[150px] h-9 text-xs bg-background">
+            <SelectTrigger className="w-[150px] h-9 text-xs">
               <SelectValue placeholder="选择版本" />
             </SelectTrigger>
             <SelectContent>

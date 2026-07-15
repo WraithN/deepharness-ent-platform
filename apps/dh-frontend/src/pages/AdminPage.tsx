@@ -1,7 +1,8 @@
-import { Bot, ChevronDown, Lock, LockOpen, MoreHorizontal, Plus, Power, Save, Trash2, Users } from 'lucide-react';
+import { Bot, Eye, Lock, MoreHorizontal, Pencil, Plus, Save, Trash2, Users } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
+import { AgentPolicyForm } from '@/components/admin/AgentPolicyForm';
 import { PromptManagement } from '@/components/admin/PromptManagement';
 import { SkillManagement } from '@/components/admin/SkillManagement';
 import { RecordPaginationBar } from '@/components/RecordPaginationBar';
@@ -20,9 +21,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -36,278 +36,7 @@ import { agentConfigApi } from '@/lib/agent-config-api';
 import { getPlatformRoleLabel, PLATFORM_ROLE } from '@/lib/role-constants';
 import { tenantApi } from '@/lib/tenant-api';
 import { formatDateTime } from '@/lib/utils';
-import type { AgentPolicy, AgentType, Tenant, TenantMember, WorkspaceAgentConfig } from '@/types';
-
-// AgentPolicyForm 用于超管在租户新建/编辑时配置智能体策略。
-interface AgentPolicyFormProps {
-  agentTypes: AgentType[];
-  globalModels: string[];
-  policy: AgentPolicy;
-  onChange: (policy: AgentPolicy) => void;
-  disabled?: boolean;
-}
-
-const AgentPolicyForm: React.FC<AgentPolicyFormProps> = ({ agentTypes, globalModels, policy, onChange, disabled }) => {
-  const updateField = <K extends keyof AgentPolicy>(field: K, value: AgentPolicy[K]) => {
-    onChange({ ...policy, [field]: value });
-  };
-
-  const toggleAgentKey = (key: string, checked: boolean) => {
-    const next = checked
-      ? [...policy.allowedAgentKeys, key]
-      : policy.allowedAgentKeys.filter(k => k !== key);
-    updateField('allowedAgentKeys', next);
-    // 取消允许时同步移除单独锁定
-    if (!checked && policy.lockedAgentKeys?.includes(key)) {
-      updateField('lockedAgentKeys', policy.lockedAgentKeys.filter(k => k !== key));
-    }
-  };
-
-  // 切换单个 agent 的锁定状态（仅在未整体锁定时生效）
-  const toggleAgentLock = (key: string, locked: boolean) => {
-    const current = policy.lockedAgentKeys ?? [];
-    const next = locked
-      ? [...current, key]
-      : current.filter(k => k !== key);
-    updateField('lockedAgentKeys', next);
-  };
-
-  const updateAgentConfig = (key: string, patch: Partial<WorkspaceAgentConfig>) => {
-    const current = policy.defaultAgentConfigs?.[key] ?? {
-      id: '',
-      workspaceId: '',
-      agentKey: key,
-      name: agentTypes.find(a => a.key === key)?.name ?? key,
-      description: '',
-      enabled: true,
-      model: '',
-      modelSource: 'builtin',
-      baseUrl: '',
-      apiKey: '',
-      createdAt: '',
-      updatedAt: '',
-    };
-    onChange({
-      ...policy,
-      defaultAgentConfigs: {
-        ...policy.defaultAgentConfigs,
-        [key]: { ...current, ...patch },
-      },
-    });
-  };
-
-  const updateAdvanced = (key: string, field: keyof NonNullable<WorkspaceAgentConfig['advancedConfig']>, value: number | undefined) => {
-    const current = policy.defaultAgentConfigs?.[key];
-    updateAgentConfig(key, {
-      advancedConfig: {
-        ...current?.advancedConfig,
-        [field]: value,
-      },
-    });
-  };
-
-  return (
-    <div className="space-y-4 border rounded-lg p-4 bg-muted/20">
-      <h4 className="text-sm font-medium">智能体策略</h4>
-
-      <div className="flex items-center justify-between">
-        <div className="space-y-0.5">
-          <Label className="text-sm">锁定智能体配置</Label>
-          <p className="text-xs text-muted-foreground">开启后空间管理员只能查看，无法修改</p>
-        </div>
-        <Switch
-          checked={policy.agentConfigLocked}
-          onCheckedChange={checked => updateField('agentConfigLocked', checked)}
-          disabled={disabled}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label className="text-sm">允许使用的 Coding Agent</Label>
-        <p className="text-xs text-muted-foreground">
-          勾选允许后可单独锁定该智能体（锁定后空间管理员无法修改其配置）
-        </p>
-        <div className="space-y-2">
-          {agentTypes.map(at => {
-            const allowed = policy.allowedAgentKeys.includes(at.key);
-            const locked = policy.agentConfigLocked || (policy.lockedAgentKeys ?? []).includes(at.key);
-            return (
-              <div key={at.key} className="flex items-center gap-3 p-2 rounded-md border border-border/50 bg-background">
-                <Checkbox
-                  id={`agent-${at.key}`}
-                  checked={allowed}
-                  onCheckedChange={checked => toggleAgentKey(at.key, checked === true)}
-                  disabled={disabled}
-                />
-                <Label htmlFor={`agent-${at.key}`} className="text-sm font-normal cursor-pointer flex-1">
-                  {at.name}
-                </Label>
-                {allowed && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={`h-7 px-2 text-xs ${locked ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}
-                    disabled={disabled || policy.agentConfigLocked}
-                    onClick={() => toggleAgentLock(at.key, !locked)}
-                    title={policy.agentConfigLocked ? '整体锁定已开启，所有智能体均被锁定' : (locked ? '点击解锁' : '点击锁定')}
-                  >
-                    {locked ? <Lock className="h-3.5 w-3.5 mr-1" /> : <LockOpen className="h-3.5 w-3.5 mr-1" />}
-                    {locked ? '已锁定' : '未锁定'}
-                  </Button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {policy.allowedAgentKeys.length > 0 && (
-        <div className="space-y-3 pt-2 border-t">
-          <Label className="text-sm">默认模型配置</Label>
-          {policy.allowedAgentKeys.map(key => {
-            const cfg = policy.defaultAgentConfigs?.[key] ?? {
-              model: '',
-              modelSource: 'builtin',
-              baseUrl: '',
-              apiKey: '',
-            } as WorkspaceAgentConfig;
-            const builtinModels = globalModels.length > 0 ? globalModels : ['gpt-4o'];
-            return (
-              <Collapsible key={key} defaultOpen>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm" className="p-0 h-auto text-xs text-muted-foreground hover:text-foreground">
-                    <ChevronDown className="h-3 w-3 mr-1" />
-                    {agentTypes.find(a => a.key === key)?.name ?? key}
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-3 pt-2">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label className="text-xs">启用</Label>
-                    </div>
-                    <Switch
-                      checked={cfg.enabled ?? true}
-                      onCheckedChange={checked => updateAgentConfig(key, { enabled: checked })}
-                      disabled={disabled}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label className="text-xs">使用自定义模型</Label>
-                    </div>
-                    <Checkbox
-                      checked={cfg.modelSource === 'custom'}
-                      onCheckedChange={checked =>
-                        updateAgentConfig(key, { modelSource: checked ? 'custom' : 'builtin' })
-                      }
-                      disabled={disabled}
-                    />
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">
-                        {cfg.modelSource === 'custom' ? '模型名称' : '选择模型'}
-                      </Label>
-                      {cfg.modelSource === 'custom' ? (
-                        <Input
-                          placeholder="例如: custom-model-v1"
-                          value={cfg.model}
-                          onChange={e => updateAgentConfig(key, { model: e.target.value })}
-                          disabled={disabled}
-                        />
-                      ) : (
-                        <Select value={cfg.model} onValueChange={val => updateAgentConfig(key, { model: val })} disabled={disabled}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="选择内置模型" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {builtinModels.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      )}
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">温度 (Temperature)</Label>
-                      <Input
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        max="2"
-                        disabled={disabled}
-                        value={cfg.temperature ?? ''}
-                        onChange={e =>
-                          updateAgentConfig(key, { temperature: e.target.value ? parseFloat(e.target.value) : undefined })
-                        }
-                      />
-                    </div>
-                  </div>
-                  {cfg.modelSource === 'custom' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">Base URL</Label>
-                        <Input
-                          placeholder="https://api.example.com/v1"
-                          value={cfg.baseUrl}
-                          onChange={e => updateAgentConfig(key, { baseUrl: e.target.value })}
-                          disabled={disabled}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">API Key</Label>
-                        <Input
-                          type="password"
-                          placeholder="sk-..."
-                          value={cfg.apiKey}
-                          onChange={e => updateAgentConfig(key, { apiKey: e.target.value })}
-                          disabled={disabled}
-                        />
-                      </div>
-                    </div>
-                  )}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">最大 Token 数</Label>
-                      <Input
-                        type="number"
-                        min="1"
-                        placeholder="例如: 4096"
-                        disabled={disabled}
-                        value={cfg.advancedConfig?.maxTokens ?? ''}
-                        onChange={e => updateAdvanced(key, 'maxTokens', e.target.value ? parseInt(e.target.value, 10) : undefined)}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">上下文窗口</Label>
-                      <Input
-                        type="number"
-                        min="1"
-                        placeholder="例如: 128000"
-                        disabled={disabled}
-                        value={cfg.advancedConfig?.contextWindow ?? ''}
-                        onChange={e => updateAdvanced(key, 'contextWindow', e.target.value ? parseInt(e.target.value, 10) : undefined)}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">Top K</Label>
-                      <Input
-                        type="number"
-                        min="1"
-                        placeholder="例如: 50"
-                        disabled={disabled}
-                        value={cfg.advancedConfig?.topK ?? ''}
-                        onChange={e => updateAdvanced(key, 'topK', e.target.value ? parseInt(e.target.value, 10) : undefined)}
-                      />
-                    </div>
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-};
+import type { AgentType, Tenant, TenantMember } from '@/types';
 
 // 空间管理已对接真实 API，不再使用 mock 数据
 export const AdminPage: React.FC = () => {
@@ -622,9 +351,19 @@ export const AdminPage: React.FC = () => {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => viewTenant(t)}>查看</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => editTenant(t)}>编辑</DropdownMenuItem>
-                            <DropdownMenuItem className="text-destructive" onClick={() => openDeleteTenant(t)}>删除</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => viewTenant(t)}>
+                              <Eye className="h-4 w-4" /> 查看
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => editTenant(t)}>
+                              <Pencil className="h-4 w-4" /> 编辑
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+                              onClick={() => openDeleteTenant(t)}
+                            >
+                              <Trash2 className="h-4 w-4" /> 删除
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -769,19 +508,19 @@ export const AdminPage: React.FC = () => {
 
       {isConfig && (
         <Tabs value={configTab} onValueChange={setConfigTab} className="w-full mb-6">
-          <TabsList className="bg-transparent p-0 gap-1 border-b border-border/50 w-full justify-start rounded-none h-auto pb-px">
-            <TabsTrigger value="agents" className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent rounded-none px-4 py-2 border-b-2 border-transparent">智能体设置</TabsTrigger>
-            <TabsTrigger value="norms" className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent rounded-none px-4 py-2 border-b-2 border-transparent">规范设置</TabsTrigger>
-            <TabsTrigger value="cicd" className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent rounded-none px-4 py-2 border-b-2 border-transparent">CICD设置</TabsTrigger>
+          <TabsList className="aurora-tab-bar level-1 mb-4">
+            <TabsTrigger value="agents" className="aurora-tab-item level-1">智能体设置</TabsTrigger>
+            <TabsTrigger value="norms" className="aurora-tab-item level-1">规范设置</TabsTrigger>
+            <TabsTrigger value="cicd" className="aurora-tab-item level-1">CICD设置</TabsTrigger>
           </TabsList>
           
           <TabsContent value="norms" className="pt-4">
             <Card className="soft-shadow border-none">
               <CardContent className="pt-6 space-y-4">
                 <Tabs defaultValue="coding">
-                  <TabsList className="mb-4">
-                    <TabsTrigger value="coding">编码规范</TabsTrigger>
-                    <TabsTrigger value="design">设计规范</TabsTrigger>
+                  <TabsList className="aurora-tab-bar level-2 mb-4">
+                    <TabsTrigger value="coding" className="aurora-tab-item level-2">编码规范</TabsTrigger>
+                    <TabsTrigger value="design" className="aurora-tab-item level-2">设计规范</TabsTrigger>
                   </TabsList>
                   <TabsContent value="coding">
                     <Textarea className="min-h-[300px] font-mono text-sm" defaultValue="# 全局编码规范\n\n1. 所有组件必须使用 TypeScript\n2. 样式使用 Tailwind CSS\n" />

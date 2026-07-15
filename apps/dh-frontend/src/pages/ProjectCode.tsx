@@ -15,6 +15,7 @@ import { LivePreview } from '@/components/chat/LivePreview';
 import { detectFrontendProject } from '@/lib/project-detector';
 import { CodeBlock } from '@/components/CodeBlock';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTheme } from 'next-themes';
 
 const SYNC_POLL_INTERVAL_MS = 2000;
 
@@ -395,7 +396,7 @@ const FileTreeItem = ({
   return (
     <div className="w-full">
       <div
-        className={`flex items-center gap-1.5 py-1.5 px-2 cursor-pointer hover:bg-accent hover:text-accent-foreground text-sm rounded-md transition-colors ${isSelected ? 'bg-primary/10 text-primary font-medium' : 'text-foreground'}`}
+        className={`flex items-center gap-1.5 py-1.5 px-2 cursor-pointer text-sm transition-all duration-150 ${isSelected ? 'bg-accent text-foreground border-l-2 border-primary' : 'text-foreground/70 hover:bg-accent hover:text-foreground rounded-md'}`}
         style={{ paddingLeft: `${level * 12 + 8}px` }}
         onClick={handleClick}
       >
@@ -779,7 +780,12 @@ export const ProjectCode: React.FC = () => {
 
   // Code view mode for file viewer
   const [codeViewMode, setCodeViewMode] = useState<'code' | 'preview' | 'blame'>('code');
-  const [codeDarkMode, setCodeDarkMode] = useState(false);
+  // 代码编辑器主题跟随全局主题，暗色下使用 Aurora IDE 主题，亮色下使用清爽浅色主题。
+  const { resolvedTheme } = useTheme();
+  const [codeDarkMode, setCodeDarkMode] = useState(resolvedTheme === 'dark');
+  useEffect(() => {
+    setCodeDarkMode(resolvedTheme === 'dark');
+  }, [resolvedTheme]);
 
   // Document TOC
   const toc = useMemo(() => extractToc(mockMarkdownDoc), []);
@@ -993,6 +999,7 @@ export const ProjectCode: React.FC = () => {
 
   const currentFileSystem = fileSystem[selectedRepoId] || [];
   const currentRepo = repositories.find(r => r.id === selectedRepoId);
+  const filteredRepos = useMemo(() => repositories.filter(r => r.type === repoType), [repositories, repoType]);
 
   // 根据当前仓库文件树自动检测是否为前端项目，用于控制预览模式是否展示。
   const isFrontendProject = useMemo(
@@ -1235,155 +1242,120 @@ export const ProjectCode: React.FC = () => {
 
   return (
     <div className="flex flex-col h-[calc(100vh-6rem)] md:h-[calc(100vh-8rem)] min-h-[500px] gap-4 w-full pb-8">
-      {/* Top Header - Repository Selection */}
-      <Card className="shrink-0 border-none claude-card">
-        <CardContent className="p-4 flex flex-col gap-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-muted-foreground whitespace-nowrap hidden sm:inline">仓库:</span>
-              <Select value={repoType} onValueChange={(val: 'dev' | 'case') => {
-                setRepoType(val);
-                const filteredRepos = repositories.filter(r => r.type === val);
-                if (filteredRepos.length > 0) {
-                  setSelectedRepoId(filteredRepos[0].id);
-                  setSelectedBranch(filteredRepos[0].defaultBranch ?? '');
-                }
-                if (val === 'case' && viewMode === 'preview') {
-                  setViewMode('code');
-                }
-              }}>
-                <SelectTrigger className="w-[100px] h-9 bg-muted/10 border-border/50">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="dev">开发库</SelectItem>
-                  <SelectItem value="case">用例库</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={selectedRepoId} onValueChange={handleRepoChange}>
-                <SelectTrigger className="w-[160px] sm:w-[200px] h-9">
-                  <SelectValue placeholder="选择仓库" />
-                </SelectTrigger>
-                <SelectContent>
-                  {repositories.filter(r => r.type === repoType).map(repo => (
-                    <SelectItem key={repo.id} value={repo.id}>
-                      <div className="flex items-center">
-                        <Book className="h-4 w-4 mr-2 text-muted-foreground" />
-                        <span className="truncate">{repo.name}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+      {/* Top Header - Repository Selection (Level-1 Aurora tabs) */}
+      <div className="aurora-tab-bar level-1">
+        <Select value={repoType} onValueChange={(val: 'dev' | 'case') => {
+          setRepoType(val);
+          const nextRepos = repositories.filter(r => r.type === val);
+          if (nextRepos.length > 0) {
+            const first = nextRepos[0];
+            setSelectedRepoId(first.id);
+            setSelectedBranch(first.defaultBranch ?? '');
+            loadRepositoryDetails(first.id);
+            loadBranches(first.id);
+          } else {
+            setSelectedRepoId('');
+            setSelectedBranch('');
+            setBranches([]);
+            setRepoDetails(null);
+          }
+          if (val === 'case' && viewMode === 'preview') {
+            setViewMode('code');
+          }
+        }}>
+          <SelectTrigger className="aurora-tab-select-trigger aurora-tab-item level-1 !w-[140px] shrink-0">
+            <span className="aurora-tab-label">仓库:</span>
+            <SelectValue className="flex-1 min-w-0" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="dev">开发库</SelectItem>
+            <SelectItem value="case">用例库</SelectItem>
+          </SelectContent>
+        </Select>
 
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-muted-foreground whitespace-nowrap hidden sm:inline">分支:</span>
-              <Select value={selectedBranch} onValueChange={handleBranchChange} disabled={switchingBranch}>
-                <SelectTrigger className="w-[120px] sm:w-[160px] h-9">
-                  <SelectValue placeholder="选择分支" />
-                </SelectTrigger>
-                <SelectContent>
-                  {branches.map((branch) => (
-                    <SelectItem key={branch.name} value={branch.name}>
-                      <div className="flex items-center gap-2">
-                        <GitBranch className={`h-4 w-4 ${branch.isCurrent ? 'text-primary' : 'text-muted-foreground'}`} />
-                        <span className="truncate">{branch.name}</span>
-                        {branch.isRemote && (
-                          <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground">远程</span>
-                        )}
-                        {branch.isCurrent && (
-                          <span className="text-[10px] px-1 py-0.5 rounded bg-primary/10 text-primary">当前</span>
-                        )}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {switchingBranch && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-            </div>
+        <div className="aurora-tab-divider" />
 
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-9 w-9"
-              onClick={handleScanRepositories}
-              disabled={loadingScan}
-              title="刷新本地仓库"
-            >
-              {loadingScan ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            </Button>
-          </div>
+        <Select value={selectedRepoId} onValueChange={handleRepoChange} disabled={filteredRepos.length === 0}>
+          <SelectTrigger className="aurora-tab-select-trigger aurora-tab-item level-1 !w-[220px] shrink-0">
+            <Book className="h-4 w-4 text-primary shrink-0" />
+            <SelectValue placeholder="选择仓库" className="flex-1 min-w-0">
+              {currentRepo ? <span className="truncate">{currentRepo.name}</span> : <span className="text-muted-foreground">选择仓库</span>}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {filteredRepos.map(repo => (
+              <SelectItem key={repo.id} value={repo.id} textValue={repo.name}>
+                <div className="flex items-center">
+                  <Book className="h-4 w-4 mr-2 text-muted-foreground" />
+                  <span className="truncate">{repo.name}</span>
+                </div>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
-          {/* Scanned Repositories Panel - hidden now since auto-import works */}
-          {false && showScanPanel && scannedRepos.length > 0 && (
-            <div className="border-t border-border/50 pt-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-foreground">发现的本地仓库</h3>
-                <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setShowScanPanel(false)}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-60 overflow-y-auto">
-                {scannedRepos.map((repo, idx) => (
-                  <Card key={idx} className="overflow-hidden border-border/50">
-                    <CardContent className="p-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <Book className="h-4 w-4 text-primary shrink-0" />
-                            <span className="text-sm font-medium truncate">{repo.name}</span>
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-1 truncate">{repo.path}</p>
-                          <div className="flex items-center gap-2 mt-2">
-                            <GitBranch className="h-3 w-3 text-muted-foreground" />
-                            <span className="text-xs text-muted-foreground">{repo.currentBranch || 'unknown'}</span>
-                          </div>
-                          {repo.lastCommit && (
-                            <div className="text-xs text-muted-foreground mt-1 truncate">
-                              最新: {repo.lastCommit.substring(0, 7)}
-                            </div>
-                          )}
-                        </div>
-                        {repo.isCloned ? (
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 shrink-0">
-                            已关联
-                          </span>
-                        ) : (
-                          <Button size="sm" variant="secondary" className="h-7 text-xs shrink-0">
-                            导入
-                          </Button>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+        <div className="aurora-tab-divider" />
 
-      {/* View Mode Tabs */}
+        <Select value={selectedBranch} onValueChange={handleBranchChange} disabled={switchingBranch || branches.length === 0 || !selectedRepoId}>
+          <SelectTrigger className="aurora-tab-select-trigger aurora-tab-item level-1 !w-[200px] shrink-0">
+            <GitBranch className="h-4 w-4 text-success shrink-0" />
+            <SelectValue placeholder="选择分支" className="flex-1 min-w-0">
+              {selectedBranch ? <span className="truncate">{selectedBranch}</span> : <span className="text-muted-foreground">选择分支</span>}
+            </SelectValue>
+            {branches.find(b => b.name === selectedBranch)?.isCurrent && (
+              <span className="aurora-tab-badge">当前</span>
+            )}
+          </SelectTrigger>
+          <SelectContent>
+            {branches.map((branch) => (
+              <SelectItem key={branch.name} value={branch.name} textValue={branch.name}>
+                <div className="flex items-center gap-2">
+                  <GitBranch className={`h-4 w-4 ${branch.isCurrent ? 'text-primary' : 'text-muted-foreground'}`} />
+                  <span className="truncate">{branch.name}</span>
+                  {branch.isRemote && (
+                    <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground">远程</span>
+                  )}
+                  {branch.isCurrent && (
+                    <span className="text-[10px] px-1 py-0.5 rounded bg-primary/10 text-primary">当前</span>
+                  )}
+                </div>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {switchingBranch && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground shrink-0" />}
+
+        <div className="flex-1" />
+
+        <button
+          type="button"
+          onClick={handleScanRepositories}
+          disabled={loadingScan}
+          className="aurora-tab-icon-btn"
+          title="刷新本地仓库"
+        >
+          {loadingScan ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+        </button>
+      </div>
+
+      {/* View Mode Tabs (Level-2 Aurora tabs) */}
       <div className="flex items-center w-full justify-between gap-2 self-start flex-wrap">
-        <div className="flex items-center gap-1 bg-muted/50 p-1 rounded-xl">
+        <div className="aurora-tab-bar level-2">
           {tabs.map(tab => {
             if (tab.key === 'preview' && (repoType === 'case' || isFrontendProject === false)) return null;
             const Icon = tab.icon;
+            const isActive = viewMode === tab.key;
             return (
               <button
                 key={tab.key}
+                type="button"
                 onClick={() => {
                   setViewMode(tab.key);
                   if (tab.key === 'details' && selectedRepoId) {
                     refreshRepoData(selectedRepoId);
                   }
                 }}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                  viewMode === tab.key
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
+                className={`aurora-tab-item level-2 ${isActive ? 'active' : ''}`}
               >
                 <Icon className="w-4 h-4" />
                 <span className="hidden sm:inline">{tab.label}</span>
@@ -1405,19 +1377,19 @@ export const ProjectCode: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <Card className="flex-1 overflow-hidden border-none claude-card flex flex-col relative">
+      <div className="flex-1 overflow-hidden rounded-xl border border-border/15 bg-panel flex flex-col relative">
         {viewMode === 'code' && (
-          <ResizablePanelGroup direction="horizontal" className="h-full rounded-xl border border-border/50">
+          <ResizablePanelGroup direction="horizontal" className="h-full">
             {/* Left Panel - File Tree */}
-            <ResizablePanel defaultSize={20} minSize={15} maxSize={40} className="bg-muted/10">
+            <ResizablePanel defaultSize={20} minSize={15} maxSize={40} className="bg-panel">
               <div className="h-full flex flex-col">
-                <div className="p-3 border-b border-border/50 bg-muted/20 flex flex-col gap-2 shrink-0">
+                <div className="p-3 border-b border-border/15 bg-panel flex flex-col gap-2 shrink-0">
                   <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">资源管理器</span>
                   <div className="relative">
                     <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                     <Input
                       placeholder="搜索文件..."
-                      className="h-8 pl-8 pr-8 text-xs bg-background"
+                      className="h-8 pl-8 pr-8 text-xs bg-muted/50 border-border/30 text-foreground placeholder:text-muted-foreground"
                       value={searchQuery}
                       onChange={e => setSearchQuery(e.target.value)}
                     />
@@ -1434,10 +1406,10 @@ export const ProjectCode: React.FC = () => {
                 <ScrollArea className="flex-1 p-2">
                   <div className="flex flex-col">
                     <div className="flex items-center gap-2 px-2 py-1.5 mb-1 font-medium text-sm text-foreground">
-                      <Folder className="h-4 w-4 text-blue-400 shrink-0" />
+                      <Folder className="h-4 w-4 text-warning shrink-0" />
                       <span className="truncate">{currentRepo?.name}</span>
                     </div>
-                    <div className="flex items-center gap-2 px-2 pb-2 mb-2 border-b border-border/50 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-2 px-2 pb-2 mb-2 border-b border-border/15 text-xs text-muted-foreground">
                       <GitBranch className="h-3 w-3 shrink-0" />
                       <span className="truncate">{selectedBranch}</span>
                     </div>
@@ -1462,21 +1434,21 @@ export const ProjectCode: React.FC = () => {
               <div className="h-full flex flex-col bg-background">
                 {openFiles.length > 0 ? (
                   <>
-                    <div className="flex items-center h-10 border-b border-border/50 bg-muted/10 shrink-0 overflow-x-auto whitespace-nowrap scrollbar-none">
+                    <div className="flex items-center h-10 border-b border-border/15 bg-panel shrink-0 overflow-x-auto whitespace-nowrap scrollbar-none">
                       {openFiles.map((file, idx) => (
                         <div
                           key={`${file.name}-${idx}`}
-                          className={`flex items-center gap-2 h-full px-4 border-r border-border/50 cursor-pointer ${
+                          className={`flex items-center gap-2 h-full px-4 border-r border-border/15 cursor-pointer transition-colors duration-150 ${
                             activeFile === file
                               ? 'bg-background border-b-2 border-b-primary text-foreground'
-                              : 'text-muted-foreground hover:bg-muted/50 border-b-2 border-b-transparent'
+                              : 'text-muted-foreground hover:bg-accent border-b-2 border-b-transparent'
                           }`}
                           onClick={() => setActiveFile(file)}
                         >
                           <File className="h-3.5 w-3.5" />
                           <span className="text-sm font-medium">{file.name}</span>
                           <button
-                            className="p-0.5 rounded-sm opacity-50 hover:opacity-100 hover:bg-muted ml-1"
+                            className="p-0.5 rounded-sm ml-1 text-muted-foreground hover:text-foreground hover:bg-muted opacity-70 hover:opacity-100 transition-colors"
                             onClick={(e) => handleCloseTab(e, file)}
                           >
                             <X className="h-3.5 w-3.5" />
@@ -1487,7 +1459,7 @@ export const ProjectCode: React.FC = () => {
 
                     {/* Breadcrumb path navigation */}
                     {activeFile && (
-                      <div className="flex items-center h-8 px-4 border-b border-border/50 bg-muted/5 shrink-0">
+                      <div className="flex items-center h-8 px-4 border-b border-border/15 bg-panel shrink-0">
                         <div className="flex items-center gap-1.5 text-xs">
                           {activeFile.path.split('/').map((segment, idx, arr) => (
                             <React.Fragment key={idx}>
@@ -1499,7 +1471,7 @@ export const ProjectCode: React.FC = () => {
                                 {segment}
                               </button>
                               {idx < arr.length - 1 && (
-                                <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                                <ChevronRight className="w-3 h-3 text-muted-foreground/60" />
                               )}
                             </React.Fragment>
                           ))}
@@ -1509,16 +1481,18 @@ export const ProjectCode: React.FC = () => {
 
                     {activeFile && (
                       <ScrollArea className="flex-1">
-                        <div className="p-2 md:p-3 h-full">
+                        <div className="h-full">
                           <CodeBlock
                             content={activeFile.content || ''}
                             filename={activeFile.name}
                             editable
+                            variant="editor"
                             onChange={handleUpdateFileContent}
                             onSave={handleSaveFileContent}
                             viewMode={codeViewMode}
                             onViewModeChange={setCodeViewMode}
                             onThemeChange={setCodeDarkMode}
+                            darkMode={codeDarkMode}
                           />
                         </div>
                       </ScrollArea>
@@ -1585,43 +1559,43 @@ export const ProjectCode: React.FC = () => {
 
                   {/* Nodes */}
                   <g transform="translate(150, 100)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中前端UI模块')}>
-                    <circle r="30" fill="#eff6ff" stroke="#3b82f6" strokeWidth="3" filter="url(#glow)" className="dark:fill-blue-950 dark:stroke-blue-500" />
-                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="#1e3a8a" className="dark:fill-blue-200">UI</text>
+                    <circle r="30" fill="hsl(var(--card))" stroke="hsl(var(--primary))" strokeWidth="3" filter="url(#glow)" />
+                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="hsl(var(--foreground))">UI</text>
                   </g>
                   
                   <g transform="translate(150, 300)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中API服务层')}>
-                    <circle r="30" fill="#f0fdf4" stroke="#10b981" strokeWidth="3" filter="url(#glow)" className="dark:fill-emerald-950 dark:stroke-emerald-500" />
-                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="#064e3b" className="dark:fill-emerald-200">API</text>
+                    <circle r="30" fill="hsl(var(--card))" stroke="hsl(var(--success))" strokeWidth="3" filter="url(#glow)" />
+                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="hsl(var(--foreground))">API</text>
                   </g>
 
                   <g transform="translate(400, 200)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中核心数据存储')}>
-                    <circle r="40" fill="#f5f3ff" stroke="#8b5cf6" strokeWidth="4" filter="url(#glow)" className="dark:fill-purple-950 dark:stroke-purple-500" />
-                    <text y="5" textAnchor="middle" fontSize="15" fontWeight="bold" fill="#4c1d95" className="dark:fill-purple-200">Store</text>
+                    <circle r="40" fill="hsl(var(--card))" stroke="hsl(var(--chart-2))" strokeWidth="4" filter="url(#glow)" />
+                    <text y="5" textAnchor="middle" fontSize="15" fontWeight="bold" fill="hsl(var(--foreground))">Store</text>
                   </g>
 
                   <g transform="translate(650, 150)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中认证鉴权服务')}>
-                    <circle r="30" fill="#fffbeb" stroke="#f59e0b" strokeWidth="3" filter="url(#glow)" className="dark:fill-amber-950 dark:stroke-amber-500" />
-                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="#78350f" className="dark:fill-amber-200">Auth</text>
+                    <circle r="30" fill="hsl(var(--card))" stroke="hsl(var(--warning))" strokeWidth="3" filter="url(#glow)" />
+                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="hsl(var(--foreground))">Auth</text>
                   </g>
 
                   <g transform="translate(650, 250)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中底层数据库')}>
-                    <circle r="30" fill="#fdf2f8" stroke="#ec4899" strokeWidth="3" filter="url(#glow)" className="dark:fill-pink-950 dark:stroke-pink-500" />
-                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="#831843" className="dark:fill-pink-200">DB</text>
+                    <circle r="30" fill="hsl(var(--card))" stroke="hsl(var(--destructive))" strokeWidth="3" filter="url(#glow)" />
+                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="hsl(var(--foreground))">DB</text>
                   </g>
                   
                   <g transform="translate(400, 400)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中缓存服务')}>
-                    <circle r="30" fill="#f0f9ff" stroke="#0ea5e9" strokeWidth="3" filter="url(#glow)" className="dark:fill-sky-950 dark:stroke-sky-500" />
-                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="#0c4a6e" className="dark:fill-sky-200">Redis</text>
+                    <circle r="30" fill="hsl(var(--card))" stroke="hsl(var(--info))" strokeWidth="3" filter="url(#glow)" />
+                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="hsl(var(--foreground))">Redis</text>
                   </g>
 
                   <g transform="translate(800, 200)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中外部日志系统')}>
-                    <circle r="25" fill="#f8fafc" stroke="#64748b" strokeWidth="3" filter="url(#glow)" className="dark:fill-slate-950 dark:stroke-slate-500" />
-                    <text y="4" textAnchor="middle" fontSize="11" fontWeight="bold" fill="#334155" className="dark:fill-slate-200">Logger</text>
+                    <circle r="25" fill="hsl(var(--card))" stroke="hsl(var(--muted-foreground))" strokeWidth="3" filter="url(#glow)" />
+                    <text y="4" textAnchor="middle" fontSize="11" fontWeight="bold" fill="hsl(var(--foreground))">Logger</text>
                   </g>
                   
                   <g transform="translate(400, 50)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中消息队列')}>
-                    <circle r="25" fill="#fff1f2" stroke="#f43f5e" strokeWidth="3" filter="url(#glow)" className="dark:fill-rose-950 dark:stroke-rose-500" />
-                    <text y="4" textAnchor="middle" fontSize="11" fontWeight="bold" fill="#881337" className="dark:fill-rose-200">MQ</text>
+                    <circle r="25" fill="hsl(var(--card))" stroke="hsl(var(--destructive))" strokeWidth="3" filter="url(#glow)" />
+                    <text y="4" textAnchor="middle" fontSize="11" fontWeight="bold" fill="hsl(var(--foreground))">MQ</text>
                   </g>
                   
                   {/* Particles */}
@@ -1677,7 +1651,7 @@ export const ProjectCode: React.FC = () => {
                         placeholder="搜索目录..."
                         value={tocSearchQuery}
                         onChange={(e) => setTocSearchQuery(e.target.value)}
-                        className="h-7 pl-7 text-xs bg-background/50 border-border/50"
+                        className="h-7 pl-7 text-xs"
                       />
                     </div>
                   </div>
@@ -1965,7 +1939,7 @@ export const ProjectCode: React.FC = () => {
           </div>
         )}
         <TerminalDrawer />
-      </Card>
+      </div>
     </div>
   );
 };
