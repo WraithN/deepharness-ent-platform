@@ -5,14 +5,17 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { ModelVendorSelect } from '@/components/ModelVendorSelect';
 import { cn } from '@/lib/utils';
-import type { AgentPolicy, AgentType, WorkspaceAgentConfig } from '@/types';
+import type { AgentPolicy, AgentType, ModelVendorGroup, WorkspaceAgentConfig } from '@/types';
+
+// 后端未返回厂商分组时的本地兜底模型列表
+const FALLBACK_BUILTIN_MODELS = ['gpt-4o'];
 
 interface AgentPolicyFormProps {
   agentTypes: AgentType[];
-  globalModels: string[];
+  modelGroups: ModelVendorGroup[];
   policy: AgentPolicy;
   onChange: (policy: AgentPolicy) => void;
   disabled?: boolean;
@@ -29,7 +32,7 @@ interface AgentPolicyFormProps {
  */
 export const AgentPolicyForm: React.FC<AgentPolicyFormProps> = ({
   agentTypes,
-  globalModels,
+  modelGroups,
   policy,
   onChange,
   disabled,
@@ -90,6 +93,7 @@ export const AgentPolicyForm: React.FC<AgentPolicyFormProps> = ({
       name: agentTypes.find(a => a.key === key)?.name ?? key,
       description: '',
       enabled: true,
+      isDefault: false,
       model: '',
       modelSource: 'builtin',
       baseUrl: '',
@@ -123,8 +127,6 @@ export const AgentPolicyForm: React.FC<AgentPolicyFormProps> = ({
       },
     });
   };
-
-  const builtinModels = globalModels.length > 0 ? globalModels : ['gpt-4o'];
 
   return (
     <div className="space-y-4">
@@ -274,20 +276,13 @@ export const AgentPolicyForm: React.FC<AgentPolicyFormProps> = ({
                             disabled={disabled}
                           />
                         ) : (
-                          <Select
+                          <ModelVendorSelect
                             value={cfg.model}
                             onValueChange={val => updateAgentConfig(at.key, { model: val })}
                             disabled={disabled}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="选择内置模型" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {builtinModels.map(m => (
-                                <SelectItem key={m} value={m}>{m}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            groups={modelGroups}
+                            fallbackModels={FALLBACK_BUILTIN_MODELS}
+                          />
                         )}
                       </div>
                       <div className="space-y-1">

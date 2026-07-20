@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Camera, Save, UserCircle, LogOut, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getSubRoleLabel } from '@/lib/role-constants';
+import { getSubRoleLabel, PLATFORM_ROLE } from '@/lib/role-constants';
 import { formatDateTime } from '@/lib/utils';
 import { profileApi } from '@/lib/profile-api';
 import { toast } from 'sonner';
@@ -23,6 +23,13 @@ export const Profile: React.FC = () => {
     avatarUrl: '',
     sshKey: '',
   });
+
+  // 超级管理员不允许设置个人信息，直接重定向到租户管理
+  useEffect(() => {
+    if (user?.platformRole === PLATFORM_ROLE.SUPER_ADMIN) {
+      navigate('/admin/tenants', { replace: true });
+    }
+  }, [user, navigate]);
 
   // 从后端加载个人信息
   useEffect(() => {

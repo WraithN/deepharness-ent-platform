@@ -76,6 +76,12 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	workspaceID := r.URL.Query().Get("workspaceId")
+	if workspaceID == "" {
+		WriteJSONError(w, http.StatusBadRequest, 1, "workspaceId is required")
+		return
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("read body: %v", err), http.StatusBadRequest)
@@ -145,6 +151,8 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		if isGreeting(userInput) {
 			log.Printf("[AGUIHandler] run=%s greeting matched, bypassing intent/agent run", input.RunID)
 			h.streamChatResponse(r, w, flusher, greetingResponse(), sessionID, input.RunID)
+			// 与正常 agent run 保持一致：更新会话活动时间并尝试生成标题。
+			h.finalizeSession(r.Context(), sessionID, input.Messages)
 			return
 		}
 		if userInput != "" {
@@ -155,6 +163,8 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 				if intentResult.IsChat {
 					// 闲聊：直接流式返回回复，不走 agent run。
 					h.streamChatResponse(r, w, flusher, intentResult.Response, sessionID, input.RunID)
+					// 与正常 agent run 保持一致：更新会话活动时间并尝试生成标题。
+					h.finalizeSession(r.Context(), sessionID, input.Messages)
 					return
 				}
 				// 任务意图：应用指令模板到用户消息。
@@ -177,7 +187,7 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 
 	// 确保后端 session 记录存在（新会话在发送第一条消息前已通过 /api/v1/sessions 创建，
 	// 这里作为兜底，兼容直接调用 /api/v1/agent 的场景）。
-	if err := h.ensureSession(context.Background(), actualThreadID); err != nil {
+	if err := h.ensureSession(context.Background(), actualThreadID, workspaceID); err != nil {
 		log.Printf("[AGUIHandler] run=%s ensure session failed: %v", input.RunID, err)
 	}
 	sessionID = actualThreadID
@@ -653,7 +663,7 @@ func (h *AGUIHandler) writeEvent(w http.ResponseWriter, flusher http.Flusher, ev
 }
 
 // ensureSession 保证指定 session id 在数据库中存在。
-func (h *AGUIHandler) ensureSession(ctx context.Context, sessionID string) error {
+func (h *AGUIHandler) ensureSession(ctx context.Context, sessionID, workspaceID string) error {
 	if sessionID == "" {
 		return nil
 	}
@@ -661,9 +671,12 @@ func (h *AGUIHandler) ensureSession(ctx context.Context, sessionID string) error
 	if err == nil {
 		return nil
 	}
+	if workspaceID == "" {
+		return fmt.Errorf("workspaceId is required")
+	}
 	sess := chat.Session{
 		ID:          sessionID,
-		WorkspaceID: "ws-default",
+		WorkspaceID: workspaceID,
 		AgentID:     "agent-default",
 		AgentType:   "chat",
 		CreatedAt:   time.Now(),

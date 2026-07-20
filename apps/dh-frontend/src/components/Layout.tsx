@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import {
   LayoutDashboard,
   Store,
@@ -43,10 +42,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissions } from '@/hooks/use-permissions';
-import { getSubRoleLabel, SUB_ROLE } from '@/lib/role-constants';
+import { getSubRoleLabel, SUB_ROLE, PLATFORM_ROLE } from '@/lib/role-constants';
 import type { SubRole } from '@/lib/role-constants';
 import { workspaceApi } from '@/lib/workspace-api';
+import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 import type { LucideIcon } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface NavItem {
   path: string;
@@ -98,10 +99,11 @@ export const Layout: React.FC = () => {
   const [isCollapsed] = useState(true);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('');
-  const { user: currentUser, membership, signOut } = useAuth();
+  const { user: currentUser, membership, workspaces, signOut, switchWorkspace, refreshWorkspaces } = useAuth();
   const perms = usePermissions();
   const location = useLocation();
   const navigate = useNavigate();
+  const isSuperAdmin = currentUser?.platformRole === PLATFORM_ROLE.SUPER_ADMIN;
 
   // 导航项按权限过滤：无 perm 字段的始终展示，有 perm 字段的按权限判定
   // 同时根据当前用户的职能子角色动态替换个人空间的展示文案与图标。
@@ -122,6 +124,15 @@ export const Layout: React.FC = () => {
     toast.success('已退出登录');
   };
 
+  // 切换工作空间：更新上下文与 localStorage 后整页刷新，确保各页面重新加载空间数据
+  const handleSwitchWorkspace = (workspaceId: string) => {
+    if (!workspaceId || workspaceId === membership?.workspaceId) return;
+    const target = workspaces.find(m => m.workspaceId === workspaceId);
+    if (!target) return;
+    switchWorkspace(target.workspaceId);
+    window.location.reload();
+  };
+
   const handleCreateWorkspace = async () => {
     if (!workspaceName.trim()) {
       toast.error('请输入工作区名称');
@@ -132,14 +143,19 @@ export const Layout: React.FC = () => {
       return;
     }
     try {
-      await workspaceApi.create({
+      const created = await workspaceApi.create({
         tenantId: currentUser.tenantId,
         name: workspaceName.trim(),
         ownerUserId: currentUser.id,
+        subRole: membership?.subRole,
+        sourceWorkspaceId: getCurrentWorkspaceId(),
       });
       toast.success('工作区创建成功');
       setCreateWorkspaceOpen(false);
       setWorkspaceName('');
+      // 创建后立即刷新工作区列表并切换到新工作区
+      await refreshWorkspaces();
+      handleSwitchWorkspace(created.id);
     } catch {
       toast.error('创建工作区失败');
     }
@@ -178,31 +194,68 @@ export const Layout: React.FC = () => {
             <p className={`text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 pl-2 transition-all duration-300 whitespace-nowrap ${isCollapsed ? 'h-0 w-0 opacity-0 overflow-hidden' : 'opacity-100'}`}>
               当前工作空间
             </p>
-            {isCollapsed ? (
-              <div
-                className="flex items-center justify-center mx-auto w-9 h-9 rounded-lg bg-primary/10 hover:bg-primary/20 cursor-pointer transition-colors"
-                onClick={() => setCreateWorkspaceOpen(true)}
-                title={membership?.workspaceName ?? ''}
-              >
-                <span className="text-sm font-bold text-primary">{(membership?.workspaceName ?? '?').charAt(0)}</span>
-              </div>
-            ) : (
-              <div
-                className="flex items-center gap-2 rounded-xl p-2 glass-card click-card justify-between"
-                onClick={() => setCreateWorkspaceOpen(true)}
-              >
-                <div className="flex items-center gap-2 overflow-hidden w-full">
-                  <div className="h-9 w-9 shrink-0 rounded-lg bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
-                    {(membership?.workspaceName ?? '?').charAt(0)}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                {isCollapsed ? (
+                  <div
+                    className="flex items-center justify-center mx-auto w-9 h-9 rounded-lg bg-primary/10 hover:bg-primary/20 transition-colors cursor-pointer"
+                    title={membership?.workspaceName ?? ''}
+                  >
+                    <span className="text-sm font-bold text-primary">{(membership?.workspaceName ?? '?').charAt(0)}</span>
                   </div>
-                  <div className="flex flex-col flex-1 overflow-hidden">
-                    <span className="text-sm font-medium truncate group-hover:text-primary transition-colors">{membership?.workspaceName ?? '未加入工作空间'}</span>
-                    <span className="text-xs text-muted-foreground truncate">{membership ? getSubRoleLabel(membership.subRole) : ''}</span>
-                  </div>
-                </div>
-                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-              </div>
-            )}
+                ) : (
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-2 rounded-xl p-2 glass-card click-card justify-between cursor-pointer">
+                          <div className="flex items-center gap-2 overflow-hidden w-full">
+                            <div className="h-9 w-9 shrink-0 rounded-lg bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
+                              {(membership?.workspaceName ?? '?').charAt(0)}
+                            </div>
+                            <div className="flex flex-col flex-1 overflow-hidden">
+                              {membership?.tenantName && (
+                                <span className="text-xs text-muted-foreground truncate">{membership.tenantName}</span>
+                              )}
+                              <span className="text-sm font-medium truncate group-hover:text-primary transition-colors">{membership?.workspaceName ?? '未加入工作空间'}</span>
+                              <span className="text-xs text-muted-foreground truncate">{membership ? getSubRoleLabel(membership.subRole) : ''}</span>
+                            </div>
+                          </div>
+                          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" align="start" className="max-w-xs">
+                        <div className="flex flex-col gap-0.5">
+                          {membership?.tenantName && (
+                            <span className="text-xs text-primary-foreground/80">租户：{membership.tenantName}</span>
+                          )}
+                          <span className="font-medium">空间：{membership?.workspaceName ?? '未加入工作空间'}</span>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side={isCollapsed ? 'right' : 'bottom'} align="start" className="w-64">
+                <DropdownMenuLabel>当前工作空间</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {workspaces.map(ws => {
+                  const active = ws.workspaceId === membership?.workspaceId;
+                  return (
+                    <DropdownMenuItem
+                      key={ws.workspaceId}
+                      onClick={() => handleSwitchWorkspace(ws.workspaceId)}
+                      title={ws.workspaceName}
+                      className={active ? 'font-medium bg-primary/10 text-primary focus:bg-primary/15 focus:text-primary' : ''}
+                    >
+                      <div className="h-5 w-5 rounded bg-primary/20 flex items-center justify-center mr-2 text-xs shrink-0">
+                        {(ws.workspaceName ?? '?').charAt(0)}
+                      </div>
+                      <span className="truncate flex-1 min-w-0">{ws.workspaceName}</span>
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
           <nav className="px-3 space-y-1 mb-8 mt-6 overflow-x-hidden">
@@ -235,7 +288,13 @@ export const Layout: React.FC = () => {
         </div>
         
         <div className="shrink-0 border-t border-border p-3 bg-background flex flex-col gap-2 overflow-hidden">
-          {isCollapsed ? (
+          {isSuperAdmin ? (
+            <div className="flex justify-center">
+              <Button variant="ghost" size="icon" className="mx-auto w-9 h-9 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setLogoutOpen(true)} title="退出登录">
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : isCollapsed ? (
             <div className="flex flex-col gap-3">
               <div
                 className="flex items-center justify-center mx-auto w-9 h-9 rounded-full bg-primary/10 hover:bg-primary/20 cursor-pointer transition-colors"
@@ -270,20 +329,20 @@ export const Layout: React.FC = () => {
         </div>
       </aside>
 
-      <AlertDialog open={logoutOpen} onOpenChange={setLogoutOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>确认退出登录？</AlertDialogTitle>
-            <AlertDialogDescription>
+      <Dialog open={logoutOpen} onOpenChange={setLogoutOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>确认退出登录？</DialogTitle>
+            <DialogDescription>
               退出后需要重新登录才能访问您的工作区和项目代码。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={handleLogout} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground">确认退出</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLogoutOpen(false)}>取消</Button>
+            <Button variant="destructive" onClick={handleLogout}>确认退出</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Main Content */}
       <div className="flex flex-1 flex-col min-w-0 bg-background">
@@ -327,18 +386,38 @@ export const Layout: React.FC = () => {
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="hidden md:flex">
-                    <span className="truncate max-w-[120px]">{membership?.workspaceName ?? '未选择'}</span>
-                    <ChevronDown className="ml-2 h-4 w-4 text-muted-foreground" />
+                  <Button variant="outline" size="sm" className="hidden md:flex w-44 justify-between">
+                    <div className="flex items-center gap-1 overflow-hidden">
+                      {membership?.tenantName && (
+                        <>
+                          <span className="truncate text-xs text-muted-foreground">{membership.tenantName}</span>
+                          <span className="text-muted-foreground text-xs">/</span>
+                        </>
+                      )}
+                      <span className="truncate">{membership?.workspaceName ?? '未选择'}</span>
+                    </div>
+                    <ChevronDown className="ml-2 h-4 w-4 text-muted-foreground shrink-0" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuContent align="end" className="w-64">
                   <DropdownMenuLabel>当前工作空间</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem className="font-medium bg-primary/10 text-primary">
-                    <div className="h-5 w-5 rounded bg-primary/20 flex items-center justify-center mr-2 text-xs">{(membership?.workspaceName ?? '?').charAt(0)}</div>
-                    {membership?.workspaceName ?? '未加入工作空间'}
-                  </DropdownMenuItem>
+                  {workspaces.map(ws => {
+                    const active = ws.workspaceId === membership?.workspaceId;
+                    return (
+                      <DropdownMenuItem
+                        key={ws.workspaceId}
+                        onClick={() => handleSwitchWorkspace(ws.workspaceId)}
+                        title={ws.workspaceName}
+                        className={active ? 'font-medium bg-primary/10 text-primary focus:bg-primary/15 focus:text-primary' : ''}
+                      >
+                        <div className="h-5 w-5 rounded bg-primary/20 flex items-center justify-center mr-2 text-xs shrink-0">
+                          {(ws.workspaceName ?? '?').charAt(0)}
+                        </div>
+                        <span className="truncate flex-1 min-w-0">{ws.workspaceName}</span>
+                      </DropdownMenuItem>
+                    );
+                  })}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setCreateWorkspaceOpen(true)}>
                     <Terminal className="mr-2 h-4 w-4" />

@@ -1,8 +1,9 @@
-import { AlertCircle, Bot, Box, Camera, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Code2, Copy, Download, FileText, ListTodo, Loader2, Lock, MessageSquareQuote, MoreHorizontal, Palette, Plus, Puzzle, Save, Search, Share2, Shield, SlidersHorizontal, Star, Trash2, UploadCloud, UserCircle, UserPlus, Users, Wand2, X } from 'lucide-react';
+import { Bot, Box, Camera, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Code2, Copy, Download, FileText, ListTodo, Loader2, Lock, MessageSquareQuote, MoreHorizontal, Palette, Plus, Puzzle, Save, Search, Share2, Shield, SlidersHorizontal, Star, Trash2, UploadCloud, UserCircle, UserPlus, Users, Wand2, X } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { MarkdownEditor } from '@/components/MarkdownEditor';
+import { ModelVendorSelect } from '@/components/ModelVendorSelect';
 import { RecordPaginationBar } from '@/components/RecordPaginationBar';
 import { RepoStandardsDialog } from '@/components/RepoStandardsDialog';
 import { StandardGenerateDialog } from '@/components/StandardGenerateDialog';
@@ -39,8 +40,9 @@ import { getPlatformRoleLabel, getSubRoleLabel, PLATFORM_ROLE, type PlatformRole
 import { useTemplates } from '@/hooks/use-templates';
 import { teamApi } from '@/lib/team-api';
 import { formatDateTime } from '@/lib/utils';
+import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 import { workspaceApi } from '@/lib/workspace-api';
-import type { AgentType, Prompt, PromptCategory, SettingsConfig, Skill, SkillCategory, WorkitemPlatform, WorkitemProject, Workspace, WorkspaceAgentConfig, WorkspaceCICD, WorkspaceMember, WorkspacePrompt, WorkspaceRepository, WorkspaceStandard } from '@/types';
+import type { ModelVendorGroup, Prompt, PromptCategory, SettingsConfig, Skill, SkillCategory, WorkitemPlatform, WorkitemProject, Workspace, WorkspaceAgentConfig, WorkspaceCICD, WorkspaceMember, WorkspacePrompt, WorkspaceRepository, WorkspaceStandard } from '@/types';
 
 // 空间提示词分享审核状态展示配置（取值与后端 team_prompts.status 对齐）。
 const PROMPT_SHARE_STATUS_LABELS: Record<string, string> = {
@@ -99,13 +101,13 @@ interface AgentConfigCardProps {
   config: WorkspaceAgentConfig;
   readOnly: boolean;
   locked: boolean;
-  globalModels: string[];
-  platformEnabled: boolean;
+  modelGroups: ModelVendorGroup[];
   onChange: (config: WorkspaceAgentConfig) => void;
 }
 
-const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, locked, globalModels, platformEnabled, onChange }) => {
-  const builtinModels = globalModels.length > 0 ? globalModels : (BUILTIN_MODELS[config.agentKey] ?? BUILTIN_MODELS['opencode']);
+const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, locked, modelGroups, onChange }) => {
+  // 后端未返回厂商分组时的本地兜底模型列表
+  const fallbackModels = BUILTIN_MODELS[config.agentKey] ?? BUILTIN_MODELS['opencode'];
   // 锁定后该卡片所有输入均禁用
   const disabled = readOnly || locked;
 
@@ -138,21 +140,26 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, loc
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {!platformEnabled && (
-              <span className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400" title="该智能体尚未在平台范围启用，空间级启用不会生效">
-                <AlertCircle className="h-3.5 w-3.5" />
-                平台未启用
-              </span>
-            )}
             {locked && (
               <span className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400" title="该智能体已被超级管理员锁定，仅可查看">
                 <Lock className="h-3.5 w-3.5" />
                 已锁定
               </span>
             )}
+            <div className="flex items-center gap-1.5 mr-2">
+              <Checkbox
+                id={`default-agent-${config.agentKey}`}
+                disabled={disabled || !config.enabled}
+                checked={config.isDefault}
+                onCheckedChange={checked => updateField('isDefault', checked === true)}
+              />
+              <Label htmlFor={`default-agent-${config.agentKey}`} className="text-xs text-muted-foreground cursor-pointer">
+                默认智能体
+              </Label>
+            </div>
             <span className="text-xs text-muted-foreground">{config.enabled ? '已启用' : '已禁用'}</span>
             <Switch
-              disabled={disabled || !platformEnabled}
+              disabled={disabled}
               checked={config.enabled}
               onCheckedChange={checked => updateField('enabled', checked)}
             />
@@ -183,18 +190,13 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, loc
                   onChange={e => updateField('model', e.target.value)}
                 />
               ) : (
-                <Select
+                <ModelVendorSelect
                   disabled={disabled}
                   value={config.model}
                   onValueChange={val => updateField('model', val)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="选择内置模型" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {builtinModels.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                  groups={modelGroups}
+                  fallbackModels={fallbackModels}
+                />
               )}
             </div>
 
@@ -347,15 +349,14 @@ export const Settings: React.FC = () => {
 
   const [agentConfigs, setAgentConfigs] = useState<WorkspaceAgentConfig[]>([]);
   const [agentConfigsLoading, setAgentConfigsLoading] = useState(false);
-  const [platformAgentTypes, setPlatformAgentTypes] = useState<AgentType[]>([]);
-  const [globalModels, setGlobalModels] = useState<string[]>([]);
+  const [modelGroups, setModelGroups] = useState<ModelVendorGroup[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    agentConfigApi.listGlobalModels()
-      .then(models => {
+    agentConfigApi.listGlobalModelGroups()
+      .then(groups => {
         if (cancelled) return;
-        setGlobalModels(models);
+        setModelGroups(groups);
       })
       .catch(err => {
         if (cancelled) return;
@@ -367,9 +368,10 @@ export const Settings: React.FC = () => {
   const loadSkills = async (page: number = 1) => {
     setSkillsLoading(true);
     try {
+      const wsId = getCurrentWorkspaceId();
       const [res, categories] = await Promise.all([
-        teamApi.listSkills(page, SKILL_PAGE_SIZE),
-        teamApi.listSkillCategories(),
+        teamApi.listSkills(page, SKILL_PAGE_SIZE, wsId),
+        teamApi.listSkillCategories(wsId),
       ]);
       setSkills(res.list);
       setSkillTotal(res.total);
@@ -377,7 +379,6 @@ export const Settings: React.FC = () => {
       setSkillCategories(categories);
     } catch (err) {
       console.error('Failed to load team skills:', err);
-      toast.error('加载团队技能失败');
     } finally {
       setSkillsLoading(false);
     }
@@ -385,7 +386,7 @@ export const Settings: React.FC = () => {
 
   useEffect(() => {
     loadSkills(1);
-  }, []);
+  }, [workspaceId]);
 
   const loadWorkspacePrompts = async (wsId: string) => {
     try {
@@ -409,7 +410,7 @@ export const Settings: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const wsId = getCurrentWorkspaceId();
     Promise.all([
       workspaceApi.listPrompts(wsId),
       workspaceApi.listPromptCategories(wsId),
@@ -431,16 +432,12 @@ export const Settings: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     setAgentConfigsLoading(true);
-    Promise.all([
-      agentConfigApi.listWorkspaceConfigs(workspaceId),
-      agentConfigApi.listAgentTypes().catch((): AgentType[] => []),
-    ])
-      .then(([configs, types]) => {
+    agentConfigApi.listWorkspaceConfigs(workspaceId)
+      .then(configs => {
         if (cancelled) return;
         setAgentConfigs(configs);
-        setPlatformAgentTypes(types);
       })
       .catch(err => {
         if (cancelled) return;
@@ -452,7 +449,7 @@ export const Settings: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     Promise.all([
       workspaceApi.get(workspaceId).catch((): Workspace | null => null),
       workspaceApi.members(workspaceId).catch((): WorkspaceMember[] => []),
@@ -500,7 +497,7 @@ export const Settings: React.FC = () => {
   }, []);
 
   const loadMembers = React.useCallback(() => {
-    const wsId = workspace?.id || membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const wsId = workspace?.id || getCurrentWorkspaceId();
     workspaceApi.members(wsId)
       .then(mems => setWorkspaceMembers(mems))
       .catch(() => toast.error('加载成员列表失败'));
@@ -568,11 +565,10 @@ export const Settings: React.FC = () => {
     setSelectedSkillIds([]);
     setSkillPhase('需求设计');
     try {
-      const res = await teamApi.listSkills(1, 100);
+      const res = await teamApi.listSkills(1, 100, workspaceId);
       setMarketSkills(res.list);
     } catch (err) {
       console.error('Failed to load market skills:', err);
-      toast.error('加载技能市场失败');
     } finally {
       setMarketSkillsLoading(false);
     }
@@ -600,7 +596,7 @@ export const Settings: React.FC = () => {
   // 逐条结算，部分失败时保留未成功的条目供重试。
   const handleAddSelectedPrompts = async () => {
     if (selectedPromptIds.length === 0) return;
-    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const wsId = getCurrentWorkspaceId();
     setIsAddingMarketPrompts(true);
     try {
       const results = await Promise.allSettled(selectedPromptIds.map(id => workspaceApi.addPrompt(wsId, id)));
@@ -626,7 +622,7 @@ export const Settings: React.FC = () => {
   };
 
   const handleRemoveWorkspacePrompt = async (promptId: string) => {
-    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const wsId = getCurrentWorkspaceId();
     try {
       await workspaceApi.removePrompt(wsId, promptId);
       setPrompts(prev => prev.filter(p => p.id !== promptId));
@@ -637,7 +633,7 @@ export const Settings: React.FC = () => {
   };
 
   const handleUpdatePromptCategories = async (promptId: string, categoryIds: string[]) => {
-    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const wsId = getCurrentWorkspaceId();
     try {
       const updated = await workspaceApi.updatePromptCategories(wsId, promptId, categoryIds);
       setPrompts(prev => prev.map(p => p.id === promptId ? updated : p));
@@ -651,7 +647,7 @@ export const Settings: React.FC = () => {
   };
 
   const handleUpdatePromptEnabled = async (promptId: string, enabled: boolean) => {
-    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const wsId = getCurrentWorkspaceId();
     try {
       const updated = await workspaceApi.updatePromptEnabled(wsId, promptId, enabled);
       setPrompts(prev => prev.map(p => p.id === promptId ? updated : p));
@@ -667,7 +663,7 @@ export const Settings: React.FC = () => {
   // 复制为空间自定义副本：市场来源提示词不可直接修改，复制生成 is_custom 副本后可编辑。
   // copyingPromptId 作为按钮 loading 态兼防抖，避免重复点击导致市场使用次数重复 +1。
   const handleCopyWorkspacePrompt = async (prompt: WorkspacePrompt) => {
-    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const wsId = getCurrentWorkspaceId();
     setCopyingPromptId(prompt.id);
     try {
       const copy = await workspaceApi.copyPrompt(wsId, prompt.id);
@@ -688,7 +684,7 @@ export const Settings: React.FC = () => {
 
   // 分享自定义提示词到市场：创建 pending_review 审核条目，由超管在市场页审核。
   const handleShareWorkspacePrompt = async (promptId: string) => {
-    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const wsId = getCurrentWorkspaceId();
     setSharingPromptId(promptId);
     try {
       const updated = await workspaceApi.sharePrompt(wsId, promptId);
@@ -706,7 +702,7 @@ export const Settings: React.FC = () => {
 
   const handleSavePromptContent = async () => {
     if (!selectedPrompt) return;
-    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const wsId = getCurrentWorkspaceId();
     setIsSavingPromptContent(true);
     try {
       const updated = await workspaceApi.updatePromptContent(wsId, selectedPrompt.id, {
@@ -775,7 +771,7 @@ export const Settings: React.FC = () => {
       toast.error('该分类名称为系统内置，无需创建');
       return;
     }
-    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const wsId = getCurrentWorkspaceId();
     try {
       const created = await workspaceApi.createPromptCategory(wsId, name);
       setPromptCategories(prev => [...prev, created]);
@@ -798,7 +794,7 @@ export const Settings: React.FC = () => {
       return;
     }
     try {
-      const created = await teamApi.createSkillCategory(name);
+      const created = await teamApi.createSkillCategory(name, workspaceId);
       setSkillCategories(prev => [...prev, created]);
       setNewSkillCategoryName('');
       setIsAddingSkillCategory(false);
@@ -829,7 +825,7 @@ export const Settings: React.FC = () => {
   };
 
   const executeDeletePromptCategory = async (categoryId: string) => {
-    const wsId = membership?.workspaceId || localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const wsId = getCurrentWorkspaceId();
     try {
       await workspaceApi.deletePromptCategory(wsId, categoryId);
       setPromptCategories(prev => prev.filter(c => c.id !== categoryId));
@@ -869,7 +865,7 @@ export const Settings: React.FC = () => {
   const executeDeleteSkillCategory = async (categoryId: string) => {
     const categoryName = skillCategories.find(c => c.id === categoryId)?.name;
     try {
-      await teamApi.deleteSkillCategory(categoryId);
+      await teamApi.deleteSkillCategory(categoryId, workspaceId);
       setSkillCategories(prev => prev.filter(c => c.id !== categoryId));
       if (categoryName && selectedSkillCategory === categoryName) {
         setSelectedSkillCategory('全部');
@@ -958,7 +954,7 @@ export const Settings: React.FC = () => {
       setGitRepos(gitRepos.filter(repo => repo.id !== id));
       return;
     }
-    const workspaceId = workspace?.id || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     repositoryApi.delete(workspaceId, id)
       .then(() => setGitRepos(gitRepos.filter(repo => repo.id !== id)))
       .catch(() => toast.error('删除仓库失败'));
@@ -969,7 +965,7 @@ export const Settings: React.FC = () => {
   };
 
   const handleSaveAgentConfigs = async () => {
-    const wsId = workspace?.id || 'ws-default';
+    const wsId = getCurrentWorkspaceId();
     if (workspace?.agentConfigLocked) {
       toast.error('当前空间智能体配置已被锁定，无法保存');
       return;
@@ -985,6 +981,7 @@ export const Settings: React.FC = () => {
       await Promise.all(savableConfigs.map(cfg => agentConfigApi.saveWorkspaceConfig(wsId, {
         agentKey: cfg.agentKey,
         enabled: cfg.enabled,
+        isDefault: cfg.isDefault,
         model: cfg.model,
         modelSource: cfg.modelSource,
         baseUrl: cfg.baseUrl,
@@ -999,7 +996,7 @@ export const Settings: React.FC = () => {
   };
 
   const handleSaveWorkitem = async () => {
-    const wsId = workspace?.id || 'ws-default';
+    const wsId = getCurrentWorkspaceId();
     try {
       await workspaceApi.setWorkitemProject(wsId, {
         platform: reqPlatform,
@@ -1013,7 +1010,7 @@ export const Settings: React.FC = () => {
   };
 
   const handleSaveRepos = async () => {
-    const wsId = workspace?.id || 'ws-default';
+    const wsId = getCurrentWorkspaceId();
     try {
       const savedRepos = await Promise.all(gitRepos.map(async r => {
         if (r.id.startsWith(LOCAL_REPO_ID_PREFIX)) {
@@ -1035,7 +1032,7 @@ export const Settings: React.FC = () => {
   };
 
   const handleSaveStandards = async () => {
-    const workspaceId = workspace?.id || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     try {
       const coding = workspaceStandards.find(s => s.type === 'coding');
       const design = workspaceStandards.find(s => s.type === 'design');
@@ -1060,7 +1057,7 @@ export const Settings: React.FC = () => {
   };
 
   const handleSaveCICD = async () => {
-    const workspaceId = workspace?.id || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     try {
       await workspaceApi.saveCICD(workspaceId, {
         triggerBranches: cicdBranches,
@@ -1150,7 +1147,7 @@ export const Settings: React.FC = () => {
       toast.error('请输入成员邮箱');
       return;
     }
-    const workspaceId = workspace?.id || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     // inviteRole 取值：pm | designer | developer | tester
     // 设置空间管理员仅租户管理员可操作（前端隐藏勾选框，此处再兜底一次）
     const role = inviteAsAdmin && isTenantAdmin ? SPACE_ROLE.SPACE_ADMIN : SPACE_ROLE.MEMBER;
@@ -1168,7 +1165,7 @@ export const Settings: React.FC = () => {
   };
 
   const handleSetAdmin = (user: typeof displayUsers[number], asAdmin: boolean) => {
-    const workspaceId = workspace?.id || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     const role = asAdmin ? SPACE_ROLE.SPACE_ADMIN : SPACE_ROLE.MEMBER;
     workspaceApi.updateMemberRole(workspaceId, user.id, { role, subRole: user.subRole })
       .then(() => {
@@ -1186,7 +1183,7 @@ export const Settings: React.FC = () => {
 
   const confirmDeleteMember = () => {
     if (!memberToDelete) return;
-    const workspaceId = workspace?.id || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     setIsProcessing(true);
     workspaceApi.removeMember(workspaceId, memberToDelete.id, assetAssigneeId || undefined)
       .then(() => {
@@ -1644,7 +1641,7 @@ export const Settings: React.FC = () => {
                               <Switch
                                 checked={skill.installed}
                                 onCheckedChange={checked => {
-                                  teamApi.updateSkillInstalled(skill.id, checked)
+                                  teamApi.updateSkillInstalled(skill.id, checked, workspaceId)
                                     .then(() => {
                                       setSkills(prev => prev.map(s => s.id === skill.id ? { ...s, installed: checked } : s));
                                       toast.success(checked ? '技能已安装到当前空间' : '技能已卸载');
@@ -2036,8 +2033,6 @@ export const Settings: React.FC = () => {
                 <p className="text-center py-8 text-muted-foreground">暂无可用智能体，请联系超管开启平台智能体范围。</p>
               ) : (
                 agentConfigs.map(cfg => {
-                  const platformType = platformAgentTypes.find(t => t.key === cfg.agentKey);
-                  const platformEnabled = platformType ? platformType.enabled : true;
                   const agentLocked = workspace?.agentConfigLocked === true || (workspace?.lockedAgentKeys ?? []).includes(cfg.agentKey);
                   return (
                     <AgentConfigCard
@@ -2045,9 +2040,13 @@ export const Settings: React.FC = () => {
                       config={cfg}
                       readOnly={isReadOnly}
                       locked={agentLocked}
-                      globalModels={globalModels}
-                      platformEnabled={platformEnabled}
-                      onChange={next => setAgentConfigs(prev => prev.map(c => c.agentKey === next.agentKey ? next : c))}
+                      modelGroups={modelGroups}
+                      onChange={next => setAgentConfigs(prev => prev.map(c => {
+                        if (c.agentKey === next.agentKey) return next;
+                        // 单选默认智能体：设置新的默认时清空其他
+                        if (next.isDefault) return { ...c, isDefault: false };
+                        return c;
+                      }))}
                     />
                   );
                 })
@@ -2370,7 +2369,7 @@ export const Settings: React.FC = () => {
               disabled={selectedSkillIds.length === 0}
               className="px-5 py-2 h-10 rounded-lg transition-all"
               onClick={() => {
-                Promise.all(selectedSkillIds.map(id => teamApi.updateSkillInstalled(id, true)))
+                Promise.all(selectedSkillIds.map(id => teamApi.updateSkillInstalled(id, true, workspaceId)))
                   .then(() => {
                     loadSkills(skillPage);
                     toast.success(`已将 ${selectedSkillIds.length} 个技能安装到当前空间`);
@@ -2424,7 +2423,7 @@ export const Settings: React.FC = () => {
                   icon: 'Puzzle',
                   phase: skillPhase,
                   rating: 5.0,
-                }).then(skill => {
+                }, workspaceId).then(skill => {
                   setSkills(prev => [skill, ...prev]);
                   setIsGeneratingSkill(false);
                   toast.success('自定义技能生成成功并已自动安装');

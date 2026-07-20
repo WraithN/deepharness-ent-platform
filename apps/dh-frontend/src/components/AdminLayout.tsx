@@ -1,16 +1,24 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { 
-  LayoutDashboard, 
-  Settings as SettingsIcon,
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  LayoutDashboard,
+  Building2,
   Puzzle,
   MessageSquareQuote,
   LayoutTemplate,
   LogOut,
   Terminal,
   Menu,
-  X
+  X,
+  Bot,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTheme } from 'next-themes';
@@ -18,12 +26,45 @@ import { Sun, Moon } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 
-const adminNavItems = [
-  { path: '/admin/dashboard', label: '数据大盘', icon: LayoutDashboard },
-  { path: '/admin/tenants', label: '租户管理', icon: SettingsIcon },
-  { path: '/admin/skills', label: '技能管理', icon: Puzzle },
-  { path: '/admin/prompts', label: '提示词管理', icon: MessageSquareQuote },
-  { path: '/admin/templates', label: '模板管理', icon: LayoutTemplate },
+interface NavItem {
+  path: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  description: string;
+}
+
+interface NavGroup {
+  title: string;
+  items: NavItem[];
+}
+
+const adminNavGroups: NavGroup[] = [
+  {
+    title: '运营概览',
+    items: [
+      { path: '/admin/dashboard', label: '数据大盘', icon: LayoutDashboard, description: '查看平台全局统计数据与资源消耗' },
+    ],
+  },
+  {
+    title: '资源管理',
+    items: [
+      { path: '/admin/tenants', label: '租户管理', icon: Building2, description: '管理所有租户、智能体策略与租户管理员' },
+    ],
+  },
+  {
+    title: '运行管控',
+    items: [
+      { path: '/admin/agent-runtimes', label: 'Agent 运行时', icon: Bot, description: '管理全平台运行时实例，支持按租户、空间、智能体类型多维度筛选' },
+    ],
+  },
+  {
+    title: '能力配置',
+    items: [
+      { path: '/admin/skills', label: '技能管理', icon: Puzzle, description: '审核、上架或禁用系统内的技能' },
+      { path: '/admin/prompts', label: '提示词管理', icon: MessageSquareQuote, description: '审核、上架或禁用系统内的提示词' },
+      { path: '/admin/templates', label: '模板管理', icon: LayoutTemplate, description: '管理平台级需求、设计、研发规范模板' },
+    ],
+  },
 ];
 
 export const AdminLayout: React.FC = () => {
@@ -33,6 +74,12 @@ export const AdminLayout: React.FC = () => {
   const { signOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
+
+  const flatNavItems = useMemo(() => adminNavGroups.flatMap((g) => g.items), []);
+  const activeItem = useMemo(
+    () => flatNavItems.find((item) => item.path === location.pathname),
+    [flatNavItems, location.pathname],
+  );
 
   const handleLogout = () => {
     signOut();
@@ -60,14 +107,10 @@ export const AdminLayout: React.FC = () => {
         </div>
         <div className="flex flex-col min-w-0">
           <div className="text-xs font-semibold text-foreground truncate">
-            {adminNavItems.find(item => item.path === location.pathname)?.label || 'DeepHarness管理后台'}
+            {activeItem?.label || 'DeepHarness管理后台'}
           </div>
           <span className="text-xs text-muted-foreground truncate">
-            {location.pathname === '/admin/dashboard' && '查看平台全局统计数据与资源消耗'}
-            {location.pathname === '/admin/tenants' && '管理所有租户、智能体策略与租户管理员'}
-            {location.pathname === '/admin/skills' && '审核、上架或禁用系统内的技能'}
-            {location.pathname === '/admin/prompts' && '审核、上架或禁用系统内的提示词'}
-            {location.pathname === '/admin/templates' && '管理平台级需求、设计、研发规范模板'}
+            {activeItem?.description || ''}
           </span>
         </div>
       </div>
@@ -83,32 +126,38 @@ export const AdminLayout: React.FC = () => {
           <span>DeepHarness管理后台</span>
         </div>
 
-        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
-          {adminNavItems.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              onClick={() => setMobileMenuOpen(false)}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-250 ease-smooth ${
-                  isActive
-                    ? 'bg-primary text-primary-foreground shadow-glow'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground hover:shadow-glow'
-                }`
-              }
-            >
-              <item.icon className="h-4 w-4" />
-              {item.label}
-            </NavLink>
+        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6">
+          {adminNavGroups.map((group) => (
+            <div key={group.title}>
+              <div className="px-3 mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                {group.title}
+              </div>
+              <div className="space-y-1">
+                {group.items.map((item) => (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={({ isActive }) =>
+                      `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-250 ease-smooth ${
+                        isActive
+                          ? 'bg-primary text-primary-foreground shadow-glow'
+                          : 'text-muted-foreground hover:bg-muted hover:text-foreground hover:shadow-glow'
+                      }`
+                    }
+                  >
+                    <item.icon className="h-4 w-4" />
+                    {item.label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
 
         <div className="shrink-0 border-t border-border p-3 bg-background flex flex-col gap-2 overflow-hidden">
           <div className="flex items-center gap-2 rounded-xl p-2 glass-card transition-all duration-250 ease-smooth group hover:border-primary/20">
-            <div
-              className="flex items-center gap-3 flex-1 overflow-hidden cursor-pointer"
-              onClick={() => navigate('/profile')}
-            >
+            <div className="flex items-center gap-3 flex-1 overflow-hidden">
               <div className="h-9 w-9 shrink-0 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-sm">
                 A
               </div>
@@ -124,20 +173,20 @@ export const AdminLayout: React.FC = () => {
         </div>
       </aside>
 
-      <AlertDialog open={logoutOpen} onOpenChange={setLogoutOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>确认退出登录？</AlertDialogTitle>
-            <AlertDialogDescription>
+      <Dialog open={logoutOpen} onOpenChange={setLogoutOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>确认退出登录？</DialogTitle>
+            <DialogDescription>
               退出后需要重新登录才能访问管理后台。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={handleLogout} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground">确认退出</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLogoutOpen(false)}>取消</Button>
+            <Button variant="destructive" onClick={handleLogout}>确认退出</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Main Content */}
       <main className="flex-1 overflow-hidden bg-background relative flex flex-col min-w-0 h-[calc(100vh-65px)] md:h-screen">
@@ -145,14 +194,10 @@ export const AdminLayout: React.FC = () => {
           <div className="px-4 md:px-8 py-4 shrink-0 border-b border-border/50 bg-panel/50 backdrop-blur-xl sticky top-0 z-10 hidden md:block">
             <div className="flex flex-col min-w-0">
               <h1 className="text-lg sm:text-xl font-bold text-foreground truncate tracking-tight">
-                {adminNavItems.find(item => item.path === location.pathname)?.label || 'DeepHarness管理后台'}
+                {activeItem?.label || 'DeepHarness管理后台'}
               </h1>
               <p className="text-sm text-muted-foreground truncate mt-1">
-                {location.pathname === '/admin/dashboard' && '查看平台全局统计数据与资源消耗'}
-                {location.pathname === '/admin/tenants' && '管理所有租户、智能体策略与租户管理员'}
-                {location.pathname === '/admin/skills' && '审核、上架或禁用系统内的技能'}
-                {location.pathname === '/admin/prompts' && '审核、上架或禁用系统内的提示词'}
-                {location.pathname === '/admin/templates' && '管理平台级需求、设计、研发规范模板'}
+                {activeItem?.description || ''}
               </p>
             </div>
           </div>

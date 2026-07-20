@@ -27,8 +27,11 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 );
 
 ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS workspace_path VARCHAR(500);
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS user_id VARCHAR(36);
 
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_user ON agent_sessions (user_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace_user ON agent_sessions (workspace_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_agent ON agent_sessions (agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_updated ON agent_sessions (updated_at DESC);
 

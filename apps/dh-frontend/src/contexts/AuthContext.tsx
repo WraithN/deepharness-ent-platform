@@ -14,7 +14,8 @@ import { PLATFORM_ROLE, SYSTEM_TENANT_ID, type PlatformRole, type SpaceRole, typ
  */
 
 const TOKEN_STORAGE_KEY = 'token';
-const CURRENT_WORKSPACE_ID_KEY = 'currentWorkspaceId';
+
+import { getCurrentWorkspaceIdOrNull, removeCurrentWorkspaceId, setCurrentWorkspaceId } from '@/lib/workspace-utils';
 
 export interface AuthUser {
   id: string;
@@ -28,6 +29,7 @@ export interface AuthUser {
 export interface WorkspaceMembership {
   workspaceId: string;
   workspaceName: string;
+  tenantName: string;
   spaceRole: SpaceRole;
   subRole: SubRole;
 }
@@ -35,12 +37,28 @@ export interface WorkspaceMembership {
 interface AuthContextType {
   user: AuthUser | null;
   membership: WorkspaceMembership | null;
+  /** 当前用户加入的全部工作空间成员关系 */
+  workspaces: WorkspaceMembership[];
   loading: boolean;
   signIn: (email: string, password: string) => Promise<AuthUser>;
   signOut: () => void;
+  /** 切换当前工作空间：更新 membership 与 localStorage，调用方负责刷新页面以重载空间数据 */
+  switchWorkspace: (workspaceId: string) => void;
+  /** 重新拉取当前用户的工作空间列表（创建新工作区后调用），返回最新列表 */
+  refreshWorkspaces: () => Promise<WorkspaceMembership[]>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+function toMembership(dto: MineWorkspaceDTO): WorkspaceMembership {
+  return {
+    workspaceId: dto.id,
+    workspaceName: dto.name,
+    tenantName: dto.tenantName,
+    spaceRole: dto.role,
+    subRole: dto.subRole,
+  };
+}
 
 function toAuthUser(dto: UserDTO): AuthUser {
   return {
@@ -56,6 +74,7 @@ function toAuthUser(dto: UserDTO): AuthUser {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [membership, setMembership] = useState<WorkspaceMembership | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceMembership[]>([]);
   const [loading, setLoading] = useState(true);
 
   // 启动时根据已存 token 恢复登录态
@@ -85,23 +104,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  // 拉取当前用户的工作空间成员关系，取第一个作为默认工作空间
+  // 拉取当前用户的工作空间成员关系；优先恢复 localStorage 中保存的当前工作空间，否则取第一个
   async function loadMembership(authUser: AuthUser) {
     try {
       const mine = await api.get<MineWorkspaceDTO[]>('/v1/workspaces/mine');
-      const first = mine[0];
-      if (!first) return;
-      const m: WorkspaceMembership = {
-        workspaceId: first.id,
-        workspaceName: first.name,
-        spaceRole: first.role,
-        subRole: first.subRole,
-      };
-      setMembership(m);
+      const list = mine.map(toMembership);
+      setWorkspaces(list);
+      const savedId = getCurrentWorkspaceIdOrNull();
+      const current = list.find(m => m.workspaceId === savedId) ?? list[0];
+      if (!current) return;
+      setMembership(current);
       // 持久化 workspaceId 供非 React 代码（如 chat hooks）读取
-      localStorage.setItem(CURRENT_WORKSPACE_ID_KEY, first.id);
+      setCurrentWorkspaceId(current.workspaceId);
     } catch {
       // 无工作空间成员关系时保持 membership 为 null
+    }
+  }
+
+  function switchWorkspace(workspaceId: string) {
+    const target = workspaces.find(m => m.workspaceId === workspaceId);
+    if (!target) return;
+    setMembership(target);
+    setCurrentWorkspaceId(target.workspaceId);
+  }
+
+  async function refreshWorkspaces(): Promise<WorkspaceMembership[]> {
+    try {
+      const mine = await api.get<MineWorkspaceDTO[]>('/v1/workspaces/mine');
+      const list = mine.map(toMembership);
+      setWorkspaces(list);
+      return list;
+    } catch {
+      return workspaces;
     }
   }
 
@@ -119,13 +153,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   function signOut() {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
-    localStorage.removeItem(CURRENT_WORKSPACE_ID_KEY);
+    removeCurrentWorkspaceId();
     setUser(null);
     setMembership(null);
+    setWorkspaces([]);
   }
 
   return (
-    <AuthContext.Provider value={{ user, membership, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, membership, workspaces, loading, signIn, signOut, switchWorkspace, refreshWorkspaces }}>
       {children}
     </AuthContext.Provider>
   );

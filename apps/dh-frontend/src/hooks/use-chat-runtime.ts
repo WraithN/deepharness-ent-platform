@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom';
 import { useExternalStoreRuntime, type ThreadMessageLike, type AssistantRuntime } from '@assistant-ui/react';
 import { toast } from 'sonner';
 import { api, type ApiResponse } from '@/lib/api';
+import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 import type { ChatMsg, ChatPart } from '@/components/chat/types';
 
 const RUNNING_IDLE_TIMEOUT_MS = 3000;
@@ -437,7 +438,7 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
       }
       didCreateSessionRef.current = true;
 
-      const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+      const workspaceId = getCurrentWorkspaceId();
       console.log('[ChatRuntime:effect] POST /v1/sessions workspaceId=%s agentId=%s', workspaceId, selectedAgentId || 'agent-default');
       api.post<ApiResponse<CreateSessionResponse>>('/v1/sessions', {
         workspaceId,

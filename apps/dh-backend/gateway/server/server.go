@@ -15,6 +15,8 @@ import (
 	orchestratorservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/orchestrator/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentruntime"
+	agentruntimeservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentruntime/service"
 	agentconfigservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit"
 	auditservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit/service"
@@ -71,11 +73,12 @@ func New(cfg config.Config) http.Handler {
 	initOrchestratorService(db)
 	workspaceService := initWorkspaceService(db, cfg.WorkspaceRoot, userService, cfg.CodingAgents)
 	initProductSpaceService(db, cfg.WorkspaceRoot, workspaceService)
-	initAgentConfigService(db, cfg.CodingAgents, cfg.CodingAgentModels)
+	initAgentConfigService(db, cfg.CodingAgents, cfg.CodingAgentModels, cfg.CodingAgentModelVendors)
 	initWorkspacePromptService(db)
 	initRepositoryService(db, cfg)
 	initProductDocService(db, cfg.WorkspaceRoot)
 	initPlatformTemplateService(db)
+	initAgentRuntimeService(db)
 	initTeamService(db, userService)
 
 	// Handlers
@@ -112,10 +115,10 @@ func New(cfg config.Config) http.Handler {
 	// Routes
 	mux.HandleFunc("/health", handler.HealthCheck)
 	mux.HandleFunc("/api/v1/agent", aguiHandler.AgentRun)
-	// 会话创建需登录态：handler 内 UserIDFromContext 依赖 auth 中间件注入的 userID
+	// 会话创建、删除、消息查询均需登录态：handler 内 UserIDFromContext 依赖 auth 中间件注入的 userID
 	mux.Handle("/api/v1/sessions", middleware.Auth(http.HandlerFunc(sessionHandler.Sessions)))
-	mux.HandleFunc("/api/v1/sessions/{id}", sessionHandler.DeleteSession)
-	mux.HandleFunc("/api/v1/sessions/{id}/messages", sessionHandler.GetMessages)
+	mux.Handle("/api/v1/sessions/{id}", middleware.Auth(http.HandlerFunc(sessionHandler.DeleteSession)))
+	mux.Handle("/api/v1/sessions/{id}/messages", middleware.Auth(http.HandlerFunc(sessionHandler.GetMessages)))
 	mux.HandleFunc("/api/v1/sessions/{id}/sse", sseReplayHandler.ServeSSE)
 	mux.HandleFunc("/api/v1/hello", handler.Hello)
 
@@ -151,6 +154,11 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/templates/{key}/publish", middleware.Auth(http.HandlerFunc(platformtemplate.TemplatePublish)))
 	mux.Handle("/api/v1/templates/{key}", middleware.Auth(http.HandlerFunc(platformtemplate.TemplateByKey)))
 
+	// Agent 运行时：外部 gatewayd / agent-stub 通过固定 Bearer Token 上报状态；列表/详情超级管理员可看全部，普通用户仅可看自己的运行时
+	mux.Handle("/api/v1/agent-runtimes/{id}/status", middleware.BearerAuth(cfg.AgentRuntimeBearerToken)(http.HandlerFunc(agentruntime.ReportStatus)))
+	mux.Handle("/api/v1/agent-runtimes", middleware.Auth(http.HandlerFunc(agentruntime.ListRuntimes)))
+	mux.Handle("/api/v1/agent-runtimes/{id}", middleware.Auth(http.HandlerFunc(agentruntime.GetRuntime)))
+
 	mux.HandleFunc("/api/v1/workitems", workitem.WorkItems)
 	mux.HandleFunc("/api/v1/workitem-platforms", workitem.Platforms)
 	mux.HandleFunc("/api/v1/workitems/{id}", workitem.WorkItemByID)
@@ -158,10 +166,11 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/review/review", pragent.Reviews)
 	mux.HandleFunc("/api/v1/audit/events", audit.Events)
 	mux.HandleFunc("/api/v1/orchestrator/sessions", orchestrator.Sessions)
-	mux.HandleFunc("/api/v1/stats/summary", statsHandler.Summary)
-	mux.HandleFunc("/api/v1/stats/trend", statsHandler.Trend)
-	mux.HandleFunc("/api/v1/stats/commits", statsHandler.CodeCommits)
-	mux.HandleFunc("/api/v1/stats/trails", statsHandler.Trails)
+	// 数据大盘统计需登录并按 workspaceId 隔离
+	mux.Handle("/api/v1/stats/summary", middleware.Auth(http.HandlerFunc(statsHandler.Summary)))
+	mux.Handle("/api/v1/stats/trend", middleware.Auth(http.HandlerFunc(statsHandler.Trend)))
+	mux.Handle("/api/v1/stats/commits", middleware.Auth(http.HandlerFunc(statsHandler.CodeCommits)))
+	mux.Handle("/api/v1/stats/trails", middleware.Auth(http.HandlerFunc(statsHandler.Trails)))
 	mux.HandleFunc("/api/v1/commands", handler.CommandsHandler)
 
 	// Personal assistant module
@@ -342,7 +351,7 @@ func initWorkspaceService(db *sql.DB, workspaceRoot string, userService identity
 	return svc
 }
 
-func initAgentConfigService(db *sql.DB, codingAgents []config.CodingAgentDefinition, models []string) {
+func initAgentConfigService(db *sql.DB, codingAgents []config.CodingAgentDefinition, models []string, modelVendors []config.ModelVendorGroup) {
 	log.Println("[AgentConfig] using postgres storage")
 	agents := make([]agent.AgentType, 0, len(codingAgents))
 	for _, a := range codingAgents {
@@ -354,9 +363,18 @@ func initAgentConfigService(db *sql.DB, codingAgents []config.CodingAgentDefinit
 			Builtin:     true,
 		})
 	}
+	vendors := make([]agent.ModelVendorGroup, 0, len(modelVendors))
+	for _, v := range modelVendors {
+		vendors = append(vendors, agent.ModelVendorGroup{
+			Key:    v.Key,
+			Name:   v.Name,
+			Models: v.Models,
+		})
+	}
 	defaultAgentConfigService = agentconfigservice.NewDBAgentConfigService(db, agentconfigservice.AgentGlobalConfig{
-		Agents: agents,
-		Models: models,
+		Agents:       agents,
+		Models:       models,
+		ModelVendors: vendors,
 	})
 	agentconfig.Init(defaultAgentConfigService)
 }
@@ -382,6 +400,11 @@ func initProductDocService(db *sql.DB, workspaceRoot string) {
 func initPlatformTemplateService(db *sql.DB) {
 	log.Println("[PlatformTemplate] using postgres storage")
 	platformtemplate.Init(platformtemplateservice.NewDBPlatformTemplateService(db))
+}
+
+func initAgentRuntimeService(db *sql.DB) {
+	log.Println("[AgentRuntime] using postgres storage")
+	agentruntime.Init(agentruntimeservice.NewDBAgentRuntimeService(db))
 }
 
 func initProductSpaceService(db *sql.DB, workspaceRoot string, workspaceService workspaceservice.WorkspaceService) {

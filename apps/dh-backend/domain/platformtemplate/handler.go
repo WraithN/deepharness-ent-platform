@@ -200,7 +200,9 @@ func isValidationError(err error) bool {
 	return strings.Contains(msg, "required") ||
 		strings.Contains(msg, "invalid category") ||
 		strings.Contains(msg, "already exists") ||
-		strings.Contains(msg, "limit reached")
+		strings.Contains(msg, "limit reached") ||
+		strings.Contains(msg, "published templates") ||
+		strings.Contains(msg, "not published")
 }
 
 // handleTemplateError 统一处理模板服务错误：校验错误返回 400，not found 返回 404，其余返回 500。

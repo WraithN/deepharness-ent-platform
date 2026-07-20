@@ -21,6 +21,8 @@ export const workspaceApi = {
     name: string;
     description?: string;
     ownerUserId: string;
+    subRole?: string;
+    sourceWorkspaceId?: string;
     agentPolicy?: AgentPolicy;
   }) => api.post<Workspace>('/v1/workspaces', req),
   get: (id: string) => api.get<Workspace>(`/v1/workspaces/${id}`),

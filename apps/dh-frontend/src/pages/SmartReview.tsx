@@ -28,38 +28,23 @@ interface PRRecord {
   };
 }
 
-const mockPRs: PRRecord[] = [
-  { id: 'PR-1024', title: 'feat: 增加用户登录和注册功能', author: '张三', repo: 'frontend-web', branch: 'feature/auth', status: 'passed', time: '10分钟前', relatedRequirement: { id: 'REQ-234', title: '支持手机号验证码登录' }, issues: { errors: 0, warnings: 2, info: 5 } },
-  { id: 'PR-1023', title: 'fix: 修复订单列表状态显示错误', author: '李四', repo: 'backend-api', branch: 'hotfix/order-status', status: 'failed', time: '2小时前', relatedRequirement: { id: 'REQ-235', title: '订单状态机优化' }, issues: { errors: 3, warnings: 1, info: 0 } },
-  { id: 'PR-1022', title: 'refactor: 重构统一样式组件', author: '王五', repo: 'ui-components', branch: 'refactor/styles', status: 'pending', time: '昨天 15:30', issues: { errors: 0, warnings: 0, info: 0 } },
-  { id: 'PR-1021', title: 'docs: 更新API接口文档', author: '赵六', repo: 'backend-api', branch: 'docs/api-update', status: 'passed', time: '昨天 11:20', relatedRequirement: { id: 'REQ-210', title: '完善开发者接入文档' }, issues: { errors: 0, warnings: 0, info: 1 } },
-];
-
 const REVIEW_PAGE_SIZE = 10;
+const prList: PRRecord[] = [];
 
 export const SmartReview: React.FC = () => {
   const [selectedPR, setSelectedPR] = useState<PRRecord | null>(null);
 
   const { currentPage, totalPages, onPageChange, startIndex, endIndex } = useClientPagination({
     pageSize: REVIEW_PAGE_SIZE,
-    total: mockPRs.length,
+    total: prList.length,
   });
-  const paginatedPRs = mockPRs.slice(startIndex, endIndex);
+  const paginatedPRs = prList.slice(startIndex, endIndex);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'passed': return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200"><CheckCircle2 className="w-3 h-3 mr-1" /> 评审通过</Badge>;
       case 'failed': return <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200"><XCircle className="w-3 h-3 mr-1" /> 需要修改</Badge>;
       case 'pending': return <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200"><Clock className="w-3 h-3 mr-1" /> 评审中</Badge>;
-      default: return null;
-    }
-  };
-
-  const getIssueIcon = (type: string) => {
-    switch (type) {
-      case 'error': return <AlertCircle className="h-5 w-5 text-destructive" />;
-      case 'warning': return <AlertTriangle className="h-5 w-5 text-amber-500" />;
-      case 'info': return <CheckCircle2 className="h-5 w-5 text-blue-500" />;
       default: return null;
     }
   };
@@ -97,69 +82,77 @@ export const SmartReview: React.FC = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {paginatedPRs.map((pr) => (
-                  <TableRow 
-                    key={pr.id} 
-                    className="hover:bg-muted/50"
-                  >
-                    <TableCell className="cursor-pointer" onClick={() => setSelectedPR(pr)}>
-                      <div className="font-medium text-sm text-foreground mb-1">{pr.title}</div>
-                      <div className="text-xs text-muted-foreground flex items-center gap-1">
-                        <GitPullRequest className="w-3 h-3" />
-                        {pr.id}
-                      </div>
-                    </TableCell>
-                    <TableCell className="cursor-pointer" onClick={() => setSelectedPR(pr)}>
-                      <div className="flex items-center gap-2">
-                        <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium text-xs">
-                          {pr.author.charAt(0)}
-                        </div>
-                        <span className="text-sm font-medium">{pr.author}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="cursor-pointer" onClick={() => setSelectedPR(pr)}>
-                      <div className="text-sm">{pr.repo}</div>
-                      <div className="text-xs text-muted-foreground flex items-center mt-1">
-                        <GitMerge className="w-3 h-3 mr-1" />
-                        {pr.branch}
-                      </div>
-                    </TableCell>
-                    <TableCell className="cursor-pointer" onClick={() => setSelectedPR(pr)}>
-                      <div className="flex gap-2">
-                        {pr.issues.errors > 0 && <span className="text-xs flex items-center text-destructive"><AlertCircle className="w-3 h-3 mr-1"/>{pr.issues.errors}</span>}
-                        {pr.issues.warnings > 0 && <span className="text-xs flex items-center text-amber-500"><AlertTriangle className="w-3 h-3 mr-1"/>{pr.issues.warnings}</span>}
-                        {pr.issues.info > 0 && <span className="text-xs flex items-center text-blue-500"><CheckCircle2 className="w-3 h-3 mr-1"/>{pr.issues.info}</span>}
-                        {pr.issues.errors === 0 && pr.issues.warnings === 0 && pr.issues.info === 0 && <span className="text-xs text-muted-foreground">-</span>}
-                      </div>
-                    </TableCell>
-                    <TableCell className="cursor-pointer" onClick={() => setSelectedPR(pr)}>
-                      {getStatusBadge(pr.status)}
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground text-sm cursor-pointer" onClick={() => setSelectedPR(pr)}>
-                      {pr.time}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {pr.status === 'passed' && (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="h-8 shadow-none"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toast.success(`已提交测试: ${pr.id}`);
-                          }}
-                        >
-                          <Rocket className="w-3.5 h-3.5 mr-1 text-primary" />
-                          提测
-                        </Button>
-                      )}
+                {paginatedPRs.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                      暂无 PR 记录
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  paginatedPRs.map((pr) => (
+                    <TableRow 
+                      key={pr.id} 
+                      className="hover:bg-muted/50"
+                    >
+                      <TableCell className="cursor-pointer" onClick={() => setSelectedPR(pr)}>
+                        <div className="font-medium text-sm text-foreground mb-1">{pr.title}</div>
+                        <div className="text-xs text-muted-foreground flex items-center gap-1">
+                          <GitPullRequest className="w-3 h-3" />
+                          {pr.id}
+                        </div>
+                      </TableCell>
+                      <TableCell className="cursor-pointer" onClick={() => setSelectedPR(pr)}>
+                        <div className="flex items-center gap-2">
+                          <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium text-xs">
+                            {pr.author.charAt(0)}
+                          </div>
+                          <span className="text-sm font-medium">{pr.author}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="cursor-pointer" onClick={() => setSelectedPR(pr)}>
+                        <div className="text-sm">{pr.repo}</div>
+                        <div className="text-xs text-muted-foreground flex items-center mt-1">
+                          <GitMerge className="w-3 h-3 mr-1" />
+                          {pr.branch}
+                        </div>
+                      </TableCell>
+                      <TableCell className="cursor-pointer" onClick={() => setSelectedPR(pr)}>
+                        <div className="flex gap-2">
+                          {pr.issues.errors > 0 && <span className="text-xs flex items-center text-destructive"><AlertCircle className="w-3 h-3 mr-1"/>{pr.issues.errors}</span>}
+                          {pr.issues.warnings > 0 && <span className="text-xs flex items-center text-amber-500"><AlertTriangle className="w-3 h-3 mr-1"/>{pr.issues.warnings}</span>}
+                          {pr.issues.info > 0 && <span className="text-xs flex items-center text-blue-500"><CheckCircle2 className="w-3 h-3 mr-1"/>{pr.issues.info}</span>}
+                          {pr.issues.errors === 0 && pr.issues.warnings === 0 && pr.issues.info === 0 && <span className="text-xs text-muted-foreground">-</span>}
+                        </div>
+                      </TableCell>
+                      <TableCell className="cursor-pointer" onClick={() => setSelectedPR(pr)}>
+                        {getStatusBadge(pr.status)}
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground text-sm cursor-pointer" onClick={() => setSelectedPR(pr)}>
+                        {pr.time}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {pr.status === 'passed' && (
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="h-8 shadow-none"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toast.success(`已提交测试: ${pr.id}`);
+                            }}
+                          >
+                            <Rocket className="w-3.5 h-3.5 mr-1 text-primary" />
+                            提测
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </div>
-          {mockPRs.length > 0 && (
+          {prList.length > 0 && (
             <PaginationBar
               currentPage={currentPage}
               totalPages={totalPages}
@@ -246,44 +239,9 @@ export const SmartReview: React.FC = () => {
                       <p>代码质量优秀，未发现明显问题，符合规范。</p>
                     </div>
                   ) : (
-                    <div className="space-y-4">
-                      {/* Mock Issue 1 */}
-                      {selectedPR.issues.errors > 0 && (
-                        <Card className="border-destructive/30">
-                          <CardHeader className="p-4 pb-2">
-                            <div className="flex items-center gap-2">
-                              {getIssueIcon('error')}
-                              <CardTitle className="text-sm">安全漏洞: SQL注入风险</CardTitle>
-                            </div>
-                          </CardHeader>
-                          <CardContent className="p-4 pt-0 text-sm">
-                            <p className="mb-2">在 <code className="font-mono bg-muted/50 px-1 py-0.5 rounded">src/api/user.ts</code> 的第 45 行，发现直接将用户输入拼接到 SQL 查询字符串中，存在安全风险。</p>
-                            <div className="bg-muted p-3 rounded-md font-mono text-xs overflow-x-auto text-destructive/80">
-                              - const query = `SELECT * FROM users WHERE name = '{"${req.body.name}"}'`;<br/>
-                              + const query = `SELECT * FROM users WHERE name = $1`;<br/>
-                              + db.query(query, [{"req.body.name"}]);
-                            </div>
-                          </CardContent>
-                        </Card>
-                      )}
-                      
-                      {/* Mock Issue 2 */}
-                      {selectedPR.issues.warnings > 0 && (
-                        <Card className="border-amber-500/30">
-                          <CardHeader className="p-4 pb-2">
-                            <div className="flex items-center gap-2">
-                              {getIssueIcon('warning')}
-                              <CardTitle className="text-sm">代码规范: 复杂的判断逻辑</CardTitle>
-                            </div>
-                          </CardHeader>
-                          <CardContent className="p-4 pt-0 text-sm">
-                            <p className="mb-2">在 <code className="font-mono bg-muted/50 px-1 py-0.5 rounded">src/components/Header.tsx</code> 的第 112 行，使用了超过 3 层的嵌套 if-else 判断，建议重构以降低认知复杂度。</p>
-                            <div className="bg-muted p-3 rounded-md font-mono text-xs overflow-x-auto text-amber-600/80 dark:text-amber-500/80">
-                              建议使用提前返回(Early Return)或策略模式(Strategy Pattern)进行重构。
-                            </div>
-                          </CardContent>
-                        </Card>
-                      )}
+                    <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                      <CheckCircle2 className="h-12 w-12 mb-4 text-green-500/50" />
+                      <p>代码质量优秀，未发现明显问题，符合规范。</p>
                     </div>
                   )}
                 </div>

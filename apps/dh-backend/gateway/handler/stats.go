@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -50,11 +51,24 @@ type TrailsResponse struct {
 	Data []chat.SessionTrailInfo `json:"data"`
 }
 
+func workspaceIDFromQuery(r *http.Request) (string, error) {
+	id := r.URL.Query().Get("workspaceId")
+	if id == "" {
+		return "", errors.New("workspaceId is required")
+	}
+	return id, nil
+}
+
 // Summary 处理 GET /api/v1/stats/summary 请求。
 // 返回本周会话数、上周会话数、较上周变化百分比。
 func (h *StatsHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	// 取 14 天趋势数据，前 7 天为上周，后 7 天为本周。
-	trend, err := h.sessions.GetSessionTrend(r.Context(), statsTrendDays*2)
+	workspaceID, err := workspaceIDFromQuery(r)
+	if err != nil {
+		WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		return
+	}
+	trend, err := h.sessions.GetSessionTrend(r.Context(), workspaceID, statsTrendDays*2)
 	if err != nil {
 		log.Printf("[Stats] GetSessionTrend for summary failed: %v", err)
 	}
@@ -74,7 +88,12 @@ func (h *StatsHandler) Summary(w http.ResponseWriter, r *http.Request) {
 // Trend 处理 GET /api/v1/stats/trend 请求。
 // 返回最近 7 天每天的会话创建数量。
 func (h *StatsHandler) Trend(w http.ResponseWriter, r *http.Request) {
-	data, err := h.sessions.GetSessionTrend(r.Context(), statsTrendDays)
+	workspaceID, err := workspaceIDFromQuery(r)
+	if err != nil {
+		WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		return
+	}
+	data, err := h.sessions.GetSessionTrend(r.Context(), workspaceID, statsTrendDays)
 	if err != nil {
 		log.Printf("[Stats] GetSessionTrend failed: %v", err)
 		data = []chat.DateCount{}
@@ -84,9 +103,14 @@ func (h *StatsHandler) Trend(w http.ResponseWriter, r *http.Request) {
 }
 
 // CodeCommits 处理 GET /api/v1/stats/commits 请求。
-// 扫描工作空间根目录下的所有 git 仓库，统计最近 7 天每天的代码提交数量。
+// 扫描指定工作空间根目录下的所有 git 仓库，统计最近 7 天每天的代码提交数量。
 func (h *StatsHandler) CodeCommits(w http.ResponseWriter, r *http.Request) {
-	data, err := h.getCodeCommitTrend(r.Context(), statsTrendDays)
+	workspaceID, err := workspaceIDFromQuery(r)
+	if err != nil {
+		WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		return
+	}
+	data, err := h.getCodeCommitTrend(r.Context(), workspaceID, statsTrendDays)
 	if err != nil {
 		log.Printf("[Stats] getCodeCommitTrend failed: %v", err)
 		data = emptyDateTrend(statsTrendDays)
@@ -96,9 +120,14 @@ func (h *StatsHandler) CodeCommits(w http.ResponseWriter, r *http.Request) {
 }
 
 // Trails 处理 GET /api/v1/stats/trails 请求。
-// 返回最近的会话轨迹（含消息数量），按更新时间倒序。
+// 返回指定工作空间最近的会话轨迹（含消息数量），按更新时间倒序。
 func (h *StatsHandler) Trails(w http.ResponseWriter, r *http.Request) {
-	data, err := h.sessions.GetSessionTrails(r.Context(), statsTrailLimit)
+	workspaceID, err := workspaceIDFromQuery(r)
+	if err != nil {
+		WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		return
+	}
+	data, err := h.sessions.GetSessionTrails(r.Context(), workspaceID, statsTrailLimit)
 	if err != nil {
 		log.Printf("[Stats] GetSessionTrails failed: %v", err)
 		data = []chat.SessionTrailInfo{}
@@ -132,14 +161,18 @@ func computeDeltaPercent(thisWeek, lastWeek int) int {
 	return (thisWeek - lastWeek) * 100 / lastWeek
 }
 
-// getCodeCommitTrend 扫描 workspaceRoot 下的 git 仓库，返回最近 days 天每天的提交数量。
+// getCodeCommitTrend 扫描指定工作空间目录下的 git 仓库，返回最近 days 天每天的提交数量。
 // 通过 git log --all --no-merges --since 统计每个仓库的提交日期，汇总后按天聚合。
-func (h *StatsHandler) getCodeCommitTrend(ctx context.Context, days int) ([]chat.DateCount, error) {
+func (h *StatsHandler) getCodeCommitTrend(ctx context.Context, workspaceID string, days int) ([]chat.DateCount, error) {
 	counts := make(map[string]int)
 
+	workspaceDir := ""
 	if h.workspaceRoot != "" {
+		workspaceDir = filepath.Join(h.workspaceRoot, workspaceID)
+	}
+	if workspaceDir != "" {
 		since := fmt.Sprintf("%d days ago", days)
-		err := filepath.WalkDir(h.workspaceRoot, func(path string, d fs.DirEntry, err error) error {
+		err := filepath.WalkDir(workspaceDir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil || !d.IsDir() {
 				return nil
 			}

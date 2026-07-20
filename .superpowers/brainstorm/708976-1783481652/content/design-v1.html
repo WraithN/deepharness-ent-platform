@@ -1,0 +1,31 @@
+<h2>方案一：产品空间详细设计</h2>
+<p class="subtitle">数据库元数据 + 磁盘文件版本</p>
+
+<div class="section">
+  <h3>整体架构</h3>
+  <div class="mockup">
+    <div class="mockup-body" style="font-family:monospace;line-height:1.8;">
+      前端 ProductWorkspace<br>
+      &nbsp;&nbsp;├─ 左侧目录树 (docs / prototypes / 子目录)<br>
+      &nbsp;&nbsp;├─ 文档编辑器 (Markdown + 版本历史)<br>
+      &nbsp;&nbsp;└─ 原型预览器 (图片/PDF)<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓ /api/v1/workspaces/{ws}/product-space/*<br>
+      后端 domain/productspace/<br>
+      &nbsp;&nbsp;├─ Service: 元数据 CRUD + 版本快照<br>
+      &nbsp;&nbsp;└─ 磁盘 IO: WORKSPACE_ROOT/{ws}/{user}/products/...<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓ PostgreSQL<br>
+      &nbsp;&nbsp;product_docs (扩展) + product_doc_versions
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>关键设计点</h3>
+  <ul>
+    <li><strong>路径隔离：</strong>所有操作强制限制在 <code>WORKSPACE_ROOT/{ws}/{currentUser}/products</code> 下。</li>
+    <li><strong>系统目录隐藏：</strong>前端树只展示 <code>docs</code> 和 <code>prototypes</code> 下的内容，不展示这两层本身。</li>
+    <li><strong>版本存储：</strong>当前版本直接保存为不带后缀的文件；历史版本保存为 <code>文件名-v{版本号}.ext</code>，并在 <code>product_doc_versions</code> 记录。</li>
+    <li><strong>文件类型：</strong><code>doc</code>（Markdown/文本）、<code>prototype</code>（图片/PDF/其他）。</li>
+    <li><strong>权限：</strong>仅 <code>sub_role = pm</code> 可访问产品空间接口与页面。</li>
+  </ul>
+</div>

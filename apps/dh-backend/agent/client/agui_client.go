@@ -16,13 +16,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const (
-	// defaultAGUIPluginKey 指定默认挂载的 agent 插件。
-	defaultAGUIPluginKey = "claude-code"
-	// defaultAGUIAdminURL 是 ent-desktop gatewayd 的 Admin 接口地址。
-	defaultAGUIAdminURL = "http://127.0.0.1:2346"
-)
-
 // AGUIClient 通过 AG-UI 协议对接 ent-desktop gatewayd。
 type AGUIClient struct {
 	adminURL  string
@@ -32,12 +25,6 @@ type AGUIClient struct {
 
 // NewAGUIClient 创建 AG-UI client。
 func NewAGUIClient(adminURL, pluginKey string) *AGUIClient {
-	if adminURL == "" {
-		adminURL = defaultAGUIAdminURL
-	}
-	if pluginKey == "" {
-		pluginKey = defaultAGUIPluginKey
-	}
 	return &AGUIClient{
 		adminURL:  adminURL,
 		pluginKey: pluginKey,

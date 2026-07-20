@@ -50,6 +50,21 @@ func UserIDFromContext(ctx context.Context) (string, bool) {
 	return v, ok
 }
 
+// BearerAuth 返回一个校验固定 Bearer Token 的中间件，供外部系统（如 gatewayd / agent-stub）上报状态使用。
+// token 为空时所有请求都会被拒绝，避免未配置时意外开放接口。
+func BearerAuth(token string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			bearer, ok := extractBearerToken(r)
+			if !ok || bearer != token || token == "" {
+				writeUnauthorized(w)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func writeUnauthorized(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)

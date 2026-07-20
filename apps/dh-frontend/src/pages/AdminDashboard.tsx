@@ -30,33 +30,11 @@ import { teamApi } from '@/lib/team-api';
 import type { SkillStats, PromptStats } from '@/types';
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EF4444', '#EC4899', '#06B6D4'];
-
-const mockGlobalData = {
-  requirements: [
-    { date: '11-01', count: 12 }, { date: '11-02', count: 18 }, { date: '11-03', count: 15 },
-    { date: '11-04', count: 25 }, { date: '11-05', count: 20 }, { date: '11-06', count: 30 }, { date: '11-07', count: 28 },
-  ],
-  sessions: [
-    { date: '11-01', count: 150 }, { date: '11-02', count: 210 }, { date: '11-03', count: 180 },
-    { date: '11-04', count: 320 }, { date: '11-05', count: 280 }, { date: '11-06', count: 400 }, { date: '11-07', count: 380 },
-  ],
-  tokens: [
-    { date: '11-01', count: 1500000 }, { date: '11-02', count: 2100000 }, { date: '11-03', count: 1800000 },
-    { date: '11-04', count: 3200000 }, { date: '11-05', count: 2800000 }, { date: '11-06', count: 4000000 }, { date: '11-07', count: 3800000 },
-  ],
-  spacesReqDistribution: [
-    { name: '前端空间', value: 45 }, { name: '后端空间', value: 55 }, { name: '测试空间', value: 20 }, { name: 'UI空间', value: 10 }
-  ],
-  sessionsSource: [
-    { name: '云侧', value: 65 }, { name: '端侧', value: 35 }
-  ],
-  tokenUsageByType: [
-    { name: '产品需求', value: 30 }, { name: '开发编码', value: 50 }, { name: '测试验证', value: 20 }
-  ]
-};
+const EMPTY_TREND_DATA: { date: string; count: number }[] = [];
+const EMPTY_PIE_DATA: { name: string; value: number }[] = [];
 
 const renderEmpty = () => (
-  <div className="p-6 text-center text-sm text-muted-foreground">暂无数据</div>
+  <div className="h-full flex items-center justify-center text-sm text-muted-foreground">暂无数据</div>
 );
 
 export const AdminDashboard: React.FC = () => {
@@ -94,8 +72,8 @@ export const AdminDashboard: React.FC = () => {
                 <CheckCircle2 className="h-4 w-4 text-blue-500" />
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold">148</div>
-                <p className="text-xs text-muted-foreground mt-1">较上周增长 12%</p>
+                <div className="text-3xl font-bold">0</div>
+                <p className="text-xs text-muted-foreground mt-1">暂无统计</p>
               </CardContent>
             </Card>
             <Card className="soft-shadow border-none bg-gradient-to-br from-card to-emerald-50/50 dark:to-emerald-950/20">
@@ -104,8 +82,8 @@ export const AdminDashboard: React.FC = () => {
                 <MessageSquare className="h-4 w-4 text-emerald-500" />
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold">1,920</div>
-                <p className="text-xs text-muted-foreground mt-1">较上周增长 24%</p>
+                <div className="text-3xl font-bold">0</div>
+                <p className="text-xs text-muted-foreground mt-1">暂无统计</p>
               </CardContent>
             </Card>
             <Card className="soft-shadow border-none bg-gradient-to-br from-card to-purple-50/50 dark:to-purple-950/20">
@@ -114,8 +92,8 @@ export const AdminDashboard: React.FC = () => {
                 <Cpu className="h-4 w-4 text-purple-500" />
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold">19.2M</div>
-                <p className="text-xs text-muted-foreground mt-1">较上周增长 18%</p>
+                <div className="text-3xl font-bold">0</div>
+                <p className="text-xs text-muted-foreground mt-1">暂无统计</p>
               </CardContent>
             </Card>
             <Card className="soft-shadow border-none bg-gradient-to-br from-card to-amber-50/50 dark:to-amber-950/20">
@@ -124,8 +102,8 @@ export const AdminDashboard: React.FC = () => {
                 <Activity className="h-4 w-4 text-amber-500" />
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold">12</div>
-                <p className="text-xs text-muted-foreground mt-1">当前稳定运行</p>
+                <div className="text-3xl font-bold">0</div>
+                <p className="text-xs text-muted-foreground mt-1">暂无统计</p>
               </CardContent>
             </Card>
           </div>
@@ -143,28 +121,36 @@ export const AdminDashboard: React.FC = () => {
                     <TabsTrigger value="distribution" className="aurora-tab-item level-2">空间分布</TabsTrigger>
                   </TabsList>
                   <TabsContent value="trend" className="flex-1 min-h-0 m-0">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={mockGlobalData.requirements}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dy={10} />
-                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dx={-10} />
-                        <Tooltip cursor={{ stroke: 'hsl(var(--border))', strokeWidth: 1, strokeDasharray: '4 4' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                        <Line type="monotone" dataKey="count" name="完成需求数" stroke={COLORS[0]} strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6, strokeWidth: 0 }} />
-                      </LineChart>
-                    </ResponsiveContainer>
+                    {EMPTY_TREND_DATA.length === 0 ? (
+                      renderEmpty()
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={EMPTY_TREND_DATA}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                          <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dy={10} />
+                          <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dx={-10} />
+                          <Tooltip cursor={{ stroke: 'hsl(var(--border))', strokeWidth: 1, strokeDasharray: '4 4' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                          <Line type="monotone" dataKey="count" name="完成需求数" stroke={COLORS[0]} strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6, strokeWidth: 0 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
                   </TabsContent>
                   <TabsContent value="distribution" className="flex-1 min-h-0 m-0">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie data={mockGlobalData.spacesReqDistribution} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={2} dataKey="value">
-                          {mockGlobalData.spacesReqDistribution.map((_, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                        <Legend layout="horizontal" verticalAlign="bottom" wrapperStyle={{ fontSize: '13px' }} />
-                      </PieChart>
-                    </ResponsiveContainer>
+                    {EMPTY_PIE_DATA.length === 0 ? (
+                      renderEmpty()
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={EMPTY_PIE_DATA} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={2} dataKey="value">
+                            {EMPTY_PIE_DATA.map((_, index) => (
+                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                          <Legend layout="horizontal" verticalAlign="bottom" wrapperStyle={{ fontSize: '13px' }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    )}
                   </TabsContent>
                 </Tabs>
               </CardContent>
@@ -182,28 +168,36 @@ export const AdminDashboard: React.FC = () => {
                     <TabsTrigger value="distribution" className="aurora-tab-item level-2">端云分布</TabsTrigger>
                   </TabsList>
                   <TabsContent value="trend" className="flex-1 min-h-0 m-0">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={mockGlobalData.sessions}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dy={10} />
-                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dx={-10} />
-                        <Tooltip cursor={{ fill: 'rgba(0,0,0,0.05)' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                        <Bar dataKey="count" name="会话总数" fill={COLORS[1]} radius={[4, 4, 0, 0]} maxBarSize={40} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                    {EMPTY_TREND_DATA.length === 0 ? (
+                      renderEmpty()
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={EMPTY_TREND_DATA}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                          <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dy={10} />
+                          <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dx={-10} />
+                          <Tooltip cursor={{ fill: 'rgba(0,0,0,0.05)' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                          <Bar dataKey="count" name="会话总数" fill={COLORS[1]} radius={[4, 4, 0, 0]} maxBarSize={40} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
                   </TabsContent>
                   <TabsContent value="distribution" className="flex-1 min-h-0 m-0">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie data={mockGlobalData.sessionsSource} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={2} dataKey="value">
-                          {mockGlobalData.sessionsSource.map((_, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                        <Legend layout="horizontal" verticalAlign="bottom" wrapperStyle={{ fontSize: '13px' }} />
-                      </PieChart>
-                    </ResponsiveContainer>
+                    {EMPTY_PIE_DATA.length === 0 ? (
+                      renderEmpty()
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={EMPTY_PIE_DATA} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={2} dataKey="value">
+                            {EMPTY_PIE_DATA.map((_, index) => (
+                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                          <Legend layout="horizontal" verticalAlign="bottom" wrapperStyle={{ fontSize: '13px' }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    )}
                   </TabsContent>
                 </Tabs>
               </CardContent>
@@ -221,28 +215,36 @@ export const AdminDashboard: React.FC = () => {
                     <TabsTrigger value="distribution" className="aurora-tab-item level-2">场景分布</TabsTrigger>
                   </TabsList>
                   <TabsContent value="trend" className="flex-1 min-h-0 m-0">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={mockGlobalData.tokens}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dy={10} />
-                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} tickFormatter={val => `${val / 1000000}M`} dx={-10} />
-                        <Tooltip formatter={(value: number) => `${(value / 1000).toFixed(1)}k tokens`} cursor={{ stroke: 'hsl(var(--border))', strokeWidth: 1, strokeDasharray: '4 4' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                        <Line type="monotone" dataKey="count" name="Token 消耗量" stroke={COLORS[3]} strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6, strokeWidth: 0 }} />
-                      </LineChart>
-                    </ResponsiveContainer>
+                    {EMPTY_TREND_DATA.length === 0 ? (
+                      renderEmpty()
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={EMPTY_TREND_DATA}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                          <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} dy={10} />
+                          <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 13, fill: 'hsl(var(--muted-foreground))' }} tickFormatter={val => `${val / 1000000}M`} dx={-10} />
+                          <Tooltip formatter={(value: number) => `${(value / 1000).toFixed(1)}k tokens`} cursor={{ stroke: 'hsl(var(--border))', strokeWidth: 1, strokeDasharray: '4 4' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                          <Line type="monotone" dataKey="count" name="Token 消耗量" stroke={COLORS[3]} strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6, strokeWidth: 0 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
                   </TabsContent>
                   <TabsContent value="distribution" className="flex-1 min-h-0 m-0">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie data={mockGlobalData.tokenUsageByType} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={2} dataKey="value">
-                          {mockGlobalData.tokenUsageByType.map((_, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                        <Legend layout="horizontal" verticalAlign="bottom" wrapperStyle={{ fontSize: '13px' }} />
-                      </PieChart>
-                    </ResponsiveContainer>
+                    {EMPTY_PIE_DATA.length === 0 ? (
+                      renderEmpty()
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={EMPTY_PIE_DATA} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={2} dataKey="value">
+                            {EMPTY_PIE_DATA.map((_, index) => (
+                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                          <Legend layout="horizontal" verticalAlign="bottom" wrapperStyle={{ fontSize: '13px' }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    )}
                   </TabsContent>
                 </Tabs>
               </CardContent>

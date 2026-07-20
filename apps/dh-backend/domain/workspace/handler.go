@@ -230,7 +230,7 @@ func Workspaces(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 工作空间的智能体策略从租户继承，创建时使用空策略（默认值）
-		ws, err := defaultService.CreateWorkspace(tenantID, req.Name, req.Description, req.OwnerUserID, service.AgentPolicy{})
+		ws, err := defaultService.CreateWorkspace(tenantID, req.Name, req.Description, req.OwnerUserID, req.SubRole, req.SourceWorkspaceID, service.AgentPolicy{})
 		if err != nil {
 			handler.HandleServiceError(w, err, "workspace not found", "failed to create workspace")
 			return
@@ -658,11 +658,13 @@ func isValidMemberSubRole(subRole string) bool {
 }
 
 type createWorkspaceRequest struct {
-	TenantID    string            `json:"tenantId"`
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	OwnerUserID string            `json:"ownerUserId"`
-	AgentPolicy service.AgentPolicy `json:"agentPolicy"`
+	TenantID          string            `json:"tenantId"`
+	Name              string            `json:"name"`
+	Description       string            `json:"description"`
+	OwnerUserID       string            `json:"ownerUserId"`
+	SubRole           string            `json:"subRole"`
+	SourceWorkspaceID string            `json:"sourceWorkspaceId"`
+	AgentPolicy       service.AgentPolicy `json:"agentPolicy"`
 }
 
 type updateWorkspaceRequest struct {

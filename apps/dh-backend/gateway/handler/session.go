@@ -80,7 +80,17 @@ func (h *SessionHandler) Sessions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch r.Method {
 	case http.MethodGet:
-		sessions, err := h.sessions.ListSessions(r.Context())
+		userID, ok := middleware.UserIDFromContext(r.Context())
+		if !ok {
+			WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+			return
+		}
+		workspaceID := r.URL.Query().Get("workspaceId")
+		if workspaceID == "" {
+			WriteJSONError(w, http.StatusBadRequest, 1, "workspaceId is required")
+			return
+		}
+		sessions, err := h.sessions.ListSessions(r.Context(), workspaceID, userID)
 		if err != nil {
 			http.Error(w, `{"code":1,"message":"failed to list sessions"}`, http.StatusInternalServerError)
 			return
@@ -116,7 +126,8 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 
 	workspaceID := req.WorkspaceID
 	if workspaceID == "" {
-		workspaceID = "ws-default"
+		WriteJSONError(w, http.StatusBadRequest, 1, "workspaceId is required")
+		return
 	}
 
 	// 从请求上下文中取出当前登录用户 ID，workspace 路径必须以当前用户为目录所有者。
@@ -219,6 +230,7 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		ID:            threadID,
 		WorkspaceID:   workspaceID,
 		WorkspacePath: workspacePath,
+		UserID:        userID,
 		AgentID:       agentID,
 		AgentType:     agentType,
 		Model:         req.Model,
@@ -270,9 +282,26 @@ func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return
+	}
+
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, `{"code":1,"message":"missing session id"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 删除前校验归属，避免跨用户/跨空间误删。
+	sess, err := h.sessions.Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, `{"code":1,"message":"session not found"}`, http.StatusNotFound)
+		return
+	}
+	if sess.UserID != "" && sess.UserID != userID {
+		WriteJSONError(w, http.StatusForbidden, 1, "not allowed to delete this session")
 		return
 	}
 
@@ -294,9 +323,35 @@ func (h *SessionHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return
+	}
+
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, `{"code":1,"message":"missing session id"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 查询消息前校验会话归属，防止跨用户/跨空间读取历史消息。
+	sess, err := h.sessions.Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, `{"code":1,"message":"session not found"}`, http.StatusNotFound)
+		return
+	}
+	if sess.UserID != "" && sess.UserID != userID {
+		WriteJSONError(w, http.StatusForbidden, 1, "not allowed to access this session")
+		return
+	}
+	workspaceID := r.URL.Query().Get("workspaceId")
+	if workspaceID == "" {
+		WriteJSONError(w, http.StatusBadRequest, 1, "workspaceId is required")
+		return
+	}
+	if sess.WorkspaceID != "" && sess.WorkspaceID != workspaceID {
+		WriteJSONError(w, http.StatusForbidden, 1, "session not in this workspace")
 		return
 	}
 

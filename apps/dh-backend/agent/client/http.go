@@ -47,12 +47,6 @@ type GatewaydClient struct {
 }
 
 func NewGatewaydClient(adminURL string, agentID string) *GatewaydClient {
-	if adminURL == "" {
-		adminURL = "http://127.0.0.1:2346"
-	}
-	if agentID == "" {
-		agentID = "claude-code"
-	}
 	c := &GatewaydClient{
 		adminURL:    adminURL,
 		agentID:     agentID,
@@ -274,7 +268,7 @@ func (c *GatewaydClient) transformEvent(eventType string, rawPayload json.RawMes
 func (c *GatewaydClient) WsURL() string {
 	u, err := url.Parse(c.adminURL)
 	if err != nil {
-		return "ws://127.0.0.1:2346/agents/events"
+		return ""
 	}
 	scheme := "ws"
 	if u.Scheme == "https" {
@@ -288,7 +282,7 @@ func (c *GatewaydClient) WsURL() string {
 func (c *GatewaydClient) WsURLForSession(sessionID string) string {
 	u, err := url.Parse(c.adminURL)
 	if err != nil {
-		return fmt.Sprintf("ws://127.0.0.1:2346/sessions/%s/events", sessionID)
+		return ""
 	}
 	scheme := "ws"
 	if u.Scheme == "https" {

@@ -27,9 +27,9 @@ func (s *PostgresStore) Create(ctx context.Context, sess chat.Session) error {
 		return fmt.Errorf("marshal context failed: %w", err)
 	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO agent_sessions (id, workspace_id, workspace_path, agent_id, agent_type, model, project_id, title, context, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, sess.ID, sess.WorkspaceID, sess.WorkspacePath, sess.AgentID, sess.AgentType, sess.Model, sess.ProjectID, sess.Title, ctxJSON, sess.CreatedAt, sess.UpdatedAt)
+		INSERT INTO agent_sessions (id, workspace_id, workspace_path, user_id, agent_id, agent_type, model, project_id, title, context, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	`, sess.ID, sess.WorkspaceID, sess.WorkspacePath, sess.UserID, sess.AgentID, sess.AgentType, sess.Model, sess.ProjectID, sess.Title, ctxJSON, sess.CreatedAt, sess.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert session failed: %w", err)
 	}
@@ -40,9 +40,9 @@ func (s *PostgresStore) Get(ctx context.Context, id string) (chat.Session, error
 	var sess chat.Session
 	var ctxJSON []byte
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, workspace_id, COALESCE(workspace_path, ''), agent_id, agent_type, model, project_id, title, context, created_at, updated_at
+		SELECT id, workspace_id, COALESCE(workspace_path, ''), COALESCE(user_id, ''), agent_id, agent_type, model, project_id, title, context, created_at, updated_at
 		FROM agent_sessions WHERE id = $1
-	`, id).Scan(&sess.ID, &sess.WorkspaceID, &sess.WorkspacePath, &sess.AgentID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt)
+	`, id).Scan(&sess.ID, &sess.WorkspaceID, &sess.WorkspacePath, &sess.UserID, &sess.AgentID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return chat.Session{}, fmt.Errorf("session not found: %s", id)
 	}
@@ -79,12 +79,13 @@ func (s *PostgresStore) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *PostgresStore) ListSessions(ctx context.Context) ([]chat.Session, error) {
+func (s *PostgresStore) ListSessions(ctx context.Context, workspaceID, userID string) ([]chat.Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, workspace_id, COALESCE(workspace_path, ''), agent_id, agent_type, model, project_id, title, context, created_at, updated_at
+		SELECT id, workspace_id, COALESCE(workspace_path, ''), COALESCE(user_id, ''), agent_id, agent_type, model, project_id, title, context, created_at, updated_at
 		FROM agent_sessions
+		WHERE workspace_id = $1 AND (COALESCE(user_id, '') = '' OR user_id = $2)
 		ORDER BY updated_at DESC
-	`)
+	`, workspaceID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions failed: %w", err)
 	}
@@ -94,7 +95,7 @@ func (s *PostgresStore) ListSessions(ctx context.Context) ([]chat.Session, error
 	for rows.Next() {
 		var sess chat.Session
 		var ctxJSON []byte
-		if err := rows.Scan(&sess.ID, &sess.WorkspaceID, &sess.WorkspacePath, &sess.AgentID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
+		if err := rows.Scan(&sess.ID, &sess.WorkspaceID, &sess.WorkspacePath, &sess.UserID, &sess.AgentID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan session failed: %w", err)
 		}
 		if len(ctxJSON) > 0 {
@@ -107,15 +108,15 @@ func (s *PostgresStore) ListSessions(ctx context.Context) ([]chat.Session, error
 
 // ── 统计查询 ──
 
-// GetSessionTrend 返回最近 days 天每天的会话创建数量。
-func (s *PostgresStore) GetSessionTrend(ctx context.Context, days int) ([]chat.DateCount, error) {
+// GetSessionTrend 返回指定工作空间最近 days 天每天的会话创建数量。
+func (s *PostgresStore) GetSessionTrend(ctx context.Context, workspaceID string, days int) ([]chat.DateCount, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT DATE(created_at) AS d, COUNT(*) AS c
 		FROM agent_sessions
-		WHERE created_at >= NOW() - make_interval(days => $1)
+		WHERE workspace_id = $1 AND created_at >= NOW() - make_interval(days => $2)
 		GROUP BY d
 		ORDER BY d
-	`, days)
+	`, workspaceID, days)
 	if err != nil {
 		return nil, fmt.Errorf("query session trend failed: %w", err)
 	}
@@ -132,17 +133,19 @@ func (s *PostgresStore) GetSessionTrend(ctx context.Context, days int) ([]chat.D
 	return result, rows.Err()
 }
 
-// GetSessionTrails 返回最近 limit 条会话轨迹（含消息数量）。
-func (s *PostgresStore) GetSessionTrails(ctx context.Context, limit int) ([]chat.SessionTrailInfo, error) {
+// GetSessionTrails 返回指定工作空间最近 limit 条会话轨迹（含消息数量）。
+func (s *PostgresStore) GetSessionTrails(ctx context.Context, workspaceID string, limit int) ([]chat.SessionTrailInfo, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.id, COALESCE(s.title, ''), s.agent_type, s.created_at, s.updated_at,
+		SELECT s.id, COALESCE(s.user_id, ''), COALESCE(u.name, ''), COALESCE(s.title, ''), s.agent_type, s.created_at, s.updated_at,
 		       COUNT(m.id) AS msg_count
 		FROM agent_sessions s
+		LEFT JOIN users u ON u.id = s.user_id
 		LEFT JOIN agent_messages m ON m.session_id = s.id
-		GROUP BY s.id
+		WHERE s.workspace_id = $1
+		GROUP BY s.id, u.name
 		ORDER BY s.updated_at DESC
-		LIMIT $1
-	`, limit)
+		LIMIT $2
+	`, workspaceID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query session trails failed: %w", err)
 	}
@@ -151,7 +154,7 @@ func (s *PostgresStore) GetSessionTrails(ctx context.Context, limit int) ([]chat
 	result := make([]chat.SessionTrailInfo, 0)
 	for rows.Next() {
 		var t chat.SessionTrailInfo
-		if err := rows.Scan(&t.ID, &t.Title, &t.AgentType, &t.CreatedAt, &t.UpdatedAt, &t.MessageCount); err != nil {
+		if err := rows.Scan(&t.ID, &t.UserID, &t.UserName, &t.Title, &t.AgentType, &t.CreatedAt, &t.UpdatedAt, &t.MessageCount); err != nil {
 			return nil, fmt.Errorf("scan session trail failed: %w", err)
 		}
 		result = append(result, t)

@@ -33,8 +33,8 @@ func NewDBWorkspaceService(db *sql.DB, workspaceRoot string) *DBWorkspaceService
 	return &DBWorkspaceService{db: db, workspaceRoot: workspaceRoot}
 }
 
-// CreateWorkspace 创建新工作空间，并将所有者加入成员表。
-func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerUserID string, policy AgentPolicy) (workspace.Workspace, error) {
+// CreateWorkspace 创建新工作空间，并将所有者加入成员表；若指定 sourceWorkspaceID，则继承源空间的智能体配置。
+func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerUserID, subRole, sourceWorkspaceID string, policy AgentPolicy) (workspace.Workspace, error) {
 	// 确保 slice 不为 nil，避免 pq.Array(nil) 插入 NULL 违反 NOT NULL 约束
 	if policy.LockedAgentKeys == nil {
 		policy.LockedAgentKeys = []string{}
@@ -87,12 +87,23 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 		return workspace.Workspace{}, fmt.Errorf("insert workspace failed: %w", err)
 	}
 
+	if subRole == "" {
+		subRole = MemberSubRoleDeveloper
+	}
+
 	_, err = tx.Exec(`
 		INSERT INTO workspace_members (workspace_id, user_id, display_id, role, sub_role, joined_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
-	`, ws.ID, ownerUserID, "u1", MemberRoleSpaceAdmin, MemberSubRoleDeveloper, now)
+	`, ws.ID, ownerUserID, "u1", MemberRoleSpaceAdmin, subRole, now)
 	if err != nil {
 		return workspace.Workspace{}, fmt.Errorf("insert workspace member failed: %w", err)
+	}
+
+	// 若指定了源工作空间，则继承其智能体配置（workspace_agent_configs）。
+	if sourceWorkspaceID != "" {
+		if err := s.copyWorkspaceAgentConfigsTx(tx, ws.ID, sourceWorkspaceID, tenantID); err != nil {
+			return workspace.Workspace{}, fmt.Errorf("copy workspace agent configs failed: %w", err)
+		}
 	}
 
 	if err := SeedBuiltinPromptCategories(tx, ws.ID); err != nil {
@@ -112,6 +123,60 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 	}
 
 	return ws, nil
+}
+
+// copyWorkspaceAgentConfigsTx 将源工作空间的智能体配置复制到目标工作空间，
+// 并校验源空间必须与目标空间属于同一租户。
+func (s *DBWorkspaceService) copyWorkspaceAgentConfigsTx(tx *sql.Tx, targetWorkspaceID, sourceWorkspaceID, tenantID string) error {
+	var sourceTenantID string
+	err := tx.QueryRow(`SELECT tenant_id FROM workspaces WHERE id = $1`, sourceWorkspaceID).Scan(&sourceTenantID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("source workspace not found")
+	}
+	if err != nil {
+		return fmt.Errorf("query source workspace failed: %w", err)
+	}
+	if sourceTenantID != tenantID {
+		return errors.New("source workspace does not belong to the same tenant")
+	}
+
+	rows, err := tx.Query(`
+		SELECT agent_key, enabled, is_default, model, model_source, base_url, api_key,
+		       temperature, max_tokens, context_window, advanced_config
+		FROM workspace_agent_configs
+		WHERE workspace_id = $1
+	`, sourceWorkspaceID)
+	if err != nil {
+		return fmt.Errorf("query source workspace agent configs failed: %w", err)
+	}
+	defer rows.Close()
+
+	now := time.Now().UTC()
+	for rows.Next() {
+		var agentKey, modelSource string
+		var enabled, isDefault bool
+		var model, baseURL, apiKey sql.NullString
+		var temperature sql.NullFloat64
+		var maxTokens, contextWindow sql.NullInt32
+		var advancedConfig sql.NullString
+		if err := rows.Scan(&agentKey, &enabled, &isDefault, &model, &modelSource, &baseURL, &apiKey,
+			&temperature, &maxTokens, &contextWindow, &advancedConfig); err != nil {
+			return fmt.Errorf("scan source workspace agent config failed: %w", err)
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO workspace_agent_configs (
+				id, workspace_id, agent_key, enabled, is_default, model, model_source, base_url, api_key,
+				temperature, max_tokens, context_window, advanced_config, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
+		`, strings.ReplaceAll(uuid.New().String(), "-", ""), targetWorkspaceID, agentKey, enabled, isDefault,
+			model, modelSource, baseURL, apiKey, temperature, maxTokens, contextWindow, advancedConfig, now); err != nil {
+			return fmt.Errorf("insert copied workspace agent config failed: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate source workspace agent configs failed: %w", err)
+	}
+	return nil
 }
 
 // EnsureUserWorkspaceDirs 确保用户在工作空间下的 projects、files 与 products 目录存在。
@@ -330,7 +395,8 @@ func (s *DBWorkspaceService) ListMine(userID string) ([]MineWorkspace, error) {
 		SELECT w.id, w.display_id, w.tenant_id, w.name, w.description,
 		       t.agent_config_locked, t.locked_agent_keys, t.allowed_agent_keys, t.default_agent_configs,
 		       w.created_at, w.updated_at,
-		       m.role, COALESCE(m.sub_role, '')
+		       m.role, COALESCE(m.sub_role, ''),
+		       t.name AS tenant_name
 		FROM workspaces w
 		JOIN tenants t ON t.id = w.tenant_id
 		JOIN workspace_members m ON m.workspace_id = w.id
@@ -349,17 +415,20 @@ func (s *DBWorkspaceService) ListMine(userID string) ([]MineWorkspace, error) {
 		var defaultConfigs []byte
 		var lockedKeys pq.StringArray
 		var allowedKeys pq.StringArray
+		var tenantName sql.NullString
 		if err := rows.Scan(
 			&mw.ID, &mw.DisplayID, &mw.TenantID, &mw.Name, &desc,
 			&mw.AgentConfigLocked, &lockedKeys, &allowedKeys, &defaultConfigs,
 			&mw.CreatedAt, &mw.UpdatedAt,
 			&mw.Role, &mw.SubRole,
+			&tenantName,
 		); err != nil {
 			return nil, fmt.Errorf("scan mine workspace failed: %w", err)
 		}
 		mw.Description = sqlutil.ScanNullString(desc)
 		mw.LockedAgentKeys = []string(lockedKeys)
 		mw.AllowedAgentKeys = []string(allowedKeys)
+		mw.TenantName = sqlutil.ScanNullString(tenantName)
 		if len(defaultConfigs) > 0 {
 			if err := json.Unmarshal(defaultConfigs, &mw.DefaultAgentConfigs); err != nil {
 				return nil, fmt.Errorf("unmarshal default agent configs failed: %w", err)

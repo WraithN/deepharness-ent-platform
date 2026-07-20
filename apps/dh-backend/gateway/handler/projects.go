@@ -561,7 +561,7 @@ func ProjectCheck(w http.ResponseWriter, r *http.Request) {
 
 // ProjectSync 同步工程：提交所有更改并初始化 git（如果尚未初始化）。
 // POST /api/v1/projects/sync
-// Body: {"path": "/abs/path/to/project", "workspaceId": "ws-default", "commitMsg": "optional message"}
+// Body: {"path": "/abs/path/to/project", "workspaceId": "<required>", "commitMsg": "optional message"}
 func ProjectSync(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")

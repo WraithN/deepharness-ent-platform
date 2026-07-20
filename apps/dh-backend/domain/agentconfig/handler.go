@@ -39,7 +39,8 @@ func syncAgentConfigToGateway(ctx context.Context, workspaceID string, cfg agent
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	sessions, err := defaultSessionStore.ListSessions(ctx)
+	// 同步配置到指定工作空间下的所有活跃会话；userID 传空表示不过滤用户。
+	sessions, err := defaultSessionStore.ListSessions(ctx, workspaceID, "")
 	if err != nil {
 		log.Printf("[AgentConfig] list sessions for sync failed: %v", err)
 		return
@@ -180,15 +181,15 @@ func WorkspaceAgentConfigByKey(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// AgentModels 处理 GET /api/v1/agent-models，返回全局支持的模型池。
+// AgentModels 处理 GET /api/v1/agent-models，返回按厂商分组的全局模型池。
 func AgentModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
 		return
 	}
-	models := defaultService.ListGlobalModels()
+	groups := defaultService.ListGlobalModelGroups()
 	handler.SetJSONHeader(w)
-	json.NewEncoder(w).Encode(models)
+	json.NewEncoder(w).Encode(groups)
 }
 
 // AvailableAgents 处理 GET /api/v1/workspaces/{id}/available-agents。

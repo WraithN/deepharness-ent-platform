@@ -93,7 +93,7 @@ export const PrdView: React.FC = () => {
       toast.success('已同步到飞书知识库');
     } catch (e) {
       console.error('[PrdView] feishu sync failed:', e);
-      toast.success('已同步到飞书知识库（Mock）');
+      toast.error('同步到飞书失败');
     } finally {
       setSyncing(false);
     }

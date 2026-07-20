@@ -28,118 +28,8 @@ type FileNode = {
   children?: FileNode[];
 };
 
-// Mock markdown document
-const mockMarkdownDoc = `# 前端工程架构文档
-
-## 项目概述
-
-本项目采用 **React 18 + TypeScript + Tailwind CSS** 技术栈，旨在构建高性能、可维护的企业级前端应用。
-
-### 核心特性
-
-- 组件化架构设计，支持原子设计模式
-- 完整的 TypeScript 类型安全
-- 响应式布局，适配多端设备
-- 暗黑模式支持
-- 模块化路由管理
-
-## 目录结构
-
-\`\`\`
-frontend-web/
-├── src/
-│   ├── components/     # 通用组件库
-│   ├── pages/          # 页面级组件
-│   ├── hooks/           # 自定义 Hooks
-│   ├── utils/           # 工具函数
-│   └── styles/          # 全局样式
-├── public/              # 静态资源
-└── package.json         # 依赖管理
-\`\`\`
-
-## 开发规范
-
-### 代码风格
-
-1. 使用 **ESLint + Prettier** 统一代码格式
-2. 组件命名采用 PascalCase
-3.  hooks 命名以 \`use\` 开头
-4. 常量使用全大写 + 下划线
-
-### Git 提交规范
-
-| 类型 | 说明 |
-|------|------|
-| feat | 新功能 |
-| fix | 修复问题 |
-| docs | 文档更新 |
-| refactor | 代码重构 |
-| test | 测试相关 |
-
-## API 集成
-
-### 请求封装
-
-\`\`\`typescript
-import axios from 'axios';
-
-const apiClient = axios.create({
-  baseURL: process.env.VITE_API_URL,
-  timeout: 10000,
-});
-
-apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = \`Bearer \${token}\`;
-  }
-  return config;
-});
-\`\`\`
-
-## 性能优化
-
-### 1. 代码分割
-
-使用 React.lazy 和 Suspense 实现按需加载：
-
-\`\`\`tsx
-const Dashboard = React.lazy(() => import('./pages/Dashboard'));
-\`\`\`
-
-### 2. 状态管理
-
-采用 React Context + useReducer 进行局部状态管理：
-
-- 避免不必要的全局状态
-- 使用 useMemo 缓存计算结果
-- 使用 useCallback 稳定回调引用
-
-### 3. 渲染优化
-
-- 虚拟滚动处理长列表
-- 图片懒加载
-- CSS 动画优先于 JS 动画
-
-## 部署流程
-
-1. **构建**: \`pnpm run build\`
-2. **测试**: \`pnpm run test\`
-3. **部署**: 使用 CI/CD 流水线自动部署到生产环境
-
-## 常见问题
-
-### 环境变量未生效
-
-确保以 \`VITE_\` 开头，并在 \`.env\` 文件中正确配置。
-
-### 热更新失败
-
-检查 Vite 配置中的 \`server.hmr\` 设置。
-
----
-
-*本文档最后更新于 2024 年 12 月*`;
+// 项目文档内容（当前为空，后续由后端或 AI 生成后替换）
+const projectDoc = '';
 
 // Extract TOC from markdown
 interface TocItem {
@@ -439,7 +329,7 @@ const PreviewPanel: React.FC<{ repoId: string; branch: string; repoName: string;
   repoUrl,
   previewUrl,
 }) => {
-  const defaultUrl = previewUrl || 'https://example.com';
+  const defaultUrl = previewUrl || '';
   const [inputUrl, setInputUrl] = useState(defaultUrl);
   const [loadedUrl, setLoadedUrl] = useState(defaultUrl);
   const [loading, setLoading] = useState(false);
@@ -449,7 +339,7 @@ const PreviewPanel: React.FC<{ repoId: string; branch: string; repoName: string;
 
   // Update URL when repo changes
   React.useEffect(() => {
-    const url = previewUrl || 'https://example.com';
+    const url = previewUrl || '';
     setInputUrl(url);
     setLoadedUrl(url);
     setLoadFailed(false);
@@ -595,7 +485,7 @@ const PreviewPanel: React.FC<{ repoId: string; branch: string; repoName: string;
   );
 };
 
-// ─── Mock review data ───
+// ─── Review issue types ───
 interface ReviewIssue {
   id: string;
   severity: 'critical' | 'high' | 'medium' | 'low';
@@ -604,14 +494,6 @@ interface ReviewIssue {
   suggestion: string;
   file: string;
 }
-
-const MOCK_REVIEW_ISSUES: ReviewIssue[] = [
-  { id: 'R1', severity: 'critical', line: 42, message: '存在SQL注入风险，未对用户输入进行参数化处理', suggestion: '使用预处理语句或ORM框架的查询构建器，避免直接拼接SQL。', file: 'pkg/handler.go' },
-  { id: 'R2', severity: 'high', line: 18, message: '未对密码进行加密存储', suggestion: '使用bcrypt等哈希算法对密码进行单向加密存储。', file: 'cmd/auth.go' },
-  { id: 'R3', severity: 'medium', line: 88, message: '缺少错误日志记录', suggestion: '在捕获错误后添加日志记录，便于后续排查问题。', file: 'pkg/middleware.go' },
-  { id: 'R4', severity: 'medium', line: 55, message: '硬编码了API密钥', suggestion: '将敏感配置移至环境变量或配置中心管理。', file: 'config/api.go' },
-  { id: 'R5', severity: 'low', line: 12, message: '缺少函数注释', suggestion: '为导出函数添加godoc注释，说明函数用途和参数含义。', file: 'pkg/handler.go' },
-];
 
 const SEVERITY_BADGE: Record<string, string> = {
   critical: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
@@ -643,23 +525,14 @@ const DocGenButton: React.FC = () => {
 
 const ReviewPanel: React.FC = () => {
   const [reviewing, setReviewing] = useState(false);
-  const [issues, setIssues] = useState<ReviewIssue[]>(MOCK_REVIEW_ISSUES);
+  const [issues, setIssues] = useState<ReviewIssue[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const startReview = () => {
     setReviewing(true);
     setTimeout(() => {
       setReviewing(false);
-      setIssues(prev => {
-        // simulate a new issue being found
-        if (prev.length <= MOCK_REVIEW_ISSUES.length) {
-          return [
-            ...prev,
-            { id: `R${prev.length + 1}`, severity: 'low', line: 30, message: '检测到未使用的导入包', suggestion: '移除未使用的 import 语句，保持代码整洁。', file: 'cmd/main.go' }
-          ];
-        }
-        return prev;
-      });
+      setIssues([]);
     }, 2000);
   };
 
@@ -788,7 +661,7 @@ export const ProjectCode: React.FC = () => {
   }, [resolvedTheme]);
 
   // Document TOC
-  const toc = useMemo(() => extractToc(mockMarkdownDoc), []);
+  const toc = useMemo(() => extractToc(projectDoc), []);
   const [activeTocId, setActiveTocId] = useState<string | null>(null);
   const [tocSearchQuery, setTocSearchQuery] = useState('');
 
@@ -1515,113 +1388,6 @@ export const ProjectCode: React.FC = () => {
               <Share2 className="h-12 w-12 mx-auto mb-4 opacity-20" />
               <h3 className="text-lg font-semibold text-foreground mb-2">代码关系图谱</h3>
               <p className="text-sm mb-6 max-w-md mx-auto">可视化展示代码模块间的依赖关系、调用链路和架构层级。该功能将由 CodeGraph 引擎驱动。</p>
-              
-              {/* SVG Code Graph Mock with Draggable nodes simulation via CSS */}
-              <div className="tech-border rounded-xl p-8 bg-muted/10 relative overflow-hidden aspect-video flex items-center justify-center cursor-move">
-                <svg className="absolute inset-0 w-full h-full opacity-60 dark:opacity-40" viewBox="0 0 800 400" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <defs>
-                    <linearGradient id="line-grad-1" x1="150" y1="100" x2="400" y2="200" gradientUnits="userSpaceOnUse">
-                      <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.8" />
-                      <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.8" />
-                    </linearGradient>
-                    <linearGradient id="line-grad-2" x1="150" y1="300" x2="400" y2="200" gradientUnits="userSpaceOnUse">
-                      <stop offset="0%" stopColor="#10b981" stopOpacity="0.8" />
-                      <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.8" />
-                    </linearGradient>
-                    <linearGradient id="line-grad-3" x1="400" y1="200" x2="650" y2="150" gradientUnits="userSpaceOnUse">
-                      <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.8" />
-                      <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.8" />
-                    </linearGradient>
-                    <linearGradient id="line-grad-4" x1="400" y1="200" x2="650" y2="250" gradientUnits="userSpaceOnUse">
-                      <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.8" />
-                      <stop offset="100%" stopColor="#ec4899" stopOpacity="0.8" />
-                    </linearGradient>
-                    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                      <feGaussianBlur stdDeviation="4" result="blur" />
-                      <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                    </filter>
-                  </defs>
-
-                  {/* Lines */}
-                  <path d="M 150 100 Q 275 100 400 200" stroke="url(#line-grad-1)" strokeWidth="3" fill="none" strokeDasharray="6 6" className="animate-[dash_2s_linear_infinite]" />
-                  <path d="M 150 300 Q 275 300 400 200" stroke="url(#line-grad-2)" strokeWidth="3" fill="none" strokeDasharray="6 6" className="animate-[dash_2s_linear_infinite]" />
-                  <path d="M 400 200 Q 525 150 650 150" stroke="url(#line-grad-3)" strokeWidth="3" fill="none" className="animate-[dash_3s_linear_infinite]" strokeDasharray="8 8" />
-                  <path d="M 400 200 Q 525 250 650 250" stroke="url(#line-grad-4)" strokeWidth="3" fill="none" className="animate-[dash_3s_linear_infinite]" strokeDasharray="8 8" />
-                  <path d="M 650 250 Q 525 350 400 400" stroke="url(#line-grad-2)" strokeWidth="2" fill="none" strokeDasharray="4 4" className="animate-[dash_4s_linear_infinite]" />
-                  <path d="M 400 400 Q 275 350 150 300" stroke="url(#line-grad-1)" strokeWidth="2" fill="none" strokeDasharray="4 4" className="animate-[dash_4s_linear_infinite]" />
-                  <path d="M 650 150 Q 750 100 800 200" stroke="url(#line-grad-3)" strokeWidth="2" fill="none" strokeDasharray="5 5" className="animate-[dash_2s_linear_infinite]" />
-                  <path d="M 800 200 Q 750 300 650 250" stroke="url(#line-grad-4)" strokeWidth="2" fill="none" strokeDasharray="5 5" className="animate-[dash_2s_linear_infinite]" />
-                  
-                  {/* Additional detailed lines */}
-                  <path d="M 150 100 Q 275 -50 650 150" stroke="url(#line-grad-1)" strokeWidth="1" fill="none" strokeDasharray="3 3" className="animate-[dash_5s_linear_infinite]" />
-                  <path d="M 150 300 Q 275 450 650 250" stroke="url(#line-grad-2)" strokeWidth="1" fill="none" strokeDasharray="3 3" className="animate-[dash_5s_linear_infinite]" />
-                  <path d="M 400 400 Q 600 400 650 250" stroke="url(#line-grad-3)" strokeWidth="1.5" fill="none" strokeDasharray="4 4" className="animate-[dash_3s_linear_infinite]" />
-
-                  {/* Nodes */}
-                  <g transform="translate(150, 100)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中前端UI模块')}>
-                    <circle r="30" fill="hsl(var(--card))" stroke="hsl(var(--primary))" strokeWidth="3" filter="url(#glow)" />
-                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="hsl(var(--foreground))">UI</text>
-                  </g>
-                  
-                  <g transform="translate(150, 300)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中API服务层')}>
-                    <circle r="30" fill="hsl(var(--card))" stroke="hsl(var(--success))" strokeWidth="3" filter="url(#glow)" />
-                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="hsl(var(--foreground))">API</text>
-                  </g>
-
-                  <g transform="translate(400, 200)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中核心数据存储')}>
-                    <circle r="40" fill="hsl(var(--card))" stroke="hsl(var(--chart-2))" strokeWidth="4" filter="url(#glow)" />
-                    <text y="5" textAnchor="middle" fontSize="15" fontWeight="bold" fill="hsl(var(--foreground))">Store</text>
-                  </g>
-
-                  <g transform="translate(650, 150)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中认证鉴权服务')}>
-                    <circle r="30" fill="hsl(var(--card))" stroke="hsl(var(--warning))" strokeWidth="3" filter="url(#glow)" />
-                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="hsl(var(--foreground))">Auth</text>
-                  </g>
-
-                  <g transform="translate(650, 250)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中底层数据库')}>
-                    <circle r="30" fill="hsl(var(--card))" stroke="hsl(var(--destructive))" strokeWidth="3" filter="url(#glow)" />
-                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="hsl(var(--foreground))">DB</text>
-                  </g>
-                  
-                  <g transform="translate(400, 400)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中缓存服务')}>
-                    <circle r="30" fill="hsl(var(--card))" stroke="hsl(var(--info))" strokeWidth="3" filter="url(#glow)" />
-                    <text y="5" textAnchor="middle" fontSize="13" fontWeight="bold" fill="hsl(var(--foreground))">Redis</text>
-                  </g>
-
-                  <g transform="translate(800, 200)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中外部日志系统')}>
-                    <circle r="25" fill="hsl(var(--card))" stroke="hsl(var(--muted-foreground))" strokeWidth="3" filter="url(#glow)" />
-                    <text y="4" textAnchor="middle" fontSize="11" fontWeight="bold" fill="hsl(var(--foreground))">Logger</text>
-                  </g>
-                  
-                  <g transform="translate(400, 50)" className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toast.info('已选中消息队列')}>
-                    <circle r="25" fill="hsl(var(--card))" stroke="hsl(var(--destructive))" strokeWidth="3" filter="url(#glow)" />
-                    <text y="4" textAnchor="middle" fontSize="11" fontWeight="bold" fill="hsl(var(--foreground))">MQ</text>
-                  </g>
-                  
-                  {/* Particles */}
-                  <circle r="4" fill="#3b82f6">
-                    <animateMotion dur="2s" repeatCount="indefinite" path="M 150 100 Q 275 100 400 200" />
-                  </circle>
-                  <circle r="4" fill="#10b981">
-                    <animateMotion dur="2.5s" repeatCount="indefinite" path="M 150 300 Q 275 300 400 200" />
-                  </circle>
-                  <circle r="4" fill="#8b5cf6">
-                    <animateMotion dur="2s" repeatCount="indefinite" path="M 400 200 Q 525 150 650 150" />
-                  </circle>
-                  <circle r="4" fill="#f59e0b">
-                    <animateMotion dur="2.2s" repeatCount="indefinite" path="M 400 200 Q 525 250 650 250" />
-                  </circle>
-                  <circle r="3" fill="#ec4899">
-                    <animateMotion dur="3s" repeatCount="indefinite" path="M 650 250 Q 525 350 400 400" />
-                  </circle>
-                  <circle r="3" fill="#0ea5e9">
-                    <animateMotion dur="3s" repeatCount="indefinite" path="M 400 400 Q 275 350 150 300" />
-                  </circle>
-                  <circle r="3" fill="#f43f5e">
-                    <animateMotion dur="2.5s" repeatCount="indefinite" path="M 650 150 Q 750 100 800 200" />
-                  </circle>
-                </svg>
-              </div>
             </div>
           </div>
         )}
@@ -1684,7 +1450,7 @@ export const ProjectCode: React.FC = () => {
                       <h1 className="text-2xl md:text-3xl font-bold text-foreground">前端工程架构文档</h1>
                       <p className="text-sm text-muted-foreground mt-2">版本 2.0 · 最后更新 2024-12</p>
                     </div>
-                    <MarkdownRenderer content={mockMarkdownDoc} />
+                    <MarkdownRenderer content={projectDoc} />
                   </div>
                 </ScrollArea>
               </ResizablePanel>

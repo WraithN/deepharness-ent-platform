@@ -84,6 +84,7 @@ export const TemplateManagement: React.FC = () => {
   const [deleteKey, setDeleteKey] = useState<string | null>(null);
   const [reorderLoading, setReorderLoading] = useState(false);
 
+  const listContainerRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSaveRef = useRef<{ category: TemplateCategory; key: string; content: string } | null>(null);
   const listRequestIdRef = useRef(0);
@@ -125,30 +126,35 @@ export const TemplateManagement: React.FC = () => {
     await saveContent(category, key, content);
   }, []);
 
-  const loadList = useCallback(async (category: TemplateCategory, requestId: number) => {
-    setListLoading(true);
-    try {
-      const list = await templateApi.list(category);
-      // 忽略已过期请求的结果，避免快速切换分类时旧数据覆盖新分类
-      if (requestId !== listRequestIdRef.current) return;
-      setTemplates(list);
-      setSelectedKey(list.length > 0 ? list[0].key : null);
-    } catch (err) {
-      if (requestId !== listRequestIdRef.current) return;
-      toast.error(getErrorMessage(err, '加载模板列表失败'));
-      setTemplates([]);
-      setSelectedKey(null);
-    } finally {
-      if (requestId === listRequestIdRef.current) {
-        setListLoading(false);
+  const loadList = useCallback(
+    async (category: TemplateCategory, requestId: number, options?: { selectFirst?: boolean }) => {
+      setListLoading(true);
+      try {
+        const list = await templateApi.list(category);
+        // 忽略已过期请求的结果，避免快速切换分类时旧数据覆盖新分类
+        if (requestId !== listRequestIdRef.current) return;
+        setTemplates(list);
+        if (options?.selectFirst !== false) {
+          setSelectedKey(list.length > 0 ? list[0].key : null);
+        }
+      } catch (err) {
+        if (requestId !== listRequestIdRef.current) return;
+        toast.error(getErrorMessage(err, '加载模板列表失败'));
+        setTemplates([]);
+        setSelectedKey(null);
+      } finally {
+        if (requestId === listRequestIdRef.current) {
+          setListLoading(false);
+        }
       }
-    }
-  }, []);
+    },
+    [],
+  );
 
   // 切换分类时重新加载对应模板池，并默认选中第一项
   useEffect(() => {
     const currentId = generateListRequestId();
-    loadList(activeCategory, currentId);
+    loadList(activeCategory, currentId, { selectFirst: true });
   }, [activeCategory, loadList]);
 
   // 切换分类时取消未执行的保存，避免内容被写入错误分类
@@ -178,8 +184,8 @@ export const TemplateManagement: React.FC = () => {
 
     const category = activeCategory;
     const key = selectedTemplate.key;
-    const next = templates.map((t) => (t.key === key ? { ...t, content } : t));
-    setTemplates(next);
+    // 使用函数式更新，避免在异步回调或旧闭包中用到过期的 templates 数组
+    setTemplates((prev) => prev.map((t) => (t.key === key ? { ...t, content } : t)));
 
     pendingSaveRef.current = { category, key, content };
     if (saveTimerRef.current) {
@@ -209,6 +215,8 @@ export const TemplateManagement: React.FC = () => {
     const key = slugifyKey(label, existingKeys);
 
     try {
+      // 创建前先清空未保存的编辑内容，避免切换选中项时把旧内容刷到错误的模板
+      clearPendingSave();
       await templateApi.create(activeCategory, {
         key,
         label,
@@ -218,8 +226,14 @@ export const TemplateManagement: React.FC = () => {
       setNewLabel('');
       setCreateOpen(false);
       const createListId = generateListRequestId();
-      await loadList(activeCategory, createListId);
+      // 创建成功后保持当前选中状态，随后再切到新模板，避免列表先跳到第一项造成「闪现消失」
+      await loadList(activeCategory, createListId, { selectFirst: false });
       setSelectedKey(key);
+      // 将新模板滚动到可视区域，确保用户能立即看到
+      setTimeout(() => {
+        const el = listContainerRef.current?.querySelector(`[data-template-key="${key}"]`);
+        el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 0);
     } catch (err) {
       toast.error(getErrorMessage(err, '创建模板失败'));
     }
@@ -243,6 +257,12 @@ export const TemplateManagement: React.FC = () => {
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
     if (targetIndex < 0 || targetIndex >= templates.length) return;
 
+    // 仅允许已发布模板之间移动；草稿态模板不能移动，也不能与发布态交换位置
+    if (!templates[index].published || !templates[targetIndex].published) {
+      toast.info('仅已发布模板支持排序');
+      return;
+    }
+
     const next = [...templates];
     [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
     const previous = templates;
@@ -250,9 +270,10 @@ export const TemplateManagement: React.FC = () => {
     setReorderLoading(true);
 
     try {
+      // 只把已发布模板的顺序提交给后端，草稿态始终保持在后端原位置
       await templateApi.reorder(
         activeCategory,
-        next.map((t) => t.key),
+        next.filter((t) => t.published).map((t) => t.key),
       );
     } catch (err) {
       toast.error(getErrorMessage(err, '排序保存失败'));
@@ -269,6 +290,9 @@ export const TemplateManagement: React.FC = () => {
         prev.map((t) => (t.key === key ? { ...t, published } : t)),
       );
       toast.success(published ? '模板已发布' : '模板已下架');
+      // 发布/下架会改变分组顺序（发布态始终在前），重新拉取列表以保证顺序正确
+      const publishListId = generateListRequestId();
+      await loadList(activeCategory, publishListId, { selectFirst: false });
     } catch (err) {
       toast.error(getErrorMessage(err, published ? '发布失败' : '下架失败'));
     }
@@ -318,7 +342,7 @@ export const TemplateManagement: React.FC = () => {
               </Button>
             </CardTitle>
           </CardHeader>
-          <CardContent className="p-2 overflow-y-auto flex-1">
+          <CardContent ref={listContainerRef} className="p-2 overflow-y-auto flex-1">
             {listLoading ? (
               <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -329,6 +353,7 @@ export const TemplateManagement: React.FC = () => {
                 {templates.map((tpl, index) => (
                   <div
                     key={tpl.key}
+                    data-template-key={tpl.key}
                     onClick={() => setSelectedKey(tpl.key)}
                     className={cn(
                       'group flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm cursor-pointer transition-colors',
@@ -351,30 +376,36 @@ export const TemplateManagement: React.FC = () => {
                       )}
                     </div>
                     <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                        disabled={reorderLoading || index === 0}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleMove(index, 'up');
-                        }}
-                      >
-                        <ChevronUp className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                        disabled={reorderLoading || index === templates.length - 1}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleMove(index, 'down');
-                        }}
-                      >
-                        <ChevronDown className="h-3.5 w-3.5" />
-                      </Button>
+                      {tpl.published && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                            disabled={reorderLoading || index === 0 || !templates[index - 1]?.published}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMove(index, 'up');
+                            }}
+                          >
+                            <ChevronUp className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                            disabled={
+                              reorderLoading || index === templates.length - 1 || !templates[index + 1]?.published
+                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMove(index, 'down');
+                            }}
+                          >
+                            <ChevronDown className="h-3.5 w-3.5" />
+                          </Button>
+                        </>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"

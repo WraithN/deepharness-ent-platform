@@ -11,23 +11,32 @@ import { Textarea } from '@/components/ui/textarea';
 import { useClientPagination } from '@/hooks/use-client-pagination';
 import { teamApi } from '@/lib/team-api';
 import type { Skill } from '@/types';
+import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 
 const CATEGORIES = ['全部', '研发', '测试', '产品', '设计'];
 const SKILL_MARKET_PAGE_SIZE = 12;
 
+// 技能分类与 tab 的映射：后端分类可能包含中文/英文关键词，通过关键词归并到对应角色 tab。
+const CATEGORY_TAB_MAP: Record<string, string[]> = {
+  研发: ['研发', '代码', '开发', 'Code', '代码生成', '代码优化', '代码审查', '架构方案', '编程', '重构', '效率', '后端', '前端'],
+  测试: ['测试', 'Testing', '验证', 'QA', 'Jest', 'API测试', '测试用例'],
+  产品: ['产品', '需求', 'PRD', 'Product', '文档', '设计稿'],
+  设计: ['设计', 'UI', 'Design', 'UX', 'UI设计', '视觉'],
+};
+
 export const SkillMarket: React.FC = () => {
+  const workspaceId = getCurrentWorkspaceId();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('全部');
   const [skills, setSkills] = useState<Skill[]>([]);
 
   useEffect(() => {
-    teamApi.listSkills(1, 100)
+    teamApi.listSkills(1, 100, workspaceId)
       .then(res => setSkills(res.list))
       .catch(err => {
         console.error('Failed to load skills:', err);
-        toast.error('加载技能失败');
       });
-  }, []);
+  }, [workspaceId]);
   
   // AI Create state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -37,17 +46,9 @@ export const SkillMarket: React.FC = () => {
   const filteredSkills = skills.filter(skill => {
     const matchSearch = skill.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
                        skill.description.toLowerCase().includes(searchTerm.toLowerCase());
-    // Since mock data category might not match exactly, we do a loose check or assign mock categories randomly if needed.
-    // For demo purpose, if category is '全部', return matchSearch.
-    const matchCategory = selectedCategory === '全部' || skill.category === selectedCategory || (
-        // Map some mock categories to these tags
-        (selectedCategory === '研发' && ['代码生成', '代码优化', 'Code'].includes(skill.category)) ||
-        (selectedCategory === '测试' && ['测试编写', 'Testing'].includes(skill.category)) ||
-        (selectedCategory === '产品' && ['需求设计', 'Product'].includes(skill.category)) ||
-        (selectedCategory === '设计' && ['UI设计', 'Design'].includes(skill.category))
-    );
-    // If mock data doesn't have these exact categories, let's just make it loose:
-    return matchSearch && (selectedCategory === '全部' || skill.category.includes(selectedCategory) || matchCategory);
+    if (selectedCategory === '全部') return matchSearch;
+    const keywords = CATEGORY_TAB_MAP[selectedCategory] ?? [selectedCategory];
+    return matchSearch && keywords.some(k => skill.category.includes(k));
   });
 
   const { currentPage, totalPages, onPageChange, startIndex, endIndex } = useClientPagination({
@@ -58,7 +59,7 @@ export const SkillMarket: React.FC = () => {
   const paginatedSkills = filteredSkills.slice(startIndex, endIndex);
 
   const handleInstall = (id: string) => {
-    teamApi.updateSkillInstalled(id, true)
+    teamApi.updateSkillInstalled(id, true, workspaceId)
       .then(() => {
         setSkills(skills.map(s => s.id === id ? { ...s, installed: true } : s));
         toast.success('技能已安装到当前工作空间');
@@ -80,7 +81,7 @@ export const SkillMarket: React.FC = () => {
       icon: 'Puzzle',
       phase: '代码开发',
       rating: 5.0,
-    }).then(skill => {
+    }, workspaceId).then(skill => {
       setSkills([skill, ...skills]);
       setIsGenerating(false);
       setIsCreateOpen(false);

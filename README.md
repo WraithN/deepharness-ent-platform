@@ -82,6 +82,96 @@
 - [pnpm](https://pnpm.io/) (v9.15.5)
 - [Go](https://go.dev/) (v1.22+)
 
+## Agent Runtime 状态上报接口
+
+外部 gatewayd / agent-stub 可通过以下接口向 DH Backend 上报运行时状态，供管理后台「Agent 运行时」页面实时监控。
+
+### 认证
+
+上报接口使用固定 Bearer Token 认证：
+
+```
+Authorization: Bearer <agent_runtime.bearer_token>
+```
+
+Token 配置位置：
+
+- `apps/dh-backend/config.yaml`：`agent_runtime.bearer_token`
+- 环境变量：`AGENT_RUNTIME_BEARER_TOKEN`（优先级最高）
+
+### 端点
+
+#### 上报/更新运行时状态
+
+```http
+POST /api/v1/agent-runtimes/{runtimeId}/status
+Content-Type: application/json
+Authorization: Bearer {token}
+```
+
+请求体示例：
+
+```json
+{
+  "workspace_id": "95d698acad194c76a7a2bb482677a4df",
+  "user_id": "a0564de55589467d935d797611963493",
+  "status": "running",
+  "uptime_seconds": 45240,
+  "cpu_percent": 32.0,
+  "mem_percent": 58.0,
+  "sandbox_spec": "4C / 8G",
+  "agents": [
+    {
+      "type": "opencode",
+      "name": "opencode-main",
+      "status": "running",
+      "calls_today": 1284,
+      "version": "v2.1.3",
+      "last_active": "2分钟前"
+    }
+  ]
+}
+```
+
+字段说明：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `workspace_id` | string | 运行时所属工作空间 ID；服务端据此反查 `tenantId`、`tenantName`、`workspaceName` |
+| `user_id` | string | 运行时所属成员 ID（服务端自动查询 `userName` 与 `userDisplayName`） |
+| `status` | string | 运行时整体状态：`running` / `error` / `stopped` / `resource_warning` |
+| `uptime_seconds` | int64 | 已运行秒数 |
+| `cpu_percent` / `mem_percent` | float | CPU / 内存使用率百分比 |
+| `sandbox_spec` | string | 沙箱规格，如 `4C / 8G` |
+| `agents` | array | 该运行时内部的智能体实例列表 |
+| `agents[].type` | string | 智能体类型，如 `opencode`、`codex`、`claude-code` |
+| `agents[].status` | string | 智能体实例状态：`running` / `error` / `idle` |
+
+#### 查询运行时列表（超管）
+
+```http
+GET /api/v1/agent-runtimes?tenantId=&workspaceId=&userId=&agentType=&page=1&pageSize=10
+Authorization: Bearer <user-token>
+```
+
+响应示例：
+
+```json
+{
+  "list": [...],
+  "total": 100,
+  "page": 1,
+  "pageSize": 10
+}
+```
+
+#### 查询单个运行时详情（超管）
+
+```http
+GET /api/v1/agent-runtimes/{runtimeId}
+Authorization: Bearer <user-token>
+```
+
 ## 快速开始
 
 安装依赖：

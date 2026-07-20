@@ -23,6 +23,7 @@ import { Profile } from "@/pages/Profile";
 
 import { AdminDashboard } from "@/pages/AdminDashboard";
 import { TemplateManagement } from "@/pages/TemplateManagement";
+import { AgentRuntimePage } from "@/pages/AgentRuntimePage";
 
 export const routes: RouteObject[] = [
   { path: "/login", element: <Login /> },
@@ -43,6 +44,7 @@ export const routes: RouteObject[] = [
       { index: true, element: <Navigate to="/admin/dashboard" replace /> },
       { path: "dashboard", element: <AdminDashboard /> },
       { path: "tenants", element: <AdminPage /> },
+      { path: "agent-runtimes", element: <AgentRuntimePage /> },
       { path: "skills", element: <AdminPage /> },
       { path: "prompts", element: <AdminPage /> },
       { path: "templates", element: <TemplateManagement /> },

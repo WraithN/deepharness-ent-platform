@@ -465,6 +465,7 @@ CREATE TABLE IF NOT EXISTS workspace_agent_configs (
     workspace_id VARCHAR(36) NOT NULL,
     agent_key VARCHAR(50) NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
     model VARCHAR(100),
     model_source VARCHAR(20) DEFAULT 'builtin',
     base_url VARCHAR(500),
@@ -483,6 +484,7 @@ COMMENT ON COLUMN workspace_agent_configs.id IS '配置 ID';
 COMMENT ON COLUMN workspace_agent_configs.workspace_id IS '所属空间 ID';
 COMMENT ON COLUMN workspace_agent_configs.agent_key IS '智能体标识';
 COMMENT ON COLUMN workspace_agent_configs.enabled IS '是否在当前空间启用';
+COMMENT ON COLUMN workspace_agent_configs.is_default IS '是否为当前空间默认智能体（最多一个）';
 COMMENT ON COLUMN workspace_agent_configs.model IS '模型名称';
 COMMENT ON COLUMN workspace_agent_configs.model_source IS '模型来源：builtin 内置 / custom 自定义';
 COMMENT ON COLUMN workspace_agent_configs.base_url IS '自定义模型服务地址';

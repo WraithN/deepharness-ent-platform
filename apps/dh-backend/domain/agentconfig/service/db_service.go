@@ -16,8 +16,18 @@ import (
 // AgentGlobalConfig 保存来自 config.yaml 的全局 agent 与模型配置。
 type AgentGlobalConfig struct {
 	Agents []agent.AgentType
+	// Models 为平铺模型池（由 ModelVendors 展开或旧的平铺配置），
+	// 作为未配置厂商分组时的回退来源。
 	Models []string
+	// ModelVendors 按厂商分组的模型池，前端模型下拉框据此分组展示。
+	ModelVendors []agent.ModelVendorGroup
 }
+
+const (
+	// defaultModelVendorGroupKey/Name 是未配置厂商分组时回退使用的单一分组标识与名称。
+	defaultModelVendorGroupKey  = "default"
+	defaultModelVendorGroupName = "内置模型"
+)
 
 // DBAgentConfigService 是基于 PostgreSQL 的 AgentConfigService 实现。
 type DBAgentConfigService struct {
@@ -66,9 +76,20 @@ func (s *DBAgentConfigService) seedBuiltinAgentTypes() error {
 	return nil
 }
 
-// ListGlobalModels 返回全局配置中支持的模型池。
-func (s *DBAgentConfigService) ListGlobalModels() []string {
-	return s.globalCfg.Models
+// ListGlobalModelGroups 返回全局配置中按厂商分组的模型池。
+// 未配置厂商分组时将平铺模型池包装为单一「内置模型」分组，保证前端始终可展示。
+func (s *DBAgentConfigService) ListGlobalModelGroups() []agent.ModelVendorGroup {
+	if len(s.globalCfg.ModelVendors) > 0 {
+		return s.globalCfg.ModelVendors
+	}
+	if len(s.globalCfg.Models) > 0 {
+		return []agent.ModelVendorGroup{{
+			Key:    defaultModelVendorGroupKey,
+			Name:   defaultModelVendorGroupName,
+			Models: s.globalCfg.Models,
+		}}
+	}
+	return []agent.ModelVendorGroup{}
 }
 
 // ListAgentTypes 返回平台级智能体类型列表，按全局配置过滤。
@@ -244,7 +265,7 @@ func (s *DBAgentConfigService) ListWorkspaceConfigs(workspaceID string) ([]agent
 
 	rows, err := s.db.Query(`
 		SELECT t.agent_key, t.name, t.description, t.enabled,
-			c.id, c.enabled, c.model, c.model_source, c.base_url, c.api_key,
+			c.id, c.enabled, c.is_default, c.model, c.model_source, c.base_url, c.api_key,
 			c.temperature, c.max_tokens, c.context_window, c.advanced_config,
 			c.created_at, c.updated_at
 		FROM platform_agent_types t
@@ -288,7 +309,7 @@ func (s *DBAgentConfigService) GetWorkspaceConfig(workspaceID, agentKey string) 
 
 	row := s.db.QueryRow(`
 		SELECT t.agent_key, t.name, t.description, t.enabled,
-			c.id, c.enabled, c.model, c.model_source, c.base_url, c.api_key,
+			c.id, c.enabled, c.is_default, c.model, c.model_source, c.base_url, c.api_key,
 			c.temperature, c.max_tokens, c.context_window, c.advanced_config,
 			c.created_at, c.updated_at
 		FROM platform_agent_types t
@@ -345,13 +366,27 @@ func (s *DBAgentConfigService) SaveWorkspaceConfig(workspaceID string, req SaveW
 	now := time.Now().UTC()
 	id := uuid.New().String()
 
-	_, err = s.db.Exec(`
+	// 开启事务保存配置；若设置为默认智能体，先清空同空间其他默认智能体，确保最多只有一个默认。
+	tx, err := s.db.Begin()
+	if err != nil {
+		return agent.WorkspaceAgentConfig{}, fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	if req.IsDefault {
+		if _, err := tx.Exec(`UPDATE workspace_agent_configs SET is_default = false WHERE workspace_id = $1`, workspaceID); err != nil {
+			return agent.WorkspaceAgentConfig{}, fmt.Errorf("clear default agent failed: %w", err)
+		}
+	}
+
+	_, err = tx.Exec(`
 		INSERT INTO workspace_agent_configs (
-			id, workspace_id, agent_key, enabled, model, model_source, base_url, api_key,
+			id, workspace_id, agent_key, enabled, is_default, model, model_source, base_url, api_key,
 			temperature, max_tokens, context_window, advanced_config, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
 		ON CONFLICT (workspace_id, agent_key) DO UPDATE SET
 			enabled = EXCLUDED.enabled,
+			is_default = EXCLUDED.is_default,
 			model = EXCLUDED.model,
 			model_source = EXCLUDED.model_source,
 			base_url = EXCLUDED.base_url,
@@ -361,10 +396,14 @@ func (s *DBAgentConfigService) SaveWorkspaceConfig(workspaceID string, req SaveW
 			context_window = EXCLUDED.context_window,
 			advanced_config = EXCLUDED.advanced_config,
 			updated_at = EXCLUDED.updated_at
-	`, id, workspaceID, req.AgentKey, req.Enabled, req.Model, req.ModelSource, req.BaseURL, req.APIKey,
+	`, id, workspaceID, req.AgentKey, req.Enabled, req.IsDefault, req.Model, req.ModelSource, req.BaseURL, req.APIKey,
 		req.Temperature, advancedJSON.MaxTokens, advancedJSON.ContextWindow, advancedJSON.Raw, now)
 	if err != nil {
 		return agent.WorkspaceAgentConfig{}, fmt.Errorf("save workspace config failed: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return agent.WorkspaceAgentConfig{}, fmt.Errorf("commit failed: %w", err)
 	}
 
 	return s.GetWorkspaceConfig(workspaceID, req.AgentKey)
@@ -379,7 +418,7 @@ func (s *DBAgentConfigService) ListAvailableAgents(workspaceID string) ([]agent.
 
 	result := make([]agent.AvailableAgent, 0)
 	for _, cfg := range configs {
-		// 仅当平台启用且空间启用时才对外展示。
+		// 仅当空间启用时才对外展示。
 		if !cfg.Enabled {
 			continue
 		}
@@ -459,6 +498,7 @@ func scanWorkspaceAgentConfig(workspaceID string, row scanner) (agent.WorkspaceA
 	cfg.WorkspaceID = workspaceID
 	var platformEnabled bool
 	var configEnabled sql.NullBool
+	var isDefault sql.NullBool
 	var id, model, modelSource, baseURL, apiKey sql.NullString
 	var temperature sql.NullFloat64
 	var maxTokens, contextWindow sql.NullInt32
@@ -467,7 +507,7 @@ func scanWorkspaceAgentConfig(workspaceID string, row scanner) (agent.WorkspaceA
 
 	err := row.Scan(
 		&cfg.AgentKey, &cfg.Name, &cfg.Description, &platformEnabled,
-		&id, &configEnabled, &model, &modelSource, &baseURL, &apiKey,
+		&id, &configEnabled, &isDefault, &model, &modelSource, &baseURL, &apiKey,
 		&temperature, &maxTokens, &contextWindow, &advancedRaw,
 		&createdAt, &updatedAt,
 	)
@@ -483,6 +523,9 @@ func scanWorkspaceAgentConfig(workspaceID string, row scanner) (agent.WorkspaceA
 		cfg.Enabled = configEnabled.Bool
 	} else {
 		cfg.Enabled = true
+	}
+	if isDefault.Valid {
+		cfg.IsDefault = isDefault.Bool
 	}
 
 	cfg.ID = sqlutil.ScanNullString(id)
@@ -501,11 +544,6 @@ func scanWorkspaceAgentConfig(workspaceID string, row scanner) (agent.WorkspaceA
 	cfg.AdvancedConfig, err = unmarshalAdvancedConfig(maxTokens, contextWindow, advancedRaw)
 	if err != nil {
 		return agent.WorkspaceAgentConfig{}, err
-	}
-
-	// 若平台级已禁用，则空间级也视为禁用。
-	if !platformEnabled {
-		cfg.Enabled = false
 	}
 
 	return cfg, nil

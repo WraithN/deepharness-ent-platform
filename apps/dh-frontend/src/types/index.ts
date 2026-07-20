@@ -303,6 +303,7 @@ export interface WorkspaceAgentConfig {
   name: string;
   description: string;
   enabled: boolean;
+  isDefault: boolean;
   model: string;
   modelSource: 'builtin' | 'custom';
   baseUrl: string;
@@ -318,6 +319,13 @@ export interface AvailableAgent {
   name: string;
   description: string;
   model: string;
+}
+
+/** 按厂商分组的模型池（由 config.yaml 的 coding_agents.model_vendors 配置，后端下发）。 */
+export interface ModelVendorGroup {
+  key: string;
+  name: string;
+  models: string[];
 }
 
 export interface WorkspaceRepository {

@@ -1,9 +1,10 @@
 import { api } from './api';
-import type { AgentType, WorkspaceAgentConfig, AvailableAgent } from '@/types';
+import type { AgentType, WorkspaceAgentConfig, AvailableAgent, ModelVendorGroup } from '@/types';
 
 export interface SaveWorkspaceAgentConfigRequest {
   agentKey: string;
   enabled: boolean;
+  isDefault: boolean;
   model: string;
   modelSource: 'builtin' | 'custom';
   baseUrl: string;
@@ -26,7 +27,7 @@ export const agentConfigApi = {
   updateAgentType: (key: string, enabled: boolean) =>
     api.put<AgentType>(`/v1/agent-types/${key}`, { enabled }),
 
-  listGlobalModels: () => api.get<string[]>('/v1/agent-models'),
+  listGlobalModelGroups: () => api.get<ModelVendorGroup[]>('/v1/agent-models'),
 
   listWorkspaceConfigs: (workspaceId: string) =>
     api.get<WorkspaceAgentConfig[]>(`/v1/workspaces/${workspaceId}/agent-configs`),

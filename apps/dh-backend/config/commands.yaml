@@ -177,3 +177,231 @@ commands:
 
       【审查目标】
       {ARGS}
+
+  - cmd: "/unit-test"
+    label: "生成单测"
+    desc: "为代码生成单元测试"
+    icon: "FlaskConical"
+    allowTask: true
+    allowRepos: true
+    requireRepos: true
+    maxRepos: 2
+    template: |
+      你是一位资深测试工程师。请根据以下代码或需求，生成完整的单元测试。
+
+      【测试要求】
+      1. 覆盖正常路径、异常路径与边界条件。
+      2. 测试代码写入对应工程的 tests/ 目录或与被测文件同目录。
+      3. 使用项目现有测试框架（如 Jest / Vitest / pytest）。
+
+      【输出标记】
+      - 创建单个测试文件使用 [[FILE:绝对路径]] 标记。
+      - 如涉及多个文件使用 [[PROJECT:绝对路径]] 标记。
+
+      【目标代码/需求】
+      {ARGS}
+
+  - cmd: "/test-case"
+    label: "生成测试用例"
+    desc: "生成结构化测试用例"
+    icon: "ClipboardList"
+    allowTask: true
+    allowRepos: false
+    requireRepos: false
+    maxRepos: 0
+    template: |
+      你是一位资深测试工程师。请根据以下需求或功能描述，生成结构化的测试用例。
+
+      【文件输出要求】
+      1. 将测试用例文档写入 projects/products-jobs/test-cases/ 目录下。
+      2. 文件命名格式：{功能名称}-test-cases.md。
+      3. 每条用例包含：用例编号、标题、前置条件、操作步骤、预期结果、优先级。
+
+      【输出标记】
+      [[FILE:绝对路径/到/projects/products-jobs/test-cases/功能名称-test-cases.md]]
+
+      【功能描述】
+      {ARGS}
+
+  - cmd: "/auto-test"
+    label: "自动化脚本"
+    desc: "生成自动化测试脚本"
+    icon: "Terminal"
+    allowTask: true
+    allowRepos: true
+    requireRepos: false
+    maxRepos: 1
+    template: |
+      你是一位资深测试开发工程师。请根据以下需求或接口，生成可运行的自动化测试脚本。
+
+      【脚本要求】
+      1. 脚本写入 projects/ 对应工程的 tests/ 或 e2e/ 目录。
+      2. 优先使用 Playwright / Cypress / Jest 等常见工具，并说明运行方式。
+      3. 包含关键断言与用例说明。
+
+      【输出标记】
+      [[FILE:绝对路径]] 或 [[PROJECT:绝对路径]]
+
+      【目标需求/接口】
+      {ARGS}
+
+  - cmd: "/bug-analysis"
+    label: "BUG分析"
+    desc: "分析缺陷根因与影响"
+    icon: "Search"
+    allowTask: true
+    allowRepos: false
+    requireRepos: false
+    maxRepos: 0
+    template: |
+      你是一位资深测试分析师。请根据以下缺陷现象，进行根因分析并评估影响范围。
+
+      【分析要求】
+      1. 列出可能的根因假设并给出验证思路。
+      2. 评估对功能、性能、用户体验的影响。
+      3. 输出修复建议与回归测试重点。
+
+      【输出标记】
+      如需写入文件，使用 [[FILE:绝对路径]] 标记。
+
+      【缺陷现象】
+      {ARGS}
+
+  - cmd: "/test-report"
+    label: "测试报告"
+    desc: "生成测试报告"
+    icon: "FileBarChart"
+    allowTask: true
+    allowRepos: false
+    requireRepos: false
+    maxRepos: 0
+    template: |
+      你是一位资深测试经理。请根据以下测试执行情况或数据，生成一份测试报告。
+
+      【报告内容】
+      1. 测试范围与目标
+      2. 测试执行摘要（用例数、通过/失败数、阻塞数）
+      3. 缺陷统计与严重度分布
+      4. 风险评估与发布建议
+      5. 遗留问题与后续计划
+
+      【输出标记】
+      [[FILE:绝对路径/到/projects/products-jobs/reports/测试报告.md]]
+
+      【测试数据/描述】
+      {ARGS}
+
+  - cmd: "/ui-spec"
+    label: "UI规范"
+    desc: "生成 UI 设计规范"
+    icon: "Layout"
+    allowTask: true
+    allowRepos: false
+    requireRepos: false
+    maxRepos: 0
+    template: |
+      你是一位资深 UI 设计师。请根据以下需求，生成一份 UI 设计规范文档。
+
+      【文档内容】
+      1. 色彩规范（主色、辅助色、状态色、文字色）
+      2. 字体与字号规范
+      3. 间距与圆角规范
+      4. 按钮、输入框、卡片等组件样式规范
+      5. 布局栅格示例
+
+      【输出标记】
+      [[FILE:绝对路径/到/projects/products-jobs/design/需求名称-ui-spec.md]]
+
+      【需求描述】
+      {ARGS}
+
+  - cmd: "/design-review"
+    label: "设计走查"
+    desc: "检查设计稿与实现一致性"
+    icon: "Eye"
+    allowTask: true
+    allowRepos: false
+    requireRepos: false
+    maxRepos: 0
+    template: |
+      你是一位资深设计走查专家。请根据以下设计稿或实现描述，检查设计还原与一致性。
+
+      【走查维度】
+      1. 视觉还原（颜色、字体、间距、圆角）
+      2. 交互流程与状态完整性
+      3. 响应式与可访问性
+      4. 设计 Token 使用是否一致
+
+      【输出标记】
+      如需写入文件，使用 [[FILE:绝对路径]] 标记。
+
+      【设计稿/实现描述】
+      {ARGS}
+
+  - cmd: "/design-token"
+    label: "Design Token"
+    desc: "生成 Design Token 定义"
+    icon: "Palette"
+    allowTask: true
+    allowRepos: false
+    requireRepos: false
+    maxRepos: 0
+    template: |
+      你是一位资深设计系统专家。请根据以下品牌或设计需求，生成一份 Design Token 定义。
+
+      【Token 要求】
+      1. 包含颜色、字体、间距、圆角、阴影、断点等维度。
+      2. 输出为 JSON 或 CSS 变量格式，便于代码使用。
+      3. 命名语义清晰，支持层级扩展。
+
+      【输出标记】
+      [[FILE:绝对路径/到/projects/products-jobs/design/tokens.json]]
+
+      【品牌/设计需求】
+      {ARGS}
+
+  - cmd: "/user-story"
+    label: "用户故事拆分"
+    desc: "将需求拆分为用户故事"
+    icon: "ListChecks"
+    allowTask: true
+    allowRepos: false
+    requireRepos: false
+    maxRepos: 0
+    template: |
+      你是一位资深产品经理。请根据以下需求，拆分为结构化的用户故事与验收标准。
+
+      【输出要求】
+      1. 每条用户故事遵循 "作为...，我希望...，以便..." 格式。
+      2. 包含验收标准（AC），使用 Given/When/Then 描述。
+      3. 输出按优先级与模块分组。
+
+      【输出标记】
+      [[FILE:绝对路径/到/projects/products-jobs/stories/需求名称-user-stories.md]]
+
+      【需求描述】
+      {ARGS}
+
+  - cmd: "/data-analysis"
+    label: "数据分析"
+    desc: "分析数据并生成洞察"
+    icon: "BarChart3"
+    allowTask: true
+    allowRepos: false
+    requireRepos: false
+    maxRepos: 0
+    template: |
+      你是一位资深数据分析师。请根据以下数据或分析目标，生成数据洞察报告。
+
+      【报告内容】
+      1. 分析目标与指标说明
+      2. 数据清洗与假设说明
+      3. 关键指标与趋势分析
+      4. 洞察结论与行动建议
+      5. 可视化建议（图表类型）
+
+      【输出标记】
+      [[FILE:绝对路径/到/projects/products-jobs/analysis/分析主题.md]]
+
+      【数据/分析目标】
+      {ARGS}

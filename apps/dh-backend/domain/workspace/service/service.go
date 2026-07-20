@@ -34,7 +34,7 @@ type AgentConfigSnapshot struct {
 
 // WorkspaceService 定义 workspace 模块的服务接口。
 type WorkspaceService interface {
-	CreateWorkspace(tenantID, name, description, ownerUserID string, policy AgentPolicy) (workspace.Workspace, error)
+	CreateWorkspace(tenantID, name, description, ownerUserID, subRole, sourceWorkspaceID string, policy AgentPolicy) (workspace.Workspace, error)
 	GetWorkspace(id string) (workspace.Workspace, error)
 	UpdateWorkspace(id, name, description string, policy AgentPolicy) (workspace.Workspace, error)
 	DeleteWorkspace(id string) error
@@ -104,8 +104,9 @@ type CICDRequest struct {
 // MineWorkspace 表示当前用户加入的工作空间及其成员关系。
 type MineWorkspace struct {
 	workspace.Workspace
-	Role    string `json:"role"`
-	SubRole string `json:"subRole"`
+	Role       string `json:"role"`
+	SubRole    string `json:"subRole"`
+	TenantName string `json:"tenantName"`
 }
 
 // 空间成员权限角色常量（决定空间内管理权限）。

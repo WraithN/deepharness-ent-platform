@@ -33,7 +33,7 @@ func testConfig() config.Config {
 func TestCreateSession_Success(t *testing.T) {
 	sessions := session.NewSessionStore()
 	messages := session.NewMessageStore(0)
-	h := handler.NewSessionHandler(sessions, messages, client.NewGatewaydClient("", ""), nil, nil, testConfig(), memory.New())
+	h := handler.NewSessionHandler(sessions, messages, client.NewGatewaydClient("http://127.0.0.1:2346", "claude-code"), nil, nil, testConfig(), memory.New())
 
 	reqBody, _ := json.Marshal(map[string]any{
 		"agentType": "chat",
@@ -68,7 +68,7 @@ func TestCreateSession_Success(t *testing.T) {
 func TestCreateSession_InvalidBody(t *testing.T) {
 	sessions := session.NewSessionStore()
 	messages := session.NewMessageStore(0)
-	h := handler.NewSessionHandler(sessions, messages, client.NewGatewaydClient("", ""), nil, nil, testConfig(), memory.New())
+	h := handler.NewSessionHandler(sessions, messages, client.NewGatewaydClient("http://127.0.0.1:2346", "claude-code"), nil, nil, testConfig(), memory.New())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewReader([]byte("not-json")))
 	w := httptest.NewRecorder()
@@ -83,7 +83,7 @@ func TestCreateSession_InvalidBody(t *testing.T) {
 func TestSessions_MethodNotAllowed(t *testing.T) {
 	sessions := session.NewSessionStore()
 	messages := session.NewMessageStore(0)
-	h := handler.NewSessionHandler(sessions, messages, client.NewGatewaydClient("", ""), nil, nil, testConfig(), memory.New())
+	h := handler.NewSessionHandler(sessions, messages, client.NewGatewaydClient("http://127.0.0.1:2346", "claude-code"), nil, nil, testConfig(), memory.New())
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/sessions", nil)
 	w := httptest.NewRecorder()

@@ -5,6 +5,7 @@
 import { Check, ChevronUp, X } from "lucide-react";
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
 
 interface Option {
   value: string;
@@ -15,6 +16,9 @@ interface MultiSelectProps {
   options: Option[];
   value?: string[];
   defaultSelected?: string[];
+  placeholder?: string;
+  className?: string;
+  triggerClassName?: string;
   onChange?: (selected: string[]) => void;
   disabled?: boolean;
   dropdownPosition?: 'top' | 'bottom';
@@ -24,6 +28,9 @@ const MultiSelect: React.FC<MultiSelectProps> = ({
   options,
   defaultSelected = [],
   value,
+  placeholder = '请选择...',
+  className,
+  triggerClassName,
   onChange,
   disabled = false,
   dropdownPosition = 'bottom',
@@ -89,15 +96,17 @@ const MultiSelect: React.FC<MultiSelectProps> = ({
   );
 
   return (
-    <div className="relative w-full" ref={containerRef}>
+    <div className={cn("relative w-full", className)} ref={containerRef}>
       {/* 触发框 */}
       <div
         onClick={toggleDropdown}
-        className={`group flex min-h-[44px] w-full items-center justify-between gap-2 rounded-lg border border-input bg-background px-3 py-2 shadow-sm transition-all ${
+        className={cn(
+          "group flex w-full items-center justify-between gap-2 rounded-lg border border-input bg-background px-3 py-2 shadow-sm transition-all",
           disabled
             ? 'cursor-not-allowed opacity-50'
-            : 'cursor-pointer hover:border-input/80 focus-within:border-ring focus-within:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]'
-        }`}
+            : 'cursor-pointer hover:border-input/80 hover:shadow-sm focus-within:border-ring focus-within:shadow-[0_0_0_3px_hsl(var(--ring)/0.08)]',
+          triggerClassName,
+        )}
       >
         <div className="flex flex-wrap items-center gap-2 flex-1">
           {selectedValuesText.length > 0 ? (
@@ -122,7 +131,7 @@ const MultiSelect: React.FC<MultiSelectProps> = ({
               </span>
             ))
           ) : (
-            <span className="text-sm text-muted-foreground">请选择...</span>
+            <span className="text-sm text-muted-foreground">{placeholder}</span>
           )}
         </div>
         <ChevronUp

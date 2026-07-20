@@ -162,6 +162,10 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   // 最近一次向父级发出的 Markdown，用于识别外部 value 变化（切换文档等）
   const lastEmittedRef = useRef(value);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // WangEditor 初始化后不会更新 config.onChange，使用 ref 保证总能调用到父组件最新回调，
+  // 避免切换文档/模板时触发旧的 onChange 闭包导致父级状态被旧数据覆盖。
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   /**
    * 安全写入 HTML。setHtml 会在编辑器内部结算节点操作，若此时存在选区或
@@ -244,7 +248,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     if (!ed) return;
     const md = htmlToMarkdown(ed.getHtml());
     lastEmittedRef.current = md;
-    onChange(md);
+    onChangeRef.current(md);
   };
 
   const handleModeChange = (next: EditorMode) => {
@@ -269,7 +273,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       debounceRef.current = setTimeout(() => {
         const md = htmlToMarkdown(html);
         lastEmittedRef.current = md;
-        onChange(md);
+        onChangeRef.current(md);
       }, SYNC_DEBOUNCE_MS);
     },
   };
@@ -281,7 +285,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       debounceRef.current = null;
     }
     lastEmittedRef.current = content;
-    onChange(content);
+    onChangeRef.current(content);
     if (mode === 'rich' && editor) {
       setEditorHtml(editor, content);
     }

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
@@ -420,28 +421,19 @@ export const ProductWorkspace: React.FC = () => {
 
   return (
     <div className="flex flex-col h-[calc(100vh-6rem)] md:h-[calc(100vh-8rem)] min-h-[500px] gap-4 w-full pb-8">
-      <div className="flex items-center w-full justify-between gap-2 self-start flex-wrap">
-        <div className="flex items-center gap-1 bg-muted/50 p-1 rounded-xl">
+      <Tabs value={activeTab} onValueChange={value => setActiveTab(value as ProductTab)} className="w-full">
+        <TabsList className="aurora-tab-bar level-1 mb-0">
           {tabs.map(tab => {
             const Icon = tab.icon;
             return (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={cn(
-                  'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all',
-                  activeTab === tab.key
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                )}
-              >
-                <Icon className="w-4 h-4" />
-                <span className="hidden sm:inline">{tab.label}</span>
-              </button>
+              <TabsTrigger key={tab.key} value={tab.key} className="aurora-tab-item level-1">
+                <Icon className="h-4 w-4" />
+                {tab.label}
+              </TabsTrigger>
             );
           })}
-        </div>
-      </div>
+        </TabsList>
+      </Tabs>
 
       <Card className="flex-1 overflow-hidden border-none claude-card flex flex-col relative">
         {activeTab === 'doc' && <DocMode />}

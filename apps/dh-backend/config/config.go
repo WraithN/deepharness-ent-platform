@@ -56,8 +56,13 @@ type Config struct {
 
 	// CodingAgents 平台支持的 coding agent 白名单。
 	CodingAgents []CodingAgentDefinition
-	// CodingAgentModels 平台支持的模型池。
+	// CodingAgentModels 平台支持的模型池（由 model_vendors 展开，或旧的平铺 models）。
 	CodingAgentModels []string
+	// CodingAgentModelVendors 按厂商分组的模型池，供前端分组下拉展示。
+	CodingAgentModelVendors []ModelVendorGroup
+
+	// AgentRuntimeBearerToken 是外部 gatewayd / agent-stub 上报运行状态时必须携带的 Bearer Token。
+	AgentRuntimeBearerToken string
 }
 
 // CodingAgentDefinition 表示全局配置中一个 coding agent 的定义。
@@ -65,6 +70,13 @@ type CodingAgentDefinition struct {
 	Key         string
 	Name        string
 	Description string
+}
+
+// ModelVendorGroup 表示 config.yaml 中按厂商分组的模型池。
+type ModelVendorGroup struct {
+	Key    string
+	Name   string
+	Models []string
 }
 
 // yamlConfig 与 config.yaml 的分层结构对应。
@@ -124,8 +136,18 @@ type yamlConfig struct {
 			Name        string `yaml:"name"`
 			Description string `yaml:"description"`
 		} `yaml:"agents"`
-		Models []string `yaml:"models"`
+		// Models 为旧的平铺模型池，保留用于兼容；
+		// 当 model_vendors 配置存在时以分组配置为准并展开为平铺列表。
+		Models       []string `yaml:"models"`
+		ModelVendors []struct {
+			Key    string   `yaml:"key"`
+			Name   string   `yaml:"name"`
+			Models []string `yaml:"models"`
+		} `yaml:"model_vendors"`
 	} `yaml:"coding_agents"`
+	AgentRuntime struct {
+		BearerToken string `yaml:"bearer_token"`
+	} `yaml:"agent_runtime"`
 }
 
 // Load 从 config.yaml 加载配置，并以环境变量为最高优先级覆盖。
@@ -186,7 +208,19 @@ func Load() (Config, error) {
 			Description: a.Description,
 		})
 	}
+	for _, v := range yc.CodingAgents.ModelVendors {
+		cfg.CodingAgentModelVendors = append(cfg.CodingAgentModelVendors, ModelVendorGroup{
+			Key:    v.Key,
+			Name:   v.Name,
+			Models: v.Models,
+		})
+	}
+	// 模型池平铺列表：优先从厂商分组展开，兼容旧的平铺 models 配置。
 	cfg.CodingAgentModels = yc.CodingAgents.Models
+	if len(cfg.CodingAgentModelVendors) > 0 {
+		cfg.CodingAgentModels = flattenModelVendors(cfg.CodingAgentModelVendors)
+	}
+	cfg.AgentRuntimeBearerToken = yc.AgentRuntime.BearerToken
 
 	// 环境变量覆盖
 	cfg.Port = getEnv("PORT", cfg.Port)
@@ -219,6 +253,7 @@ func Load() (Config, error) {
 	if redisAddrsEnv := getEnv("REDIS_ADDRS", ""); redisAddrsEnv != "" {
 		cfg.RedisAddrs = strings.Split(redisAddrsEnv, ",")
 	}
+	cfg.AgentRuntimeBearerToken = getEnv("AGENT_RUNTIME_BEARER_TOKEN", cfg.AgentRuntimeBearerToken)
 
 	if err := cfg.validate(); err != nil {
 		return cfg, err
@@ -283,6 +318,15 @@ func (c Config) validate() error {
 		return fmt.Errorf("missing required config: %s", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+// flattenModelVendors 将厂商分组模型池展开为平铺列表。
+func flattenModelVendors(vendors []ModelVendorGroup) []string {
+	models := make([]string, 0)
+	for _, v := range vendors {
+		models = append(models, v.Models...)
+	}
+	return models
 }
 
 func parseDurationOrZero(v string) time.Duration {

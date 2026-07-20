@@ -34,7 +34,7 @@ import { agentConfigApi } from '@/lib/agent-config-api';
 import { getPlatformRoleLabel, PLATFORM_ROLE } from '@/lib/role-constants';
 import { tenantApi } from '@/lib/tenant-api';
 import { formatDateTime } from '@/lib/utils';
-import type { AgentType, Tenant, TenantMember } from '@/types';
+import type { AgentPolicy, AgentType, ModelVendorGroup, Tenant, TenantMember } from '@/types';
 
 // 新成员默认密码（与后端 schema 及 AddTenantMember 保持一致）
 const DEFAULT_MEMBER_PASSWORD = '123456';
@@ -72,6 +72,13 @@ export const AdminPage: React.FC = () => {
   const [newMemberName, setNewMemberName] = useState('');
   const [isAddingMember, setIsAddingMember] = useState(false);
 
+  // 新增/复制租户时的初始成员（租户尚未创建，先作为 pending 列表，保存时统一创建）
+  type PendingMember = { email: string; name: string; isAdmin: boolean };
+  const [pendingMembers, setPendingMembers] = useState<PendingMember[]>([]);
+  const [pendingMemberEmail, setPendingMemberEmail] = useState('');
+  const [pendingMemberName, setPendingMemberName] = useState('');
+  const [pendingMemberIsAdmin, setPendingMemberIsAdmin] = useState(false);
+
   const defaultAgentPolicy = (): AgentPolicy => ({
     agentConfigLocked: false,
     lockedAgentKeys: [],
@@ -81,7 +88,7 @@ export const AdminPage: React.FC = () => {
 
   const [newAgentPolicy, setNewAgentPolicy] = useState<AgentPolicy>(defaultAgentPolicy());
   const [editAgentPolicy, setEditAgentPolicy] = useState<AgentPolicy>(defaultAgentPolicy());
-  const [globalModels, setGlobalModels] = useState<string[]>([]);
+  const [modelGroups, setModelGroups] = useState<ModelVendorGroup[]>([]);
 
   const loadTenants = async () => {
     setTenantsLoading(true);
@@ -133,6 +140,7 @@ export const AdminPage: React.FC = () => {
       allowedAgentKeys: tenant.allowedAgentKeys ?? [],
       defaultAgentConfigs: tenant.defaultAgentConfigs ?? {},
     });
+    resetPendingMembers();
     setIsCopyingTenant(true);
     setNewTenantOpen(true);
   };
@@ -152,18 +160,39 @@ export const AdminPage: React.FC = () => {
       toast.error('租户名称不能为空');
       return;
     }
+    if (newAgentPolicy.allowedAgentKeys.length === 0) {
+      toast.error('请至少指定一个允许使用的智能体');
+      return;
+    }
+    if (!pendingMembers.some(m => m.isAdmin)) {
+      toast.error('请至少指定一个租户管理员');
+      return;
+    }
     try {
       const created = await tenantApi.create({
         name: newTenantName.trim(),
         agentPolicy: newAgentPolicy,
       });
+
+      // 创建初始成员并设置管理员（空间管理员对应租户管理员角色）
+      for (const pm of pendingMembers) {
+        try {
+          const member = await tenantApi.addMember(created.id, { email: pm.email, name: pm.name });
+          if (pm.isAdmin) {
+            await tenantApi.setAdmin(created.id, member.id, true);
+          }
+        } catch {
+          toast.error(`添加成员 ${pm.email} 失败`);
+        }
+      }
+
       toast.success('新增租户成功');
       setNewTenantOpen(false);
       setNewTenantName('');
       setNewAgentPolicy(defaultAgentPolicy());
+      resetPendingMembers();
       setIsCopyingTenant(false);
       await loadTenants();
-      await openEditTenant(created);
     } catch {
       toast.error('新增租户失败');
     }
@@ -254,6 +283,42 @@ export const AdminPage: React.FC = () => {
     }
   };
 
+  // 新增/复制租户时的 pending 成员管理
+  const handleAddPendingMember = () => {
+    const email = pendingMemberEmail.trim();
+    const name = pendingMemberName.trim();
+    if (!email || !name) {
+      toast.error('邮箱和姓名不能为空');
+      return;
+    }
+    if (!EMAIL_REGEX.test(email)) {
+      toast.error('请输入有效的邮箱地址');
+      return;
+    }
+    if (pendingMembers.some(m => m.email === email)) {
+      toast.error('该邮箱已添加');
+      return;
+    }
+    setPendingMembers(prev => [...prev, { email, name, isAdmin: pendingMemberIsAdmin }]);
+    setPendingMemberEmail('');
+    setPendingMemberName('');
+  };
+
+  const handleRemovePendingMember = (email: string) => {
+    setPendingMembers(prev => prev.filter(m => m.email !== email));
+  };
+
+  const handleTogglePendingAdmin = (email: string) => {
+    setPendingMembers(prev => prev.map(m => m.email === email ? { ...m, isAdmin: !m.isAdmin } : m));
+  };
+
+  const resetPendingMembers = () => {
+    setPendingMembers([]);
+    setPendingMemberEmail('');
+    setPendingMemberName('');
+    setPendingMemberIsAdmin(false);
+  };
+
   const [agentTypes, setAgentTypes] = useState<AgentType[]>([]);
   const [agentTypesLoading, setAgentTypesLoading] = useState(false);
 
@@ -264,8 +329,8 @@ export const AdminPage: React.FC = () => {
       .then(setAgentTypes)
       .catch(() => toast.error('加载智能体类型失败'))
       .finally(() => setAgentTypesLoading(false));
-    agentConfigApi.listGlobalModels()
-      .then(setGlobalModels)
+    agentConfigApi.listGlobalModelGroups()
+      .then(setModelGroups)
       .catch(() => toast.error('加载全局模型池失败'));
   }, [location.pathname]);
 
@@ -293,6 +358,7 @@ export const AdminPage: React.FC = () => {
             <Dialog open={newTenantOpen} onOpenChange={(open) => {
               if (!open) {
                 setIsCopyingTenant(false);
+                resetPendingMembers();
               }
               setNewTenantOpen(open);
             }}>
@@ -301,6 +367,7 @@ export const AdminPage: React.FC = () => {
                   setIsCopyingTenant(false);
                   setNewTenantName('');
                   setNewAgentPolicy(defaultAgentPolicy());
+                  resetPendingMembers();
                 }}><Plus className="h-4 w-4 mr-2"/>新增租户</Button>
               </DialogTrigger>
               <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
@@ -318,10 +385,117 @@ export const AdminPage: React.FC = () => {
                   </div>
                   <AgentPolicyForm
                     agentTypes={agentTypes}
-                    globalModels={globalModels}
+                    modelGroups={modelGroups}
                     policy={newAgentPolicy}
                     onChange={setNewAgentPolicy}
                   />
+
+                  {/* 初始租户管理员与成员：保存时随租户一起创建 */}
+                  <div className="border-t pt-4 space-y-3">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Users className="h-4 w-4" /> 租户成员与管理员
+                    </div>
+                    <div className="space-y-3 rounded-lg border border-border/50 bg-muted/20 p-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <Label htmlFor="pending-member-email">邮箱</Label>
+                          <Input
+                            id="pending-member-email"
+                            type="email"
+                            placeholder="输入成员邮箱"
+                            value={pendingMemberEmail}
+                            onChange={e => setPendingMemberEmail(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="pending-member-name">姓名</Label>
+                          <Input
+                            id="pending-member-name"
+                            placeholder="输入成员姓名"
+                            value={pendingMemberName}
+                            onChange={e => setPendingMemberName(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="pending-member-admin"
+                          checked={pendingMemberIsAdmin}
+                          onCheckedChange={checked => setPendingMemberIsAdmin(checked === true)}
+                        />
+                        <Label htmlFor="pending-member-admin" className="text-sm font-normal cursor-pointer">
+                          设为租户管理员
+                        </Label>
+                      </div>
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                        <Button
+                          size="sm"
+                          onClick={handleAddPendingMember}
+                          disabled={!pendingMemberEmail.trim() || !pendingMemberName.trim()}
+                        >
+                          <UserPlus className="h-4 w-4 mr-2" />
+                          添加成员
+                        </Button>
+                        <p className="text-xs text-muted-foreground">
+                          新成员默认密码为 {DEFAULT_MEMBER_PASSWORD}，首次登录后建议修改。
+                        </p>
+                      </div>
+                    </div>
+                    {pendingMembers.length > 0 && (
+                      <div className="border rounded-lg overflow-hidden max-h-[220px] overflow-y-auto">
+                        <Table>
+                          <TableHeader className="bg-muted/30 sticky top-0">
+                            <TableRow>
+                              <TableHead>成员信息</TableHead>
+                              <TableHead>平台角色</TableHead>
+                              <TableHead className="text-right">操作</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {pendingMembers.map(m => (
+                              <TableRow key={m.email}>
+                                <TableCell>
+                                  <div className="flex items-center gap-2">
+                                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium text-xs">
+                                      {m.name.charAt(0) || '?'}
+                                    </div>
+                                    <div>
+                                      <div className="font-medium text-sm">{m.name}</div>
+                                      <div className="text-xs text-muted-foreground">{m.email}</div>
+                                    </div>
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  {m.isAdmin ? (
+                                    <Badge>租户管理员</Badge>
+                                  ) : (
+                                    <Badge variant="outline">普通用户</Badge>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-right whitespace-nowrap">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleTogglePendingAdmin(m.email)}
+                                  >
+                                    {m.isAdmin ? '取消管理员' : '设为管理员'}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                    onClick={() => handleRemovePendingMember(m.email)}
+                                  >
+                                    移除
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" onClick={() => setNewTenantOpen(false)}>取消</Button>
@@ -432,9 +606,6 @@ export const AdminPage: React.FC = () => {
               <DialogHeader>
                 <DialogTitle>
                   {viewMode ? '查看租户' : '编辑租户'}
-                  {editingTenant?.displayId && (
-                    <span className="ml-2 text-sm font-normal text-muted-foreground">{editingTenant.displayId}</span>
-                  )}
                 </DialogTitle>
               </DialogHeader>
               {editingTenant && (
@@ -449,7 +620,7 @@ export const AdminPage: React.FC = () => {
                   </div>
                   <AgentPolicyForm
                     agentTypes={agentTypes}
-                    globalModels={globalModels}
+                    modelGroups={modelGroups}
                     policy={editAgentPolicy}
                     onChange={setEditAgentPolicy}
                     disabled={viewMode}
@@ -503,57 +674,59 @@ export const AdminPage: React.FC = () => {
                     {tenantMembersLoading ? (
                       <div className="py-4 text-center text-sm text-muted-foreground">加载中...</div>
                     ) : (
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>成员信息</TableHead>
-                            <TableHead>平台角色</TableHead>
-                            <TableHead className="text-right">操作</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {tenantMembers.length === 0 && (
+                      <div className="border rounded-lg overflow-hidden max-h-[300px] overflow-y-auto">
+                        <Table>
+                          <TableHeader className="bg-muted/30 sticky top-0">
                             <TableRow>
-                              <TableCell colSpan={3} className="text-center text-muted-foreground py-4">
-                                暂无成员
-                              </TableCell>
+                              <TableHead>成员信息</TableHead>
+                              <TableHead>平台角色</TableHead>
+                              <TableHead className="text-right">操作</TableHead>
                             </TableRow>
-                          )}
-                          {tenantMembers.map(m => (
-                            <TableRow key={m.id}>
-                              <TableCell>
-                                <div className="flex items-center gap-2">
-                                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium text-xs">
-                                    {m.name?.charAt(0) || '?'}
+                          </TableHeader>
+                          <TableBody>
+                            {tenantMembers.length === 0 && (
+                              <TableRow>
+                                <TableCell colSpan={3} className="text-center text-muted-foreground py-4">
+                                  暂无成员
+                                </TableCell>
+                              </TableRow>
+                            )}
+                            {tenantMembers.map(m => (
+                              <TableRow key={m.id}>
+                                <TableCell>
+                                  <div className="flex items-center gap-2">
+                                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium text-xs">
+                                      {m.name?.charAt(0) || '?'}
+                                    </div>
+                                    <div>
+                                      <div className="font-medium text-sm">{m.name || '未知'}</div>
+                                      <div className="text-xs text-muted-foreground">{m.email}</div>
+                                    </div>
                                   </div>
-                                  <div>
-                                    <div className="font-medium text-sm">{m.name || '未知'}</div>
-                                    <div className="text-xs text-muted-foreground">{m.email}</div>
-                                  </div>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                {m.platformRole === PLATFORM_ROLE.TENANT_ADMIN ? (
-                                  <Badge>租户管理员</Badge>
-                                ) : (
-                                  <Badge variant="outline">普通用户</Badge>
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right whitespace-nowrap">
-                                {!viewMode && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleToggleTenantAdmin(m)}
-                                  >
-                                    {m.platformRole === PLATFORM_ROLE.TENANT_ADMIN ? '取消管理员' : '设为管理员'}
-                                  </Button>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
+                                </TableCell>
+                                <TableCell>
+                                  {m.platformRole === PLATFORM_ROLE.TENANT_ADMIN ? (
+                                    <Badge>租户管理员</Badge>
+                                  ) : (
+                                    <Badge variant="outline">普通用户</Badge>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-right whitespace-nowrap">
+                                  {!viewMode && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleToggleTenantAdmin(m)}
+                                    >
+                                      {m.platformRole === PLATFORM_ROLE.TENANT_ADMIN ? '取消管理员' : '设为管理员'}
+                                    </Button>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
                     )}
                   </div>
                 </div>

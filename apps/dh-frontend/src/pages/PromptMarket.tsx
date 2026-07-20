@@ -14,6 +14,7 @@ import { PLATFORM_ROLE, SPACE_ROLE } from '@/lib/role-constants';
 import { teamApi } from '@/lib/team-api';
 import { workspaceApi } from '@/lib/workspace-api';
 import type { Prompt, PromptStatus } from '@/types';
+import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 
 const CATEGORIES = ['全部', '研发', '测试', '产品', '设计'];
 const PROMPT_MARKET_PAGE_SIZE = 12;
@@ -40,7 +41,7 @@ export const PromptMarket: React.FC = () => {
   const isSuperAdmin = user?.platformRole === PLATFORM_ROLE.SUPER_ADMIN;
   const isSpaceAdmin = membership?.spaceRole === SPACE_ROLE.SPACE_ADMIN;
   const canAddToWorkspace = isTenantAdmin || isSpaceAdmin;
-  const currentWorkspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+  const currentWorkspaceId = getCurrentWorkspaceId();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('全部');

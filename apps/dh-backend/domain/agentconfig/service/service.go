@@ -12,8 +12,9 @@ type AgentConfigService interface {
 	UpdateAgentType(key string, enabled bool) (agent.AgentType, error)
 	// GetAgentType 返回指定平台级智能体类型。
 	GetAgentType(key string) (agent.AgentType, error)
-	// ListGlobalModels 返回全局配置中支持的模型池。
-	ListGlobalModels() []string
+	// ListGlobalModelGroups 返回全局配置中按厂商分组的模型池。
+	// 未配置厂商分组时回退为单一「内置模型」分组，保证前端始终可用。
+	ListGlobalModelGroups() []agent.ModelVendorGroup
 
 	// ListWorkspaceConfigs 返回某空间下所有智能体配置。
 	ListWorkspaceConfigs(workspaceID string) ([]agent.WorkspaceAgentConfig, error)
@@ -31,6 +32,7 @@ type AgentConfigService interface {
 type SaveWorkspaceConfigRequest struct {
 	AgentKey       string                      `json:"agentKey"`
 	Enabled        bool                        `json:"enabled"`
+	IsDefault      bool                        `json:"isDefault"`
 	Model          string                      `json:"model"`
 	ModelSource    string                      `json:"modelSource"`
 	BaseURL        string                      `json:"baseUrl"`

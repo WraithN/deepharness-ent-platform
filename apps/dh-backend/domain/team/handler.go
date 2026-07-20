@@ -70,7 +70,8 @@ func Skills(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
-		skills, err := defaultService.ListSkills(page, pageSize)
+		workspaceID := r.URL.Query().Get("workspaceId")
+		skills, err := defaultService.ListSkills(workspaceID, page, pageSize)
 		if err != nil {
 			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list skills")
 			return
@@ -85,7 +86,8 @@ func Skills(w http.ResponseWriter, r *http.Request) {
 			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
 			return
 		}
-		skill, err := defaultService.CreateSkill(req)
+		workspaceID := r.URL.Query().Get("workspaceId")
+		skill, err := defaultService.CreateSkill(req, workspaceID)
 		if err != nil {
 			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to create skill")
 			return
@@ -111,14 +113,16 @@ func SkillByID(w http.ResponseWriter, r *http.Request) {
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
-		skill, err := defaultService.UpdateSkill(id, req)
+		workspaceID := r.URL.Query().Get("workspaceId")
+		skill, err := defaultService.UpdateSkill(id, req, workspaceID)
 		if err != nil {
 			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to update skill")
 			return
 		}
 		json.NewEncoder(w).Encode(skill)
 	case http.MethodDelete:
-		if err := defaultService.DeleteSkill(id); err != nil {
+		workspaceID := r.URL.Query().Get("workspaceId")
+		if err := defaultService.DeleteSkill(id, workspaceID); err != nil {
 			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to delete skill")
 			return
 		}
@@ -277,7 +281,8 @@ func ReviewSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, _ := middleware.UserIDFromContext(r.Context())
-	skill, err := defaultService.ReviewSkill(id, req.Action, userID)
+	workspaceID := r.URL.Query().Get("workspaceId")
+	skill, err := defaultService.ReviewSkill(id, req.Action, userID, workspaceID)
 	if err != nil {
 		handler.HandleServiceError(w, err, "skill not found", "failed to review skill")
 		return
@@ -306,7 +311,8 @@ func SkillCategoriesUpdate(w http.ResponseWriter, r *http.Request) {
 	if !handler.DecodeJSONBody(w, r, &req) {
 		return
 	}
-	skill, err := defaultService.UpdateSkillCategories(id, req.CategoryIDs)
+	workspaceID := r.URL.Query().Get("workspaceId")
+	skill, err := defaultService.UpdateSkillCategories(id, workspaceID, req.CategoryIDs)
 	if err != nil {
 		handler.HandleServiceError(w, err, "skill not found", "failed to update skill categories")
 		return
@@ -389,7 +395,8 @@ func SkillCategories(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		categories, err := defaultService.ListSkillCategories()
+		workspaceID := r.URL.Query().Get("workspaceId")
+		categories, err := defaultService.ListSkillCategories(workspaceID)
 		if err != nil {
 			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list skill categories")
 			return
@@ -413,7 +420,8 @@ func SkillCategories(w http.ResponseWriter, r *http.Request) {
 			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
 			return
 		}
-		category, err := defaultService.CreateSkillCategory(req)
+		workspaceID := r.URL.Query().Get("workspaceId")
+		category, err := defaultService.CreateSkillCategory(req, workspaceID)
 		if err != nil {
 			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to create skill category")
 			return
@@ -448,7 +456,8 @@ func SkillCategoryByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := defaultService.DeleteSkillCategory(id); err != nil {
+	workspaceID := r.URL.Query().Get("workspaceId")
+	if err := defaultService.DeleteSkillCategory(id, workspaceID); err != nil {
 		handler.HandleServiceError(w, err, "skill category not found", "failed to delete skill category")
 		return
 	}
@@ -545,7 +554,8 @@ func SkillStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := defaultService.GetSkillStats()
+	workspaceID := r.URL.Query().Get("workspaceId")
+	stats, err := defaultService.GetSkillStats(workspaceID)
 	if err != nil {
 		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to get skill stats")
 		return

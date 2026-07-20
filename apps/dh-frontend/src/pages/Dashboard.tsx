@@ -10,7 +10,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
 import type { UserDTO } from '@/lib/api-types';
-import { mockDashboardStats } from '@/mock/data';
+import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 
 /** /v1/stats/summary 响应类型。 */
 interface SummaryResponse {
@@ -32,6 +32,8 @@ interface TrailsResponse {
 /** 会话轨迹 DTO（来自后端 agent_sessions + agent_messages JOIN）。 */
 interface SessionTrailDTO {
   id: string;
+  userId: string;
+  userName: string;
   title: string;
   agentType: string;
   messageCount: number;
@@ -85,6 +87,8 @@ function formatDateShort(date: string): string {
 }
 
 export const Dashboard: React.FC = () => {
+  const workspaceId = getCurrentWorkspaceId();
+  const statsQuery = `?workspaceId=${encodeURIComponent(workspaceId)}`;
   const [selectedUserSession, setSelectedUserSession] = useState<any>(null);
   const [sessionPage, setSessionPage] = useState(1);
   const [users, setUsers] = useState<UserDTO[]>([]);
@@ -96,50 +100,75 @@ export const Dashboard: React.FC = () => {
   const totalSessionPages = Math.ceil(sessionTrails.length / sessionPageSize);
   const paginatedSessions = sessionTrails.slice((sessionPage - 1) * sessionPageSize, sessionPage * sessionPageSize);
 
+  // 根据会话轨迹中的 userId，从已加载的成员列表中解析真实成员信息；
+  // 若未找到匹配成员，则回退到后端返回的 userName 或"未知用户"。
+  function resolveTrailUser(s: SessionTrailDTO, userMap: Map<string, UserDTO>): UserDTO {
+    const user = userMap.get(s.userId);
+    if (user) {
+      return user;
+    }
+    return {
+      id: s.userId || '',
+      tenantId: '',
+      email: '',
+      name: s.userName || '未知用户',
+      platformRole: 'user',
+      createdAt: '',
+    };
+  }
+
   useEffect(() => {
-    api.get<UserDTO[]>('/v1/identity/users').then(setUsers).catch(() => {});
+    api.get<UserDTO[]>('/v1/identity/users')
+      .then(users => {
+        setUsers(users);
+        return users;
+      })
+      .catch(() => [] as UserDTO[])
+      .then(users => {
+        const userMap = new Map(users.map(u => [u.id, u]));
+
+        // 成员会话轨迹：最近的会话记录。
+        api.get<TrailsResponse>(`/v1/stats/trails${statsQuery}`)
+          .then(data => {
+            const mapped: SessionTrail[] = data.data.map(s => ({
+              id: s.id,
+              user: resolveTrailUser(s, userMap),
+              time: formatRelativeTime(s.updatedAt),
+              title: s.title || '未命名会话',
+              type: s.agentType || 'code',
+              duration: formatDuration(s.createdAt, s.updatedAt),
+              messageCount: s.messageCount,
+            }));
+            setSessionTrails(mapped);
+          })
+          .catch(err => {
+            console.error('[Dashboard] fetch trails failed:', err);
+            toast.error('加载会话轨迹失败');
+          });
+      });
 
     // 统计卡片：本周会话数 + 较上周变化。
-    api.get<SummaryResponse>('/v1/stats/summary')
+    api.get<SummaryResponse>(`/v1/stats/summary${statsQuery}`)
       .then(setSummary)
       .catch(err => console.error('[Dashboard] fetch summary failed:', err));
 
     // AI 会话趋势：最近 7 天每天的会话数。
-    api.get<TrendResponse>('/v1/stats/trend')
+    api.get<TrendResponse>(`/v1/stats/trend${statsQuery}`)
       .then(data => {
         setSessionTrend(data.data.map(d => ({ date: formatDateShort(d.date), count: d.count })));
       })
       .catch(err => console.error('[Dashboard] fetch trend failed:', err));
 
     // 代码提交趋势：扫描工作空间 git 仓库，统计最近 7 天每天的提交数量。
-    api.get<TrendResponse>('/v1/stats/commits')
+    api.get<TrendResponse>(`/v1/stats/commits${statsQuery}`)
       .then(data => {
         setCodeCommitTrend(data.data.map(d => ({ date: formatDateShort(d.date), count: d.count })));
       })
       .catch(err => console.error('[Dashboard] fetch commit trend failed:', err));
-
-    // 成员会话轨迹：最近的会话记录。
-    api.get<TrailsResponse>('/v1/stats/trails')
-      .then(data => {
-        const mapped: SessionTrail[] = data.data.map(s => ({
-          id: s.id,
-          user: { id: '', tenantId: '', email: '', name: '未知用户', platformRole: 'user', createdAt: '' },
-          time: formatRelativeTime(s.updatedAt),
-          title: s.title || '未命名会话',
-          type: s.agentType || 'code',
-          duration: formatDuration(s.createdAt, s.updatedAt),
-          messageCount: s.messageCount,
-        }));
-        setSessionTrails(mapped);
-      })
-      .catch(err => {
-        console.error('[Dashboard] fetch trails failed:', err);
-        toast.error('加载会话轨迹失败');
-      });
   }, []);
 
   const totalCommits = codeCommitTrend.reduce((acc, curr) => acc + curr.count, 0);
-  const totalReqs = mockDashboardStats.requirementsCompleted.reduce((acc, curr) => acc + curr.count, 0);
+  const totalReqs = 0;
 
   return (
     <div className="flex-1 space-y-6 w-full pb-12 overflow-x-hidden">
@@ -191,7 +220,7 @@ export const Dashboard: React.FC = () => {
           <CardContent className="flex-1 min-h-[300px]">
             <div className="w-full h-full min-w-0 overflow-hidden">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={codeCommitTrend.length > 0 ? codeCommitTrend : mockDashboardStats.codeCommits}>
+                <LineChart data={codeCommitTrend}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="date" tick={{ fontSize: 13 }} tickLine={false} axisLine={false} />
                   <YAxis tick={{ fontSize: 13 }} tickLine={false} axisLine={false} />
@@ -218,7 +247,7 @@ export const Dashboard: React.FC = () => {
           <CardContent className="flex-1 min-h-[300px]">
             <div className="w-full h-full min-w-0 overflow-hidden">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={sessionTrend.length > 0 ? sessionTrend : mockDashboardStats.sessions}>
+                <BarChart data={sessionTrend}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="date" tick={{ fontSize: 13 }} tickLine={false} axisLine={false} />
                   <YAxis tick={{ fontSize: 13 }} tickLine={false} axisLine={false} />

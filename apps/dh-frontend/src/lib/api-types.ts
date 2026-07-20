@@ -144,6 +144,7 @@ export interface MineWorkspaceDTO {
   id: string;
   displayId: string;
   tenantId: string;
+  tenantName: string;
   name: string;
   description?: string;
   createdAt: string;

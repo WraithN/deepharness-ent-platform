@@ -14,6 +14,8 @@ type DateCount struct {
 // SessionTrailInfo 会话轨迹信息（用于数据大盘成员会话轨迹表）。
 type SessionTrailInfo struct {
 	ID           string    `json:"id"`
+	UserID       string    `json:"userId"`
+	UserName     string    `json:"userName"`
 	Title        string    `json:"title"`
 	AgentType    string    `json:"agentType"`
 	MessageCount int       `json:"messageCount"`
@@ -27,11 +29,12 @@ type SessionStore interface {
 	UpdateActivity(ctx context.Context, id string) error
 	UpdateTitle(ctx context.Context, id string, title string) error
 	Delete(ctx context.Context, id string) error
-	ListSessions(ctx context.Context) ([]Session, error)
-	// GetSessionTrend 返回最近 N 天每天的会话创建数量。
-	GetSessionTrend(ctx context.Context, days int) ([]DateCount, error)
-	// GetSessionTrails 返回最近的会话轨迹（含消息数量），按更新时间倒序。
-	GetSessionTrails(ctx context.Context, limit int) ([]SessionTrailInfo, error)
+	// ListSessions 按 workspace 与 user 隔离返回会话列表。
+	ListSessions(ctx context.Context, workspaceID, userID string) ([]Session, error)
+	// GetSessionTrend 返回指定工作空间最近 N 天每天的会话创建数量。
+	GetSessionTrend(ctx context.Context, workspaceID string, days int) ([]DateCount, error)
+	// GetSessionTrails 返回指定工作空间最近的会话轨迹（含消息数量），按更新时间倒序。
+	GetSessionTrails(ctx context.Context, workspaceID string, limit int) ([]SessionTrailInfo, error)
 }
 
 type MessageStore interface {

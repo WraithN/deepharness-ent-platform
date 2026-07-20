@@ -6,6 +6,7 @@ type Session struct {
 	ID            string         `json:"id"`
 	WorkspaceID   string         `json:"workspaceId"`
 	WorkspacePath string         `json:"workspacePath"` // 新增：gatewayd 工作目录
+	UserID        string         `json:"userId,omitempty"`
 	AgentID       string         `json:"agentId"`
 	AgentType     string         `json:"agentType"`
 	Model         string         `json:"model"`

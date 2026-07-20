@@ -5,6 +5,9 @@
 
 const BASE_URL = "/api";
 
+/** API 请求的默认缓存模式：禁用浏览器缓存，避免 POST/PUT 后 GET 拿到旧数据。 */
+const DEFAULT_CACHE_MODE: RequestCache = "no-store";
+
 export interface ApiResponse<T> {
   code: number;
   message: string;
@@ -44,6 +47,7 @@ async function request<T>(
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    cache: DEFAULT_CACHE_MODE,
     ...options,
   });
 

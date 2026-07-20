@@ -169,15 +169,8 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
     onViewModeChange?.(mode);
   };
 
-  // Mock blame data if none provided
-  const displayBlameData = blameData.length > 0 ? blameData :
-    content.split('\n').map((line, idx) => ({
-      commit: 'abc1234',
-      author: '开发者',
-      date: '2024-01-15',
-      line: idx + 1,
-      content: line,
-    }));
+  // 无 blame 数据时 blame 模式不可用，由调用方提供真实数据。
+  const hasBlameData = blameData.length > 0;
 
   return (
     <div className={cn(
@@ -220,11 +213,13 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
             </button>
             <button
               onClick={() => handleModeChange('blame')}
+              disabled={!hasBlameData}
+              title={hasBlameData ? 'Git Blame' : '暂无 blame 数据'}
               className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
                 viewMode === 'blame'
                   ? localDark ? 'bg-primary text-primary-foreground' : 'bg-primary text-primary-foreground'
                   : localDark ? 'text-[#94A3B8] hover:bg-[#2A374B] hover:text-[#F1F5F9]' : 'text-muted-foreground hover:bg-muted'
-              }`}
+              } ${!hasBlameData ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               BLAME
             </button>
@@ -280,25 +275,29 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
                 </div>
               </div>
               <div className="overflow-auto max-h-[500px]">
-                {displayBlameData.slice(0, 50).map((blame, idx) => (
-                  <div
-                    key={idx}
-                    className={`px-3 py-2 border-b text-xs ${'border-border/20 hover:bg-muted/20'}`}
-                  >
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <GitCommit className="w-3 h-3 text-primary" />
-                      <span className="font-mono text-primary font-medium">{blame.commit}</span>
+                {blameData.length > 0 ? (
+                  blameData.slice(0, 50).map((blame, idx) => (
+                    <div
+                      key={idx}
+                      className={`px-3 py-2 border-b text-xs ${'border-border/20 hover:bg-muted/20'}`}
+                    >
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <GitCommit className="w-3 h-3 text-primary" />
+                        <span className="font-mono text-primary font-medium">{blame.commit}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <User className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-muted-foreground truncate">{blame.author}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-muted-foreground">{blame.date}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <User className="w-3 h-3 text-muted-foreground" />
-                      <span className="text-muted-foreground truncate">{blame.author}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="w-3 h-3 text-muted-foreground" />
-                      <span className="text-muted-foreground">{blame.date}</span>
-                    </div>
-                  </div>
-                ))}
+                  ))
+                ) : (
+                  <div className="px-3 py-6 text-xs text-muted-foreground text-center">暂无 blame 数据</div>
+                )}
               </div>
             </div>
             {/* Code content */}

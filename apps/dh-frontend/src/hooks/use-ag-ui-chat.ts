@@ -3,6 +3,7 @@ import { useExternalStoreRuntime, useExternalStoreSharedOptions } from '@assista
 import type { AssistantRuntime, ThreadMessageLike } from '@assistant-ui/react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 
 export interface SendContext {
   quotedCard?: { type: 'req' | 'defect' | 'case'; id: string; title: string; reporter: string };
@@ -34,7 +35,10 @@ const NO_EVENT_TIMEOUT_MS = 180000;
 const NO_EVENT_TIMER_INTERVAL_MS = 5000;
 
 const USER_PROMPT_MARKER = '__USER_PROMPT__';
-const SESSION_ID_KEY = 'dh_chat_session_id';
+const SESSION_ID_KEY_PREFIX = 'dh_chat_session_id';
+
+// 会话 ID 按工作区隔离存储，避免切换工作区后恢复其他工作区的会话
+const getSessionIdKey = (workspaceId: string) => `${SESSION_ID_KEY_PREFIX}:${workspaceId}`;
 
 /**
  * 构建提示词模板规则，传入当前 session_id 用于文件目录定位。
@@ -229,6 +233,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const activeRunSessionIdRef = useRef<string | null>(null);
+  const lastWorkspaceIdRef = useRef<string>(getCurrentWorkspaceId());
 
   // 组件卸载时中止所有进行中的 SSE 连接，避免卸载后仍持续 setState 阻塞导航。
   useEffect(() => {
@@ -241,26 +246,54 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
     };
   }, []);
 
+  // 检测工作区切换：localStorage 中的 currentWorkspaceId 变化时重置当前会话状态，
+  // 防止用新工作区 ID 去加载旧工作区的 session，导致后端报 "session not in this workspace"。
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const current = getCurrentWorkspaceId();
+      if (current !== lastWorkspaceIdRef.current) {
+        lastWorkspaceIdRef.current = current;
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
+        activeRunSessionIdRef.current = null;
+        setIsRunning(false);
+        setSessionId(null);
+        setInstanceId(null);
+        setMessages([]);
+      }
+    }, 500);
+    return () => clearInterval(interval);
+  }, []);
+
   const loadMessages = useCallback(async (targetSessionId: string | null) => {
     if (!targetSessionId) {
       setMessages([]);
       return;
     }
     try {
-      const msgs = await api.get<BackendMessage[]>(`/v1/sessions/${targetSessionId}/messages`);
+      const workspaceId = getCurrentWorkspaceId();
+      const msgs = await api.get<BackendMessage[]>(`/v1/sessions/${targetSessionId}/messages?workspaceId=${encodeURIComponent(workspaceId)}`);
       setMessages(msgs.map(backendMessageToThreadMessageLike));
     } catch (err) {
       console.error('[useAgUiChat] load messages failed:', err);
-      toast.error('加载会话历史失败');
+      // 会话不属于当前工作区时，不需要弹窗报错；上层会感知到消息为空并自动创建新会话。
+      const isWorkspaceMismatch = err instanceof Error && err.message.includes('session not in this workspace');
+      if (!isWorkspaceMismatch) {
+        toast.error('加载会话历史失败');
+      }
       setMessages([]);
     }
   }, []);
 
-  const tryRestoreSession = useCallback(async (): Promise<string | null> => {
-    const saved = localStorage.getItem(SESSION_ID_KEY);
+  const tryRestoreSession = useCallback(async (workspaceId?: string): Promise<string | null> => {
+    const wsId = workspaceId || getCurrentWorkspaceId();
+    const key = getSessionIdKey(wsId);
+    const saved = localStorage.getItem(key);
     if (!saved) return null;
     try {
-      const msgs = await api.get<BackendMessage[]>(`/v1/sessions/${saved}/messages`);
+      const msgs = await api.get<BackendMessage[]>(`/v1/sessions/${saved}/messages?workspaceId=${encodeURIComponent(wsId)}`);
       setMessages(msgs.map(backendMessageToThreadMessageLike));
       setSessionId(saved);
       setInstanceId(null);
@@ -268,15 +301,16 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       return saved;
     } catch {
       console.log('[useAgUiChat] restore failed, session may have expired:', saved);
-      localStorage.removeItem(SESSION_ID_KEY);
+      localStorage.removeItem(key);
       return null;
     }
   }, []);
 
-  // 会话 ID 变更时持久化到 localStorage，用于页面刷新后恢复。
+  // 会话 ID 变更时持久化到 localStorage（按工作区隔离），用于页面刷新后恢复。
   useEffect(() => {
     if (sessionId) {
-      localStorage.setItem(SESSION_ID_KEY, sessionId);
+      const workspaceId = getCurrentWorkspaceId();
+      localStorage.setItem(getSessionIdKey(workspaceId), sessionId);
     }
   }, [sessionId]);
 
@@ -285,12 +319,13 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       try {
         const key = pluginKey || agentPluginKey;
         console.log('[useAgUiChat] createSession pluginKey=', key);
+        const workspaceId = getCurrentWorkspaceId();
         const res = await api.post<{
           code: number;
           data?: { sessionId: string; instanceId?: string };
           message?: string;
         }>('/v1/sessions', {
-          workspaceId: 'ws-default',
+          workspaceId,
           agentId: 'agent-default',
           agentType: 'chat',
           agent_key: key,
@@ -417,8 +452,10 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       let noEventTimer: ReturnType<typeof setInterval> | null = null;
 
       try {
-        console.log('[useAgUiChat] fetching', AGENT_URL, 'runId=', runId);
-        const response = await fetch(AGENT_URL, {
+        const workspaceId = getCurrentWorkspaceId();
+        const agentUrl = `${AGENT_URL}?workspaceId=${encodeURIComponent(workspaceId)}`;
+        console.log('[useAgUiChat] fetching', agentUrl, 'runId=', runId);
+        const response = await fetch(agentUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
           body: JSON.stringify(runInput),

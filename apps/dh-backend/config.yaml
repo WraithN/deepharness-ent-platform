@@ -59,39 +59,61 @@ coding_agents:
     - key: codex
       name: Codex
       description: OpenAI Codex，专为软件工程优化的 AI 模型
-  models:
-    # Kimi（月之暗面）
-    - kimi-latest
-    - kimi-k2
-    - kimi-k1.5
-    # GLM（智谱清言）
-    - glm-4-plus
-    - glm-4-0520
-    - glm-4-air
-    - glm-4-airx
-    - glm-4-flash
-    - glm-4-long
-    - glm-4v-plus
-    # MiniMax
-    - minimax-text-01
-    - minimax-pro
-    # 通义千问
-    - qwen-max
-    - qwen-plus
-    - qwen-turbo
-    - qwen-coder-plus
-    - qwen3-235b-a22b
-    # DeepSeek
-    - deepseek-chat
-    - deepseek-coder
-    - deepseek-reasoner
-    # 文心一言
-    - "ernie-4.0"
-    - "ernie-4.5"
-    - "ernie-x1"
-    # 腾讯混元
-    - hunyuan-pro
-    - hunyuan-standard
+  # 模型池按厂商分组配置，前端模型下拉框按此分组展示。
+  # key 为厂商标识，name 为下拉分组显示名，models 为该厂商下的模型清单。
+  model_vendors:
+    - key: kimi
+      name: Kimi（月之暗面）
+      models:
+        - kimi-latest
+        - kimi-k2
+        - kimi-k1.5
+    - key: glm
+      name: GLM（智谱）
+      models:
+        - glm-4-plus
+        - glm-4-0520
+        - glm-4-air
+        - glm-4-airx
+        - glm-4-flash
+        - glm-4-long
+        - glm-4v-plus
+    - key: minimax
+      name: MiniMax
+      models:
+        - minimax-text-01
+        - minimax-pro
+    - key: qwen
+      name: 通义千问
+      models:
+        - qwen-max
+        - qwen-plus
+        - qwen-turbo
+        - qwen-coder-plus
+        - qwen3-235b-a22b
+    - key: deepseek
+      name: DeepSeek
+      models:
+        - deepseek-chat
+        - deepseek-coder
+        - deepseek-reasoner
+    - key: ernie
+      name: 文心一言
+      models:
+        - "ernie-4.0"
+        - "ernie-4.5"
+        - "ernie-x1"
+    - key: hunyuan
+      name: 腾讯混元
+      models:
+        - hunyuan-pro
+        - hunyuan-standard
+
+# Agent 运行时状态上报配置
+# bearer_token 是外部 gatewayd / agent-stub 调用状态上报接口时必须携带的 Bearer Token。
+# 生产环境请通过环境变量 AGENT_RUNTIME_BEARER_TOKEN 注入强随机字符串。
+agent_runtime:
+  bearer_token: "96be41dbe1875010dafbe237c7082df1379a503c33412cd5f19d256a5c566c92"
 
 workitem:
   platforms:

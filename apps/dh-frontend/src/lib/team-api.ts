@@ -19,13 +19,15 @@ export interface CreatePromptRequest {
 }
 
 export const teamApi = {
-  // 技能
-  listSkills: (page = 1, pageSize = 10) =>
-    api.get<PaginatedList<Skill>>(`/v1/team/skills?page=${page}&pageSize=${pageSize}`),
-  createSkill: (req: CreateSkillRequest) => api.post<Skill>('/v1/team/skills', req),
-  updateSkillInstalled: (id: string, installed: boolean) =>
-    api.patch<Skill>(`/v1/team/skills/${id}`, { installed }),
-  deleteSkill: (id: string) => api.delete<void>(`/v1/team/skills/${id}`),
+  // 技能（按工作区隔离安装状态与可见范围）
+  listSkills: (page = 1, pageSize = 10, workspaceId = '') =>
+    api.get<PaginatedList<Skill>>(`/v1/team/skills?page=${page}&pageSize=${pageSize}&workspaceId=${encodeURIComponent(workspaceId)}`),
+  createSkill: (req: CreateSkillRequest, workspaceId = '') =>
+    api.post<Skill>(`/v1/team/skills?workspaceId=${encodeURIComponent(workspaceId)}`, req),
+  updateSkillInstalled: (id: string, installed: boolean, workspaceId = '') =>
+    api.patch<Skill>(`/v1/team/skills/${id}?workspaceId=${encodeURIComponent(workspaceId)}`, { installed }),
+  deleteSkill: (id: string, workspaceId = '') =>
+    api.delete<void>(`/v1/team/skills/${id}?workspaceId=${encodeURIComponent(workspaceId)}`),
   // 技能审核：approve 上架 / reject 拒绝 / unshelf 下架（仅超管）
   reviewSkill: (id: string, action: 'approve' | 'reject' | 'unshelf') =>
     api.post<Skill>(`/v1/team/skills/${id}/review`, { action }),
@@ -52,9 +54,12 @@ export const teamApi = {
     api.put<Prompt>(`/v1/team/prompts/${id}/categories`, { categoryIds }),
 
   // 技能分类
-  listSkillCategories: () => api.get<SkillCategory[]>('/v1/team/skill-categories'),
-  createSkillCategory: (name: string) => api.post<SkillCategory>('/v1/team/skill-categories', { name }),
-  deleteSkillCategory: (id: string) => api.delete<void>(`/v1/team/skill-categories/${id}`),
+  listSkillCategories: (workspaceId = '') =>
+    api.get<SkillCategory[]>(`/v1/team/skill-categories?workspaceId=${encodeURIComponent(workspaceId)}`),
+  createSkillCategory: (name: string, workspaceId = '') =>
+    api.post<SkillCategory>(`/v1/team/skill-categories?workspaceId=${encodeURIComponent(workspaceId)}`, { name }),
+  deleteSkillCategory: (id: string, workspaceId = '') =>
+    api.delete<void>(`/v1/team/skill-categories/${id}?workspaceId=${encodeURIComponent(workspaceId)}`),
 
   // 提示词分类
   listPromptCategories: () => api.get<TeamPromptCategory[]>('/v1/team/prompt-categories'),
@@ -62,6 +67,7 @@ export const teamApi = {
   deletePromptCategory: (id: string) => api.delete<void>(`/v1/team/prompt-categories/${id}`),
 
   // 大盘统计
-  getSkillStats: () => api.get<SkillStats>('/v1/team/skills/stats'),
+  getSkillStats: (workspaceId = '') =>
+    api.get<SkillStats>(`/v1/team/skills/stats?workspaceId=${encodeURIComponent(workspaceId)}`),
   getPromptStats: () => api.get<PromptStats>('/v1/team/prompts/stats'),
 };

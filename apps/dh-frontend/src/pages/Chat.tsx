@@ -1,6 +1,7 @@
 import '@/lib/patch-assistant-ui';
 import { AssistantRuntimeProvider, type ThreadMessageLike } from '@assistant-ui/react';
 import {
+  BarChart3,
   BookOpen,
   Bot,
   Box,
@@ -10,17 +11,23 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   Clock,
   Code2,
   Compass,
+  Eye,
+  FileBarChart,
   FileText,
   FlaskConical,
   GitBranch,
   Info,
+  Layout,
   LayoutTemplate,
+  ListChecks,
   ListTodo,
   Loader2,
   MessageSquarePlus,
+  Palette,
   Paperclip,
   Plus,
   Puzzle,
@@ -40,11 +47,12 @@ import { toast } from 'sonner';
 import { ChatThread } from '@/components/chat/ChatThread';
 import { InlineFilePreview } from '@/components/chat/InlineFilePreview';
 import { LivePreview, type PreviewMode } from '@/components/chat/LivePreview';
+import { MarkdownView } from '@/components/chat/MarkdownView';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
@@ -65,8 +73,9 @@ import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
 import { SUB_ROLE, type SubRole } from '@/lib/role-constants';
 import { teamApi } from '@/lib/team-api';
 import { cn } from '@/lib/utils';
+import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 import { workspaceApi } from '@/lib/workspace-api';
-import type { AvailableAgent, PromptCategory, Skill, WorkspaceAgent, WorkspacePrompt } from '@/types';
+import type { AvailableAgent, PromptCategory, Skill, WorkspaceAgent, WorkspaceAgentConfig, WorkspacePrompt } from '@/types';
 
 // ──────────────── Types ────────────────
 type RequirementStatus = 'todo' | 'in-progress' | 'done' | 'cancelled' | 'on-hold';
@@ -93,73 +102,6 @@ interface CaseItem {
   steps: string[];
 }
 
-// ──────────────── Mock Data ────────────────
-const MOCK_HISTORY = [
-  { id: '1', title: '实现登录页面UI', date: '10分钟前', type: 'ui' },
-  { id: '2', title: '用户管理模块需求分析', date: '2小时前', type: 'requirement' },
-  { id: '3', title: '修复API跨域问题', date: '昨天', type: 'code' },
-  { id: '4', title: '重构数据库表结构', date: '昨天', type: 'code' },
-  { id: '5', title: '订单模块接口设计', date: '前天', type: 'code' },
-  { id: '6', title: '权限控制方案', date: '3天前', type: 'requirement' },
-];
-
-const MOCK_MESSAGES = [
-  { id: 'm1', role: 'user', content: '帮我设计一个现代化的登录页面，需要包含邮箱、密码输入框，以及第三方登录选项。' },
-  {
-    id: 'm2', role: 'assistant',
-    content: '好的，我已经为您设计了一个现代化的登录页面。这个设计采用了简洁的卡片式布局，左侧是大图展示品牌形象，右侧是登录表单。',
-    artifact: { id: 'art_1', type: 'ui', title: 'Login_Page_Design.tsx' }
-  },
-  { id: 'm3', role: 'user', content: '能不能把主色调换成深蓝色（#1890ff）？' },
-  {
-    id: 'm4', role: 'assistant',
-    content: '没问题，我已经将按钮、高亮链接和部分图标的主色调更新为了深蓝色（#1890ff）。这样看起来更加商务和专业。',
-    artifact: { id: 'art_2', type: 'ui', title: 'Login_Page_Design_v2.tsx' }
-  }
-];
-
-const MOCK_REQUIREMENTS: ReqItem[] = [
-  { id: 'REQ-001', title: '实现多租户登录功能', description: '支持不同租户间的数据隔离和单点登录，需要实现OAuth2.0协议和JWT Token验证机制。', status: 'done', assigneeId: 'u1', reporter: '产品小红', createdAt: '2026-05-20' },
-  { id: 'REQ-002', title: '数据大盘图表展示', description: '集成ECharts实现多维度数据可视化，支持折线图、柱状图、饼图等常见图表类型。', status: 'in-progress', assigneeId: 'u1', reporter: '产品小红', createdAt: '2026-05-22' },
-  { id: 'REQ-003', title: 'UI设计对话助手', description: '基于自然语言理解，自动生成UI组件建议和设计方案，支持多轮对话迭代。', status: 'todo', assigneeId: 'u1', reporter: '设计小李', createdAt: '2026-05-25' },
-  { id: 'REQ-004', title: '智能评审结果展示', description: '将代码评审结果以结构化方式展示，支持按严重程度和文件分组。', status: 'todo', assigneeId: 'u1', reporter: '设计小李', createdAt: '2026-05-27' },
-  { id: 'REQ-005', title: 'API 网关限流配置', description: '基于令牌桶算法实现API限流，支持按用户、IP、接口维度配置限流规则。', status: 'todo', assigneeId: 'u1', reporter: '产品小红', createdAt: '2026-05-28' },
-];
-
-const MOCK_DEFECTS: DefectItem[] = [
-  { id: 'BUG-001', title: '登录页面验证码不刷新', description: '点击验证码图片后，网络请求返回200但图片未更新，需要排查缓存策略。', status: 'open', severity: 'high', assigneeId: 'u1', reporter: '测试小刚', createdAt: '2026-05-26' },
-  { id: 'BUG-002', title: '数据大盘图表数据异常', description: '当选择时间范围超过30天时，折线图数据点重叠导致渲染性能下降。', status: 'in-progress', severity: 'medium', assigneeId: 'u1', reporter: '测试小刚', createdAt: '2026-05-27' },
-  { id: 'BUG-003', title: '移动端菜单无法展开', description: '在iOS Safari浏览器中，侧边栏菜单按钮点击无响应，需要检查事件绑定。', status: 'fixed', severity: 'critical', assigneeId: 'u1', reporter: '产品小红', createdAt: '2026-05-25' },
-  { id: 'BUG-004', title: '导出PDF文件乱码', description: '中文字体在导出PDF时出现方块，需要嵌入字体文件并配置字体映射。', status: 'closed', severity: 'low', assigneeId: 'u1', reporter: '设计小李', createdAt: '2026-05-20' },
-];
-
-const MOCK_CASES: CaseItem[] = [
-  {
-    id: 'TC-001', title: '登录功能-正常登录验证', description: '验证用户使用正确的账号密码可以成功登录系统。',
-    status: 'passed', assigneeId: 'u1', reporter: '测试小刚', createdAt: '2026-05-22',
-    steps: ['打开登录页面', '输入正确的邮箱和密码', '点击登录按钮', '验证跳转到首页并显示用户信息']
-  },
-  {
-    id: 'TC-002', title: '登录功能-密码错误处理', description: '验证输入错误密码时系统给出正确的错误提示。',
-    status: 'passed', assigneeId: 'u1', reporter: '测试小刚', createdAt: '2026-05-22',
-    steps: ['打开登录页面', '输入正确邮箱和错误密码', '点击登录按钮', '验证出现"账号或密码错误"提示']
-  },
-  {
-    id: 'TC-003', title: '数据大盘-时间范围筛选', description: '验证时间范围选择器正确过滤图表数据。',
-    status: 'failed', assigneeId: 'u1', reporter: '产品小红', createdAt: '2026-05-27',
-    steps: ['进入数据大盘页面', '点击时间范围选择器', '选择"最近30天"', '验证图表数据与选中范围匹配']
-  },
-  {
-    id: 'TC-004', title: '权限管理-角色分配', description: '验证管理员可以正确分配用户角色。',
-    status: 'draft', assigneeId: 'u1', reporter: '产品小红', createdAt: '2026-05-28',
-    steps: ['进入用户管理', '选中目标用户', '点击"分配角色"', '选择角色并保存', '验证角色权限生效']
-  },
-  {
-    id: 'TC-005', title: 'API限流-超限响应验证', description: '验证超过限流阈值后接口返回429状态码。',
-    status: 'ready', assigneeId: 'u1', reporter: '测试小刚', createdAt: '2026-05-28',
-    steps: ['使用脚本发送超过阈值的请求', '验证响应状态码为429', '验证响应体包含限流提示']
-  },
-];
 
 // 用户输入排队上限。
 const MAX_INPUT_QUEUE = 3;
@@ -185,6 +127,16 @@ const COMMAND_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   '/code': Code2,
   '/debug': Bug,
   '/review': CheckCircle,
+  '/unit-test': FlaskConical,
+  '/test-case': ClipboardList,
+  '/auto-test': Terminal,
+  '/bug-analysis': Search,
+  '/test-report': FileBarChart,
+  '/ui-spec': Layout,
+  '/design-review': Eye,
+  '/design-token': Palette,
+  '/user-story': ListChecks,
+  '/data-analysis': BarChart3,
 };
 
 /** 欢迎页快捷指令卡片定义。 */
@@ -197,31 +149,79 @@ interface WelcomeCard {
 /** 默认快捷卡片（产品经理视角，兼容无子角色/管理员场景）。 */
 const WELCOME_CARDS_DEFAULT: WelcomeCard[] = [
   { cmd: '/prd-write', title: '撰写 PRD', desc: '根据需求生成产品需求文档' },
+  { cmd: '/user-story', title: '用户故事拆分', desc: '将需求拆分为用户故事与验收标准' },
   { cmd: '/prd-research', title: '需求调研', desc: '对需求主题进行深度调研分析' },
-  { cmd: '/proto-make', title: '制作原型', desc: '根据文档生成可预览的原型工程' },
-  { cmd: '/code', title: '编写代码', desc: '基于需求和代码库编写实现代码' },
+  { cmd: '/data-analysis', title: '数据分析', desc: '分析数据并生成业务洞察' },
 ];
 
 /** 按职能子角色定制的快捷卡片；未命中的角色回退到默认卡片。 */
 const WELCOME_CARDS_BY_ROLE: Partial<Record<SubRole, WelcomeCard[]>> = {
   [SUB_ROLE.DEVELOPER]: [
     { cmd: '/code', title: '编写代码', desc: '基于需求和代码库编写实现代码' },
-    { cmd: '/debug', title: 'BUG 解决', desc: '定位并修复代码中的缺陷' },
+    { cmd: '/debug', title: '修复 BUG', desc: '定位并修复代码中的缺陷' },
     { cmd: '/review', title: '代码评审', desc: '对变更代码进行智能评审' },
-    { cmd: '/proto-make', title: '制作原型', desc: '根据文档生成可预览的原型工程' },
+    { cmd: '/unit-test', title: '生成单测', desc: '为代码生成单元测试' },
   ],
   [SUB_ROLE.TESTER]: [
-    { cmd: '/debug', title: 'BUG 定位', desc: '分析现象并定位缺陷根因' },
-    { cmd: '/review', title: '代码评审', desc: '对变更代码进行智能评审' },
-    { cmd: '/prd-research', title: '需求调研', desc: '对需求主题进行深度调研分析' },
-    { cmd: '/code', title: '编写测试脚本', desc: '基于需求编写自动化测试代码' },
+    { cmd: '/test-case', title: '生成测试用例', desc: '根据需求生成结构化测试用例' },
+    { cmd: '/auto-test', title: '自动化脚本', desc: '生成可运行的自动化测试脚本' },
+    { cmd: '/bug-analysis', title: 'BUG 分析', desc: '分析缺陷根因与影响范围' },
+    { cmd: '/test-report', title: '测试报告', desc: '汇总测试执行结果生成报告' },
   ],
   [SUB_ROLE.DESIGNER]: [
     { cmd: '/proto-make', title: '制作原型', desc: '根据文档生成可预览的原型工程' },
-    { cmd: '/prd-research', title: '需求调研', desc: '对需求主题进行深度调研分析' },
-    { cmd: '/prd-write', title: '撰写 PRD', desc: '根据需求生成产品需求文档' },
-    { cmd: '/code', title: '编写代码', desc: '基于需求和代码库编写实现代码' },
+    { cmd: '/ui-spec', title: 'UI 规范', desc: '生成 UI 设计规范文档' },
+    { cmd: '/design-review', title: '设计走查', desc: '检查设计稿与实现一致性' },
+    { cmd: '/design-token', title: 'Design Token', desc: '生成设计 Token 定义' },
   ],
+  [SUB_ROLE.PM]: [
+    { cmd: '/prd-write', title: '撰写 PRD', desc: '根据需求生成产品需求文档' },
+    { cmd: '/user-story', title: '用户故事拆分', desc: '将需求拆分为用户故事与验收标准' },
+    { cmd: '/prd-research', title: '需求调研', desc: '对需求主题进行深度调研分析' },
+    { cmd: '/data-analysis', title: '数据分析', desc: '分析数据并生成业务洞察' },
+  ],
+};
+
+/** 指令分类（用于上拉菜单按角色展示）。 */
+type CommandCategory = 'product' | 'design' | 'dev' | 'test';
+
+const COMMAND_CATEGORY_LABELS: Record<CommandCategory, string> = {
+  product: '产品',
+  design: 'UI',
+  dev: '研发',
+  test: '测试',
+};
+
+const COMMAND_CATEGORY_ORDER: CommandCategory[] = ['product', 'design', 'dev', 'test'];
+
+const COMMAND_CATEGORIES: Record<string, CommandCategory> = {
+  '/code': 'dev',
+  '/debug': 'dev',
+  '/review': 'dev',
+  '/unit-test': 'dev',
+  '/test-case': 'test',
+  '/auto-test': 'test',
+  '/bug-analysis': 'test',
+  '/test-report': 'test',
+  '/proto-make': 'design',
+  '/ui-spec': 'design',
+  '/design-review': 'design',
+  '/design-token': 'design',
+  '/prd-write': 'product',
+  '/prd-research': 'product',
+  '/user-story': 'product',
+  '/data-analysis': 'product',
+};
+
+/** 根据用户子角色返回默认激活的指令分类 tab。 */
+const getDefaultCommandCategory = (subRole?: SubRole): CommandCategory => {
+  switch (subRole) {
+    case SUB_ROLE.PM: return 'product';
+    case SUB_ROLE.DESIGNER: return 'design';
+    case SUB_ROLE.TESTER: return 'test';
+    case SUB_ROLE.DEVELOPER:
+    default: return 'dev';
+  }
 };
 
 // 排队输入项。
@@ -287,10 +287,12 @@ const DEFAULT_AGENT_OPTIONS: AvailableAgent[] = [
 // 新会话创建时默认智能体的优先级，取第一个可用的。
 const DEFAULT_AGENT_PRIORITY = ['claude-code', 'opencode', 'codex'];
 
-const resolveDefaultAgentKey = (options: AvailableAgent[]): string | undefined => {
-  const priorityKey = DEFAULT_AGENT_PRIORITY.find(key => options.some(o => o.agentKey === key));
-  if (priorityKey) return priorityKey;
-  return options[0]?.agentKey;
+const resolveDefaultAgentKey = (configs: WorkspaceAgentConfig[], options: AvailableAgent[]): string | undefined => {
+  const enabled = configs.filter(c => c.enabled && options.some(o => o.agentKey === c.agentKey));
+  if (enabled.length === 0) return undefined;
+  const defaultCfg = enabled.find(c => c.isDefault);
+  if (defaultCfg) return defaultCfg.agentKey;
+  return enabled[0].agentKey;
 };
 
 const getAgentLabel = (key: string, options: AvailableAgent[]): string => options.find(o => o.agentKey === key)?.name ?? key;
@@ -300,6 +302,36 @@ function getHistoryAgentLabel(item: { pluginKey?: string; instanceId?: string },
   const label = getAgentLabel(item.pluginKey || 'claude-code', options);
   if (!item.instanceId) return { label, full: label, short: label };
   return { label, full: `${label} · ${item.instanceId}`, short: `${label} · ${item.instanceId.slice(0, 8)}` };
+}
+
+// 当前工作空间 ID 从 workspace-utils 读取，避免多处重复兜底。
+const CHAT_TABS_STORAGE_KEY = 'dh-chat-tabs';
+const CHAT_ACTIVE_TAB_STORAGE_KEY = 'dh-chat-active-tab';
+const getChatTabsStorageKey = (workspaceId: string) => `${CHAT_TABS_STORAGE_KEY}:${workspaceId}`;
+const getChatActiveTabStorageKey = (workspaceId: string) => `${CHAT_ACTIVE_TAB_STORAGE_KEY}:${workspaceId}`;
+
+/** 为无标题的历史会话生成友好占位标题，避免展示 session ID。 */
+const formatSessionTitle = (
+  s: AgentSessionDTO & { context?: Record<string, unknown> },
+  options: AvailableAgent[]
+): string => {
+  if (s.title) return s.title;
+  const pluginKey = typeof s.context?.pluginKey === 'string' ? s.context.pluginKey : (s.agentId || 'claude-code');
+  const agentName = getAgentLabel(pluginKey, options);
+  const date = s.createdAt
+    ? new Date(s.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '';
+  return date ? `${agentName} · 未命名会话 · ${date}` : `${agentName} · 未命名会话`;
+};
+
+/** 详情弹窗中的字段项：浅灰标签 + 值 */
+function ChatDetailField({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-xs text-muted-foreground mb-1">{label}</div>
+      <div className="text-sm text-foreground font-medium">{value}</div>
+    </div>
+  );
 }
 
 const AGENT_STATUS_COLORS: Record<AgentStatus, string> = {
@@ -479,13 +511,19 @@ export const Chat: React.FC = () => {
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
   const [availableAgentOptions, setAvailableAgentOptions] = useState<AvailableAgent[]>(DEFAULT_AGENT_OPTIONS);
   const [availableAgentsLoaded, setAvailableAgentsLoaded] = useState(false);
+  const [workspaceAgentConfigs, setWorkspaceAgentConfigs] = useState<WorkspaceAgentConfig[]>([]);
 
   const [agentTabs, setAgentTabs] = useState<AgentTab[]>([]);
   const [activeAgentTabId, setActiveAgentTabId] = useState<string | null>(null);
 
   const activeTab = agentTabs.find(t => t.sessionId === activeAgentTabId) ?? null;
-  const defaultPluginKey = resolveDefaultAgentKey(availableAgentOptions);
-  const activePluginKey = activeTab?.pluginKey ?? defaultPluginKey;
+  const enabledAgentOptions = useMemo(() => {
+    const enabledKeys = new Set(workspaceAgentConfigs.filter(c => c.enabled).map(c => c.agentKey));
+    return availableAgentOptions.filter(o => enabledKeys.has(o.agentKey));
+  }, [workspaceAgentConfigs, availableAgentOptions]);
+  const defaultPluginKey = resolveDefaultAgentKey(workspaceAgentConfigs, availableAgentOptions);
+  const activePluginKey = activeTab?.pluginKey ?? defaultPluginKey ?? 'claude-code';
+  const chatEnabled = enabledAgentOptions.length > 0;
 
   const { runtime, sessionId, wsConnected, messages, isRunning, sendMessage, switchSession, createSession, cancelRun, tryRestoreSession } = useAgUiChat({ agentPluginKey: activePluginKey });
 
@@ -611,7 +649,6 @@ export const Chat: React.FC = () => {
       reporter: '当前用户',
     });
     setInput(prev => prev.trimEnd() ? `${prev.trimEnd()}\n/proto-make ` : '/proto-make ');
-    toast.success('已添加文档卡片并选择 /proto-make 指令');
   }, []);
 
   // 监听 FileView 跨标签页发来的做原型请求。
@@ -661,6 +698,7 @@ export const Chat: React.FC = () => {
   const [compactPlusSubmenu, setCompactPlusSubmenu] = useState<'repo' | 'prompt' | 'skill' | 'cmd' | null>(null);
   const [activeSkillTab, setActiveSkillTab] = useState('全部');
   const [activeTaskTab, setActiveTaskTab] = useState<'req' | 'defect' | 'case'>('req');
+  const [activeCommandTab, setActiveCommandTab] = useState<CommandCategory>(getDefaultCommandCategory(membership?.subRole));
   const repoMenuRef = useRef<HTMLDivElement>(null);
   const promptMenuRef = useRef<HTMLDivElement>(null);
   const skillMenuRef = useRef<HTMLDivElement>(null);
@@ -819,7 +857,7 @@ export const Chat: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     repositoryApi.list(workspaceId)
       .then(repos => {
         if (cancelled) return;
@@ -844,9 +882,9 @@ export const Chat: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     Promise.all([
-      teamApi.listSkills(1, 100).then(res => res.list),
+      teamApi.listSkills(1, 100, workspaceId).then(res => res.list),
       workspaceApi.listPrompts(workspaceId).catch((): WorkspacePrompt[] => []),
       workspaceApi.listPromptCategories(workspaceId).catch((): PromptCategory[] => []),
       // 产品空间文档（后端已按 updated_at 倒序）
@@ -868,12 +906,13 @@ export const Chat: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     Promise.all([
       workspaceApi.listAgents(workspaceId).catch((): WorkspaceAgent[] => []),
       agentConfigApi.listAvailableAgents(workspaceId).catch((): AvailableAgent[] => []),
+      agentConfigApi.listWorkspaceConfigs(workspaceId).catch((): WorkspaceAgentConfig[] => []),
     ])
-      .then(([agents, runtimeAgents]) => {
+      .then(([agents, runtimeAgents, configs]) => {
         if (cancelled) return;
         setAvailableAgents(agents);
         const defaultAgent = agents.find(a => a.isDefault) || agents[0];
@@ -881,6 +920,7 @@ export const Chat: React.FC = () => {
           setSelectedAgentId(defaultAgent.id);
         }
         setAvailableAgentOptions(runtimeAgents);
+        setWorkspaceAgentConfigs(configs);
         setAvailableAgentsLoaded(true);
       })
       .catch(err => {
@@ -905,8 +945,7 @@ export const Chat: React.FC = () => {
     const c = p.content || p.description;
     setInput(prev => prev.trimEnd() ? prev.trimEnd() + '\n' + c : c);
     setPromptMenuOpen(false); setCompactPlusSubmenu(null); setCompactPlusOpen(false);
-    toast.success('已插入提示词');
-    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     workspaceApi.recordPromptUsage(workspaceId, p.id)
       .then(updated => setAvailablePrompts(prev => prev.map(item => item.id === updated.id ? updated : item)))
       .catch(err => console.warn('上报提示词使用次数失败:', err));
@@ -936,7 +975,7 @@ export const Chat: React.FC = () => {
   }, [availableSkills, activeSkillTab, skillMenuSearch]);
 
   const toggleRepo = (repo: {id: string; name: string}) => setSelectedRepos(prev => prev.find(r => r.id === repo.id) ? prev.filter(r => r.id !== repo.id) : [...prev, repo]);
-  const appendSkillTag = (name: string) => { setInput(p => p.trimEnd() ? p.trimEnd() + ` #${name} ` : `#${name} `); toast.success(`已选择：${name}`); };
+  const appendSkillTag = (name: string) => { setInput(p => p.trimEnd() ? p.trimEnd() + ` #${name} ` : `#${name} `); };
 
   // 文档菜单：按标题搜索过滤（列表已由后端按修改时间倒序）。
   // @ 内联触发时检索词来自输入框 @ 后的文本，按钮触发时来自菜单内搜索框。
@@ -999,12 +1038,11 @@ export const Chat: React.FC = () => {
   const handleSelectDoc = async (doc: ProductDoc) => {
     const token = docMentionToken(doc.title);
     if (input.includes(token)) {
-      toast.info('该文档已引用');
       setDocMenuOpen(false);
       setDocMention(null);
       return;
     }
-    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     setMaterializingDocId(doc.id);
     try {
       const res = await productDocApi.materializeDoc(workspaceId, doc.id);
@@ -1022,7 +1060,6 @@ export const Chat: React.FC = () => {
         cursorPos = (input.trimEnd() ? input.trimEnd().length + 1 : 0) + token.length;
         setDocMenuOpen(false);
       }
-      toast.success(`已引用文档：${doc.title}`);
       // 等 React 提交新值后恢复焦点并定位光标到提及块之外
       requestAnimationFrame(() => {
         const ta = textareaRef.current;
@@ -1038,16 +1075,20 @@ export const Chat: React.FC = () => {
   };
   // 插入指令到输入框开头（斜杠指令通常作为前缀），若已有内容则追加空格分隔。
   // 指令成为原子块（/code 整体删除），插入后光标定位到块尾。
-  // 若指令不支持代码库且当前已选代码库，提示用户并清空选择。
+  // 若已存在指令，则替换为新的指令；若指令不支持代码库且当前已选代码库，清空选择。
   const insertCommand = (cmd: string) => {
-    setInput(p => p.trimEnd() ? `${cmd} ${p}` : `${cmd} `);
+    const existingCmd = commandConfigs.find(c => {
+      const after = input.slice(c.cmd.length);
+      return input.startsWith(c.cmd) && (after === '' || /^\s/.test(after));
+    });
+    const rest = existingCmd ? input.slice(existingCmd.cmd.length).replace(/^\s*/, '') : input.trimStart();
+    const newInput = rest ? `${cmd} ${rest}` : `${cmd} `;
+    setInput(newInput);
     setCmdMenuOpen(false);
     const cfg = commandConfigs.find(c => c.cmd === cmd);
     if (cfg && !cfg.allowRepos && selectedRepos.length > 0) {
-      toast.warning(`指令 ${cmd} 不支持代码库，已清空选择`);
       setSelectedRepos([]);
     }
-    toast.success(`已插入指令：${cmd}`);
     requestAnimationFrame(() => {
       const ta = textareaRef.current;
       if (!ta) return;
@@ -1072,7 +1113,6 @@ export const Chat: React.FC = () => {
     setSlashIndex(0);
     const cfg = commandConfigs.find(c => c.cmd === cmd);
     if (cfg && !cfg.allowRepos && selectedRepos.length > 0) {
-      toast.warning(`指令 ${cmd} 不支持代码库，已清空选择`);
       setSelectedRepos([]);
     }
     requestAnimationFrame(() => {
@@ -1181,7 +1221,7 @@ export const Chat: React.FC = () => {
 
   // 同步仓库到用户 projects 目录
   const handleSyncRepo = (repoId: string) => {
-    const workspaceId = localStorage.getItem('currentWorkspaceId') || 'ws-default';
+    const workspaceId = getCurrentWorkspaceId();
     setSyncingRepoId(repoId);
     repositoryApi.syncUserRepo(workspaceId, repoId)
       .then(() => {
@@ -1412,6 +1452,7 @@ export const Chat: React.FC = () => {
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const agentMenuRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
+  const isInitialTabsPersistRef = useRef(true);
 
   const updateAgentTab = useCallback((sessionId: string, patch: Partial<AgentTab>) => {
     setAgentTabs(prev => prev.map(t => t.sessionId === sessionId ? { ...t, ...patch } : t));
@@ -1432,37 +1473,66 @@ export const Chat: React.FC = () => {
       || (h.pluginKey || '').toLowerCase().includes(term);
   });
 
-  // 加载历史会话列表。从 session.context 中读取插件 key 与实例 id，便于归类到对应智能体。
-  useEffect(() => {
-    api.get<(AgentSessionDTO & { context?: Record<string, unknown> })[]>('/v1/sessions')
-      .then(list => {
-        setHistoryList(list.map(s => {
-          const pluginKey = typeof s.context?.pluginKey === 'string' ? s.context.pluginKey : (s.agentId || 'claude-code');
-          const instanceId = typeof s.context?.instanceId === 'string' ? s.context.instanceId : undefined;
-          return {
-            id: s.id,
-            title: s.title || s.id.slice(0, 8),
-            date: s.createdAt ? new Date(s.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '',
-            type: s.agentType || 'chat',
-            pluginKey,
-            instanceId,
-          };
-        }));
-      })
-      .catch(err => console.warn('[Chat] load history failed:', err));
-  }, [agentTabs.length]);
+  // 加载历史会话列表。按当前工作空间过滤，并从 session.context 中读取插件 key 与实例 id。
+  const loadHistory = useCallback(async () => {
+    const workspaceId = getCurrentWorkspaceId();
+    try {
+      const list = await api.get<(AgentSessionDTO & { context?: Record<string, unknown> })[]>(`/v1/sessions?workspaceId=${encodeURIComponent(workspaceId)}`);
+      setHistoryList(list.map(s => {
+        const pluginKey = typeof s.context?.pluginKey === 'string' ? s.context.pluginKey : (s.agentId || 'claude-code');
+        const instanceId = typeof s.context?.instanceId === 'string' ? s.context.instanceId : undefined;
+        return {
+          id: s.id,
+          title: formatSessionTitle(s, availableAgentOptions),
+          date: s.updatedAt ? new Date(s.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '',
+          type: s.agentType || 'chat',
+          pluginKey,
+          instanceId,
+        };
+      }));
+    } catch (err) {
+      console.warn('[Chat] load history failed:', err);
+    }
+  }, [availableAgentOptions]);
 
-  // 初始化一个默认智能体 tab。
-  // 必须等 /available-agents 加载完成后再决定默认插件 key，
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
+
+  // 初始化智能体 tab：优先从 localStorage 恢复当前空间的 tab 列表，
+  // 否则按默认智能体创建新会话。必须等 /available-agents 加载完成后再决定默认插件 key，
   // 否则初始值会是 DEFAULT_AGENT_OPTIONS 里的 claude-code，
   // 若当前空间未启用该智能体，createSession 会收到 403。
   useEffect(() => {
     if (initializedRef.current || !availableAgentsLoaded || agentTabs.length > 0) return;
     initializedRef.current = true;
 
-    const defaultKey = resolveDefaultAgentKey(availableAgentOptions);
+    const workspaceId = getCurrentWorkspaceId();
+    const savedTabsRaw = localStorage.getItem(getChatTabsStorageKey(workspaceId));
+    const savedActiveRaw = localStorage.getItem(getChatActiveTabStorageKey(workspaceId));
+    if (savedTabsRaw) {
+      try {
+        const savedTabs = JSON.parse(savedTabsRaw) as AgentTab[];
+        if (Array.isArray(savedTabs) && savedTabs.length > 0) {
+          const validTabs = savedTabs.filter(t => t.sessionId && t.pluginKey);
+          if (validTabs.length > 0) {
+            const activeId = savedActiveRaw && validTabs.some(t => t.sessionId === savedActiveRaw)
+              ? savedActiveRaw
+              : validTabs[0].sessionId;
+            setAgentTabs(validTabs);
+            setActiveAgentTabId(activeId);
+            switchSession(activeId).catch(() => {});
+            return;
+          }
+        }
+      } catch {
+        // 解析失败时回退到新建默认会话。
+      }
+    }
+
+    const defaultKey = resolveDefaultAgentKey(workspaceAgentConfigs, availableAgentOptions);
     if (!defaultKey) {
-      toast.error('当前没有可用的智能体，请联系管理员。');
+      toast.error('空间管理员没有配置智能体，请联系空间管理员。');
       return;
     }
 
@@ -1492,7 +1562,25 @@ export const Chat: React.FC = () => {
         setActiveAgentTabId(result.sessionId);
       });
     });
-  }, [availableAgentsLoaded, availableAgentOptions]);
+  }, [availableAgentsLoaded, availableAgentOptions, switchSession]);
+
+  // 智能体 tab 持久化：跳过首次渲染，只在用户操作导致的状态变更后写入 localStorage。
+  useEffect(() => {
+    if (isInitialTabsPersistRef.current) {
+      isInitialTabsPersistRef.current = false;
+      return;
+    }
+    const workspaceId = getCurrentWorkspaceId();
+    if (agentTabs.length === 0) {
+      localStorage.removeItem(getChatTabsStorageKey(workspaceId));
+      localStorage.removeItem(getChatActiveTabStorageKey(workspaceId));
+      return;
+    }
+    localStorage.setItem(getChatTabsStorageKey(workspaceId), JSON.stringify(agentTabs));
+    if (activeAgentTabId) {
+      localStorage.setItem(getChatActiveTabStorageKey(workspaceId), activeAgentTabId);
+    }
+  }, [agentTabs, activeAgentTabId]);
 
   // 如果当前会话正在运行，先弹出确认框；确认后取消当前 run 再执行目标动作。
   const runIfIdleOrConfirm = useCallback((action: () => void, title: string) => {
@@ -1556,9 +1644,11 @@ export const Chat: React.FC = () => {
     const doClose = async () => {
       const remaining = agentTabs.filter(t => t.sessionId !== tab.sessionId);
       setAgentTabs(remaining);
-      api.delete(`/v1/sessions/${tab.sessionId}`).catch(err => {
-        console.warn('[closeAgentTab] delete session failed:', err);
-      });
+      api.delete(`/v1/sessions/${tab.sessionId}`)
+        .then(() => loadHistory())
+        .catch(err => {
+          console.warn('[closeAgentTab] delete session failed:', err);
+        });
       if (activeAgentTabId !== tab.sessionId) return;
       if (remaining.length > 0) {
         const next = remaining[0];
@@ -1570,9 +1660,10 @@ export const Chat: React.FC = () => {
       }
     };
     runIfIdleOrConfirm(doClose, `关闭：${tab.title}`);
-  }, [activeAgentTabId, agentTabs, runIfIdleOrConfirm, switchSession]);
+  }, [activeAgentTabId, agentTabs, loadHistory, runIfIdleOrConfirm, switchSession]);
 
   // 为当前智能体新建一个实例（替换当前 tab 的会话）。
+  // 若当前会话已有消息，则保留为历史会话，不再删除；空会话直接清理。
   const handleNewSession = useCallback(async () => {
     if (!activeAgentTabId) return;
     const activeTab = agentTabs.find(t => t.sessionId === activeAgentTabId);
@@ -1584,9 +1675,12 @@ export const Chat: React.FC = () => {
         updateAgentTab(activeAgentTabId, { status: 'error' });
         return;
       }
-      api.delete(`/v1/sessions/${oldSessionId}`).catch(err => {
-        console.warn('[handleNewSession] delete old session failed:', err);
-      });
+      // 只有空会话才删除，避免有对话记录的会话（包括问候/闲聊）被误清理。
+      if (messages.length === 0) {
+        api.delete(`/v1/sessions/${oldSessionId}`).catch(err => {
+          console.warn('[handleNewSession] delete old session failed:', err);
+        });
+      }
       setAgentTabs(prev =>
         prev.map(t =>
           t.sessionId === oldSessionId
@@ -1602,8 +1696,9 @@ export const Chat: React.FC = () => {
       );
       setActiveAgentTabId(result.sessionId);
       await switchSession(result.sessionId);
+      loadHistory();
     }, '新建会话');
-  }, [activeAgentTabId, agentTabs, createSession, runIfIdleOrConfirm, switchSession, updateAgentTab]);
+  }, [activeAgentTabId, agentTabs, createSession, loadHistory, messages.length, runIfIdleOrConfirm, switchSession, updateAgentTab]);
 
   // 新增一个智能体实例 tab。
   const addAgentTab = useCallback(async (pluginKey: string) => {
@@ -1620,8 +1715,9 @@ export const Chat: React.FC = () => {
       };
       setAgentTabs(prev => [...prev, tab]);
       setActiveAgentTabId(result.sessionId);
+      loadHistory();
     }, `新增：${getAgentLabel(pluginKey, availableAgentOptions)}`);
-  }, [createSession, runIfIdleOrConfirm]);
+  }, [createSession, loadHistory, runIfIdleOrConfirm]);
 
   // Derive task counts
   const allTasks = [...requirements, ...defects, ...cases];
@@ -1683,7 +1779,7 @@ export const Chat: React.FC = () => {
                   onClick={(e) => {
                     e.stopPropagation();
                     setQuotedCard({ type, id: item.id, title: item.title, reporter: item.reporter });
-                    toast.success('已引用到会话');
+                    setTaskMenuOpen(false);
                   }}
                   title="引用到会话"
                 >
@@ -1818,9 +1914,10 @@ export const Chat: React.FC = () => {
                       <Bot className="h-3 w-3 shrink-0" />
                       <span className="truncate flex-1">{tab.instanceId ? `${tab.title} · ${tab.instanceId.slice(0, 6)}` : tab.title}</span>
                       <button
-                        className="h-4 w-4 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-opacity shrink-0"
-                        title="关闭智能体"
+                        className="h-4 w-4 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-opacity shrink-0 disabled:opacity-0 disabled:cursor-not-allowed"
+                        title={agentTabs.length <= 1 ? '至少保留一个智能体' : '关闭智能体'}
                         onClick={(e) => closeAgentTab(tab, e)}
+                        disabled={agentTabs.length <= 1}
                       >
                         <X className="h-3 w-3" />
                       </button>
@@ -1839,12 +1936,16 @@ export const Chat: React.FC = () => {
                 onClick={() => setAgentMenuOpen(!agentMenuOpen)}
                 aria-label="新增智能体"
                 title="新增智能体"
+                disabled={!chatEnabled}
               >
                 <Plus className="h-4 w-4" />
               </Button>
               {agentMenuOpen && (
                 <div className="absolute top-full right-0 mt-1 w-40 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-top-2">
-                  {availableAgentOptions.map(option => (
+                  {enabledAgentOptions.length === 0 && (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">没有可用的智能体</div>
+                  )}
+                  {enabledAgentOptions.map(option => (
                     <div
                       key={option.agentKey}
                       className="flex items-center gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-accent transition-colors"
@@ -1971,7 +2072,17 @@ export const Chat: React.FC = () => {
         {/* Chat Messages */}
         <ScrollArea id="chat-scroll-area" className={cn('flex-1', showPreview ? 'p-2' : 'p-4 pr-8')}>
           <div className="space-y-6">
-            {messages.length === 0 ? (
+            {!chatEnabled ? (
+              <div className="h-full flex flex-col items-center justify-center text-center pt-20">
+                <div className="h-14 w-14 rounded-2xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center mb-4">
+                  <Bot className="h-7 w-7 text-amber-600 dark:text-amber-400" />
+                </div>
+                <h3 className="text-lg font-semibold mb-1">智能会话不可用</h3>
+                <p className="text-muted-foreground text-sm max-w-md mb-6">
+                  空间管理员没有配置智能体，请联系空间管理员。
+                </p>
+              </div>
+            ) : messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center pt-20">
                 <div className="h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
                   <Bot className="h-7 w-7 text-primary" />
@@ -2109,7 +2220,8 @@ export const Chat: React.FC = () => {
             </div>
             <Textarea
               ref={textareaRef}
-              placeholder="你想让 AI 助手做什么？ 例如：开发一个小游戏、实现一个新功能、做数据分析..."
+              disabled={!chatEnabled}
+              placeholder={chatEnabled ? '你想让 AI 助手做什么？ 例如：开发一个小游戏、实现一个新功能、做数据分析...' : '空间管理员没有配置智能体，请联系空间管理员。'}
               className={cn('relative w-full resize-none border-0 focus-visible:ring-0 px-5 py-4 shadow-none bg-transparent text-transparent caret-foreground focus:bg-transparent dark:bg-transparent dark:focus:bg-transparent', showPreview ? 'min-h-[60px] text-sm py-3' : 'min-h-[100px] text-base')}
               value={input}
               onChange={handleInputChange}
@@ -2431,23 +2543,38 @@ export const Chat: React.FC = () => {
                     )}
                     {/* 二级菜单：指令 */}
                     {compactPlusSubmenu === 'cmd' && (
-                      <div className="absolute bottom-full left-0 mb-2 w-64 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
-                        {commandConfigs.map(item => {
-                          const Icon = COMMAND_ICON_MAP[item.cmd] ?? Terminal;
-                          return (
-                            <div
-                              key={item.cmd}
-                              className="flex items-center gap-3 px-3 py-2 hover:bg-accent cursor-pointer text-foreground transition-colors"
-                              onClick={() => { insertCommand(item.cmd); setCompactPlusSubmenu(null); setCompactPlusOpen(false); }}
-                            >
-                              <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
-                              <div className="flex flex-col min-w-0">
-                                <span className="font-medium text-sm leading-none">{item.cmd}</span>
-                                <span className="text-xs text-muted-foreground mt-0.5">{item.label} · {item.desc}</span>
-                              </div>
-                            </div>
-                          );
-                        })}
+                      <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
+                        <Tabs value={activeCommandTab} onValueChange={v => setActiveCommandTab(v as CommandCategory)} className="w-full flex flex-col">
+                          <div className="px-2 pt-2 bg-muted/30 border-b">
+                            <TabsList className="aurora-tab-bar level-2 w-full">
+                              {COMMAND_CATEGORY_ORDER.map(cat => (
+                                <TabsTrigger key={cat} value={cat} className="aurora-tab-item level-2">
+                                  {COMMAND_CATEGORY_LABELS[cat]}
+                                </TabsTrigger>
+                              ))}
+                            </TabsList>
+                          </div>
+                          <div className="flex-1 overflow-y-auto p-1">
+                            {commandConfigs
+                              .filter(item => COMMAND_CATEGORIES[item.cmd] === activeCommandTab)
+                              .map(item => {
+                                const Icon = COMMAND_ICON_MAP[item.cmd] ?? Terminal;
+                                return (
+                                  <div
+                                    key={item.cmd}
+                                    className="flex items-center gap-3 px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors"
+                                    onClick={() => { insertCommand(item.cmd); setCompactPlusSubmenu(null); setCompactPlusOpen(false); }}
+                                  >
+                                    <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+                                    <div className="flex flex-col min-w-0">
+                                      <span className="font-medium text-sm leading-none">{item.cmd}</span>
+                                      <span className="text-xs text-muted-foreground mt-0.5">{item.label} · {item.desc}</span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        </Tabs>
                       </div>
                     )}
                   </div>
@@ -2495,23 +2622,38 @@ export const Chat: React.FC = () => {
                         <Terminal className="h-3.5 w-3.5 mr-1.5" />指令
                       </Button>
                       {cmdMenuOpen && (
-                        <div className="absolute bottom-full left-0 mb-2 w-64 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
-                          {commandConfigs.map(item => {
-                            const Icon = COMMAND_ICON_MAP[item.cmd] ?? Terminal;
-                            return (
-                              <div
-                                key={item.cmd}
-                                className="flex items-center gap-3 px-3 py-2 hover:bg-accent cursor-pointer text-foreground transition-colors"
-                                onClick={() => insertCommand(item.cmd)}
-                              >
-                                <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
-                                <div className="flex flex-col min-w-0">
-                                  <span className="font-medium text-sm leading-none">{item.cmd}</span>
-                                  <span className="text-xs text-muted-foreground mt-0.5">{item.label} · {item.desc}</span>
-                                </div>
-                              </div>
-                            );
-                          })}
+                        <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
+                          <Tabs value={activeCommandTab} onValueChange={v => setActiveCommandTab(v as CommandCategory)} className="w-full flex flex-col">
+                            <div className="px-2 pt-2 bg-muted/30 border-b">
+                              <TabsList className="aurora-tab-bar level-2 w-full">
+                                {COMMAND_CATEGORY_ORDER.map(cat => (
+                                  <TabsTrigger key={cat} value={cat} className="aurora-tab-item level-2">
+                                    {COMMAND_CATEGORY_LABELS[cat]}
+                                  </TabsTrigger>
+                                ))}
+                              </TabsList>
+                            </div>
+                            <div className="flex-1 overflow-y-auto p-1">
+                              {commandConfigs
+                                .filter(item => COMMAND_CATEGORIES[item.cmd] === activeCommandTab)
+                                .map(item => {
+                                  const Icon = COMMAND_ICON_MAP[item.cmd] ?? Terminal;
+                                  return (
+                                    <div
+                                      key={item.cmd}
+                                      className="flex items-center gap-3 px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors"
+                                      onClick={() => insertCommand(item.cmd)}
+                                    >
+                                      <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+                                      <div className="flex flex-col min-w-0">
+                                        <span className="font-medium text-sm leading-none">{item.cmd}</span>
+                                        <span className="text-xs text-muted-foreground mt-0.5">{item.label} · {item.desc}</span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                          </Tabs>
                         </div>
                       )}
                     </div>
@@ -2754,183 +2896,224 @@ export const Chat: React.FC = () => {
           </DialogContent>
         </Dialog>
 
-        {/* ── Detail Drawer ── */}
-        <div className={`absolute inset-y-0 right-0 w-80 bg-background border-l border-border flex flex-col z-50 transition-transform duration-300 ${detailOpen ? 'translate-x-0 shadow-2xl' : 'translate-x-full'}`}>
-          {detailOpen && (
-            <>
-              <div className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
-                {detailType === 'req' && <ListTodo className="h-4 w-4 text-primary" />}
-                {detailType === 'defect' && <Bug className="h-4 w-4 text-destructive" />}
-                {detailType === 'case' && <FlaskConical className="h-4 w-4 text-violet-500" />}
-                <span className="font-semibold text-sm flex-1 truncate">
-                  {detailType === 'req' && detailReq?.id}
-                  {detailType === 'defect' && detailDef?.id}
-                  {detailType === 'case' && detailCase?.id}
-                  {' 详情'}
-                </span>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground" onClick={handlePrevItem} title="上一个">
-                    <ChevronLeft className="h-4 w-4" />
-                  </button>
-                  <button className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground" onClick={handleNextItem} title="下一个">
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
-                  <button className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground ml-1" onClick={closeDetail} title="关闭">
-                    <X className="h-4 w-4" />
-                  </button>
+        {/* ── Detail Dialog ── */}
+        <Dialog open={detailOpen} onOpenChange={closeDetail}>
+          <DialogContent hideClose className="w-full max-w-[760px] p-0 flex flex-col max-h-[85vh] overflow-hidden">
+            {detailOpen && (
+              <>
+                <DialogHeader className="px-6 py-5 border-b border-border/50">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-muted">
+                        {detailType === 'req' && <ListTodo className="h-4 w-4 text-primary" />}
+                        {detailType === 'defect' && <Bug className="h-4 w-4 text-destructive" />}
+                        {detailType === 'case' && <FlaskConical className="h-4 w-4 text-violet-500" />}
+                      </div>
+                      <div className="text-left">
+                        <DialogTitle className="text-lg font-semibold">
+                          {detailType === 'req' && '需求详情'}
+                          {detailType === 'defect' && '缺陷详情'}
+                          {detailType === 'case' && '用例详情'}
+                        </DialogTitle>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 shrink-0">
+                      {/* 上/下切换：小尺寸、浅灰、圆形 hover 底 */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          className="h-9 w-9 rounded-full flex items-center justify-center text-muted-foreground hover:bg-muted transition-colors"
+                          onClick={handlePrevItem}
+                          title="上一个"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </button>
+                        <button
+                          className="h-9 w-9 rounded-full flex items-center justify-center text-muted-foreground hover:bg-muted transition-colors"
+                          onClick={handleNextItem}
+                          title="下一个"
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
+                      {/* 关闭：独立分组、深色、更大 */}
+                      <button
+                        className="h-9 w-9 rounded-full flex items-center justify-center text-foreground hover:bg-muted transition-colors"
+                        onClick={closeDetail}
+                        title="关闭"
+                      >
+                        <X className="h-5 w-5" />
+                      </button>
+                    </div>
+                  </div>
+                </DialogHeader>
+
+                <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 modal-content-scroll">
+                  {/* 需求详情 */}
+                  {detailType === 'req' && detailReq && (
+                    <>
+                      <section>
+                        <h4 className="text-sm font-medium text-foreground mb-3">基本信息</h4>
+                        <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+                          <ChatDetailField label="标题" value={detailReq.title} />
+                          <ChatDetailField label="提出人" value={detailReq.reporter} />
+                          <ChatDetailField label="状态" value={REQ_STATUS_LABELS[detailReq.status]} />
+                          <ChatDetailField label="创建时间" value={detailReq.createdAt} />
+                        </div>
+                        <div className="mt-4">
+                          <p className="text-xs text-muted-foreground mb-2">状态变更</p>
+                          <Select value={detailReq.status} onValueChange={(val: RequirementStatus) => updateReqStatus(detailReq.id, val)}>
+                            <SelectTrigger className="w-[160px] h-8 text-xs bg-white dark:bg-background">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(Object.keys(REQ_STATUS_LABELS) as RequirementStatus[]).map(s => (
+                                <SelectItem key={s} value={s}>
+                                  <div className="flex items-center gap-2">
+                                    <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[s].split(' ')[0]}`} />
+                                    {REQ_STATUS_LABELS[s]}
+                                  </div>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </section>
+
+                      <div className="w-full h-px bg-border/50" />
+
+                      <section>
+                        <h4 className="text-sm font-medium text-foreground mb-3">任务描述</h4>
+                        <div className="h-[240px] overflow-y-auto rounded-xl p-4 bg-muted/40">
+                          <MarkdownView content={detailReq.description} collapsible={false} />
+                        </div>
+                      </section>
+                    </>
+                  )}
+
+                  {/* 缺陷详情 */}
+                  {detailType === 'defect' && detailDef && (
+                    <>
+                      <section>
+                        <h4 className="text-sm font-medium text-foreground mb-3">基本信息</h4>
+                        <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+                          <ChatDetailField label="标题" value={detailDef.title} />
+                          <ChatDetailField label="提出人" value={detailDef.reporter} />
+                          <ChatDetailField label="严重程度" value={SEVERITY_LABELS[detailDef.severity]} />
+                          <ChatDetailField label="状态" value={DEF_STATUS_LABELS[detailDef.status]} />
+                          <ChatDetailField label="创建时间" value={detailDef.createdAt} />
+                        </div>
+                        <div className="mt-4">
+                          <p className="text-xs text-muted-foreground mb-2">状态变更</p>
+                          <Select value={detailDef.status} onValueChange={(val: DefectStatus) => updateDefStatus(detailDef.id, val)}>
+                            <SelectTrigger className="w-[160px] h-8 text-xs bg-white dark:bg-background">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(Object.keys(DEF_STATUS_LABELS) as DefectStatus[]).map(s => (
+                                <SelectItem key={s} value={s}>
+                                  <div className="flex items-center gap-2">
+                                    <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[s].split(' ')[0]}`} />
+                                    {DEF_STATUS_LABELS[s]}
+                                  </div>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </section>
+
+                      <div className="w-full h-px bg-border/50" />
+
+                      <section>
+                        <h4 className="text-sm font-medium text-foreground mb-3">缺陷描述</h4>
+                        <div className="h-[240px] overflow-y-auto rounded-xl p-4 bg-muted/40">
+                          <MarkdownView content={detailDef.description} collapsible={false} />
+                        </div>
+                      </section>
+                    </>
+                  )}
+
+                  {/* 用例详情 */}
+                  {detailType === 'case' && detailCase && (
+                    <>
+                      <section>
+                        <h4 className="text-sm font-medium text-foreground mb-3">基本信息</h4>
+                        <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+                          <ChatDetailField label="标题" value={detailCase.title} />
+                          <ChatDetailField label="提出人" value={detailCase.reporter} />
+                          <ChatDetailField label="状态" value={CASE_STATUS_LABELS[detailCase.status]} />
+                          <ChatDetailField label="创建时间" value={detailCase.createdAt} />
+                        </div>
+                        <div className="mt-4">
+                          <p className="text-xs text-muted-foreground mb-2">状态变更</p>
+                          <Select value={detailCase.status} onValueChange={(val: CaseStatus) => updateCaseStatus(detailCase.id, val)}>
+                            <SelectTrigger className="w-[160px] h-8 text-xs bg-white dark:bg-background">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(Object.keys(CASE_STATUS_LABELS) as CaseStatus[]).map(s => (
+                                <SelectItem key={s} value={s}>
+                                  <div className="flex items-center gap-2">
+                                    <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[s].split(' ')[0]}`} />
+                                    {CASE_STATUS_LABELS[s]}
+                                  </div>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </section>
+
+                      <div className="w-full h-px bg-border/50" />
+
+                      <section>
+                        <h4 className="text-sm font-medium text-foreground mb-3">用例描述</h4>
+                        <div className="h-[180px] overflow-y-auto rounded-xl p-4 bg-muted/40">
+                          <MarkdownView content={detailCase.description} collapsible={false} />
+                        </div>
+                      </section>
+
+                      <div className="w-full h-px bg-border/50" />
+
+                      <section>
+                        <h4 className="text-sm font-medium text-foreground mb-3">执行步骤</h4>
+                        <div className="rounded-xl p-4 bg-muted/40">
+                          <ol className="space-y-2">
+                            {detailCase.steps.map((step, i) => (
+                              <li key={i} className="flex gap-2 text-sm text-foreground">
+                                <span className="h-5 w-5 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 font-medium text-xs">{i + 1}</span>
+                                <span className="leading-relaxed">{step}</span>
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      </section>
+                    </>
+                  )}
+
                 </div>
-              </div>
-              <ScrollArea className="flex-1 p-4">
-                {/* 需求详情 */}
-                {detailType === 'req' && detailReq && (
-                  <div className="space-y-4">
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">标题</p>
-                      <p className="text-sm font-medium text-foreground">{detailReq.title}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">提出人</p>
-                      <p className="text-sm text-foreground">{detailReq.reporter}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">描述</p>
-                      <p className="text-sm text-foreground leading-relaxed">{detailReq.description}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-2">状态变更</p>
-                      <Select value={detailReq.status} onValueChange={(val: RequirementStatus) => updateReqStatus(detailReq.id, val)}>
-                        <SelectTrigger className="w-[140px] h-8 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {(Object.keys(REQ_STATUS_LABELS) as RequirementStatus[]).map(s => (
-                            <SelectItem key={s} value={s}>
-                              <div className="flex items-center gap-2">
-                                <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[s].split(' ')[0]}`} />
-                                {REQ_STATUS_LABELS[s]}
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">创建时间</p>
-                      <p className="text-sm text-foreground">{detailReq.createdAt}</p>
-                    </div>
-                    <button className="text-xs text-primary hover:underline flex items-center gap-1"
-                      onClick={() => { openKanban('req', detailReq.id); closeDetail(); }}>
-                      <LayoutTemplate className="h-3 w-3" />在看板中查看
-                    </button>
-                  </div>
-                )}
-                {/* 缺陷详情 */}
-                {detailType === 'defect' && detailDef && (
-                  <div className="space-y-4">
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">标题</p>
-                      <p className="text-sm font-medium text-foreground">{detailDef.title}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">提出人</p>
-                      <p className="text-sm text-foreground">{detailDef.reporter}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">严重程度</p>
-                      <span className={`inline-block text-xs px-2.5 py-1 rounded-full font-medium ${SEVERITY_COLORS[detailDef.severity]}`}>
-                        {SEVERITY_LABELS[detailDef.severity]}
-                      </span>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">描述</p>
-                      <p className="text-sm text-foreground leading-relaxed">{detailDef.description}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-2">状态变更</p>
-                      <Select value={detailDef.status} onValueChange={(val: DefectStatus) => updateDefStatus(detailDef.id, val)}>
-                        <SelectTrigger className="w-[140px] h-8 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {(Object.keys(DEF_STATUS_LABELS) as DefectStatus[]).map(s => (
-                            <SelectItem key={s} value={s}>
-                              <div className="flex items-center gap-2">
-                                <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[s].split(' ')[0]}`} />
-                                {DEF_STATUS_LABELS[s]}
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">创建时间</p>
-                      <p className="text-sm text-foreground">{detailDef.createdAt}</p>
-                    </div>
-                    <button className="text-xs text-primary hover:underline flex items-center gap-1"
-                      onClick={() => { openKanban('defect', detailDef.id); closeDetail(); }}>
-                      <LayoutTemplate className="h-3 w-3" />在看板中查看
-                    </button>
-                  </div>
-                )}
-                {/* 用例详情 */}
-                {detailType === 'case' && detailCase && (
-                  <div className="space-y-4">
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">标题</p>
-                      <p className="text-sm font-medium text-foreground">{detailCase.title}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">提出人</p>
-                      <p className="text-sm text-foreground">{detailCase.reporter}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">描述</p>
-                      <p className="text-sm text-foreground leading-relaxed">{detailCase.description}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-2">执行步骤</p>
-                      <ol className="space-y-1.5">
-                        {detailCase.steps.map((step, i) => (
-                          <li key={i} className="flex gap-2 text-xs text-foreground">
-                            <span className="h-4 w-4 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 font-medium text-[10px]">{i + 1}</span>
-                            <span className="leading-relaxed">{step}</span>
-                          </li>
-                        ))}
-                      </ol>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-2">状态变更</p>
-                      <Select value={detailCase.status} onValueChange={(val: CaseStatus) => updateCaseStatus(detailCase.id, val)}>
-                        <SelectTrigger className="w-[140px] h-8 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {(Object.keys(CASE_STATUS_LABELS) as CaseStatus[]).map(s => (
-                            <SelectItem key={s} value={s}>
-                              <div className="flex items-center gap-2">
-                                <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[s].split(' ')[0]}`} />
-                                {CASE_STATUS_LABELS[s]}
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">创建时间</p>
-                      <p className="text-sm text-foreground">{detailCase.createdAt}</p>
-                    </div>
-                    <button className="text-xs text-primary hover:underline flex items-center gap-1"
-                      onClick={() => { openKanban('case', detailCase.id); closeDetail(); }}>
-                      <LayoutTemplate className="h-3 w-3" />在看板中查看
-                    </button>
-                  </div>
-                )}
-              </ScrollArea>
-            </>
-          )}
-        </div>
+
+                <DialogFooter className="px-6 py-4 border-t border-border/50 flex justify-end items-center gap-3">
+                  <Button variant="outline" size="sm" onClick={() => { openKanban(detailType, detailReq?.id ?? detailDef?.id ?? detailCase?.id ?? ''); closeDetail(); }}>
+                    在看板中查看
+                  </Button>
+                  <Button size="sm" onClick={() => {
+                    if (detailType === 'req' && detailReq) {
+                      setQuotedCard({ type: 'req', id: detailReq.id, title: detailReq.title, reporter: detailReq.reporter });
+                    } else if (detailType === 'defect' && detailDef) {
+                      setQuotedCard({ type: 'defect', id: detailDef.id, title: detailDef.title, reporter: detailDef.reporter });
+                    } else if (detailType === 'case' && detailCase) {
+                      setQuotedCard({ type: 'case', id: detailCase.id, title: detailCase.title, reporter: detailCase.reporter });
+                    }
+                    closeDetail();
+                  }}>
+                    引用到会话
+                  </Button>
+                </DialogFooter>
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* ── Kanban Drawer (full overlay) ── */}
         <div className={`absolute inset-0 bg-background z-40 flex flex-col transition-transform duration-300 ${kanbanOpen ? 'translate-x-0' : '-translate-x-full'}`}>

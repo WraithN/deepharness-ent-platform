@@ -190,15 +190,16 @@ type PromptStats struct {
 
 // TeamService 定义团队技能/提示词服务接口。
 type TeamService interface {
-	ListSkills(page, pageSize int) (common.PaginatedList[Skill], error)
-	CreateSkill(req CreateSkillRequest) (Skill, error)
-	UpdateSkill(id string, req UpdateSkillRequest) (Skill, error)
-	DeleteSkill(id string) error
-	ReviewSkill(id string, action string, reviewerID string) (Skill, error)
-	UpdateSkillCategories(id string, categoryIDs []string) (Skill, error)
-	ListSkillCategories() ([]SkillCategory, error)
-	CreateSkillCategory(req CreateSkillCategoryRequest) (SkillCategory, error)
-	DeleteSkillCategory(id string) error
+	// ListSkills 返回技能列表；workspaceID 非空时按工作区过滤并返回该工作区的安装状态。
+	ListSkills(workspaceID string, page, pageSize int) (common.PaginatedList[Skill], error)
+	CreateSkill(req CreateSkillRequest, workspaceID string) (Skill, error)
+	UpdateSkill(id string, req UpdateSkillRequest, workspaceID string) (Skill, error)
+	DeleteSkill(id string, workspaceID string) error
+	ReviewSkill(id string, action string, reviewerID string, workspaceID string) (Skill, error)
+	UpdateSkillCategories(id string, workspaceID string, categoryIDs []string) (Skill, error)
+	ListSkillCategories(workspaceID string) ([]SkillCategory, error)
+	CreateSkillCategory(req CreateSkillCategoryRequest, workspaceID string) (SkillCategory, error)
+	DeleteSkillCategory(id string, workspaceID string) error
 
 	ListPromptsVisibleTo(userID string, isSuperAdmin bool, page, pageSize int) (common.PaginatedList[Prompt], error)
 	CreatePrompt(req CreatePromptRequest, createdBy string) (Prompt, error)
@@ -213,7 +214,7 @@ type TeamService interface {
 	CreatePromptCategory(req CreatePromptCategoryRequest) (PromptCategory, error)
 	DeletePromptCategory(id string) error
 
-	GetSkillStats() (SkillStats, error)
+	GetSkillStats(workspaceID string) (SkillStats, error)
 	GetPromptStats() (PromptStats, error)
 }
 
@@ -228,21 +229,42 @@ func NewDBTeamService(db *sql.DB) *DBTeamService {
 }
 
 // ListSkills 返回团队技能列表，支持服务端分页。
-func (s *DBTeamService) ListSkills(page, pageSize int) (common.PaginatedList[Skill], error) {
+// workspaceID 非空时，仅返回该工作区的技能（含全局技能），并以 workspace_skill_installs 中的安装状态覆盖全局默认值。
+func (s *DBTeamService) ListSkills(workspaceID string, page, pageSize int) (common.PaginatedList[Skill], error) {
 	page = common.NormalizePage(page)
 	pageSize = common.NormalizePageSize(pageSize, 10, 100)
 
 	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM team_skills`).Scan(&total); err != nil {
-		return common.PaginatedList[Skill]{}, fmt.Errorf("count skills failed: %w", err)
-	}
+	var rows *sql.Rows
+	var err error
 
-	rows, err := s.db.Query(`
-		SELECT id, name, description, category, tags, downloads, rating, installed, icon, phase, status, created_at, updated_at
-		FROM team_skills
-		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2
-	`, pageSize, common.Offset(page, pageSize))
+	if workspaceID == "" {
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM team_skills`).Scan(&total); err != nil {
+			return common.PaginatedList[Skill]{}, fmt.Errorf("count skills failed: %w", err)
+		}
+		rows, err = s.db.Query(`
+			SELECT id, name, description, category, tags, downloads, rating, installed, icon, phase, status, created_at, updated_at
+			FROM team_skills
+			ORDER BY created_at DESC
+			LIMIT $1 OFFSET $2
+		`, pageSize, common.Offset(page, pageSize))
+	} else {
+		if err := s.db.QueryRow(`
+			SELECT COUNT(*) FROM team_skills
+			WHERE workspace_id = $1 OR workspace_id IS NULL
+		`, workspaceID).Scan(&total); err != nil {
+			return common.PaginatedList[Skill]{}, fmt.Errorf("count skills failed: %w", err)
+		}
+		rows, err = s.db.Query(`
+			SELECT s.id, s.name, s.description, s.category, s.tags, s.downloads, s.rating,
+			       COALESCE(wsi.installed, s.installed) AS installed, s.icon, s.phase, s.status, s.created_at, s.updated_at
+			FROM team_skills s
+			LEFT JOIN workspace_skill_installs wsi ON wsi.skill_id = s.id AND wsi.workspace_id = $1
+			WHERE s.workspace_id = $1 OR s.workspace_id IS NULL
+			ORDER BY s.created_at DESC
+			LIMIT $2 OFFSET $3
+		`, workspaceID, pageSize, common.Offset(page, pageSize))
+	}
 	if err != nil {
 		return common.PaginatedList[Skill]{}, fmt.Errorf("list skills failed: %w", err)
 	}
@@ -285,7 +307,8 @@ func (s *DBTeamService) ListSkills(page, pageSize int) (common.PaginatedList[Ski
 }
 
 // CreateSkill 创建新技能。
-func (s *DBTeamService) CreateSkill(req CreateSkillRequest) (Skill, error) {
+// workspaceID 非空时，技能归属到该工作区；为空时创建为全局技能。
+func (s *DBTeamService) CreateSkill(req CreateSkillRequest, workspaceID string) (Skill, error) {
 	now := time.Now().UTC()
 	skill := Skill{
 		ID:          uuid.New().String(),
@@ -305,10 +328,15 @@ func (s *DBTeamService) CreateSkill(req CreateSkillRequest) (Skill, error) {
 		skill.Rating = 5.0
 	}
 
+	var workspaceIDArg interface{}
+	if workspaceID != "" {
+		workspaceIDArg = workspaceID
+	}
+
 	_, err := s.db.Exec(`
-		INSERT INTO team_skills (id, name, description, category, tags, downloads, rating, installed, icon, phase, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-	`, skill.ID, skill.Name, skill.Description, skill.Category, strings.Join(skill.Tags, ","), skill.Downloads, skill.Rating, skill.Installed, skill.Icon, skill.Phase, skill.CreatedAt, skill.UpdatedAt)
+		INSERT INTO team_skills (id, name, description, category, tags, downloads, rating, installed, icon, phase, workspace_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`, skill.ID, skill.Name, skill.Description, skill.Category, strings.Join(skill.Tags, ","), skill.Downloads, skill.Rating, skill.Installed, skill.Icon, skill.Phase, workspaceIDArg, skill.CreatedAt, skill.UpdatedAt)
 	if err != nil {
 		return Skill{}, fmt.Errorf("insert skill failed: %w", err)
 	}
@@ -316,27 +344,47 @@ func (s *DBTeamService) CreateSkill(req CreateSkillRequest) (Skill, error) {
 }
 
 // UpdateSkill 更新技能状态。
-func (s *DBTeamService) UpdateSkill(id string, req UpdateSkillRequest) (Skill, error) {
-	skill, err := s.getSkill(id)
+// workspaceID 非空时，安装/卸载状态写入 workspace_skill_installs，避免影响其他工作区；为空时修改全局默认状态。
+func (s *DBTeamService) UpdateSkill(id string, req UpdateSkillRequest, workspaceID string) (Skill, error) {
+	skill, err := s.getSkill(id, workspaceID)
 	if err != nil {
 		return Skill{}, err
 	}
 	if req.Installed != nil {
 		skill.Installed = *req.Installed
+		if workspaceID != "" {
+			_, err = s.db.Exec(`
+				INSERT INTO workspace_skill_installs (workspace_id, skill_id, installed, created_at, updated_at)
+				VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+				ON CONFLICT (workspace_id, skill_id)
+				DO UPDATE SET installed = EXCLUDED.installed, updated_at = CURRENT_TIMESTAMP
+			`, workspaceID, id, *req.Installed)
+			if err != nil {
+				return Skill{}, fmt.Errorf("upsert skill install state failed: %w", err)
+			}
+		} else {
+			_, err = s.db.Exec(`
+				UPDATE team_skills SET installed = $1, updated_at = $2 WHERE id = $3
+			`, skill.Installed, time.Now().UTC(), id)
+			if err != nil {
+				return Skill{}, fmt.Errorf("update skill failed: %w", err)
+			}
+		}
 	}
 
-	_, err = s.db.Exec(`
-		UPDATE team_skills SET installed = $1, updated_at = $2 WHERE id = $3
-	`, skill.Installed, time.Now().UTC(), id)
-	if err != nil {
-		return Skill{}, fmt.Errorf("update skill failed: %w", err)
-	}
 	return skill, nil
 }
 
 // DeleteSkill 删除技能。
-func (s *DBTeamService) DeleteSkill(id string) error {
-	res, err := s.db.Exec(`DELETE FROM team_skills WHERE id = $1`, id)
+// workspaceID 非空时，仅允许删除属于该工作区或全局的技能，防止跨工作区误删。
+func (s *DBTeamService) DeleteSkill(id string, workspaceID string) error {
+	query := `DELETE FROM team_skills WHERE id = $1`
+	args := []any{id}
+	if workspaceID != "" {
+		query = `DELETE FROM team_skills WHERE id = $1 AND (workspace_id = $2 OR workspace_id IS NULL)`
+		args = append(args, workspaceID)
+	}
+	res, err := s.db.Exec(query, args...)
 	if err != nil {
 		return fmt.Errorf("delete skill failed: %w", err)
 	}
@@ -348,8 +396,9 @@ func (s *DBTeamService) DeleteSkill(id string) error {
 }
 
 // ReviewSkill 超级管理员审核技能（状态机与 ReviewPrompt 对称）。
-func (s *DBTeamService) ReviewSkill(id string, action string, reviewerID string) (Skill, error) {
-	skill, err := s.getSkill(id)
+// workspaceID 非空时仅审核该工作区可见的技能。
+func (s *DBTeamService) ReviewSkill(id string, action string, reviewerID string, workspaceID string) (Skill, error) {
+	skill, err := s.getSkill(id, workspaceID)
 	if err != nil {
 		return Skill{}, err
 	}
@@ -378,27 +427,40 @@ func (s *DBTeamService) ReviewSkill(id string, action string, reviewerID string)
 	if err != nil {
 		return Skill{}, fmt.Errorf("review skill failed: %w", err)
 	}
-	return s.getSkill(id)
+	return s.getSkill(id, workspaceID)
 }
 
 // UpdateSkillCategories 更新技能的多分类关联（替换语义）。
-func (s *DBTeamService) UpdateSkillCategories(id string, categoryIDs []string) (Skill, error) {
-	if _, err := s.getSkill(id); err != nil {
+// workspaceID 用于校验分类是否属于当前工作区或全局分类。
+func (s *DBTeamService) UpdateSkillCategories(id string, workspaceID string, categoryIDs []string) (Skill, error) {
+	if _, err := s.getSkill(id, workspaceID); err != nil {
 		return Skill{}, err
 	}
-	if err := s.replaceCategoryLinks(skillCategoryLinkTable, skillCategoryTable, "skill_id", id, categoryIDs); err != nil {
+	if err := s.replaceCategoryLinks(skillCategoryLinkTable, skillCategoryTable, "skill_id", id, categoryIDs, workspaceID); err != nil {
 		return Skill{}, err
 	}
-	return s.getSkill(id)
+	return s.getSkill(id, workspaceID)
 }
 
-func (s *DBTeamService) getSkill(id string) (Skill, error) {
+func (s *DBTeamService) getSkill(id string, workspaceID string) (Skill, error) {
 	var sk Skill
 	var tags sql.NullString
-	err := s.db.QueryRow(`
-		SELECT id, name, description, category, tags, downloads, rating, installed, icon, phase, status, created_at, updated_at
-		FROM team_skills WHERE id = $1
-	`, id).Scan(&sk.ID, &sk.Name, &sk.Description, &sk.Category, &tags, &sk.Downloads, &sk.Rating, &sk.Installed, &sk.Icon, &sk.Phase, &sk.Status, &sk.CreatedAt, &sk.UpdatedAt)
+	var err error
+
+	if workspaceID == "" {
+		err = s.db.QueryRow(`
+			SELECT id, name, description, category, tags, downloads, rating, installed, icon, phase, status, created_at, updated_at
+			FROM team_skills WHERE id = $1
+		`, id).Scan(&sk.ID, &sk.Name, &sk.Description, &sk.Category, &tags, &sk.Downloads, &sk.Rating, &sk.Installed, &sk.Icon, &sk.Phase, &sk.Status, &sk.CreatedAt, &sk.UpdatedAt)
+	} else {
+		err = s.db.QueryRow(`
+			SELECT s.id, s.name, s.description, s.category, s.tags, s.downloads, s.rating,
+			       COALESCE(wsi.installed, s.installed) AS installed, s.icon, s.phase, s.status, s.created_at, s.updated_at
+			FROM team_skills s
+			LEFT JOIN workspace_skill_installs wsi ON wsi.skill_id = s.id AND wsi.workspace_id = $2
+			WHERE s.id = $1 AND (s.workspace_id = $2 OR s.workspace_id IS NULL)
+		`, id, workspaceID).Scan(&sk.ID, &sk.Name, &sk.Description, &sk.Category, &tags, &sk.Downloads, &sk.Rating, &sk.Installed, &sk.Icon, &sk.Phase, &sk.Status, &sk.CreatedAt, &sk.UpdatedAt)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return Skill{}, errors.New("skill not found")
 	}
@@ -636,7 +698,7 @@ func (s *DBTeamService) UpdatePromptCategories(id string, categoryIDs []string) 
 	if _, err := s.getPrompt(id); err != nil {
 		return Prompt{}, err
 	}
-	if err := s.replaceCategoryLinks(promptCategoryLinkTable, promptCategoryTable, "prompt_id", id, categoryIDs); err != nil {
+	if err := s.replaceCategoryLinks(promptCategoryLinkTable, promptCategoryTable, "prompt_id", id, categoryIDs, ""); err != nil {
 		return Prompt{}, err
 	}
 	return s.getPrompt(id)
@@ -797,7 +859,8 @@ func (s *DBTeamService) listLinkedCategoryIDs(linkTable, idColumn string, ids []
 }
 
 // replaceCategoryLinks 以事务替换实体的分类链接：先校验分类 ID 均存在于分类表，再 delete + insert。
-func (s *DBTeamService) replaceCategoryLinks(linkTable, categoryTable, idColumn, id string, categoryIDs []string) error {
+// workspaceID 非空时，仅允许使用属于该工作区或全局的分类（用于技能分类隔离）。
+func (s *DBTeamService) replaceCategoryLinks(linkTable, categoryTable, idColumn, id string, categoryIDs []string, workspaceID string) error {
 	// 去重并过滤空 ID，避免主键冲突与脏数据。
 	deduped := make([]string, 0, len(categoryIDs))
 	seen := make(map[string]bool, len(categoryIDs))
@@ -816,7 +879,14 @@ func (s *DBTeamService) replaceCategoryLinks(linkTable, categoryTable, idColumn,
 			placeholders[i] = fmt.Sprintf("$%d", i+1)
 			args[i] = cid
 		}
-		query := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE id IN (%s)`, categoryTable, strings.Join(placeholders, ", "))
+		var query string
+		if workspaceID != "" {
+			workspacePlaceholder := fmt.Sprintf("$%d", len(deduped)+1)
+			query = fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE id IN (%s) AND (workspace_id = %s OR workspace_id IS NULL)`, categoryTable, strings.Join(placeholders, ", "), workspacePlaceholder)
+			args = append(args, workspaceID)
+		} else {
+			query = fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE id IN (%s)`, categoryTable, strings.Join(placeholders, ", "))
+		}
 		var validCount int
 		if err := s.db.QueryRow(query, args...).Scan(&validCount); err != nil {
 			return fmt.Errorf("validate categories failed: %w", err)
@@ -850,13 +920,25 @@ func (s *DBTeamService) replaceCategoryLinks(linkTable, categoryTable, idColumn,
 	return nil
 }
 
-// ListSkillCategories 返回所有技能分类，按排序权重和创建时间排序。
-func (s *DBTeamService) ListSkillCategories() ([]SkillCategory, error) {
-	rows, err := s.db.Query(`
-		SELECT id, name, builtin, sort_order, created_at, updated_at
-		FROM team_skill_categories
-		ORDER BY sort_order ASC, created_at ASC
-	`)
+// ListSkillCategories 返回技能分类。
+// workspaceID 非空时，仅返回该工作区的分类及全局内置分类。
+func (s *DBTeamService) ListSkillCategories(workspaceID string) ([]SkillCategory, error) {
+	var rows *sql.Rows
+	var err error
+	if workspaceID == "" {
+		rows, err = s.db.Query(`
+			SELECT id, name, builtin, sort_order, created_at, updated_at
+			FROM team_skill_categories
+			ORDER BY sort_order ASC, created_at ASC
+		`)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT id, name, builtin, sort_order, created_at, updated_at
+			FROM team_skill_categories
+			WHERE workspace_id = $1 OR workspace_id IS NULL
+			ORDER BY sort_order ASC, created_at ASC
+		`, workspaceID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("list skill categories failed: %w", err)
 	}
@@ -874,7 +956,8 @@ func (s *DBTeamService) ListSkillCategories() ([]SkillCategory, error) {
 }
 
 // CreateSkillCategory 创建新技能分类。
-func (s *DBTeamService) CreateSkillCategory(req CreateSkillCategoryRequest) (SkillCategory, error) {
+// workspaceID 非空时，分类归属到该工作区。
+func (s *DBTeamService) CreateSkillCategory(req CreateSkillCategoryRequest, workspaceID string) (SkillCategory, error) {
 	if strings.TrimSpace(req.Name) == "" {
 		return SkillCategory{}, errors.New("name is required")
 	}
@@ -887,10 +970,14 @@ func (s *DBTeamService) CreateSkillCategory(req CreateSkillCategoryRequest) (Ski
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	var workspaceIDArg interface{}
+	if workspaceID != "" {
+		workspaceIDArg = workspaceID
+	}
 	_, err := s.db.Exec(`
-		INSERT INTO team_skill_categories (id, name, builtin, sort_order, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, category.ID, category.Name, category.Builtin, category.SortOrder, category.CreatedAt, category.UpdatedAt)
+		INSERT INTO team_skill_categories (id, name, workspace_id, builtin, sort_order, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, category.ID, category.Name, workspaceIDArg, category.Builtin, category.SortOrder, category.CreatedAt, category.UpdatedAt)
 	if err != nil {
 		return SkillCategory{}, fmt.Errorf("insert skill category failed: %w", err)
 	}
@@ -898,9 +985,13 @@ func (s *DBTeamService) CreateSkillCategory(req CreateSkillCategoryRequest) (Ski
 }
 
 // DeleteSkillCategory 删除技能分类，内置分类不可删除。
-func (s *DBTeamService) DeleteSkillCategory(id string) error {
+// workspaceID 非空时，仅允许删除属于该工作区的非内置分类，防止误删全局分类。
+func (s *DBTeamService) DeleteSkillCategory(id string, workspaceID string) error {
 	var builtin bool
-	err := s.db.QueryRow(`SELECT builtin FROM team_skill_categories WHERE id = $1`, id).Scan(&builtin)
+	var categoryWorkspaceID sql.NullString
+	err := s.db.QueryRow(`
+		SELECT builtin, workspace_id FROM team_skill_categories WHERE id = $1
+	`, id).Scan(&builtin, &categoryWorkspaceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("skill category not found")
 	}
@@ -909,6 +1000,14 @@ func (s *DBTeamService) DeleteSkillCategory(id string) error {
 	}
 	if builtin {
 		return errors.New("cannot delete builtin category")
+	}
+	if workspaceID != "" {
+		if categoryWorkspaceID.Valid && categoryWorkspaceID.String != workspaceID {
+			return errors.New("cannot delete category from another workspace")
+		}
+		if !categoryWorkspaceID.Valid {
+			return errors.New("cannot delete global category from workspace context")
+		}
 	}
 	if _, err := s.db.Exec(`DELETE FROM team_skill_categories WHERE id = $1`, id); err != nil {
 		return fmt.Errorf("delete skill category failed: %w", err)
@@ -983,22 +1082,46 @@ func (s *DBTeamService) DeletePromptCategory(id string) error {
 }
 
 // GetSkillStats 返回技能大盘统计数据。
-func (s *DBTeamService) GetSkillStats() (SkillStats, error) {
+// workspaceID 非空时，统计数据按工作区隔离（安装状态以 workspace_skill_installs 为准）。
+func (s *DBTeamService) GetSkillStats(workspaceID string) (SkillStats, error) {
 	stats := SkillStats{
 		CategoryDistribution: make([]CategoryDistribution, 0),
 		TopSkills:            make([]TopSkill, 0),
 	}
 
-	if err := s.db.QueryRow(`SELECT COUNT(*), COUNT(*) FILTER (WHERE installed = TRUE) FROM team_skills`).Scan(&stats.Total, &stats.InstalledCount); err != nil {
-		return SkillStats{}, fmt.Errorf("count skill stats failed: %w", err)
+	if workspaceID == "" {
+		if err := s.db.QueryRow(`SELECT COUNT(*), COUNT(*) FILTER (WHERE installed = TRUE) FROM team_skills`).Scan(&stats.Total, &stats.InstalledCount); err != nil {
+			return SkillStats{}, fmt.Errorf("count skill stats failed: %w", err)
+		}
+	} else {
+		if err := s.db.QueryRow(`
+			SELECT COUNT(*), COUNT(*) FILTER (WHERE COALESCE(wsi.installed, s.installed) = TRUE)
+			FROM team_skills s
+			LEFT JOIN workspace_skill_installs wsi ON wsi.skill_id = s.id AND wsi.workspace_id = $1
+			WHERE s.workspace_id = $1 OR s.workspace_id IS NULL
+		`, workspaceID).Scan(&stats.Total, &stats.InstalledCount); err != nil {
+			return SkillStats{}, fmt.Errorf("count skill stats failed: %w", err)
+		}
 	}
 
-	rows, err := s.db.Query(`
-		SELECT category, COUNT(*) AS count
-		FROM team_skills
-		GROUP BY category
-		ORDER BY count DESC
-	`)
+	var rows *sql.Rows
+	var err error
+	if workspaceID == "" {
+		rows, err = s.db.Query(`
+			SELECT category, COUNT(*) AS count
+			FROM team_skills
+			GROUP BY category
+			ORDER BY count DESC
+		`)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT category, COUNT(*) AS count
+			FROM team_skills
+			WHERE workspace_id = $1 OR workspace_id IS NULL
+			GROUP BY category
+			ORDER BY count DESC
+		`, workspaceID)
+	}
 	if err != nil {
 		return SkillStats{}, fmt.Errorf("list skill category distribution failed: %w", err)
 	}
@@ -1014,12 +1137,23 @@ func (s *DBTeamService) GetSkillStats() (SkillStats, error) {
 		return SkillStats{}, fmt.Errorf("iterate skill category distribution failed: %w", err)
 	}
 
-	topRows, err := s.db.Query(`
-		SELECT id, name, category, downloads, rating
-		FROM team_skills
-		ORDER BY downloads DESC
-		LIMIT 10
-	`)
+	var topRows *sql.Rows
+	if workspaceID == "" {
+		topRows, err = s.db.Query(`
+			SELECT id, name, category, downloads, rating
+			FROM team_skills
+			ORDER BY downloads DESC
+			LIMIT 10
+		`)
+	} else {
+		topRows, err = s.db.Query(`
+			SELECT id, name, category, downloads, rating
+			FROM team_skills
+			WHERE workspace_id = $1 OR workspace_id IS NULL
+			ORDER BY downloads DESC
+			LIMIT 10
+		`, workspaceID)
+	}
 	if err != nil {
 		return SkillStats{}, fmt.Errorf("list top skills failed: %w", err)
 	}

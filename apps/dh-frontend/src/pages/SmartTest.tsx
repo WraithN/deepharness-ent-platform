@@ -62,88 +62,9 @@ interface Requirement {
 
 const TEST_REQ_PAGE_SIZE = 10;
 
-// Mock Data
-const MOCK_REQUIREMENTS: Requirement[] = [
-  {
-    id: 'req-1',
-    title: '用户登录功能',
-    testCases: [
-      {
-        id: 'tc-1-1',
-        title: '正确输入用户名密码登录成功',
-        status: 'pass',
-        code: `import pytest
-from app.auth import login
-
-def test_login_success():
-    """测试正确的用户名和密码登录成功"""
-    user = login("admin", "123456")
-    assert user is not None
-    assert user.is_authenticated == True
-`,
-        tags: ['登录', '正向'],
-        type: 'api',
-      },
-      {
-        id: 'tc-1-2',
-        title: '密码错误提示登录失败',
-        status: 'fail',
-        code: `import pytest
-from app.auth import login, AuthException
-
-def test_login_fail_wrong_password():
-    """测试错误的密码导致登录失败"""
-    with pytest.raises(AuthException) as excinfo:
-        login("admin", "wrong_pass")
-
-    assert "Invalid credentials" in str(excinfo.value)
-`,
-        tags: ['登录', '异常'],
-        type: 'api',
-      },
-    ],
-  },
-  {
-    id: 'req-2',
-    title: '购物车结算功能',
-    testCases: [
-      {
-        id: 'tc-2-1',
-        title: '购物车正常结算并扣减库存',
-        status: 'untested',
-        code: `import pytest
-from app.cart import Cart
-from app.inventory import check_stock
-
-def test_checkout_success(mock_inventory):
-    """测试购物车正常结算"""
-    cart = Cart(user_id=1)
-    cart.add_item("item_001", 2)
-
-    # 执行结算
-    result = cart.checkout()
-
-    assert result.status == "success"
-    assert check_stock("item_001") == mock_inventory["item_001"] - 2
-`,
-        tags: ['结算', '库存'],
-        type: 'api',
-      },
-      {
-        id: 'tc-2-2',
-        title: '库存不足时结算失败',
-        status: 'untested',
-        code: `# 尚未生成代码，点击由 AI 自动编写`,
-        tags: ['结算', '异常'],
-        type: 'api',
-      },
-    ],
-  },
-];
-
 export const SmartTest: React.FC = () => {
-  const [requirements, setRequirements] = useState<Requirement[]>(MOCK_REQUIREMENTS);
-  const [selectedTestCaseId, setSelectedTestCaseId] = useState<string | null>('tc-1-1');
+  const [requirements, setRequirements] = useState<Requirement[]>([]);
+  const [selectedTestCaseId, setSelectedTestCaseId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
 
@@ -439,7 +360,7 @@ def test_ai_generated_case():
             </div>
           </CardHeader>
           <CardContent className="flex-1 overflow-y-auto p-4 space-y-4">
-            <Accordion type="multiple" defaultValue={['req-1', 'req-2']} className="w-full">
+            <Accordion type="multiple" className="w-full">
               {paginatedRequirements.map((req) => (
                 <AccordionItem
                   value={req.id}

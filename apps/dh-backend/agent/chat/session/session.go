@@ -68,25 +68,32 @@ func (s *SessionStore) UpdateTitle(ctx context.Context, id string, title string)
 	return nil
 }
 
-func (s *SessionStore) ListSessions(ctx context.Context) ([]chat.Session, error) {
+func (s *SessionStore) ListSessions(ctx context.Context, workspaceID, userID string) ([]chat.Session, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	result := make([]chat.Session, 0, len(s.sessions))
 	for _, sess := range s.sessions {
+		// 按 workspace + user 隔离；未设置 user_id 的历史数据不过滤用户，避免切换后丢失。
+		if sess.WorkspaceID != workspaceID {
+			continue
+		}
+		if sess.UserID != "" && sess.UserID != userID {
+			continue
+		}
 		result = append(result, sess)
 	}
 	return result, nil
 }
 
-// GetSessionTrend 内存实现：按日期分组统计会话数量。
-func (s *SessionStore) GetSessionTrend(ctx context.Context, days int) ([]chat.DateCount, error) {
+// GetSessionTrend 内存实现：按工作空间与日期分组统计会话数量。
+func (s *SessionStore) GetSessionTrend(ctx context.Context, workspaceID string, days int) ([]chat.DateCount, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	cutoff := time.Now().AddDate(0, 0, -days)
 	counts := make(map[string]int)
 	for _, sess := range s.sessions {
-		if sess.CreatedAt.Before(cutoff) {
+		if sess.WorkspaceID != workspaceID || sess.CreatedAt.Before(cutoff) {
 			continue
 		}
 		date := sess.CreatedAt.Format("2006-01-02")
@@ -100,14 +107,16 @@ func (s *SessionStore) GetSessionTrend(ctx context.Context, days int) ([]chat.Da
 	return result, nil
 }
 
-// GetSessionTrails 内存实现：返回最近的会话轨迹（不含消息数量）。
-func (s *SessionStore) GetSessionTrails(ctx context.Context, limit int) ([]chat.SessionTrailInfo, error) {
+// GetSessionTrails 内存实现：返回指定工作空间最近的会话轨迹（不含消息数量）。
+func (s *SessionStore) GetSessionTrails(ctx context.Context, workspaceID string, limit int) ([]chat.SessionTrailInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	all := make([]chat.Session, 0, len(s.sessions))
 	for _, sess := range s.sessions {
-		all = append(all, sess)
+		if sess.WorkspaceID == workspaceID {
+			all = append(all, sess)
+		}
 	}
 
 	// 按更新时间倒序排序。
@@ -127,6 +136,7 @@ func (s *SessionStore) GetSessionTrails(ctx context.Context, limit int) ([]chat.
 		sess := all[i]
 		result = append(result, chat.SessionTrailInfo{
 			ID:        sess.ID,
+			UserID:    sess.UserID,
 			Title:     sess.Title,
 			AgentType: sess.AgentType,
 			CreatedAt: sess.CreatedAt,

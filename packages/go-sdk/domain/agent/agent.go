@@ -69,6 +69,7 @@ type WorkspaceAgentConfig struct {
 	Name            string              `json:"name"`
 	Description     string              `json:"description"`
 	Enabled         bool                `json:"enabled"`
+	IsDefault       bool                `json:"isDefault"`
 	Model           string              `json:"model"`
 	ModelSource     string              `json:"modelSource"`
 	BaseURL         string              `json:"baseUrl"`
@@ -77,6 +78,15 @@ type WorkspaceAgentConfig struct {
 	AdvancedConfig  *AdvancedAgentConfig `json:"advancedConfig,omitempty"`
 	CreatedAt       time.Time           `json:"createdAt"`
 	UpdatedAt       time.Time           `json:"updatedAt"`
+}
+
+// ModelVendorGroup 表示按厂商分组的模型池。
+// 厂商清单在 config.yaml 的 coding_agents.model_vendors 中配置，
+// 前端模型下拉框据此按厂商分组展示，避免长列表平铺。
+type ModelVendorGroup struct {
+	Key    string   `json:"key"`
+	Name   string   `json:"name"`
+	Models []string `json:"models"`
 }
 
 // AvailableAgent 表示前端智能体选择器中展示的智能体项。

@@ -68,6 +68,24 @@ CREATE INDEX IF NOT EXISTS idx_category ON team_skills (category);
 CREATE INDEX IF NOT EXISTS idx_phase ON team_skills (phase);
 CREATE INDEX IF NOT EXISTS idx_installed ON team_skills (installed);
 
+-- 工作区技能安装状态：按工作区记录每个技能的安装/卸载状态。
+CREATE TABLE IF NOT EXISTS workspace_skill_installs (
+    workspace_id VARCHAR(36) NOT NULL,
+    skill_id VARCHAR(36) NOT NULL REFERENCES team_skills(id) ON DELETE CASCADE,
+    installed BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (workspace_id, skill_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_skill_installs_skill ON workspace_skill_installs(skill_id);
+
+DROP TRIGGER IF EXISTS trigger_workspace_skill_installs_updated_at ON workspace_skill_installs;
+CREATE TRIGGER trigger_workspace_skill_installs_updated_at
+BEFORE UPDATE ON workspace_skill_installs
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
+
 DROP TRIGGER IF EXISTS trigger_team_skills_updated_at ON team_skills;
 CREATE TRIGGER trigger_team_skills_updated_at
 BEFORE UPDATE ON team_skills
@@ -152,11 +170,13 @@ ON CONFLICT (id) DO NOTHING;
 -- 技能分类表
 CREATE TABLE IF NOT EXISTS team_skill_categories (
     id VARCHAR(36) PRIMARY KEY,
-    name VARCHAR(100) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    workspace_id VARCHAR(36),
     builtin BOOLEAN NOT NULL DEFAULT FALSE,
     sort_order INT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_team_skill_categories_name_workspace UNIQUE (name, COALESCE(workspace_id, ''))
 );
 
 COMMENT ON TABLE team_skill_categories IS '团队技能分类';

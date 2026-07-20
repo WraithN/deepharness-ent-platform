@@ -92,7 +92,8 @@ func (s *DBPlatformTemplateService) ListByCategory(category string, publishedOnl
 	if publishedOnly {
 		query += ` AND published = true`
 	}
-	query += ` ORDER BY sort_order ASC, id ASC`
+	// 发布态模板始终排在草稿态之前；同状态内按 sort_order 排序
+	query += ` ORDER BY published DESC, sort_order ASC, id ASC`
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -227,7 +228,8 @@ func (s *DBPlatformTemplateService) Delete(key, category string) error {
 	return nil
 }
 
-// UpdateOrder 更新同一分类下模板的排序，keys 顺序即为目标顺序。
+// UpdateOrder 更新同一分类下已发布模板的排序，keys 顺序即为目标顺序。
+// 仅允许对已发布模板排序；未发布模板不能移动，且始终排在已发布模板之后。
 func (s *DBPlatformTemplateService) UpdateOrder(category string, keys []string) error {
 	if err := s.ensureSeeded(); err != nil {
 		return err
@@ -245,18 +247,30 @@ func (s *DBPlatformTemplateService) UpdateOrder(category string, keys []string) 
 	}
 	defer tx.Rollback()
 
+	// 校验传入的 keys 必须恰好覆盖该分类下所有已发布模板
+	var publishedCount int
+	if err := tx.QueryRow(`
+		SELECT COUNT(*) FROM platform_templates
+		WHERE category = $1 AND published = true
+	`, category).Scan(&publishedCount); err != nil {
+		return fmt.Errorf("count published templates failed: %w", err)
+	}
+	if len(keys) != publishedCount {
+		return errors.New("keys must include all published templates")
+	}
+
 	for i, key := range keys {
 		res, err := tx.Exec(`
 			UPDATE platform_templates
 			SET sort_order = $1
-			WHERE category = $2 AND key = $3
+			WHERE category = $2 AND key = $3 AND published = true
 		`, i+1, category, key)
 		if err != nil {
 			return fmt.Errorf("update order for %s failed: %w", key, err)
 		}
 		n, _ := res.RowsAffected()
 		if n == 0 {
-			return fmt.Errorf("template %s not found", key)
+			return fmt.Errorf("template %s not found or not published", key)
 		}
 	}
 
@@ -267,6 +281,7 @@ func (s *DBPlatformTemplateService) UpdateOrder(category string, keys []string) 
 }
 
 // Publish 设置指定模板的发布状态。
+// 发布时把 sort_order 放到已发布分组末尾，保证发布态始终排在草稿态之前且顺序合理。
 func (s *DBPlatformTemplateService) Publish(key, category string, published bool) error {
 	if err := s.ensureSeeded(); err != nil {
 		return err
@@ -275,13 +290,37 @@ func (s *DBPlatformTemplateService) Publish(key, category string, published bool
 		return errors.New("key and category are required")
 	}
 
+	if published {
+		var nextSortOrder int
+		if err := s.db.QueryRow(`
+			SELECT COALESCE(MAX(sort_order), 0) + 1
+			FROM platform_templates
+			WHERE category = $1 AND published = true
+		`, category).Scan(&nextSortOrder); err != nil {
+			return fmt.Errorf("compute published sort order failed: %w", err)
+		}
+		res, err := s.db.Exec(`
+			UPDATE platform_templates
+			SET published = true, sort_order = $1
+			WHERE category = $2 AND key = $3
+		`, nextSortOrder, category, key)
+		if err != nil {
+			return fmt.Errorf("publish template failed: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return errors.New("template not found")
+		}
+		return nil
+	}
+
 	res, err := s.db.Exec(`
 		UPDATE platform_templates
-		SET published = $1
+		SET published = false
 		WHERE category = $2 AND key = $3
 	`, published, category, key)
 	if err != nil {
-		return fmt.Errorf("publish template failed: %w", err)
+		return fmt.Errorf("unpublish template failed: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {

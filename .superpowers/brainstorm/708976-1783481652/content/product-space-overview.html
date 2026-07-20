@@ -1,0 +1,48 @@
+<h2>产品空间功能设计</h2>
+<p class="subtitle">基于当前代码结构的初步梳理，需确认几个关键设计点</p>
+
+<div class="section">
+  <h3>当前已有基础</h3>
+  <div class="mockup">
+    <div class="mockup-header">PersonalSpace → 对 sub_role=pm 渲染为 ProductWorkspace</div>
+    <div class="mockup-body">
+      <div style="display:flex;gap:12px;margin-bottom:12px;">
+        <span class="mock-button" style="background:var(--primary);color:var(--bg);">文档</span>
+        <span class="mock-button">看板</span>
+        <span class="mock-button">原型</span>
+        <span class="mock-button">历史</span>
+      </div>
+      <div class="placeholder">Markdown 编辑器 / 版本 diff / 原型预览</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>拟议目录结构（后端磁盘 + 数据库版本）</h3>
+  <div class="mockup">
+    <div class="mockup-header">WORKSPACE_ROOT / {workspace_id} / {user_id} / products</div>
+    <div class="mockup-body" style="font-family:monospace;line-height:1.6;">
+      products/<br>
+      &nbsp;&nbsp;docs/<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;产品需求/<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PRD-v1.md<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PRD-v2.md<br>
+      &nbsp;&nbsp;prototypes/<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;App原型/<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;home.png<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;detail.pdf<br>
+    </div>
+  </div>
+  <p><strong>约束：</strong>docs/ 与 prototypes/ 是系统保留目录，前端文件树中不直接展示这两层，而是平铺/分组展示其内容。</p>
+</div>
+
+<div class="section">
+  <h3>待确认的关键问题</h3>
+  <ul>
+    <li>新产品空间是<strong>扩展现有 ProductWorkspace</strong>，还是<strong>独立新页面</strong>？</li>
+    <li>"产品角色"是否仅指 <code>sub_role = pm</code>？space_admin 是否也能管理？</li>
+    <li>目录 owner 是<strong>当前登录用户</strong>，还是 workspace 最老成员（现有 EnsureUserWorkspaceDirs 逻辑）？</li>
+    <li>文档版本管理复用现有 <code>product_docs / product_doc_versions</code>，还是新建表？</li>
+    <li>子目录支持到几级？原型文件支持哪些格式/预览方式？</li>
+  </ul>
+</div>

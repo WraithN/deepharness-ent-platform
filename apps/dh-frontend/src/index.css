@@ -161,6 +161,13 @@ html {
     background: hsl(var(--border));
     border-radius: 3px;
   }
+
+  /* 统一聚焦样式：移除浏览器原生黑框，改用柔和蓝色光环 */
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px hsl(var(--primary) / 0.25);
+  }
+
   body {
     @apply text-foreground font-sans antialiased;
     background-color: hsl(var(--background));
