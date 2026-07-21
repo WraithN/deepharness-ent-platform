@@ -2267,15 +2267,15 @@ export const Chat: React.FC = () => {
             <div
               ref={mentionOverlayRef}
               aria-hidden
-              className={cn('pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-5 text-base md:text-sm text-foreground', showPreview ? 'py-3 text-sm' : 'py-4')}
+              className={cn('pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-5 text-base md:text-sm text-foreground z-0', showPreview ? 'py-3 text-sm' : 'py-4')}
             >
-              {highlightedInput}
+              {input.trim().length > 0 ? highlightedInput : null}
             </div>
             <Textarea
               ref={textareaRef}
               disabled={!chatEnabled}
               placeholder={chatEnabled ? '你想让 AI 助手做什么？ 例如：开发一个小游戏、实现一个新功能、做数据分析...' : '空间管理员没有配置智能体，请联系空间管理员。'}
-              className={cn('relative w-full resize-none border-0 focus-visible:ring-0 px-5 py-4 shadow-none bg-transparent text-transparent caret-foreground focus:bg-transparent dark:bg-transparent dark:focus:bg-transparent', showPreview ? 'min-h-[60px] text-sm py-3' : 'min-h-[100px] text-base')}
+              className={cn('relative w-full resize-none border-0 focus-visible:ring-0 px-5 py-4 shadow-none bg-transparent text-transparent caret-foreground focus:bg-transparent dark:bg-transparent dark:focus:bg-transparent z-10 leading-[1.5]', showPreview ? 'min-h-[60px] text-sm py-3' : 'min-h-[100px] text-base')}
               value={input}
               onChange={handleInputChange}
               onPaste={handlePaste}
