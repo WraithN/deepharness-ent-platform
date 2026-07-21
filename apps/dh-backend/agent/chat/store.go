@@ -40,4 +40,8 @@ type SessionStore interface {
 type MessageStore interface {
 	Append(ctx context.Context, sessionID string, msg Message) error
 	GetHistory(ctx context.Context, sessionID string, limit int) ([]Message, error)
+	// MigrateMessages 将旧 sessionID 下的所有消息迁移到新 sessionID。
+	// 当 gatewayd 创建了与原始 threadID 不同的实际 threadID 时调用，
+	// 确保前后端 session ID 一致。
+	MigrateMessages(ctx context.Context, oldSessionID, newSessionID string) error
 }

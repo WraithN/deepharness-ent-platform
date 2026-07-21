@@ -163,13 +163,14 @@ func fuzzyMatchCommand(input string) *CommandConfig {
 }
 // applyIntentCommand 将意图识别匹配到的指令模板应用到用户消息上。
 // 用原始用户输入作为 {ARGS}，渲染指令模板并替换消息内容。
-func applyIntentCommand(messages []agui.Message, cmd, userInput string) {
+// workspacePath 用于替换模板中的 {WORKSPACE_PATH}，与 interceptCommands 保持一致。
+func applyIntentCommand(messages []agui.Message, cmd, userInput, workspacePath string) {
 	cfg, found := findCommandConfig(cmd)
 	if !found {
 		return
 	}
 
-	rendered := renderTemplate(cfg.Template, userInput)
+	rendered := renderTemplate(cfg.Template, userInput, workspacePath)
 
 	// 仅替换最后一条用户消息的内容。
 	for i := len(messages) - 1; i >= 0; i-- {

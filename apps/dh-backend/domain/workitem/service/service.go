@@ -19,4 +19,6 @@ type WorkItemService interface {
 	GetWorkItem(id string) (object.WorkItem, error)
 	CreateWorkItem(item object.CreateWorkItemRequest) (object.WorkItem, error)
 	UpdateWorkItemStatus(id string, status workitem.Status) (object.WorkItem, error)
+	CountWorkItems(projectID string, status workitem.Status, days int) (int, error)
+	CountWorkItemsPrevPeriod(projectID string, status workitem.Status, days int) (int, error)
 }

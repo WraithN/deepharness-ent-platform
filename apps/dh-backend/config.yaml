@@ -26,7 +26,7 @@ redis:
 
 gatewayd:
   admin_url: "http://127.0.0.1:2346"
-  agent_id: "claude-code"
+  agent_id: "opencode"
 
 database:
   host: "127.0.0.1"

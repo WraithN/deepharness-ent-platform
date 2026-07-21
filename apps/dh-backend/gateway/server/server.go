@@ -78,7 +78,7 @@ func New(cfg config.Config) http.Handler {
 	initRepositoryService(db, cfg)
 	initProductDocService(db, cfg.WorkspaceRoot)
 	initPlatformTemplateService(db)
-	initAgentRuntimeService(db)
+	agentRuntimeSvc := initAgentRuntimeService(db)
 	initTeamService(db, userService)
 
 	// Handlers
@@ -102,11 +102,11 @@ func New(cfg config.Config) http.Handler {
 	agentconfig.InitRuntimeSync(sessions, agentClient)
 	// 注入配置文件中启用的需求管理平台列表，供空间设置的平台下拉框读取。
 	workitem.InitPlatforms(cfg.WorkitemPlatformWhitelist)
-	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, sessions, messages, sseBuffer, workItemSvc)
+	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, cfg.WorkspaceRoot, sessions, messages, sseBuffer, workItemSvc)
 	// 为 workspace 模块注入同步补全能力，用于规范的智能生成。
 	workspace.InitStandardCompleter(aguiHandler.QuickComplete)
 	sseReplayHandler := handler.NewSSEReplayHandler(sseBuffer)
-	statsHandler := handler.NewStatsHandler(sessions, cfg.WorkspaceRoot)
+	statsHandler := handler.NewStatsHandler(sessions, cfg.WorkspaceRoot, workspaceService, workItemSvc)
 
 	// agent-stub 反向代理：将文件/工程/预览请求转发到 agent-stub 服务。
 	// agent-stub 部署在 WORKSPACE_ROOT 所在服务器上，直接操作文件系统和 git。
@@ -126,6 +126,11 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/files/", stubProxy.ServeHTTP)
 	mux.HandleFunc("/api/v1/projects/", stubProxy.ServeHTTP)
 	mux.HandleFunc("/api/v1/preview/", stubProxy.ServeHTTP)
+
+	// gatewayd 代理：将前端 chat/ws 请求通过 dh-backend 转发到用户专属 gatewayd 实例
+	gatewaydProxy := handler.NewGatewaydProxy(sessions, agentRuntimeSvc, cfg.GatewaydAdminURL)
+	mux.Handle("POST /api/v1/sessions/{id}/chat", middleware.Auth(gatewaydProxy))
+	mux.Handle("GET /api/v1/sessions/{id}/ws", middleware.Auth(gatewaydProxy))
 
 	// Internal business modules
 	mux.HandleFunc("/api/v1/identity/users", identity.Users)
@@ -171,6 +176,7 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/stats/trend", middleware.Auth(http.HandlerFunc(statsHandler.Trend)))
 	mux.Handle("/api/v1/stats/commits", middleware.Auth(http.HandlerFunc(statsHandler.CodeCommits)))
 	mux.Handle("/api/v1/stats/trails", middleware.Auth(http.HandlerFunc(statsHandler.Trails)))
+	mux.Handle("/api/v1/stats/requirements", middleware.Auth(http.HandlerFunc(statsHandler.WorkItemSummary)))
 	mux.HandleFunc("/api/v1/commands", handler.CommandsHandler)
 
 	// Personal assistant module
@@ -402,9 +408,11 @@ func initPlatformTemplateService(db *sql.DB) {
 	platformtemplate.Init(platformtemplateservice.NewDBPlatformTemplateService(db))
 }
 
-func initAgentRuntimeService(db *sql.DB) {
+func initAgentRuntimeService(db *sql.DB) agentruntimeservice.AgentRuntimeService {
 	log.Println("[AgentRuntime] using postgres storage")
-	agentruntime.Init(agentruntimeservice.NewDBAgentRuntimeService(db))
+	svc := agentruntimeservice.NewDBAgentRuntimeService(db)
+	agentruntime.Init(svc)
+	return svc
 }
 
 func initProductSpaceService(db *sql.DB, workspaceRoot string, workspaceService workspaceservice.WorkspaceService) {

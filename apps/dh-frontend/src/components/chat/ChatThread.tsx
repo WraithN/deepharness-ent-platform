@@ -5,11 +5,12 @@ import { AssistantMessage } from './AssistantMessage';
 import { UserMessage } from './UserMessage';
 import { formatDateLabel, isSameDay } from '@/lib/utils';
 import type { PreviewMode } from './LivePreview';
+import type { SendContext } from '@/hooks/use-ag-ui-chat';
 
 interface ChatThreadProps {
   openDetail: (type: 'req' | 'defect' | 'case', id: string) => void;
   onArtifactClick: () => void;
-  onEditMessage?: (text: string) => void;
+  onEditMessage?: (text: string, context?: SendContext) => void;
   onRegenerate?: () => void;
   onFilePreview?: (path: string) => void;
   onProjectPreview?: (path: string, mode: PreviewMode) => void;

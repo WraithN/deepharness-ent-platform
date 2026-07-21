@@ -4,6 +4,7 @@ import type { AssistantRuntime, ThreadMessageLike } from '@assistant-ui/react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
+import { parseUserStoryFromText } from '@/components/chat/UserStoryCard';
 
 export interface SendContext {
   quotedCard?: { type: 'req' | 'defect' | 'case'; id: string; title: string; reporter: string };
@@ -39,6 +40,24 @@ const SESSION_ID_KEY_PREFIX = 'dh_chat_session_id';
 
 // 会话 ID 按工作区隔离存储，避免切换工作区后恢复其他工作区的会话
 const getSessionIdKey = (workspaceId: string) => `${SESSION_ID_KEY_PREFIX}:${workspaceId}`;
+
+const ERROR_CLASSIFICATIONS: { keywords: RegExp; specificMsg: string }[] = [
+  { keywords: /(api.?key|密钥|apikey|unauthorized|401.*invalid)/i, specificMsg: 'API 密钥无效或已过期，请检查模型配置中的 API Key 与 Base URL。' },
+  { keywords: /(quota|余额|insufficient|billing|超出.*额度|exceeded.*limit)/i, specificMsg: '模型账户余额不足或配额已用完，请充值后重试。' },
+  { keywords: /(rate.?limit|429|限流|too many requests|请求过于频繁)/i, specificMsg: '请求频率过高，被模型服务限流，请稍后重试。' },
+  { keywords: /(timeout|超时|timed.?out|deadline|ETIMEDOUT)/i, specificMsg: '模型响应超时，请检查网络连接或模型服务状态后重试。' },
+  { keywords: /(connect|connection|网络|network|refused|unreachable|ECONNREFUSED|ENOTFOUND)/i, specificMsg: '无法连接模型服务，请检查网络或模型配置的 Base URL 地址。' },
+  { keywords: /(overloaded|busy|capacity|503|502|service.?unavailable|服务不可用)/i, specificMsg: '模型服务当前繁忙或过载，请稍后重试。' },
+  { keywords: /(model.*not.?found|model.*unavailable|模型.*不可用|模型.*不存在|404.*model)/i, specificMsg: '模型不可用或名称错误，请检查模型配置中的模型名称。' },
+];
+
+function classifyAgentError(errorMsg: string): string {
+  const matched = ERROR_CLASSIFICATIONS.find((entry) => entry.keywords.test(errorMsg));
+  if (matched) {
+    return `运行出错：${matched.specificMsg}\n\n原始错误：${errorMsg}`;
+  }
+  return `运行出错：${errorMsg}`;
+}
 
 /**
  * 构建提示词模板规则，传入当前 session_id 用于文件目录定位。
@@ -145,9 +164,22 @@ function backendMessageToThreadMessageLike(msg: BackendMessage): ThreadMessageLi
         });
       }
     }
-    const content = rebuilt.length > 0
-      ? rebuilt as ThreadMessageLike['content']
+    const content: ThreadMessageLike['content'] = rebuilt.length > 0
+      ? (rebuilt as any[])
       : defaultContent;
+
+    if (custom.cardType === 'user_story' && msg.content) {
+      const fileMatch = msg.content.match(/\[\[FILE:([^\]]+)\]\]/);
+      const filePath = fileMatch?.[1] ?? '';
+      const storyData = parseUserStoryFromText(msg.content, filePath);
+      if (storyData && storyData.stories.length > 0) {
+        (content as any[]).push({
+          type: 'data',
+          name: 'user_story',
+          data: { content: JSON.stringify(storyData) },
+        });
+      }
+    }
     return {
       id: msg.id,
       role: 'assistant',
@@ -156,6 +188,23 @@ function backendMessageToThreadMessageLike(msg: BackendMessage): ThreadMessageLi
       createdAt,
       status: { type: 'complete' as const, reason: 'unknown' as const },
     };
+  }
+
+  if (custom.cardType === 'user_story' && msg.content) {
+    const storyData = parseUserStoryFromText(msg.content, '');
+    if (storyData && storyData.stories.length > 0) {
+      const contentWithCard: ThreadMessageLike['content'] = [
+        { type: 'text' as const, text: msg.content },
+        { type: 'data' as const, name: 'user_story' as const, data: { content: JSON.stringify(storyData) } },
+      ];
+      return {
+        id: msg.id,
+        role: msg.role as 'user' | 'assistant',
+        content: contentWithCard,
+        metadata: { custom },
+        createdAt,
+      };
+    }
   }
 
   return {
@@ -450,11 +499,16 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       let lastEventAt = Date.now();
       let noEventTimeoutFired = false;
       let noEventTimer: ReturnType<typeof setInterval> | null = null;
+      const sendTime = Date.now();
 
       try {
         const workspaceId = getCurrentWorkspaceId();
         const agentUrl = `${AGENT_URL}?workspaceId=${encodeURIComponent(workspaceId)}`;
-        console.log('[useAgUiChat] fetching', agentUrl, 'runId=', runId);
+        const userMessages = runInput.messages.filter((m: any) => m.role === 'user');
+        const lastUserMsg = userMessages[userMessages.length - 1];
+        const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : JSON.stringify(lastUserMsg?.content ?? '');
+        const hasCommand = /^\//.test(userText);
+        console.log('[useAgUiChat] >>> FETCH', { agentUrl, runId: runId, threadId: runInput.threadId, agentKey: runInput.agent_key, hasCommand, userTextPreview: userText.slice(0, 120), contextCount: runInput.context?.length ?? 0, timestamp: new Date().toISOString() });
         const response = await fetch(agentUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
@@ -462,7 +516,8 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
           signal: abortController.signal,
         });
 
-        console.log('[useAgUiChat] fetch response', response.status, 'hasBody=', !!response.body);
+        const fetchElapsed = Date.now() - sendTime;
+        console.log('[useAgUiChat] <<< FETCH response', { status: response.status, ok: response.ok, hasBody: !!response.body, elapsedMs: fetchElapsed, contentLength: response.headers.get('content-length'), contentType: response.headers.get('content-type') });
         if (!response.ok || !response.body) {
           const body = await response.text().catch(() => '');
           throw new Error(`Agent run failed: ${response.status} ${body}`);
@@ -494,11 +549,21 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
               if (activeRunSessionIdRef.current !== currentSessionId) continue;
 
               lastEventAt = Date.now();
-              console.log('[useAgUiChat] SSE event', ev.type, 'runId=', runId, 'assistantMessageId=', assistantMessageId);
+              const evLog = { type: ev.type, delta: ev.delta?.slice(0, 80), messageId: ev.messageId, toolCallId: ev.toolCallId, toolCallName: ev.toolCallName, runId };
+              if (ev.type === 'RUN_STARTED' || ev.type === 'RUN_FINISHED' || ev.type === 'RUN_ERROR' || ev.type === 'TOOL_CALL_START' || ev.type === 'TOOL_CALL_RESULT') {
+                console.log('[useAgUiChat] SSE', evLog);
+              }
 
               switch (ev.type) {
                 case 'RUN_STARTED':
                   setIsRunning(true);
+                  // gatewayd 在 session 丢失后会创建新 thread，RUN_STARTED
+                  // 携带新的 threadId。将此 threadId 同步为当前会话 ID，
+                  // 确保前端 localStorage 与后端持久化的一致。
+                  if (ev.threadId && ev.threadId !== currentSessionId) {
+                    console.log('[useAgUiChat] threadId changed by gatewayd: %s -> %s', currentSessionId, ev.threadId);
+                    setSessionId(ev.threadId);
+                  }
                   break;
 
                 case 'TEXT_MESSAGE_START': {
@@ -765,10 +830,11 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
                   setIsRunning(false);
                   activeRunSessionIdRef.current = null;
                   const errorMsg = ev.message || 'Agent 运行出错';
+                  const classifiedMsg = classifyAgentError(errorMsg);
                   const errorMessage: ThreadMessageLike = {
                     id: generateId(),
                     role: 'assistant',
-                    content: [{ type: 'text', text: `运行出错：${errorMsg}` }],
+                    content: [{ type: 'text', text: classifiedMsg }],
                     status: { type: 'incomplete', reason: 'error', error: errorMsg },
                   };
                   setMessages((prev) => [...prev, errorMessage]);
@@ -782,7 +848,8 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
           }
         }
 
-        console.log('[useAgUiChat] SSE stream ended, runId=', runId, 'assistantMessageId=', assistantMessageId, 'activeRunSessionIdRef=', activeRunSessionIdRef.current);
+        const streamEndTime = Date.now();
+        console.log('[useAgUiChat] <<< SSE stream END', { runId, assistantMessageId, elapsedMs: streamEndTime - sendTime, activeRunSession: activeRunSessionIdRef.current, totalSSEEvents: 'see logs above' });
         // 兜底：SSE 流已结束但未收到 RUN_FINISHED/RUN_ERROR 时，
         // 强制重置运行状态，避免前端一直显示“思考中”。
         if (activeRunSessionIdRef.current === currentSessionId) {
@@ -809,8 +876,9 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
           }
         }
       } catch (err) {
-        console.log('[useAgUiChat] send catch, runId=', runId, 'err=', err);
+        const catchTime = Date.now();
         const error = err instanceof Error ? err : new Error(String(err));
+        console.log('[useAgUiChat] <<< CATCH', { runId, errorName: error.name, errorMessage: error.message, elapsedMs: catchTime - sendTime, noEventTimeoutFired });
         if (error.name === 'AbortError') {
           setIsRunning(false);
           activeRunSessionIdRef.current = null;
@@ -843,7 +911,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         setIsRunning(false);
         activeRunSessionIdRef.current = null;
       } finally {
-        console.log('[useAgUiChat] send finally, runId=', runId, 'isRunning=', isRunning);
+        console.log('[useAgUiChat] <<< FINALLY', { runId, msgCount: messages.length, elapsedMs: Date.now() - sendTime });
         if (noEventTimer) clearInterval(noEventTimer);
         abortControllerRef.current = null;
       }

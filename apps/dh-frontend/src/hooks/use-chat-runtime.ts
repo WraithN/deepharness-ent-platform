@@ -301,13 +301,12 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
     }
   }
 
-  // ---- Send message via HTTP POST to gatewayd ----
+  // ---- Send message via HTTP POST to dh-backend proxy ----
 
   async function sendMessageViaHttp(text: string) {
-    const url = gatewaydUrlRef.current + '/agents/' + agentIdRef.current + '/message';
     const curSessionId = sessionIdRef.current;
-    if (!url || !curSessionId) {
-      console.error('[ChatRuntime] Cannot send: missing gatewayd URL or session ID');
+    if (!curSessionId) {
+      console.error('[ChatRuntime] Cannot send: missing session ID');
       toast.error('Failed to send message: connection not ready');
       setIsRunning(false);
       removeEmptyPlaceholder();
@@ -315,17 +314,10 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
     }
 
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          conversation_id: curSessionId,
-          message: text,
-        }),
+      await api.post('/v1/sessions/' + curSessionId + '/chat', {
+        conversation_id: curSessionId,
+        message: text,
       });
-      if (!res.ok) {
-        throw new Error('gatewayd returned ' + res.status);
-      }
     } catch (err) {
       console.error('[ChatRuntime] Failed to send message via HTTP:', err);
       toast.error('Failed to send message');
@@ -361,7 +353,7 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
     currentMessageIDRef.current = null;
     accumulatedTextRef.current = '';
 
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && gatewaydUrlRef.current && agentIdRef.current) {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && sessionIdRef.current) {
       sendMessageViaHttp(text);
     } else {
       pendingSendRef.current = { text, context };
@@ -391,7 +383,7 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
 
         // Send any pending message
         const pending = pendingSendRef.current;
-        if (pending && gatewaydUrlRef.current && agentIdRef.current) {
+        if (pending && sessionIdRef.current) {
           sendMessageViaHttp(pending.text);
           pendingSendRef.current = null;
         }

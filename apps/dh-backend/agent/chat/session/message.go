@@ -52,3 +52,33 @@ func (m *MessageStore) GetHistory(ctx context.Context, sessionID string, limit i
 	}
 	return msgs[len(msgs)-limit:], nil
 }
+
+// MigrateMessages 将旧 sessionID 下的所有消息迁移到新 sessionID。
+func (m *MessageStore) MigrateMessages(ctx context.Context, oldSessionID, newSessionID string) error {
+	if oldSessionID == newSessionID {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	oldMsgs := m.messages[oldSessionID]
+	if len(oldMsgs) == 0 {
+		return nil
+	}
+	existing := m.messages[newSessionID]
+	for _, msg := range oldMsgs {
+		duplicate := false
+		for _, exist := range existing {
+			if exist.ID == msg.ID {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		existing = append(existing, msg)
+	}
+	m.messages[newSessionID] = existing
+	delete(m.messages, oldSessionID)
+	return nil
+}

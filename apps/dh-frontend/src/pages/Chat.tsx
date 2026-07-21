@@ -989,8 +989,16 @@ export const Chat: React.FC = () => {
   // 文档按钮角标：输入框中仍存在的 @提及 数量（随整体删除实时变化）
   const activeRefCount = referencedDocs.filter(d => input.includes(docMentionToken(d.title))).length;
 
-  // 指令原子块 token 列表（/code 形式，尾随空格保证前缀安全，如 /code 不会误匹配 /code-review）。
-  const commandTokens = useMemo(() => commandConfigs.map(c => `${c.cmd} `), [commandConfigs]);
+  // 指令原子块 token 列表：空格后缀版本用于词边界安全匹配（如 /code 不误匹配 /code-review），
+  // 裸命令版本用于命令在输入末尾且无后缀参数时的着色匹配。
+  const commandTokens = useMemo(() => {
+    const tokens: string[] = [];
+    for (const c of commandConfigs) {
+      tokens.push(`${c.cmd} `);
+      tokens.push(c.cmd);
+    }
+    return tokens;
+  }, [commandConfigs]);
   // 所有原子块 token：@文档提及 + 指令；用于整体删除判定。
   const atomicTokens = useMemo(
     () => [...referencedDocs.map(d => docMentionToken(d.title)), ...commandTokens],
@@ -1012,7 +1020,7 @@ export const Chat: React.FC = () => {
     };
     for (const d of referencedDocs) collectRanges(docMentionToken(d.title), 'mention');
     for (const token of commandTokens) collectRanges(token, 'command');
-    ranges.sort((a, b) => a.start - b.start);
+    ranges.sort((a, b) => a.start - b.start || b.end - a.end);
     const nodes: React.ReactNode[] = [];
     let pos = 0;
     for (const r of ranges) {
@@ -1148,6 +1156,41 @@ export const Chat: React.FC = () => {
       setDocMenuOpen(false);
     } else {
       setDocMention(null);
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const html = e.clipboardData.getData('text/html');
+    console.log('[handlePaste] html:', html?.substring(0, 500));
+    if (!html) { console.log('[handlePaste] no HTML data, returning'); return; }
+    const match = html.match(/<span\s+data-dh-chat-copy=["']([^"']*)["']/i);
+    console.log('[handlePaste] match:', match ? match[1].substring(0, 200) : null);
+    if (!match) { console.log('[handlePaste] no match, returning'); return; }
+    e.preventDefault();
+    try {
+      const decoded = match[1].replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+      console.log('[handlePaste] decoded:', decoded.substring(0, 200));
+      const payload = JSON.parse(decoded);
+      console.log('[handlePaste] payload keys:', Object.keys(payload));
+      const originalText = String(payload.t ?? '');
+      console.log('[handlePaste] originalText:', originalText);
+      if (payload.q) setQuotedCard(payload.q as NonNullable<SendContext['quotedCard']>);
+      if (payload.r) setSelectedRepos(payload.r as NonNullable<SendContext['selectedRepos']>);
+      const ta = e.currentTarget;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const newValue = ta.value.slice(0, start) + originalText + ta.value.slice(end);
+      console.log('[handlePaste] newValue:', newValue);
+      const nativeSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype, 'value',
+      )?.set;
+      nativeSetter?.call(ta, newValue);
+      setInput(newValue);
+      requestAnimationFrame(() => {
+        ta.setSelectionRange(start + originalText.length, start + originalText.length);
+      });
+    } catch (err) {
+      console.log('[handlePaste] error:', err);
     }
   };
 
@@ -2118,7 +2161,17 @@ export const Chat: React.FC = () => {
                   onArtifactClick={() => setCodeJumpOpen(true)}
                   onFilePreview={handleFilePreview}
                   onProjectPreview={handleProjectPreview}
-                  onEditMessage={(text) => setInput(text)}
+                  onEditMessage={(text, context) => {
+                    setInput(text);
+                    setQuotedCard(context?.quotedCard ?? null);
+                    setSelectedRepos(context?.selectedRepos ?? []);
+                    requestAnimationFrame(() => {
+                      const ta = textareaRef.current;
+                      if (!ta) return;
+                      ta.focus();
+                      ta.setSelectionRange(text.length, text.length);
+                    });
+                  }}
                   onRegenerate={() => {
                     const lastUserMsg = messages.filter(m => m.role === 'user').pop();
                     if (lastUserMsg) {
@@ -2225,6 +2278,7 @@ export const Chat: React.FC = () => {
               className={cn('relative w-full resize-none border-0 focus-visible:ring-0 px-5 py-4 shadow-none bg-transparent text-transparent caret-foreground focus:bg-transparent dark:bg-transparent dark:focus:bg-transparent', showPreview ? 'min-h-[60px] text-sm py-3' : 'min-h-[100px] text-base')}
               value={input}
               onChange={handleInputChange}
+              onPaste={handlePaste}
               onKeyDown={handleInputKeyDown}
               onScroll={e => { if (mentionOverlayRef.current) mentionOverlayRef.current.scrollTop = e.currentTarget.scrollTop; }}
             />

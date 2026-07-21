@@ -10,10 +10,16 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
 	"github.com/google/uuid"
+)
+
+const (
+	// SSE_IDLE_TIMEOUT gatewayd SSE 流无数据超时（agent 进程异常退出后 gatewayd 可能不关闭流）
+	SSE_IDLE_TIMEOUT = 2 * time.Minute
 )
 
 // AGUIClient 通过 AG-UI 协议对接 ent-desktop gatewayd。
@@ -36,11 +42,19 @@ func NewAGUIClient(adminURL, pluginKey string) *AGUIClient {
 }
 
 // CreateThread 在 gatewayd 上创建新 session，返回 threadId。
-func (c *AGUIClient) CreateThread(ctx context.Context) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.adminURL+"/sessions", nil)
+// 如果 preferredID 非空，gatewayd 会尝试使用该 ID 而非生成新 UUID，
+// 这样 gatewayd 重启后 session 可以复用之前的 ID。
+func (c *AGUIClient) CreateThread(ctx context.Context, preferredID string) (string, error) {
+	var bodyReader io.Reader
+	if preferredID != "" {
+		b, _ := json.Marshal(map[string]string{"id": preferredID})
+		bodyReader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.adminURL+"/sessions", bodyReader)
 	if err != nil {
 		return "", fmt.Errorf("create session request: %w", err)
 	}
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -114,6 +128,9 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 		input.RunID = uuid.New().String()
 	}
 
+	log.Printf("[AGUIClient] >>> Run ENTER run=%s threadId=%q agentKeyInput=%q workspace=%q msgCount=%d toolsCount=%d contextCount=%d",
+		input.RunID, input.ThreadID, input.AgentKey, input.Workspace, len(input.Messages), len(input.Tools), len(input.Context))
+
 	// 优先使用输入中指定的 agent 插件 key，否则尝试从 forwardedProps 读取，最后回退到 client 默认值。
 	// agent_key 是 agentPluginKey 的别名，优先使用 agent_key。
 	pluginKey := c.pluginKey
@@ -132,12 +149,15 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 
 	if input.ThreadID == "" {
 		createStart := time.Now()
-		threadID, err := c.CreateThread(ctx)
+		threadID, err := c.CreateThread(ctx, input.ThreadID)
 		if err != nil {
+			log.Printf("[AGUIClient] run=%s <<< CreateThread FAILED after %v: %v", input.RunID, time.Since(createStart), err)
 			return "", nil, err
 		}
 		input.ThreadID = threadID
-		log.Printf("[AGUIClient] run=%s CreateThread took %v, threadId=%s", input.RunID, time.Since(createStart), input.ThreadID)
+		log.Printf("[AGUIClient] run=%s CreateThread OK threadId=%s after %v", input.RunID, input.ThreadID, time.Since(createStart))
+	} else {
+		log.Printf("[AGUIClient] run=%s reusing existing threadId=%s", input.RunID, input.ThreadID)
 	}
 
 	workspace := input.Workspace
@@ -148,23 +168,28 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 	attachCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	attachStart := time.Now()
+	log.Printf("[AGUIClient] run=%s >>> AttachAgent START threadId=%s pluginKey=%s workspace=%q",
+		input.RunID, input.ThreadID, pluginKey, workspace)
 	if err := c.attachAgentWithKey(attachCtx, input.ThreadID, true, pluginKey, workspace); err != nil {
 		if isSessionNotFound(err) {
 			log.Printf("[AGUIClient] run=%s session %s not found, creating new thread", input.RunID, input.ThreadID)
-			newThreadID, createErr := c.CreateThread(ctx)
+			newThreadID, createErr := c.CreateThread(ctx, input.ThreadID)
 			if createErr != nil {
+				log.Printf("[AGUIClient] run=%s <<< CreateThread (retry) FAILED: %v", input.RunID, createErr)
 				return "", nil, fmt.Errorf("recreate thread after session lost: %w", createErr)
 			}
 			input.ThreadID = newThreadID
 			if attachErr := c.attachAgentWithKey(attachCtx, input.ThreadID, true, pluginKey, workspace); attachErr != nil {
+				log.Printf("[AGUIClient] run=%s <<< AttachAgent (retry) FAILED after %v: %v", input.RunID, time.Since(attachStart), attachErr)
 				return "", nil, fmt.Errorf("attach agent after recreate: %w", attachErr)
 			}
-			log.Printf("[AGUIClient] run=%s created new instance after recreate in %v", input.RunID, time.Since(attachStart))
+			log.Printf("[AGUIClient] run=%s AttachAgent OK (after recreate) newThreadId=%s after %v", input.RunID, newThreadID, time.Since(attachStart))
 		} else {
+			log.Printf("[AGUIClient] run=%s <<< AttachAgent FAILED after %v: %v", input.RunID, time.Since(attachStart), err)
 			return "", nil, fmt.Errorf("attach agent: %w", err)
 		}
 	} else {
-		log.Printf("[AGUIClient] run=%s created new instance (force=true) after %v", input.RunID, time.Since(attachStart))
+		log.Printf("[AGUIClient] run=%s AttachAgent OK (force=true) after %v", input.RunID, time.Since(attachStart))
 	}
 
 	if input.State == nil {
@@ -206,6 +231,8 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 
 	// gatewayd AG-UI 协议使用 POST /sessions/{sessionId}/chat 启动 run 并返回 SSE 流。
 	url := fmt.Sprintf("%s/sessions/%s/chat", c.adminURL, input.ThreadID)
+	log.Printf("[AGUIClient] run=%s >>> POST CHAT url=%s msgCount=%d agentKey=%s",
+		input.RunID, url, len(gatewaydMessages), pluginKey)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return "", nil, fmt.Errorf("create run request: %w", err)
@@ -220,7 +247,8 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 	if err != nil {
 		return "", nil, fmt.Errorf("run request: %w", err)
 	}
-	log.Printf("[AGUIClient] run=%s POST /sessions/%s/chat response status=%d after %v", input.RunID, input.ThreadID, resp.StatusCode, time.Since(postStart))
+	log.Printf("[AGUIClient] run=%s <<< POST CHAT response status=%d after %v",
+		input.RunID, resp.StatusCode, time.Since(postStart))
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -230,7 +258,7 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 
 	out := make(chan agui.Event, 64)
 	go c.readSSE(resp.Body, out, input.ThreadID, input.RunID, runStart)
-	log.Printf("[AGUIClient] run=%s returning event channel to handler after %v", input.RunID, time.Since(runStart))
+	log.Printf("[AGUIClient] run=%s <<< RETURN event channel after %v totalElapsed", input.RunID, time.Since(runStart))
 	return input.ThreadID, out, nil
 }
 
@@ -257,11 +285,13 @@ func (c *AGUIClient) readSSE(body io.ReadCloser, out chan<- agui.Event, threadID
 	defer body.Close()
 	defer close(out)
 
-	scanner := bufio.NewScanner(body)
+	bodyWithTimeout := newInactivityReadCloser(body, SSE_IDLE_TIMEOUT)
+	scanner := bufio.NewScanner(bodyWithTimeout)
 	scanner.Buffer(make([]byte, 4096), 1024*1024)
 
 	firstEventSeen := false
 	firstContentSeen := false
+	eventCount := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data:") {
@@ -286,18 +316,31 @@ func (c *AGUIClient) readSSE(body io.ReadCloser, out chan<- agui.Event, threadID
 		}
 		if !firstEventSeen {
 			firstEventSeen = true
-			log.Printf("[AGUIClient] run=%s first SSE event after %v: type=%s", runID, time.Since(runStart), ev.Type)
+			log.Printf("[AGUIClient] run=%s >>> FIRST SSE event after %v: type=%s", runID, time.Since(runStart), ev.Type)
 		}
+		eventCount++
 		switch ev.Type {
 		case agui.EventThinkingStart:
-			log.Printf("[AGUIClient] run=%s THINKING_START after %v", runID, time.Since(runStart))
+			log.Printf("[AGUIClient] run=%s SSE#%d THINKING_START after %v", runID, eventCount, time.Since(runStart))
 		case agui.EventTextMessageStart:
-			log.Printf("[AGUIClient] run=%s TEXT_MESSAGE_START (TTFT) after %v", runID, time.Since(runStart))
+			log.Printf("[AGUIClient] run=%s SSE#%d TEXT_MESSAGE_START (TTFT) after %v", runID, eventCount, time.Since(runStart))
+		case agui.EventTextMessageEnd:
+			log.Printf("[AGUIClient] run=%s SSE#%d TEXT_MESSAGE_END after %v", runID, eventCount, time.Since(runStart))
 		case agui.EventTextMessageContent:
 			if !firstContentSeen {
 				firstContentSeen = true
-				log.Printf("[AGUIClient] run=%s first TEXT_MESSAGE_CONTENT after %v", runID, time.Since(runStart))
+				log.Printf("[AGUIClient] run=%s SSE#%d first TEXT_MESSAGE_CONTENT after %v", runID, eventCount, time.Since(runStart))
 			}
+		case agui.EventToolCallStart:
+			log.Printf("[AGUIClient] run=%s SSE#%d TOOL_CALL_START id=%s tool=%s after %v", runID, eventCount, ev.ToolCallID, ev.ToolCallName, time.Since(runStart))
+		case agui.EventToolCallResult:
+			log.Printf("[AGUIClient] run=%s SSE#%d TOOL_CALL_RESULT id=%s after %v", runID, eventCount, ev.ToolCallID, time.Since(runStart))
+		case agui.EventRunStarted:
+			log.Printf("[AGUIClient] run=%s SSE#%d RUN_STARTED threadId=%s after %v", runID, eventCount, ev.ThreadID, time.Since(runStart))
+		case agui.EventRunFinished:
+			log.Printf("[AGUIClient] run=%s SSE#%d RUN_FINISHED threadId=%s after %v", runID, eventCount, ev.ThreadID, time.Since(runStart))
+		case agui.EventRunError:
+			log.Printf("[AGUIClient] run=%s SSE#%d RUN_ERROR threadId=%s after %v", runID, eventCount, ev.ThreadID, time.Since(runStart))
 		}
 		select {
 		case out <- ev:
@@ -310,4 +353,72 @@ func (c *AGUIClient) readSSE(body io.ReadCloser, out chan<- agui.Event, threadID
 		log.Printf("[AGUIClient] run=%s sse scanner error: %v", runID, err)
 	}
 	log.Printf("[AGUIClient] run=%s SSE stream ended, total elapsed=%v", runID, time.Since(runStart))
+}
+
+// inactivityReadCloser 在超时无读取时关闭底层连接，避免 gatewayd SSE 流挂死。
+type inactivityReadCloser struct {
+	rc        io.ReadCloser
+	timeout   time.Duration
+	heartbeat chan struct{}
+	mu        sync.Mutex
+	timedOut  bool
+}
+
+func newInactivityReadCloser(rc io.ReadCloser, timeout time.Duration) *inactivityReadCloser {
+	w := &inactivityReadCloser{
+		rc:        rc,
+		timeout:   timeout,
+		heartbeat: make(chan struct{}, 1),
+	}
+	go w.monitor()
+	return w
+}
+
+func (r *inactivityReadCloser) Read(p []byte) (int, error) {
+	r.mu.Lock()
+	dead := r.timedOut
+	r.mu.Unlock()
+	if dead {
+		return 0, fmt.Errorf("sse stream idle timeout after %v", r.timeout)
+	}
+	n, err := r.rc.Read(p)
+	if n > 0 {
+		select {
+		case r.heartbeat <- struct{}{}:
+		default:
+		}
+	}
+	if err != nil {
+		r.mu.Lock()
+		r.timedOut = true
+		r.mu.Unlock()
+	}
+	return n, err
+}
+
+func (r *inactivityReadCloser) monitor() {
+	timer := time.NewTimer(r.timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case <-r.heartbeat:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			timer.Reset(r.timeout)
+		case <-timer.C:
+			r.mu.Lock()
+			r.timedOut = true
+			r.mu.Unlock()
+			r.rc.Close()
+			return
+		}
+	}
+}
+
+func (r *inactivityReadCloser) Close() error {
+	r.mu.Lock()
+	r.timedOut = true
+	r.mu.Unlock()
+	return r.rc.Close()
 }

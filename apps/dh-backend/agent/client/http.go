@@ -292,10 +292,20 @@ func (c *GatewaydClient) WsURLForSession(sessionID string) string {
 }
 
 // CreateThread 在 gatewayd 上创建新 thread，返回 gatewayd 的 threadId。
-func (c *GatewaydClient) CreateThread(ctx context.Context) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.adminURL+"/sessions", nil)
+// preferredID 可选，若不为空则作为 session 的 ID 发送给 gatewayd，使其复用相同 session。
+func (c *GatewaydClient) CreateThread(ctx context.Context, preferredID string) (string, error) {
+	var bodyReader io.Reader
+	if preferredID != "" {
+		reqBody := map[string]string{"id": preferredID}
+		data, _ := json.Marshal(reqBody)
+		bodyReader = bytes.NewReader(data)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.adminURL+"/sessions", bodyReader)
 	if err != nil {
 		return "", fmt.Errorf("create thread request: %w", err)
+	}
+	if preferredID != "" {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
 

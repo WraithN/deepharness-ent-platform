@@ -114,7 +114,7 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	// 保证前端 threadId 与后端 session id 一一对应。
 	// 开发或 gatewayd 未启动时，若连接被拒绝/超时，则降级为本地 UUID，
 	// 避免会话创建直接 500 导致前端不可用。
-	threadID, err := h.gatewaydClient.CreateThread(r.Context())
+	threadID, err := h.gatewaydClient.CreateThread(r.Context(), "")
 	if err != nil {
 		if !IsGatewaydConnectionError(err) {
 			http.Error(w, `{"code":5,"message":"failed to create gatewayd thread"}`, http.StatusInternalServerError)
@@ -226,18 +226,24 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	context["pluginKey"] = pluginKey
 	context["instanceId"] = instanceID
 
+	gwAgentID := instanceID
+	if gwAgentID == "" {
+		gwAgentID = h.gatewaydClient.AgentID()
+	}
+
 	session := chat.Session{
-		ID:            threadID,
-		WorkspaceID:   workspaceID,
-		WorkspacePath: workspacePath,
-		UserID:        userID,
-		AgentID:       agentID,
-		AgentType:     agentType,
-		Model:         req.Model,
-		ProjectID:     req.ProjectID,
-		Context:       context,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
+		ID:              threadID,
+		WorkspaceID:     workspaceID,
+		WorkspacePath:   workspacePath,
+		UserID:          userID,
+		AgentID:         agentID,
+		GatewaydAgentID: gwAgentID,
+		AgentType:       agentType,
+		Model:           req.Model,
+		ProjectID:       req.ProjectID,
+		Context:         context,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
 	}
 
 	if err := h.sessions.Create(r.Context(), session); err != nil {
@@ -245,20 +251,20 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gwAgentID := instanceID
-	if gwAgentID == "" {
-		gwAgentID = h.gatewaydClient.AgentID()
-	}
-
 	w.Header().Set("Content-Type", "application/json")
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	wsURL := BuildProxyWsURLForSession(scheme, r.Host, session.ID)
 	json.NewEncoder(w).Encode(map[string]any{
 		"code":    0,
 		"message": "success",
 		"data": CreateSessionResponse{
 			SessionID:     session.ID,
 			InstanceID:    instanceID,
-			GatewaydURL:   h.gatewaydClient.AdminURL(),
-			GatewaydWsURL: h.gatewaydClient.WsURLForSession(session.ID),
+			GatewaydURL:   "",
+			GatewaydWsURL: wsURL,
 			AgentID:       gwAgentID,
 		},
 	})

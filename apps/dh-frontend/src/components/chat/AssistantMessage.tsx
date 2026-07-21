@@ -1,5 +1,5 @@
-import React from 'react';
-import { Bot, Box, FileCode2, ListTodo, CheckCircle2, Wrench, X, Copy, RefreshCw, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Bot, Box, FileCode2, ListTodo, CheckCircle2, Wrench, X, Copy, RefreshCw, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import type { MessageState, TextMessagePart, ReasoningMessagePart, DataMessagePart, ToolCallMessagePart } from '@assistant-ui/react';
 import { useThread } from '@assistant-ui/react';
 import { MarkdownView } from './MarkdownView';
@@ -10,9 +10,28 @@ import type { PreviewMode } from './LivePreview';
 import { TaskListView, type TaskItemData } from './TaskListView';
 import { ToolCallView } from './ToolCallView';
 import { ThinkingCard } from './ThinkingCard';
+import { UserStoryCard } from './UserStoryCard';
+import { parseUserStoryFromText } from './UserStoryCard';
+import type { UserStoryData } from './UserStoryCard';
 import type { ChatPart } from './types';
 import { toast } from 'sonner';
 import { cn, formatTime } from '@/lib/utils';
+
+  const CARD_MARKER_REGEX = /\[\[CARD:([^\]]+)\]\]/g;
+
+const TEXT_COLLAPSE_LINE_THRESHOLD = 12;
+const TEXT_COLLAPSE_CHAR_THRESHOLD = 800;
+
+function extractCardTypes(text: string): string[] {
+  const types: string[] = [];
+  for (const match of text.matchAll(CARD_MARKER_REGEX)) {
+    const type = match[1]?.trim();
+    if (type && !types.includes(type)) {
+      types.push(type);
+    }
+  }
+  return types;
+}
 
 interface AssistantMessageProps {
   message: MessageState;
@@ -25,6 +44,7 @@ interface AssistantMessageProps {
 export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview }) => {
   const thread = useThread();
   const content = Array.isArray(message.content) ? message.content : [];
+  const [textExpanded, setTextExpanded] = useState(false);
 
   let artifact: { type: string; title: string } | undefined;
   const legacyDataParts: { name: string; data: ChatPart }[] = [];
@@ -120,7 +140,27 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
     .filter(Boolean)
     .join('\n');
 
+  const textLineCount = textContent.split('\n').length;
+  const shouldCollapseText = textLineCount > TEXT_COLLAPSE_LINE_THRESHOLD || textContent.length > TEXT_COLLAPSE_CHAR_THRESHOLD;
+  const isStreaming = isRunning || isThinkingRunning;
+
+  const UNRESOLVED_PLACEHOLDER_PATTERNS = [
+    '绝对路径',
+    '需求名称',
+    '调研主题',
+    '工程名',
+    '功能名称',
+    '功能名',
+    '分析主题',
+    '用户故事',
+  ] as const;
+
+  function hasUnresolvedPlaceholders(filePath: string): boolean {
+    return UNRESOLVED_PLACEHOLDER_PATTERNS.some((pattern) => filePath.includes(pattern));
+  }
+
   // 从最终输出中提取模型标记的文件路径，统一在消息底部展示为附件卡片。
+  // 过滤掉包含未解析中文占位符的路径（如「绝对路径」「需求名称」等）。
   const FILE_MARKER_REGEX = /\[\[FILE:([^\]]+)\]\]/g;
   const PROJECT_MARKER_REGEX = /\[\[PROJECT:([^\]]+)\]\]/g;
   const fileAttachments: string[] = [];
@@ -129,17 +169,35 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
     if (!part.text) continue;
     for (const match of part.text.matchAll(FILE_MARKER_REGEX)) {
       const path = match[1]?.trim();
-      if (path && !fileAttachments.includes(path)) {
+      if (path && !fileAttachments.includes(path) && !hasUnresolvedPlaceholders(path)) {
         fileAttachments.push(path);
       }
     }
     for (const match of part.text.matchAll(PROJECT_MARKER_REGEX)) {
       const path = match[1]?.trim();
-      if (path && !projectPaths.includes(path)) {
+      if (path && !projectPaths.includes(path) && !hasUnresolvedPlaceholders(path)) {
         projectPaths.push(path);
       }
     }
   }
+
+  const cardTypes = extractCardTypes(textContent);
+  const hasUserStoryFromMarker = cardTypes.includes('user_story');
+  const userStoryData = hasUserStoryFromMarker
+    ? parseUserStoryFromText(textContent, fileAttachments[0] ?? '')
+    : null;
+
+  const hasUserStoryFromLegacy = legacyDataParts.some((item) => item.name === 'user_story');
+  const hasUserStory = hasUserStoryFromLegacy || hasUserStoryFromMarker;
+
+  // 用户故事卡片出现时，默认展开完整文本，避免"内容没有输出完整"的观感。
+  useEffect(() => {
+    if (hasUserStoryFromMarker || hasUserStoryFromLegacy) {
+      setTextExpanded(true);
+    }
+  }, [hasUserStoryFromMarker, hasUserStoryFromLegacy]);
+
+  const showCollapsed = shouldCollapseText && !textExpanded && !isStreaming;
 
   return (
     <div className="flex gap-3 justify-start">
@@ -147,7 +205,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
         <Bot className="h-4 w-4 text-primary" />
       </div>
       <div className="flex flex-col flex-1 min-w-0 items-start">
-        <div className="flex flex-col gap-2 w-fit max-w-full min-w-0 bg-muted/60 rounded-2xl rounded-tl-sm border border-border/50 shadow-sm overflow-hidden">
+        <div className="chat-bubble-card flex flex-col gap-2 w-fit max-w-full min-w-0 rounded-2xl rounded-tl-sm overflow-hidden">
           {showThinkingPlaceholder && (
             <div className="px-3 py-2 flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -208,19 +266,45 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
           )}
 
           {/* 最终给用户的实际输出（去掉 [[FILE:...]] 和 [[PROJECT:...]] 标记，避免重复展示） */}
-          {outputParts.map((part, idx) => {
-            if (!part.text) return null;
-            const cleanText = part.text.replace(FILE_MARKER_REGEX, '').replace(PROJECT_MARKER_REGEX, '').trim();
-            if (!cleanText) return null;
-            return (
-              <div key={idx} className="px-3 py-2 text-xs sm:text-sm break-words">
-                <MarkdownView content={cleanText} />
+          {textContent && (
+            <div>
+              <div className="relative">
+                <div className={showCollapsed ? 'chat-bubble-text chat-bubble-text-closed' : 'chat-bubble-text chat-bubble-text-open'}>
+                  {outputParts.map((part, idx) => {
+                    if (!part.text) return null;
+                    const cleanText = part.text.replace(FILE_MARKER_REGEX, '').replace(PROJECT_MARKER_REGEX, '').trim();
+                    if (!cleanText) return null;
+                    return (
+                      <div key={idx} className="px-5 py-1.5 text-sm break-words">
+                        <MarkdownView content={cleanText} collapsible={false} />
+                      </div>
+                    );
+                  })}
+                </div>
+                {showCollapsed && (
+                  <div className="chat-bubble-fade absolute bottom-0 left-0 right-0 h-16 pointer-events-none z-10" />
+                )}
               </div>
-            );
-          })}
+              {shouldCollapseText && (
+                <div className="flex justify-center py-1.5">
+                  <button
+                    className="chat-bubble-toggle"
+                    onClick={() => setTextExpanded(v => !v)}
+                    type="button"
+                  >
+                    {textExpanded ? (
+                      <>收起 <ChevronUp className="h-3.5 w-3.5" /></>
+                    ) : (
+                      <>展开全部 <ChevronDown className="h-3.5 w-3.5" /></>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
-          {/* 工程卡片：新建工程显示预览+同步，已有工程显示 diff */}
-          {projectPaths.length > 0 && (
+          {/* 工程卡片：新建工程显示预览+同步，已有工程显示 diff（有 user_story 数据时不展示） */}
+          {!hasUserStory && projectPaths.length > 0 && (
             <div className="px-3 pb-2 flex flex-col gap-2">
               {projectPaths.map((path) => (
                 <ProjectCard key={path} path={path} onPreview={onProjectPreview} />
@@ -228,13 +312,18 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
             </div>
           )}
 
-          {/* 文件附件卡片统一放在消息底部 */}
-          {fileAttachments.length > 0 && (
+          {/* 文件附件卡片统一放在消息底部（有 user_story 数据时不展示） */}
+          {!hasUserStory && fileAttachments.length > 0 && (
             <div className="px-3 pb-2 flex flex-wrap gap-2">
               {fileAttachments.map((path) => (
                 <FileAttachmentCard key={path} path={path} onPreview={onFilePreview} />
               ))}
             </div>
+          )}
+
+          {/* 从 [[CARD:user_story]] 标记自动检测到的用户故事卡片 */}
+          {!hasUserStoryFromLegacy && hasUserStoryFromMarker && userStoryData && (
+            <div className="px-3 py-2"><UserStoryCard data={userStoryData} /></div>
           )}
 
           {/* legacy data 部件（diff / task_list / tool_use / tool_result 等） */}
@@ -259,6 +348,13 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
                   {data.content && <pre className={`mt-1 text-xs overflow-x-auto ${isFailed ? 'text-red-700 dark:text-red-300' : ''}`}>{data.content}</pre>}
                 </div>
               );
+            }
+            if (name === 'user_story') {
+              const storyData = (data.content ? JSON.parse(data.content) : data.metadata) as UserStoryData;
+              if (storyData && storyData.stories) {
+                return <div key={idx} className="px-3 py-2"><UserStoryCard data={storyData} /></div>;
+              }
+              return null;
             }
             if (name === 'tool_result') {
               const isFailed = data.metadata?.status === 'failed' || data.metadata?.status === 'timeout';

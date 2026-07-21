@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
+	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workitem"
 )
 
 const (
@@ -22,15 +24,23 @@ const (
 	statsTrailLimit = 50
 )
 
+// WorkItemStatsSvc 定义工作项统计所需的服务接口。
+type WorkItemStatsSvc interface {
+	CountWorkItems(projectID string, status workitem.Status, days int) (int, error)
+	CountWorkItemsPrevPeriod(projectID string, status workitem.Status, days int) (int, error)
+}
+
 // StatsHandler 处理数据大盘统计请求。
 type StatsHandler struct {
 	sessions      chat.SessionStore
 	workspaceRoot string
+	workspaceSvc  workspaceservice.WorkspaceService
+	workItemSvc   WorkItemStatsSvc
 }
 
 // NewStatsHandler 创建统计 handler。
-func NewStatsHandler(sessions chat.SessionStore, workspaceRoot string) *StatsHandler {
-	return &StatsHandler{sessions: sessions, workspaceRoot: workspaceRoot}
+func NewStatsHandler(sessions chat.SessionStore, workspaceRoot string, workspaceSvc workspaceservice.WorkspaceService, workItemSvc WorkItemStatsSvc) *StatsHandler {
+	return &StatsHandler{sessions: sessions, workspaceRoot: workspaceRoot, workspaceSvc: workspaceSvc, workItemSvc: workItemSvc}
 }
 
 // SummaryResponse 统计卡片响应。
@@ -227,6 +237,62 @@ func buildDateTrend(days int, counts map[string]int) []chat.DateCount {
 // emptyDateTrend 构造最近 days 天的零值趋势数组。
 func emptyDateTrend(days int) []chat.DateCount {
 	return buildDateTrend(days, nil)
+}
+
+// requirementsSummaryCache 缓存最近一次工作项统计结果以避免重复查询。
+var requirementsSummaryCache struct {
+	workspaceID string
+	result      SummaryResponse
+	expiresAt   time.Time
+}
+
+var requirementsCacheTTL = 30 * time.Second
+
+// WorkItemSummary 处理 GET /api/v1/stats/requirements 请求。
+// 返回近7天"需求完成"数量（状态为 done 的需求）及较上周变化百分比。
+func (h *StatsHandler) WorkItemSummary(w http.ResponseWriter, r *http.Request) {
+	workspaceID, err := workspaceIDFromQuery(r)
+	if err != nil {
+		WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		return
+	}
+
+	if h.workspaceSvc == nil || h.workItemSvc == nil {
+		writeJSON(w, SummaryResponse{ThisWeek: 0, LastWeek: 0, DeltaPercent: 0})
+		return
+	}
+
+	if requirementsSummaryCache.workspaceID == workspaceID && time.Now().Before(requirementsSummaryCache.expiresAt) {
+		writeJSON(w, requirementsSummaryCache.result)
+		return
+	}
+
+	wp, err := h.workspaceSvc.GetWorkitemProject(workspaceID)
+	if err != nil {
+		writeJSON(w, SummaryResponse{ThisWeek: 0, LastWeek: 0, DeltaPercent: 0})
+		return
+	}
+
+	thisWeek, err := h.workItemSvc.CountWorkItems(wp.ExternalKey, workitem.StatusDone, statsTrendDays)
+	if err != nil {
+		log.Printf("[Stats] CountWorkItems failed: %v", err)
+		thisWeek = 0
+	}
+
+	lastWeek, err := h.workItemSvc.CountWorkItemsPrevPeriod(wp.ExternalKey, workitem.StatusDone, statsTrendDays)
+	if err != nil {
+		log.Printf("[Stats] CountWorkItemsPrevPeriod failed: %v", err)
+		lastWeek = 0
+	}
+
+	delta := computeDeltaPercent(thisWeek, lastWeek)
+	resp := SummaryResponse{ThisWeek: thisWeek, LastWeek: lastWeek, DeltaPercent: delta}
+
+	requirementsSummaryCache.workspaceID = workspaceID
+	requirementsSummaryCache.result = resp
+	requirementsSummaryCache.expiresAt = time.Now().Add(requirementsCacheTTL)
+
+	writeJSON(w, resp)
 }
 
 // writeJSON 将响应以 JSON 格式写入 HTTP 响应。

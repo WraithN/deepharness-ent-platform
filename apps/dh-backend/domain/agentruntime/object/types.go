@@ -49,6 +49,7 @@ type AgentRuntime struct {
 	MemPercent      float64         `json:"memPercent"`
 	SandboxSpec     string          `json:"sandboxSpec"`
 	Agents          []AgentInstance `json:"agents"`
+	GatewaydURL     string          `json:"gatewaydUrl"`
 	ReportedAt      time.Time       `json:"reportedAt"`
 	CreatedAt       time.Time       `json:"createdAt"`
 	UpdatedAt       time.Time       `json:"updatedAt"`
@@ -77,6 +78,7 @@ type ReportStatusRequest struct {
 	MemPercent    float64                     `json:"mem_percent"`
 	SandboxSpec   string                      `json:"sandbox_spec"`
 	Agents        []ReportStatusAgentInstance `json:"agents"`
+	GatewaydURL   string                      `json:"gatewayd_url,omitempty"`
 	ReportedAt    *time.Time                  `json:"reported_at,omitempty"`
 }
 

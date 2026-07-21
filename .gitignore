@@ -50,3 +50,7 @@ go.work
 # Zone.Identifier (WSL)
 *:Zone.Identifier
 .worktrees/
+
+# AI 运行时生成的本地工作区目录（位于 workspace.root 下，不应提交到源码仓库）
+/projects/
+

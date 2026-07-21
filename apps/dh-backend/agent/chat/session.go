@@ -3,12 +3,13 @@ package chat
 import "time"
 
 type Session struct {
-	ID            string         `json:"id"`
-	WorkspaceID   string         `json:"workspaceId"`
-	WorkspacePath string         `json:"workspacePath"` // 新增：gatewayd 工作目录
-	UserID        string         `json:"userId,omitempty"`
-	AgentID       string         `json:"agentId"`
-	AgentType     string         `json:"agentType"`
+	ID              string         `json:"id"`
+	WorkspaceID     string         `json:"workspaceId"`
+	WorkspacePath   string         `json:"workspacePath"`
+	UserID          string         `json:"userId,omitempty"`
+	AgentID         string         `json:"agentId"`
+	GatewaydAgentID string         `json:"gatewaydAgentId"`
+	AgentType       string         `json:"agentType"`
 	Model         string         `json:"model"`
 	ProjectID     string         `json:"projectId"`
 	Title         string         `json:"title"`

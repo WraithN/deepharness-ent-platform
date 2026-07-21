@@ -231,3 +231,30 @@ func (s *DBWorkItemService) UpdateWorkItemStatus(id string, status workitem.Stat
 	}
 	return it, nil
 }
+
+// CountWorkItems 统计指定项目在最近 days 天内更新的工作项数量。
+func (s *DBWorkItemService) CountWorkItems(projectID string, status workitem.Status, days int) (int, error) {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM workitems
+		WHERE project_id = $1 AND "type" = 'requirement' AND status = $2 AND updated_at >= NOW() - INTERVAL '1 day' * $3
+	`, projectID, string(status), days).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count workitems failed: %w", err)
+	}
+	return count, nil
+}
+
+// CountWorkItemsPrevPeriod 统计上一个同等周期的工作项数量。
+func (s *DBWorkItemService) CountWorkItemsPrevPeriod(projectID string, status workitem.Status, days int) (int, error) {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM workitems
+		WHERE project_id = $1 AND "type" = 'requirement' AND status = $2
+		AND updated_at >= NOW() - INTERVAL '1 day' * ($3 * 2) AND updated_at < NOW() - INTERVAL '1 day' * $4
+	`, projectID, string(status), days, days).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count workitems prev period failed: %w", err)
+	}
+	return count, nil
+}

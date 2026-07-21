@@ -1,13 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
-import { CheckCircle2, AlertTriangle, AlertCircle, GitPullRequest, GitMerge, XCircle, Clock, Link as LinkIcon, Send, Rocket } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, AlertCircle, GitPullRequest, GitMerge, Loader2, XCircle, Clock, Link as LinkIcon, Send, Rocket } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationBar } from '@/components/admin/PaginationBar';
 import { useClientPagination } from '@/hooks/use-client-pagination';
+import { api } from '@/lib/api';
 
 interface PRRecord {
   id: string;
@@ -28,11 +29,69 @@ interface PRRecord {
   };
 }
 
+interface ReviewResult {
+  id: string;
+  repo: string;
+  prId: number;
+  title: string;
+  summary: string;
+  issues: Array<{ id: string; file: string; line: number; severity: string; message: string }>;
+  createdAt: string;
+}
+
 const REVIEW_PAGE_SIZE = 10;
-const prList: PRRecord[] = [];
+
+function mapSeverityCounts(issues: ReviewResult['issues']) {
+  const counts = { errors: 0, warnings: 0, info: 0 };
+  for (const issue of issues) {
+    if (issue.severity === 'high') counts.errors++;
+    else if (issue.severity === 'medium') counts.warnings++;
+    else counts.info++;
+  }
+  return counts;
+}
+
+function deriveStatus(issues: ReviewResult['issues']): PRRecord['status'] {
+  const hasHigh = issues.some(i => i.severity === 'high');
+  const hasMedium = issues.some(i => i.severity === 'medium');
+  if (hasHigh) return 'failed';
+  if (hasMedium) return 'pending';
+  return 'passed';
+}
+
+function formatReviewTime(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function mapReviewToPRRecord(r: ReviewResult): PRRecord {
+  return {
+    id: r.id,
+    title: r.title,
+    author: '—',
+    repo: r.repo,
+    branch: `pr-${r.prId}`,
+    status: deriveStatus(r.issues),
+    time: formatReviewTime(r.createdAt),
+    issues: mapSeverityCounts(r.issues),
+  };
+}
 
 export const SmartReview: React.FC = () => {
   const [selectedPR, setSelectedPR] = useState<PRRecord | null>(null);
+  const [prList, setPrList] = useState<PRRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.get<ReviewResult[]>('/v1/review/review')
+      .then(data => {
+        setPrList(data.map(mapReviewToPRRecord));
+      })
+      .catch(() => {
+        toast.error('加载评审记录失败');
+      })
+      .finally(() => setLoading(false));
+  }, []);
 
   const { currentPage, totalPages, onPageChange, startIndex, endIndex } = useClientPagination({
     pageSize: REVIEW_PAGE_SIZE,
@@ -82,7 +141,13 @@ export const SmartReview: React.FC = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {paginatedPRs.length === 0 ? (
+                {loading ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                      <Loader2 className="h-5 w-5 animate-spin mx-auto" />
+                    </TableCell>
+                  </TableRow>
+                ) : paginatedPRs.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                       暂无 PR 记录

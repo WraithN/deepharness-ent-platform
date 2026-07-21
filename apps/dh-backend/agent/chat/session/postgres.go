@@ -207,3 +207,17 @@ func (s *PostgresStore) GetHistory(ctx context.Context, sessionID string, limit 
 	}
 	return result, rows.Err()
 }
+
+// MigrateMessages 将旧 sessionID 下的所有消息迁移到新 sessionID。
+func (s *PostgresStore) MigrateMessages(ctx context.Context, oldSessionID, newSessionID string) error {
+	if oldSessionID == newSessionID {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE agent_messages SET session_id = $1 WHERE session_id = $2
+	`, newSessionID, oldSessionID)
+	if err != nil {
+		return fmt.Errorf("migrate messages failed: %w", err)
+	}
+	return nil
+}

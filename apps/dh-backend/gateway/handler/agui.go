@@ -17,11 +17,12 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
 	workitemservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 	"github.com/google/uuid"
 )
 
 const (
-	finishWait     = 90 * time.Second
+	finishWait     = 300 * time.Second
 	maxRunDuration = 10 * time.Minute
 )
 
@@ -42,21 +43,23 @@ type contentPart struct {
 
 // AGUIHandler 处理 AG-UI 协议的 agent run 请求。
 type AGUIHandler struct {
-	aguiClient  *client.AGUIClient
-	sessions    chat.SessionStore
-	messages    chat.MessageStore
-	buffer      buffer.SSEBuffer
-	workItemSvc workitemservice.WorkItemService
+	aguiClient    *client.AGUIClient
+	sessions      chat.SessionStore
+	messages      chat.MessageStore
+	buffer        buffer.SSEBuffer
+	workItemSvc   workitemservice.WorkItemService
+	workspaceRoot string
 }
 
 // NewAGUIHandler 创建 AG-UI handler。
-func NewAGUIHandler(adminURL, pluginKey string, sessions chat.SessionStore, messages chat.MessageStore, buf buffer.SSEBuffer, workItemSvc workitemservice.WorkItemService) *AGUIHandler {
+func NewAGUIHandler(adminURL, pluginKey, workspaceRoot string, sessions chat.SessionStore, messages chat.MessageStore, buf buffer.SSEBuffer, workItemSvc workitemservice.WorkItemService) *AGUIHandler {
 	return &AGUIHandler{
-		aguiClient:  client.NewAGUIClient(adminURL, pluginKey),
-		sessions:    sessions,
-		messages:    messages,
-		buffer:      buf,
-		workItemSvc: workItemSvc,
+		aguiClient:    client.NewAGUIClient(adminURL, pluginKey),
+		sessions:      sessions,
+		messages:      messages,
+		buffer:        buf,
+		workItemSvc:   workItemSvc,
+		workspaceRoot: workspaceRoot,
 	}
 }
 
@@ -70,6 +73,7 @@ func (h *AGUIHandler) QuickComplete(ctx context.Context, prompt string) (string,
 // 接收 RunAgentInput，转发到 ent-desktop gatewayd，并以 SSE 流回传 AG-UI 事件。
 func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	reqStart := time.Now()
+	var intentCommand string
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -100,6 +104,11 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		input.RunID = uuid.New().String()
 	}
 
+	// 提取最后一条用户消息文本，用于 debug 日志。
+	lastMsgText := extractLastUserText(input.Messages)
+	log.Printf("[AGUIHandler] >>> HandleRun ENTER run=%s threadId=%s workspace=%s msgCount=%d lastMsg=%q contextCount=%d agentKey=%s",
+		input.RunID, input.ThreadID, workspaceID, len(input.Messages), lastMsgText, len(input.Context), input.AgentKey)
+
 	// 校验并复用已存在的后端 session；不存在时让 gatewayd 创建新 thread 后再写入。
 	sessionID := input.ThreadID
 	if sessionID != "" && sessionID != "main" {
@@ -116,6 +125,23 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		sessionID = ""
+	}
+
+	// 从请求上下文中获取当前用户 ID，用于在 session 未命中时兜底解析 workspace 路径。
+	userID, _ := middleware.UserIDFromContext(r.Context())
+	// 确定本次 run 使用的 workspace 路径：优先使用 session 中保存的路径，否则按
+	// workspace_root/{workspace_id}/{user_id} 实时解析。该路径会替换指令模板中的
+	// {WORKSPACE_PATH} 占位符，避免 AI 把相对路径 projects/ 解析到 agent 的 cwd。
+	workspacePath := input.Workspace
+	if workspacePath == "" && workspaceID != "" && userID != "" && h.workspaceRoot != "" {
+		resolved, err := resolveWorkspacePath(workspaceID, userID, h.workspaceRoot)
+		if err != nil {
+			log.Printf("[AGUIHandler] run=%s resolve workspace path failed: %v", input.RunID, err)
+		} else {
+			workspacePath = resolved
+			input.Workspace = workspacePath
+			log.Printf("[AGUIHandler] run=%s resolved workspace path: %s", input.RunID, workspacePath)
+		}
 	}
 
 	// 保存用户输入消息（最后一条或全部用户消息）。
@@ -140,7 +166,7 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	// 将用户消息替换为指令专属提示词模板。
 	// 同时处理引用的任务卡片，将卡片信息注入提示词。
 	// 在 saveUserMessages 之后执行，确保数据库保存的是用户原始输入。
-	commandApplied := interceptCommands(input.Messages, input.Context, h.workItemSvc)
+	commandApplied := interceptCommands(input.Messages, input.Context, workspacePath, h.workItemSvc)
 
 	// 意图识别：用户未输入斜杠指令时，先调用 LLM 判断是闲聊还是任务意图。
 	// 闲聊 → 直接返回 LLM 回复，不走正常 agent run。
@@ -168,7 +194,8 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				// 任务意图：应用指令模板到用户消息。
-				applyIntentCommand(input.Messages, intentResult.Command, userInput)
+				applyIntentCommand(input.Messages, intentResult.Command, userInput, workspacePath)
+				intentCommand = intentResult.Command
 				log.Printf("[AGUIHandler] intent mapped to command: %s", intentResult.Command)
 			}
 		}
@@ -178,12 +205,16 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	// 这里不再重复发送，避免前端收到重复的 run 开始事件。
 
 	// 使用 background context 调用 gatewayd，确保前端断连后 gatewayd 继续运行。
+	log.Printf("[AGUIHandler] run=%s >>> aguiClient.Run ENTER input.ThreadId=%q workspace=%q commandApplied=%v messageCount=%d",
+		input.RunID, input.ThreadID, input.Workspace, commandApplied, len(input.Messages))
 	actualThreadID, events, err := h.aguiClient.Run(context.Background(), input)
 	if err != nil {
-		log.Printf("[AGUIHandler] run=%s run failed after %v: %v", input.RunID, time.Since(reqStart), err)
+		log.Printf("[AGUIHandler] run=%s <<< aguiClient.Run FAILED after %v: %v", input.RunID, time.Since(reqStart), err)
 		h.writeEvent(w, flusher, agui.RunErrorEvent(FormatGatewaydError(err), "RUN_FAILED"))
 		return
 	}
+	log.Printf("[AGUIHandler] run=%s <<< aguiClient.Run OK actualThreadId=%s after %v",
+		input.RunID, actualThreadID, time.Since(reqStart))
 
 	// 确保后端 session 记录存在（新会话在发送第一条消息前已通过 /api/v1/sessions 创建，
 	// 这里作为兜底，兼容直接调用 /api/v1/agent 的场景）。
@@ -191,6 +222,19 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[AGUIHandler] run=%s ensure session failed: %v", input.RunID, err)
 	}
 	sessionID = actualThreadID
+
+	if actualThreadID != input.ThreadID {
+		log.Printf("[AGUIHandler] run=%s threadID changed: %q -> %q, migrating messages",
+			input.RunID, input.ThreadID, actualThreadID)
+		if err := h.messages.MigrateMessages(context.Background(), input.ThreadID, actualThreadID); err != nil {
+			log.Printf("[AGUIHandler] run=%s migrate messages failed: %v", input.RunID, err)
+		}
+		if oldSess, err := h.sessions.Get(context.Background(), input.ThreadID); err == nil && oldSess.Title != "" {
+			_ = h.sessions.UpdateTitle(context.Background(), actualThreadID, oldSess.Title)
+		}
+		// 保留旧 session 不删除，避免前端在 RUN_STARTED 更新 threadId 前
+		// 查询旧 session 时得到 404 —— 旧 session 变空但至少不会触发前端重建会话。
+	}
 
 	// bgCtx 用于 buffer 和持久化操作，独立于 HTTP 请求生命周期。
 	bgCtx := context.Background()
@@ -267,6 +311,11 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		if len(parts) > 0 {
 			metadata["contentParts"] = parts
 		}
+		if intentCommand != "" {
+			cardType := strings.TrimPrefix(intentCommand, "/")
+			cardType = strings.ReplaceAll(cardType, "-", "_")
+			metadata["cardType"] = cardType
+		}
 		msg := chat.Message{
 			ID:        msgID,
 			SessionID: sessionID,
@@ -318,29 +367,35 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 
 	firstEventSeen := false
 	firstContentSeen := false
+	firstResponseSeen := false
 	frontendDone := false
+	eventCount := 0
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				log.Printf("[AGUIHandler] run=%s event stream closed, total elapsed=%v", input.RunID, time.Since(reqStart))
+				log.Printf("[AGUIHandler] run=%s event stream closed, total elapsed=%v totalEvents=%d",
+					input.RunID, time.Since(reqStart), eventCount)
 				completeRun()
 				return
 			}
+			eventCount++
 			// 无条件缓冲所有 gatewayd 事件，供前端重连回放。
 			if h.buffer != nil {
 				h.buffer.Append(bgCtx, sessionID, ev)
 			}
-			if !firstEventSeen {
-				firstEventSeen = true
-				log.Printf("[AGUIHandler] run=%s first SSE event from gatewayd after %v: type=%s", input.RunID, time.Since(reqStart), ev.Type)
-				maxTimer.Reset(maxRunDuration)
-			}
+		if !firstEventSeen {
+			firstEventSeen = true
+			log.Printf("[AGUIHandler] run=%s first SSE event from gatewayd after %v: type=%s threadId=%s",
+				input.RunID, time.Since(reqStart), ev.Type, ev.ThreadID)
+			maxTimer.Reset(maxRunDuration)
+		}
 		switch ev.Type {
 		case agui.EventThinkingStart:
 			log.Printf("[AGUIHandler] run=%s THINKING_START after %v", input.RunID, time.Since(reqStart))
 		case agui.EventTextMessageStart:
 			log.Printf("[AGUIHandler] run=%s TEXT_MESSAGE_START (TTFT) after %v", input.RunID, time.Since(reqStart))
+			firstResponseSeen = true
 			activeTextMessageID = ev.MessageID
 			bufMu.Lock()
 			if runMessageID == "" {
@@ -391,6 +446,7 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 			checkpointRun()
 		case agui.EventToolCallStart:
 			log.Printf("[AGUIHandler] run=%s TOOL_CALL_START id=%s tool=%s after %v", input.RunID, ev.ToolCallID, ev.ToolCallName, time.Since(reqStart))
+			firstResponseSeen = true
 			activeToolCallCount++
 			pendingToolCallIDs = append(pendingToolCallIDs, ev.ToolCallID)
 			bufMu.Lock()
@@ -478,12 +534,14 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 			h.finalizeSession(bgCtx, sessionID, input.Messages)
 			return
 		}
-			writeAndBuffer(ev)
+		writeAndBuffer(ev)
+		if firstResponseSeen {
 			if activeToolCallCount == 0 {
 				finishTimer.Reset(finishWait)
 			} else {
 				finishTimer.Stop()
 			}
+		}
 		case <-r.Context().Done():
 			if frontendDone {
 				continue

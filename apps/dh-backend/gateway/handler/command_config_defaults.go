@@ -12,7 +12,7 @@ var embeddedCommands = []CommandConfig{
 		AllowTask:  true,
 		AllowRepos: false,
 		MaxRepos:   0,
-		Template:   "你是一位资深产品经理。请根据以下需求描述，生成一份结构化的 PRD（产品需求文档）。\n\n【文件输出要求】\n1. 将 PRD 文档写入 projects/products-jobs/prd/ 目录下。\n2. 文件命名格式：{需求名称}-prd.md。\n3. 文档使用 Markdown 格式编写。\n\n【PRD 内容结构】\n1. 背景与目标\n2. 用户场景\n3. 功能详情\n4. 业务流程图（使用 Mermaid 语法）\n5. 数据埋点要求\n\n【输出标记】\n文档写入完成后，在回复末尾标记：\n[[FILE:绝对路径/到/projects/products-jobs/prd/需求名称-prd.md]]\n\n【用户需求】\n{ARGS}",
+		Template:   "你是一位资深产品经理。请根据以下需求描述，生成一份结构化的 PRD（产品需求文档）。\n\n【文件输出要求】\n1. 将 PRD 文档写入 {WORKSPACE_PATH}/projects/products-jobs/prd/ 目录下。\n2. 文件命名格式：{需求名称}-prd.md。\n3. 文档使用 Markdown 格式编写。\n\n【PRD 内容结构】\n1. 背景与目标\n2. 用户场景\n3. 功能详情\n4. 业务流程图（使用 Mermaid 语法）\n5. 数据埋点要求\n\n【输出标记】\n文档写入完成后，在回复末尾用 [[FILE:文件完整路径]] 标记你实际创建的 PRD 文件，\n例如 [[FILE:{WORKSPACE_PATH}/projects/products-jobs/prd/login-prd.md]]。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【用户需求】\n{ARGS}",
 	},
 	{
 		Cmd:        "/prd-research",
@@ -22,7 +22,7 @@ var embeddedCommands = []CommandConfig{
 		AllowTask:  true,
 		AllowRepos: false,
 		MaxRepos:   0,
-		Template:   "你是一位资深技术分析师。请根据以下主题，进行深入的技术调研并生成一份结构化的调研报告。\n\n【文件输出要求】\n1. 将调研文档写入 projects/products-jobs/research/ 目录下。\n2. 文件命名格式：{调研主题}-research.md。\n3. 文档使用 Markdown 格式编写。\n\n【调研报告内容结构】\n1. 调研背景与目标\n2. 现状分析\n3. 方案对比（使用表格对比优劣）\n4. 推荐方案及理由\n5. 风险与注意事项\n6. 参考资料\n\n【输出标记】\n[[FILE:绝对路径/到/projects/products-jobs/research/调研主题-research.md]]\n\n【调研主题】\n{ARGS}",
+		Template:   "你是一位资深技术分析师。请根据以下主题，进行深入的技术调研并生成一份结构化的调研报告。\n\n【文件输出要求】\n1. 将调研文档写入 {WORKSPACE_PATH}/projects/products-jobs/research/ 目录下。\n2. 文件命名格式：{调研主题}-research.md。\n3. 文档使用 Markdown 格式编写。\n\n【调研报告内容结构】\n1. 调研背景与目标\n2. 现状分析\n3. 方案对比（使用表格对比优劣）\n4. 推荐方案及理由\n5. 风险与注意事项\n6. 参考资料\n\n【输出标记】\n在回复末尾用 [[FILE:文件完整路径]] 标记你实际创建的调研报告文件。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【调研主题】\n{ARGS}",
 	},
 	{
 		Cmd:        "/proto-make",
@@ -32,7 +32,7 @@ var embeddedCommands = []CommandConfig{
 		AllowTask:  true,
 		AllowRepos: true,
 		MaxRepos:   2,
-		Template:   "你是一位全栈工程师。请根据以下需求，生成一个可运行的前端+后端工程原型。\n\n【工程输出要求】\n1. 将工程创建在 projects/ 目录下。\n2. 前端使用 React + TypeScript + Tailwind CSS。\n3. 后端使用 Node.js（Express 或 Fastify）。\n4. 前后端都必须有完整的 package.json。\n\n【输出标记】\n[[PROJECT:绝对路径/到/projects/工程名]]\n\n【需求描述】\n{ARGS}",
+		Template:   "你是一位全栈工程师。请根据以下需求，生成一个可运行的前端+后端工程原型。\n\n【工程输出要求】\n1. 将工程创建在 {WORKSPACE_PATH}/projects/ 目录下。\n2. 前端使用 React + TypeScript + Tailwind CSS。\n3. 后端使用 Node.js（Express 或 Fastify）。\n4. 前后端都必须有完整的 package.json。\n\n【输出标记】\n在回复末尾用 [[PROJECT:工程完整路径]] 标记你实际创建的工程根目录。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【需求描述】\n{ARGS}",
 	},
 	{
 		Cmd:          "/code",
@@ -43,7 +43,7 @@ var embeddedCommands = []CommandConfig{
 		AllowRepos:   true,
 		RequireRepos: true,
 		MaxRepos:     2,
-		Template:     "你是一位资深工程师。请根据以下需求编写代码。\n\n【代码输出要求】\n1. 将代码写入 projects/ 目录下对应的工程中。\n2. 遵循该工程现有的代码风格和目录结构。\n3. 代码需包含必要的错误处理和注释。\n\n【输出标记】\n- 创建整个工程使用 [[PROJECT:绝对路径]] 标记。\n- 创建或修改单个文件使用 [[FILE:绝对路径]] 标记。\n\n【需求描述】\n{ARGS}",
+		Template:     "你是一位资深工程师。请根据以下需求编写代码。\n\n【代码输出要求】\n1. 将代码写入 {WORKSPACE_PATH}/projects/ 目录下对应的工程中。\n2. 遵循该工程现有的代码风格和目录结构。\n3. 代码需包含必要的错误处理和注释。\n\n【输出标记】\n- 创建整个工程用 [[PROJECT:工程完整路径]] 标记。\n- 创建或修改单个文件用 [[FILE:文件完整路径]] 标记。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【需求描述】\n{ARGS}",
 	},
 	{
 		Cmd:        "/debug",
@@ -53,7 +53,7 @@ var embeddedCommands = []CommandConfig{
 		AllowTask:  true,
 		AllowRepos: true,
 		MaxRepos:   2,
-		Template:   "你是一位资深工程师。请根据以下缺陷描述，定位并修复问题。\n\n【调试要求】\n1. 先分析可能的根因，再给出修复方案。\n2. 修改代码时直接使用工具写入文件，不要只给出建议。\n3. 修复完成后简要说明修改了哪些文件、修改原因。\n\n【输出标记】\n- 修改多个文件使用 [[PROJECT:绝对路径]] 标记工程根目录。\n- 修改单个文件使用 [[FILE:绝对路径]] 标记。\n\n【缺陷描述】\n{ARGS}",
+		Template:   "你是一位资深工程师。请根据以下缺陷描述，定位并修复问题。\n\n【调试要求】\n1. 先分析可能的根因，再给出修复方案。\n2. 修改代码时直接使用工具写入文件，不要只给出建议。\n3. 修复完成后简要说明修改了哪些文件、修改原因。\n\n【输出标记】\n- 修改了多个文件用 [[PROJECT:工程完整路径]] 标记根目录。\n- 修改了单个文件用 [[FILE:文件完整路径]] 标记。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【缺陷描述】\n{ARGS}",
 	},
 	{
 		Cmd:          "/review",
@@ -64,7 +64,7 @@ var embeddedCommands = []CommandConfig{
 		AllowRepos:   true,
 		RequireRepos: true,
 		MaxRepos:     2,
-		Template:     "你是一位资深代码审查专家。请对以下代码或工程进行 Code Review。\n\n【审查要求】\n1. 从代码质量、安全性、性能、可维护性四个维度进行审查。\n2. 对每个问题给出严重程度（严重/警告/建议）和具体修改建议。\n3. 审查结果以 Markdown 格式输出。\n\n【输出标记】\n如果审查过程中修改了代码，使用 [[FILE:绝对路径]] 或 [[PROJECT:绝对路径]] 标记。\n\n【审查目标】\n{ARGS}",
+		Template:     "你是一位资深代码审查专家。请对以下代码或工程进行 Code Review。\n\n【审查要求】\n1. 从代码质量、安全性、性能、可维护性四个维度进行审查。\n2. 对每个问题给出严重程度（严重/警告/建议）和具体修改建议。\n3. 审查结果以 Markdown 格式输出。\n\n【输出标记】\n如果审查过程中修改了代码，用 [[FILE:文件完整路径]] 或 [[PROJECT:工程完整路径]] 标记。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【审查目标】\n{ARGS}",
 	},
 	{
 		Cmd:          "/unit-test",
@@ -75,7 +75,7 @@ var embeddedCommands = []CommandConfig{
 		AllowRepos:   true,
 		RequireRepos: true,
 		MaxRepos:     2,
-		Template:     "你是一位资深测试工程师。请根据以下代码或需求，生成完整的单元测试。\n\n【测试要求】\n1. 覆盖正常路径、异常路径与边界条件。\n2. 测试代码写入对应工程的 tests/ 目录或与被测文件同目录。\n3. 使用项目现有测试框架（如 Jest / Vitest / pytest）。\n\n【输出标记】\n- 创建单个测试文件使用 [[FILE:绝对路径]] 标记。\n- 如涉及多个文件使用 [[PROJECT:绝对路径]] 标记。\n\n【目标代码/需求】\n{ARGS}",
+		Template:     "你是一位资深测试工程师。请根据以下代码或需求，生成完整的单元测试。\n\n【测试要求】\n1. 覆盖正常路径、异常路径与边界条件。\n2. 测试代码写入对应工程的 tests/ 目录或与被测文件同目录。\n3. 使用项目现有测试框架（如 Jest / Vitest / pytest）。\n\n【输出标记】\n- 创建单个测试文件用 [[FILE:文件完整路径]] 标记。\n- 涉及多个文件用 [[PROJECT:工程完整路径]] 标记。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【目标代码/需求】\n{ARGS}",
 	},
 	{
 		Cmd:        "/test-case",
@@ -85,7 +85,7 @@ var embeddedCommands = []CommandConfig{
 		AllowTask:  true,
 		AllowRepos: false,
 		MaxRepos:   0,
-		Template:   "你是一位资深测试工程师。请根据以下需求或功能描述，生成结构化的测试用例。\n\n【文件输出要求】\n1. 将测试用例文档写入 projects/products-jobs/test-cases/ 目录下。\n2. 文件命名格式：{功能名称}-test-cases.md。\n3. 每条用例包含：用例编号、标题、前置条件、操作步骤、预期结果、优先级。\n\n【输出标记】\n[[FILE:绝对路径/到/projects/products-jobs/test-cases/功能名称-test-cases.md]]\n\n【功能描述】\n{ARGS}",
+		Template:   "你是一位资深测试工程师。请根据以下需求或功能描述，生成结构化的测试用例。\n\n【文件输出要求】\n1. 将测试用例文档写入 {WORKSPACE_PATH}/projects/products-jobs/test-cases/ 目录下。\n2. 文件命名格式：{功能名称}-test-cases.md。\n3. 每条用例包含：用例编号、标题、前置条件、操作步骤、预期结果、优先级。\n\n【输出标记】\n在回复末尾用 [[FILE:文件完整路径]] 标记你实际创建的测试用例文件。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【功能描述】\n{ARGS}",
 	},
 	{
 		Cmd:        "/auto-test",
@@ -95,7 +95,7 @@ var embeddedCommands = []CommandConfig{
 		AllowTask:  true,
 		AllowRepos: true,
 		MaxRepos:   1,
-		Template:   "你是一位资深测试开发工程师。请根据以下需求或接口，生成可运行的自动化测试脚本。\n\n【脚本要求】\n1. 脚本写入 projects/ 对应工程的 tests/ 或 e2e/ 目录。\n2. 优先使用 Playwright / Cypress / Jest 等常见工具，并说明运行方式。\n3. 包含关键断言与用例说明。\n\n【输出标记】\n[[FILE:绝对路径]] 或 [[PROJECT:绝对路径]]\n\n【目标需求/接口】\n{ARGS}",
+		Template:   "你是一位资深测试开发工程师。请根据以下需求或接口，生成可运行的自动化测试脚本。\n\n【脚本要求】\n1. 脚本写入 {WORKSPACE_PATH}/projects/ 对应工程的 tests/ 或 e2e/ 目录。\n2. 优先使用 Playwright / Cypress / Jest 等常见工具，并说明运行方式。\n3. 包含关键断言与用例说明。\n\n【输出标记】\n用 [[FILE:文件完整路径]] 或 [[PROJECT:工程完整路径]] 标记输出文件。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【目标需求/接口】\n{ARGS}",
 	},
 	{
 		Cmd:        "/bug-analysis",
@@ -105,7 +105,7 @@ var embeddedCommands = []CommandConfig{
 		AllowTask:  true,
 		AllowRepos: false,
 		MaxRepos:   0,
-		Template:   "你是一位资深测试分析师。请根据以下缺陷现象，进行根因分析并评估影响范围。\n\n【分析要求】\n1. 列出可能的根因假设并给出验证思路。\n2. 评估对功能、性能、用户体验的影响。\n3. 输出修复建议与回归测试重点。\n\n【输出标记】\n如需写入文件，使用 [[FILE:绝对路径]] 标记。\n\n【缺陷现象】\n{ARGS}",
+		Template:   "你是一位资深测试分析师。请根据以下缺陷现象，进行根因分析并评估影响范围。\n\n【分析要求】\n1. 列出可能的根因假设并给出验证思路。\n2. 评估对功能、性能、用户体验的影响。\n3. 输出修复建议与回归测试重点。\n\n【输出标记】\n如需写入文件，用 [[FILE:文件完整路径]] 标记。务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【缺陷现象】\n{ARGS}",
 	},
 	{
 		Cmd:        "/test-report",
@@ -115,7 +115,7 @@ var embeddedCommands = []CommandConfig{
 		AllowTask:  true,
 		AllowRepos: false,
 		MaxRepos:   0,
-		Template:   "你是一位资深测试经理。请根据以下测试执行情况或数据，生成一份测试报告。\n\n【报告内容】\n1. 测试范围与目标\n2. 测试执行摘要（用例数、通过/失败数、阻塞数）\n3. 缺陷统计与严重度分布\n4. 风险评估与发布建议\n5. 遗留问题与后续计划\n\n【输出标记】\n[[FILE:绝对路径/到/projects/products-jobs/reports/测试报告.md]]\n\n【测试数据/描述】\n{ARGS}",
+		Template:   "你是一位资深测试经理。请根据以下测试执行情况或数据，生成一份测试报告。\n\n【报告内容】\n1. 测试范围与目标\n2. 测试执行摘要（用例数、通过/失败数、阻塞数）\n3. 缺陷统计与严重度分布\n4. 风险评估与发布建议\n5. 遗留问题与后续计划\n\n【输出标记】\n在回复末尾用 [[FILE:文件完整路径]] 标记你实际创建的测试报告文件。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【测试数据/描述】\n{ARGS}",
 	},
 	{
 		Cmd:        "/ui-spec",
@@ -125,7 +125,7 @@ var embeddedCommands = []CommandConfig{
 		AllowTask:  true,
 		AllowRepos: false,
 		MaxRepos:   0,
-		Template:   "你是一位资深 UI 设计师。请根据以下需求，生成一份 UI 设计规范文档。\n\n【文档内容】\n1. 色彩规范（主色、辅助色、状态色、文字色）\n2. 字体与字号规范\n3. 间距与圆角规范\n4. 按钮、输入框、卡片等组件样式规范\n5. 布局栅格示例\n\n【输出标记】\n[[FILE:绝对路径/到/projects/products-jobs/design/需求名称-ui-spec.md]]\n\n【需求描述】\n{ARGS}",
+		Template:   "你是一位资深 UI 设计师。请根据以下需求，生成一份 UI 设计规范文档。\n\n【文档内容】\n1. 色彩规范（主色、辅助色、状态色、文字色）\n2. 字体与字号规范\n3. 间距与圆角规范\n4. 按钮、输入框、卡片等组件样式规范\n5. 布局栅格示例\n\n【输出标记】\n在回复末尾用 [[FILE:文件完整路径]] 标记你实际创建的 UI 规范文件。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【需求描述】\n{ARGS}",
 	},
 	{
 		Cmd:        "/design-review",
@@ -135,7 +135,7 @@ var embeddedCommands = []CommandConfig{
 		AllowTask:  true,
 		AllowRepos: false,
 		MaxRepos:   0,
-		Template:   "你是一位资深设计走查专家。请根据以下设计稿或实现描述，检查设计还原与一致性。\n\n【走查维度】\n1. 视觉还原（颜色、字体、间距、圆角）\n2. 交互流程与状态完整性\n3. 响应式与可访问性\n4. 设计 Token 使用是否一致\n\n【输出标记】\n如需写入文件，使用 [[FILE:绝对路径]] 标记。\n\n【设计稿/实现描述】\n{ARGS}",
+		Template:   "你是一位资深设计走查专家。请根据以下设计稿或实现描述，检查设计还原与一致性。\n\n【走查维度】\n1. 视觉还原（颜色、字体、间距、圆角）\n2. 交互流程与状态完整性\n3. 响应式与可访问性\n4. 设计 Token 使用是否一致\n\n【输出标记】\n如需写入文件，用 [[FILE:文件完整路径]] 标记。务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【设计稿/实现描述】\n{ARGS}",
 	},
 	{
 		Cmd:        "/design-token",
@@ -145,7 +145,7 @@ var embeddedCommands = []CommandConfig{
 		AllowTask:  true,
 		AllowRepos: false,
 		MaxRepos:   0,
-		Template:   "你是一位资深设计系统专家。请根据以下品牌或设计需求，生成一份 Design Token 定义。\n\n【Token 要求】\n1. 包含颜色、字体、间距、圆角、阴影、断点等维度。\n2. 输出为 JSON 或 CSS 变量格式，便于代码使用。\n3. 命名语义清晰，支持层级扩展。\n\n【输出标记】\n[[FILE:绝对路径/到/projects/products-jobs/design/tokens.json]]\n\n【品牌/设计需求】\n{ARGS}",
+		Template:   "你是一位资深设计系统专家。请根据以下品牌或设计需求，生成一份 Design Token 定义。\n\n【Token 要求】\n1. 包含颜色、字体、间距、圆角、阴影、断点等维度。\n2. 输出为 JSON 或 CSS 变量格式，便于代码使用。\n3. 命名语义清晰，支持层级扩展。\n\n【输出标记】\n在回复末尾用 [[FILE:文件完整路径]] 标记你实际创建的 Token 文件。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【品牌/设计需求】\n{ARGS}",
 	},
 	{
 		Cmd:        "/user-story",
@@ -155,7 +155,7 @@ var embeddedCommands = []CommandConfig{
 		AllowTask:  true,
 		AllowRepos: false,
 		MaxRepos:   0,
-		Template:   "你是一位资深产品经理。请根据以下需求，拆分为结构化的用户故事与验收标准。\n\n【输出要求】\n1. 每条用户故事遵循 \"作为...，我希望...，以便...\" 格式。\n2. 包含验收标准（AC），使用 Given/When/Then 描述。\n3. 输出按优先级与模块分组。\n\n【输出标记】\n[[FILE:绝对路径/到/projects/products-jobs/stories/需求名称-user-stories.md]]\n\n【需求描述】\n{ARGS}",
+		Template:   "你是一位资深产品经理。请根据以下需求，拆分为结构化的用户故事与验收标准。\n\n【输出要求】\n1. 每条用户故事遵循 \"作为...，我希望...，以便...\" 格式。\n2. 包含验收标准（AC），使用 Given/When/Then 描述。\n3. 输出按优先级与模块分组。\n\n【输出标记】\n在回复末尾用 [[FILE:文件完整路径]] 标记你实际创建的用户故事文件。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【需求描述】\n{ARGS}",
 	},
 	{
 		Cmd:        "/data-analysis",
@@ -165,6 +165,6 @@ var embeddedCommands = []CommandConfig{
 		AllowTask:  true,
 		AllowRepos: false,
 		MaxRepos:   0,
-		Template:   "你是一位资深数据分析师。请根据以下数据或分析目标，生成数据洞察报告。\n\n【报告内容】\n1. 分析目标与指标说明\n2. 数据清洗与假设说明\n3. 关键指标与趋势分析\n4. 洞察结论与行动建议\n5. 可视化建议（图表类型）\n\n【输出标记】\n[[FILE:绝对路径/到/projects/products-jobs/analysis/分析主题.md]]\n\n【数据/分析目标】\n{ARGS}",
+		Template:   "你是一位资深数据分析师。请根据以下数据或分析目标，生成数据洞察报告。\n\n【报告内容】\n1. 分析目标与指标说明\n2. 数据清洗与假设说明\n3. 关键指标与趋势分析\n4. 洞察结论与行动建议\n5. 可视化建议（图表类型）\n\n【输出标记】\n在回复末尾用 [[FILE:文件完整路径]] 标记你实际创建的分析报告文件。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【数据/分析目标】\n{ARGS}",
 	},
 }

@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev",
+    "dev": "bash -c 'scripts/ensure-gatewayd.sh && turbo run dev'",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "check-types": "turbo run check-types",

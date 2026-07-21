@@ -52,6 +52,7 @@ func (s *DBAgentRuntimeService) ensureTable() error {
 			cpu_percent REAL NOT NULL DEFAULT 0,
 			mem_percent REAL NOT NULL DEFAULT 0,
 			sandbox_spec VARCHAR(64) NOT NULL DEFAULT '',
+			gatewayd_url VARCHAR(512) NOT NULL DEFAULT '',
 			agents JSONB NOT NULL DEFAULT '[]'::jsonb,
 			reported_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -135,8 +136,8 @@ func (s *DBAgentRuntimeService) ReportStatus(runtimeID string, req object.Report
 		INSERT INTO agent_runtimes (
 			runtime_id, tenant_id, tenant_name, workspace_id, workspace_name,
 			user_id, user_name, user_display_name, status, uptime_seconds,
-			cpu_percent, mem_percent, sandbox_spec, agents, reported_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			cpu_percent, mem_percent, sandbox_spec, gatewayd_url, agents, reported_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		ON CONFLICT (runtime_id) DO UPDATE SET
 			tenant_id = EXCLUDED.tenant_id,
 			tenant_name = EXCLUDED.tenant_name,
@@ -150,19 +151,20 @@ func (s *DBAgentRuntimeService) ReportStatus(runtimeID string, req object.Report
 			cpu_percent = EXCLUDED.cpu_percent,
 			mem_percent = EXCLUDED.mem_percent,
 			sandbox_spec = EXCLUDED.sandbox_spec,
+			gatewayd_url = EXCLUDED.gatewayd_url,
 			agents = EXCLUDED.agents,
 			reported_at = EXCLUDED.reported_at
 		RETURNING
 			runtime_id, tenant_id, tenant_name, workspace_id, workspace_name,
 			user_id, user_name, user_display_name, status, uptime_seconds,
-			cpu_percent, mem_percent, sandbox_spec, agents, reported_at,
+			cpu_percent, mem_percent, sandbox_spec, gatewayd_url, agents, reported_at,
 			created_at, updated_at
 	`, runtimeID, tenantID, tenantName, req.WorkspaceID, workspaceName,
 		req.UserID, userName, userDisplayName, string(req.Status), req.UptimeSeconds,
-		req.CpuPercent, req.MemPercent, req.SandboxSpec, agentsJSON, reportedAt,
+		req.CpuPercent, req.MemPercent, req.SandboxSpec, req.GatewaydURL, agentsJSON, reportedAt,
 	).Scan(&rt.RuntimeID, &rt.TenantID, &rt.TenantName, &rt.WorkspaceID, &rt.WorkspaceName,
 		&rt.UserID, &rt.UserName, &rt.UserDisplayName, &rt.Status, &rt.UptimeSeconds,
-		&rt.CpuPercent, &rt.MemPercent, &rt.SandboxSpec, &returnedAgents, &rt.ReportedAt,
+		&rt.CpuPercent, &rt.MemPercent, &rt.SandboxSpec, &rt.GatewaydURL, &returnedAgents, &rt.ReportedAt,
 		&rt.CreatedAt, &rt.UpdatedAt)
 	if err != nil {
 		return object.AgentRuntime{}, fmt.Errorf("upsert runtime status failed: %w", err)
@@ -214,7 +216,7 @@ func (s *DBAgentRuntimeService) List(filter object.ListRuntimesFilter) (object.L
 	query := `
 		SELECT runtime_id, tenant_id, tenant_name, workspace_id, workspace_name,
 		       user_id, user_name, user_display_name, status, uptime_seconds,
-		       cpu_percent, mem_percent, sandbox_spec, agents, reported_at,
+		       cpu_percent, mem_percent, sandbox_spec, gatewayd_url, agents, reported_at,
 		       created_at, updated_at
 		FROM agent_runtimes
 	` + whereSQL + `
@@ -275,13 +277,13 @@ func (s *DBAgentRuntimeService) Get(runtimeID string) (object.AgentRuntime, erro
 	err := s.db.QueryRow(`
 		SELECT runtime_id, tenant_id, tenant_name, workspace_id, workspace_name,
 		       user_id, user_name, user_display_name, status, uptime_seconds,
-		       cpu_percent, mem_percent, sandbox_spec, agents, reported_at,
+		       cpu_percent, mem_percent, sandbox_spec, gatewayd_url, agents, reported_at,
 		       created_at, updated_at
 		FROM agent_runtimes
 		WHERE runtime_id = $1
 	`, runtimeID).Scan(&rt.RuntimeID, &rt.TenantID, &rt.TenantName, &rt.WorkspaceID, &rt.WorkspaceName,
 		&rt.UserID, &rt.UserName, &rt.UserDisplayName, &rt.Status, &rt.UptimeSeconds,
-		&rt.CpuPercent, &rt.MemPercent, &rt.SandboxSpec, &rt.Agents, &rt.ReportedAt,
+		&rt.CpuPercent, &rt.MemPercent, &rt.SandboxSpec, &rt.GatewaydURL, &rt.Agents, &rt.ReportedAt,
 		&rt.CreatedAt, &rt.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -301,7 +303,7 @@ func scanRuntimes(rows *sql.Rows) ([]object.AgentRuntime, error) {
 		var agentsJSON []byte
 		err := rows.Scan(&rt.RuntimeID, &rt.TenantID, &rt.TenantName, &rt.WorkspaceID, &rt.WorkspaceName,
 			&rt.UserID, &rt.UserName, &rt.UserDisplayName, &rt.Status, &rt.UptimeSeconds,
-			&rt.CpuPercent, &rt.MemPercent, &rt.SandboxSpec, &agentsJSON, &rt.ReportedAt,
+			&rt.CpuPercent, &rt.MemPercent, &rt.SandboxSpec, &rt.GatewaydURL, &agentsJSON, &rt.ReportedAt,
 			&rt.CreatedAt, &rt.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("scan runtime failed: %w", err)

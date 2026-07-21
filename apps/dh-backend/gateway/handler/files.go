@@ -12,6 +12,19 @@ import (
 	"strings"
 )
 
+// unresolvedPlaceholders 是可能出现在路径中的未解析中文占位符列表，
+// 说明 AI 未正确替换模板变量，前端或模型输出的是原始模板文字。
+var unresolvedPlaceholders = []string{
+	"绝对路径",
+	"需求名称",
+	"调研主题",
+	"工程名",
+	"功能名称",
+	"功能名",
+	"分析主题",
+	"用户故事",
+}
+
 // filesRoot 是文件读取 API 允许访问的安全根目录，
 // 在 server.go 中通过 SetFilesRoot 初始化为 cfg.WorkspaceRoot。
 var filesRoot string
@@ -83,6 +96,13 @@ func safeFilePath(r *http.Request) (string, int, string) {
 
 	if !isPathAllowed(absPath) {
 		return "", http.StatusForbidden, "path outside allowed root"
+	}
+
+	// 防御性检查：拒绝包含未解析中文占位符的路径。
+	for _, placeholder := range unresolvedPlaceholders {
+		if strings.Contains(absPath, placeholder) {
+			return "", http.StatusBadRequest, "path contains unresolved placeholder"
+		}
 	}
 
 	info, err := os.Stat(absPath)

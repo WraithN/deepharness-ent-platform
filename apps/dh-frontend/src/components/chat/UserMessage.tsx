@@ -6,18 +6,66 @@ import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 import { extractUserPrompt } from '@/hooks/use-ag-ui-chat';
 import { formatTime } from '@/lib/utils';
+import type { SendContext } from '@/hooks/use-ag-ui-chat';
 
 interface UserMessageProps {
   message: MessageState;
   openDetail?: (type: 'req' | 'defect' | 'case', id: string) => void;
   onRepoClick?: () => void;
-  onEdit?: (text: string) => void;
+  onEdit?: (text: string, context?: SendContext) => void;
+}
+
+const COPY_DATA_ATTR = 'data-dh-chat-copy';
+
+function buildCopyText(text: string, quotedCard?: SendContext['quotedCard'], selectedRepos?: SendContext['selectedRepos']): string {
+  const lines: string[] = [];
+  if (quotedCard) {
+    const typeLabel = quotedCard.type === 'req' ? '需求' : quotedCard.type === 'defect' ? '缺陷' : '用例';
+    lines.push(`[引用${typeLabel}: ${quotedCard.title} · ${quotedCard.id}]`);
+  }
+  if (selectedRepos && selectedRepos.length > 0) {
+    lines.push(`[代码库: ${selectedRepos.map(r => r.name).join(', ')}]`);
+  }
+  if (lines.length > 0) {
+    lines.push('');
+  }
+  lines.push(text);
+  return lines.join('\n');
+}
+
+async function copyStructuredText(
+  text: string,
+  quotedCard?: SendContext['quotedCard'],
+  selectedRepos?: SendContext['selectedRepos'],
+): Promise<void> {
+  const plainText = buildCopyText(text, quotedCard, selectedRepos);
+  const payload: Record<string, unknown> = { t: text };
+  if (quotedCard) payload.q = quotedCard;
+  if (selectedRepos && selectedRepos.length > 0) payload.r = selectedRepos;
+  const html = `<span ${COPY_DATA_ATTR}='${JSON.stringify(payload).replace(/'/g, "&#39;")}'>${text.replace(/</g, '&lt;')}</span>`;
+
+  console.log('[copyStructuredText] plainText:', plainText);
+  console.log('[copyStructuredText] html:', html);
+
+  try {
+    const item = new ClipboardItem({
+      'text/plain': new Blob([plainText], { type: 'text/plain' }),
+      'text/html': new Blob([html], { type: 'text/html' }),
+    });
+    console.log('[copyStructuredText] ClipboardItem created OK');
+    await navigator.clipboard.write([item]);
+    console.log('[copyStructuredText] write OK');
+  } catch (err) {
+    console.log('[copyStructuredText] ClipboardItem failed:', err);
+    await navigator.clipboard.writeText(plainText);
+    console.log('[copyStructuredText] fallback writeText OK');
+  }
 }
 
 export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, onRepoClick, onEdit }) => {
   const custom = (message.metadata?.custom || {}) as {
-    quotedCard?: { type: 'req' | 'defect' | 'case'; id: string; title: string };
-    selectedRepos?: { id: string; name: string }[];
+    quotedCard?: SendContext['quotedCard'];
+    selectedRepos?: SendContext['selectedRepos'];
     originalText?: string;
   };
   const { quotedCard, selectedRepos } = custom;
@@ -90,14 +138,17 @@ export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, o
           <div className="flex items-center gap-1 mt-1.5">
             <span className="text-[10px] text-muted-foreground/50 px-1">{formatTime(message.createdAt)}</span>
             <button
-              onClick={() => onEdit?.(textPart.text)}
+              onClick={() => onEdit?.(textPart.text, { quotedCard, selectedRepos })}
               className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-colors"
               title="编辑"
             >
               <Pencil className="h-3.5 w-3.5" />
             </button>
             <button
-              onClick={() => { navigator.clipboard.writeText(textPart.text); toast.success('已复制'); }}
+              onClick={async () => {
+                await copyStructuredText(textPart.text, quotedCard, selectedRepos);
+                toast.success('已复制');
+              }}
               className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-colors"
               title="复制"
             >

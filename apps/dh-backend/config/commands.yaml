@@ -25,7 +25,7 @@ commands:
       你是一位资深产品经理。请根据以下需求描述，生成一份结构化的 PRD（产品需求文档）。
 
       【文件输出要求】
-      1. 将 PRD 文档写入 projects/products-jobs/prd/ 目录下（如目录不存在请先创建）。
+      1. 将 PRD 文档写入 {WORKSPACE_PATH}/projects/products-jobs/prd/ 目录下（如目录不存在请先创建）。
       2. 文件命名格式：{需求名称}-prd.md（例如：用户登录-prd.md）。需求名称从用户输入中提取关键词，使用中文或英文均可。
       3. 文档使用 Markdown 格式编写。
 
@@ -38,7 +38,7 @@ commands:
 
       【输出标记】
       文档写入完成后，在回复末尾必须用以下格式标记文件路径（每行一个）：
-      [[FILE:绝对路径/到/projects/products-jobs/prd/需求名称-prd.md]]
+      [[FILE:{WORKSPACE_PATH}/projects/products-jobs/prd/需求名称-prd.md]]
       注意：路径必须是绝对路径。
 
       【用户需求】
@@ -56,7 +56,7 @@ commands:
       你是一位资深技术分析师。请根据以下主题，进行深入的技术调研并生成一份结构化的调研报告。
 
       【文件输出要求】
-      1. 将调研文档写入 projects/products-jobs/research/ 目录下（如目录不存在请先创建）。
+      1. 将调研文档写入 {WORKSPACE_PATH}/projects/products-jobs/research/ 目录下（如目录不存在请先创建）。
       2. 文件命名格式：{调研主题}-research.md（例如：微服务选型-research.md）。
       3. 文档使用 Markdown 格式编写。
 
@@ -70,7 +70,7 @@ commands:
 
       【输出标记】
       文档写入完成后，在回复末尾必须用以下格式标记文件路径（每行一个）：
-      [[FILE:绝对路径/到/projects/products-jobs/research/调研主题-research.md]]
+      [[FILE:{WORKSPACE_PATH}/projects/products-jobs/research/调研主题-research.md]]
       注意：路径必须是绝对路径。
 
       【调研主题】
@@ -88,11 +88,11 @@ commands:
       你是一位全栈工程师。请根据以下需求，生成一个可运行的前端+后端工程原型。
 
       【工程输出要求】
-      1. 将工程创建在 projects/ 目录下，工程目录名使用需求关键词的英文命名（如 projects/user-login/）。
+      1. 将工程创建在 {WORKSPACE_PATH}/projects/ 目录下，工程目录名使用需求关键词的英文命名（如 {WORKSPACE_PATH}/projects/user-login/）。
       2. 前端使用 React + TypeScript + Tailwind CSS。
       3. 后端使用 Node.js（Express 或 Fastify）。
       4. 工程结构示例：
-         projects/{工程名}/
+         {WORKSPACE_PATH}/projects/{工程名}/
          ├── frontend/    # React 前端
          │   ├── src/
          │   ├── package.json
@@ -104,7 +104,7 @@ commands:
 
       【输出标记】
       工程创建完成后，在回复末尾必须用以下格式标记工程路径（每行一个）：
-      [[PROJECT:绝对路径/到/projects/工程名]]
+      [[PROJECT:{WORKSPACE_PATH}/projects/工程名]]
       注意：路径必须是绝对路径。
 
       【需求描述】
@@ -122,7 +122,7 @@ commands:
       你是一位资深工程师。请根据以下需求编写代码。
 
       【代码输出要求】
-      1. 将代码写入 projects/ 目录下对应的工程中。
+      1. 将代码写入 {WORKSPACE_PATH}/projects/ 目录下对应的工程中。
       2. 遵循该工程现有的代码风格和目录结构。
       3. 代码需包含必要的错误处理和注释。
 
@@ -213,12 +213,12 @@ commands:
       你是一位资深测试工程师。请根据以下需求或功能描述，生成结构化的测试用例。
 
       【文件输出要求】
-      1. 将测试用例文档写入 projects/products-jobs/test-cases/ 目录下。
+      1. 将测试用例文档写入 {WORKSPACE_PATH}/projects/products-jobs/test-cases/ 目录下。
       2. 文件命名格式：{功能名称}-test-cases.md。
       3. 每条用例包含：用例编号、标题、前置条件、操作步骤、预期结果、优先级。
 
       【输出标记】
-      [[FILE:绝对路径/到/projects/products-jobs/test-cases/功能名称-test-cases.md]]
+      [[FILE:{WORKSPACE_PATH}/projects/products-jobs/test-cases/功能名称-test-cases.md]]
 
       【功能描述】
       {ARGS}
@@ -235,7 +235,7 @@ commands:
       你是一位资深测试开发工程师。请根据以下需求或接口，生成可运行的自动化测试脚本。
 
       【脚本要求】
-      1. 脚本写入 projects/ 对应工程的 tests/ 或 e2e/ 目录。
+      1. 脚本写入 {WORKSPACE_PATH}/projects/ 对应工程的 tests/ 或 e2e/ 目录。
       2. 优先使用 Playwright / Cypress / Jest 等常见工具，并说明运行方式。
       3. 包含关键断言与用例说明。
 
@@ -286,7 +286,7 @@ commands:
       5. 遗留问题与后续计划
 
       【输出标记】
-      [[FILE:绝对路径/到/projects/products-jobs/reports/测试报告.md]]
+      [[FILE:{WORKSPACE_PATH}/projects/products-jobs/reports/测试报告.md]]
 
       【测试数据/描述】
       {ARGS}
@@ -310,7 +310,7 @@ commands:
       5. 布局栅格示例
 
       【输出标记】
-      [[FILE:绝对路径/到/projects/products-jobs/design/需求名称-ui-spec.md]]
+      [[FILE:{WORKSPACE_PATH}/projects/products-jobs/design/需求名称-ui-spec.md]]
 
       【需求描述】
       {ARGS}
@@ -355,7 +355,7 @@ commands:
       3. 命名语义清晰，支持层级扩展。
 
       【输出标记】
-      [[FILE:绝对路径/到/projects/products-jobs/design/tokens.json]]
+      [[FILE:{WORKSPACE_PATH}/projects/products-jobs/design/tokens.json]]
 
       【品牌/设计需求】
       {ARGS}
@@ -377,7 +377,8 @@ commands:
       3. 输出按优先级与模块分组。
 
       【输出标记】
-      [[FILE:绝对路径/到/projects/products-jobs/stories/需求名称-user-stories.md]]
+      [[FILE:{WORKSPACE_PATH}/projects/products-jobs/stories/需求名称-user-stories.md]]
+      [[CARD:user_story]]
 
       【需求描述】
       {ARGS}
@@ -401,7 +402,7 @@ commands:
       5. 可视化建议（图表类型）
 
       【输出标记】
-      [[FILE:绝对路径/到/projects/products-jobs/analysis/分析主题.md]]
+      [[FILE:{WORKSPACE_PATH}/projects/products-jobs/analysis/分析主题.md]]
 
       【数据/分析目标】
       {ARGS}

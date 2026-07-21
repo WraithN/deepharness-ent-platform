@@ -125,8 +125,9 @@ func fetchWorkItem(svc workitemservice.WorkItemService, cardID string) (workitem
 //   - allowTask=true 且有任务卡片 → 注入任务信息
 //   - allowRepos=true 且有代码库 → 注入代码库信息
 //   - allowRepos=false → 忽略代码库（即使前端传了也不注入）
+// workspacePath 用于替换模板中的 {WORKSPACE_PATH}，确保 AI 输出到正确的用户隔离目录。
 // 返回 true 表示匹配到了已知斜杠指令，false 表示未匹配。
-func interceptCommands(messages []agui.Message, ctxItems []agui.ContextItem, workItemSvc workitemservice.WorkItemService) bool {
+func interceptCommands(messages []agui.Message, ctxItems []agui.ContextItem, workspacePath string, workItemSvc workitemservice.WorkItemService) bool {
 	card, hasCard := extractQuotedCard(ctxItems)
 	repoNames, hasRepos := extractSelectedRepos(ctxItems)
 
@@ -154,7 +155,7 @@ func interceptCommands(messages []agui.Message, ctxItems []agui.ContextItem, wor
 		if ok {
 			cfg, found := findCommandConfig(cmd)
 			if found {
-				rendered := renderTemplate(cfg.Template, args)
+				rendered := renderTemplate(cfg.Template, args, workspacePath)
 
 				// 根据指令配置注入任务卡片。
 				if cfg.AllowTask && workItemFetched {
@@ -196,9 +197,15 @@ func interceptCommands(messages []agui.Message, ctxItems []agui.ContextItem, wor
 }
 
 // renderTemplate 将用户参数填入指令模板。
-// 模板中的 {ARGS} 占位符会被替换为用户原始输入。
-func renderTemplate(tmpl, args string) string {
-	return strings.ReplaceAll(tmpl, "{ARGS}", args)
+// 模板中的 {ARGS} 占位符会被替换为用户原始输入；
+// {WORKSPACE_PATH} 会被替换为当前会话的 workspace 目录（workspace_root/{workspace_id}/{user_id}），
+// 保证 AI 生成的文件写入正确的用户隔离目录，而非 agent 当前工作目录下的 projects/。
+func renderTemplate(tmpl, args, workspacePath string) string {
+	rendered := strings.ReplaceAll(tmpl, "{ARGS}", args)
+	if workspacePath != "" {
+		rendered = strings.ReplaceAll(rendered, "{WORKSPACE_PATH}", workspacePath)
+	}
+	return rendered
 }
 
 // CommandsHandler 处理 GET /api/v1/commands 请求。

@@ -95,6 +95,7 @@ export const Dashboard: React.FC = () => {
   const [sessionTrails, setSessionTrails] = useState<SessionTrail[]>([]);
   const [sessionTrend, setSessionTrend] = useState<{ date: string; count: number }[]>([]);
   const [summary, setSummary] = useState<SummaryResponse>({ thisWeek: 0, lastWeek: 0, deltaPercent: 0 });
+  const [reqSummary, setReqSummary] = useState<SummaryResponse>({ thisWeek: 0, lastWeek: 0, deltaPercent: 0 });
   const [codeCommitTrend, setCodeCommitTrend] = useState<{ date: string; count: number }[]>([]);
   const sessionPageSize = 5;
   const totalSessionPages = Math.ceil(sessionTrails.length / sessionPageSize);
@@ -159,16 +160,20 @@ export const Dashboard: React.FC = () => {
       })
       .catch(err => console.error('[Dashboard] fetch trend failed:', err));
 
-    // 代码提交趋势：扫描工作空间 git 仓库，统计最近 7 天每天的提交数量。
+     // 代码提交趋势：扫描工作空间 git 仓库，统计最近 7 天每天的提交数量。
     api.get<TrendResponse>(`/v1/stats/commits${statsQuery}`)
       .then(data => {
         setCodeCommitTrend(data.data.map(d => ({ date: formatDateShort(d.date), count: d.count })));
       })
       .catch(err => console.error('[Dashboard] fetch commit trend failed:', err));
+
+    // 需求完成统计：工作空间关联项目最近 7 天完成的需求数量及变化。
+    api.get<SummaryResponse>(`/v1/stats/requirements${statsQuery}`)
+      .then(setReqSummary)
+      .catch(err => console.error('[Dashboard] fetch requirements failed:', err));
   }, []);
 
   const totalCommits = codeCommitTrend.reduce((acc, curr) => acc + curr.count, 0);
-  const totalReqs = 0;
 
   return (
     <div className="flex-1 space-y-6 w-full pb-12 overflow-x-hidden">
@@ -205,8 +210,12 @@ export const Dashboard: React.FC = () => {
             <PieChartIcon className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalReqs} 个</div>
-            <p className="text-xs text-muted-foreground mt-1">+5% 较上周</p>
+            <div className="text-2xl font-bold">{reqSummary.thisWeek} 个</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {reqSummary.deltaPercent > 0 && `+${reqSummary.deltaPercent}% 较上周`}
+              {reqSummary.deltaPercent < 0 && `${reqSummary.deltaPercent}% 较上周`}
+              {reqSummary.deltaPercent === 0 && `${reqSummary.lastWeek} 个上周`}
+            </p>
           </CardContent>
         </Card>
       </div>
