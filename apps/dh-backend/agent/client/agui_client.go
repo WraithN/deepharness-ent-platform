@@ -327,6 +327,7 @@ func (c *AGUIClient) readSSE(body io.ReadCloser, out chan<- agui.Event, threadID
 			var ev agui.Event
 			if err := json.Unmarshal([]byte(data), &ev); err != nil {
 				log.Printf("[AGUIClient] run=%s failed to parse event: %v, data=%s", runID, err, data)
+				send(agui.RunErrorEvent(fmt.Sprintf("failed to parse sse event: %v", err), "SSE_PARSE_ERROR"))
 				continue
 			}
 			// 补全 threadId / runId，方便下游消费。
@@ -341,29 +342,7 @@ func (c *AGUIClient) readSSE(body io.ReadCloser, out chan<- agui.Event, threadID
 				log.Printf("[AGUIClient] run=%s >>> FIRST SSE event after %v: type=%s", runID, time.Since(runStart), ev.Type)
 			}
 			eventCount++
-			switch ev.Type {
-			case agui.EventThinkingStart:
-				log.Printf("[AGUIClient] run=%s SSE#%d THINKING_START after %v", runID, eventCount, time.Since(runStart))
-			case agui.EventTextMessageStart:
-				log.Printf("[AGUIClient] run=%s SSE#%d TEXT_MESSAGE_START (TTFT) after %v", runID, eventCount, time.Since(runStart))
-			case agui.EventTextMessageEnd:
-				log.Printf("[AGUIClient] run=%s SSE#%d TEXT_MESSAGE_END after %v", runID, eventCount, time.Since(runStart))
-			case agui.EventTextMessageContent:
-				if !firstContentSeen {
-					firstContentSeen = true
-					log.Printf("[AGUIClient] run=%s SSE#%d first TEXT_MESSAGE_CONTENT after %v", runID, eventCount, time.Since(runStart))
-				}
-			case agui.EventToolCallStart:
-				log.Printf("[AGUIClient] run=%s SSE#%d TOOL_CALL_START id=%s tool=%s after %v", runID, eventCount, ev.ToolCallID, ev.ToolCallName, time.Since(runStart))
-			case agui.EventToolCallResult:
-				log.Printf("[AGUIClient] run=%s SSE#%d TOOL_CALL_RESULT id=%s after %v", runID, eventCount, ev.ToolCallID, time.Since(runStart))
-			case agui.EventRunStarted:
-				log.Printf("[AGUIClient] run=%s SSE#%d RUN_STARTED threadId=%s after %v", runID, eventCount, ev.ThreadID, time.Since(runStart))
-			case agui.EventRunFinished:
-				log.Printf("[AGUIClient] run=%s SSE#%d RUN_FINISHED threadId=%s after %v", runID, eventCount, ev.ThreadID, time.Since(runStart))
-			case agui.EventRunError:
-				log.Printf("[AGUIClient] run=%s SSE#%d RUN_ERROR threadId=%s after %v", runID, eventCount, ev.ThreadID, time.Since(runStart))
-			}
+			logEvent(ev, runID, eventCount, runStart, &firstContentSeen)
 			send(ev)
 			continue
 		}
@@ -385,7 +364,65 @@ func (c *AGUIClient) readSSE(body io.ReadCloser, out chan<- agui.Event, threadID
 		log.Printf("[AGUIClient] run=%s sse scanner error: %v", runID, err)
 		send(agui.RunErrorEvent(fmt.Sprintf("sse scanner error: %v", err), "SSE_SCANNER_ERROR"))
 	}
+	// 流结束但没有 trailing 空行时，pendingData 中可能仍有一个最终事件未发出。
+	if pendingData.Len() > 0 {
+		log.Printf("[AGUIClient] run=%s emitting final pending SSE data without trailing blank line", runID)
+		emitPendingEvent(pendingData.String(), threadID, runID, runStart, &firstEventSeen, &firstContentSeen, &eventCount, send)
+	}
 	log.Printf("[AGUIClient] run=%s SSE stream ended, total elapsed=%v", runID, time.Since(runStart))
+}
+
+// emitPendingEvent 将一条 SSE data 解析为 AG-UI 事件并发送。
+// 解析失败时发送 RUN_ERROR，避免异常事件被静默丢弃。
+func emitPendingEvent(data, threadID, runID string, runStart time.Time, firstEventSeen, firstContentSeen *bool, eventCount *int, send func(agui.Event)) {
+	if data == "" {
+		return
+	}
+	var ev agui.Event
+	if err := json.Unmarshal([]byte(data), &ev); err != nil {
+		log.Printf("[AGUIClient] run=%s failed to parse event: %v, data=%s", runID, err, data)
+		send(agui.RunErrorEvent(fmt.Sprintf("failed to parse sse event: %v", err), "SSE_PARSE_ERROR"))
+		return
+	}
+	if ev.ThreadID == "" {
+		ev.ThreadID = threadID
+	}
+	if ev.RunID == "" {
+		ev.RunID = runID
+	}
+	if !*firstEventSeen {
+		*firstEventSeen = true
+		log.Printf("[AGUIClient] run=%s >>> FIRST SSE event after %v: type=%s", runID, time.Since(runStart), ev.Type)
+	}
+	*eventCount++
+	logEvent(ev, runID, *eventCount, runStart, firstContentSeen)
+	send(ev)
+}
+
+func logEvent(ev agui.Event, runID string, eventCount int, runStart time.Time, firstContentSeen *bool) {
+	switch ev.Type {
+	case agui.EventThinkingStart:
+		log.Printf("[AGUIClient] run=%s SSE#%d THINKING_START after %v", runID, eventCount, time.Since(runStart))
+	case agui.EventTextMessageStart:
+		log.Printf("[AGUIClient] run=%s SSE#%d TEXT_MESSAGE_START (TTFT) after %v", runID, eventCount, time.Since(runStart))
+	case agui.EventTextMessageEnd:
+		log.Printf("[AGUIClient] run=%s SSE#%d TEXT_MESSAGE_END after %v", runID, eventCount, time.Since(runStart))
+	case agui.EventTextMessageContent:
+		if !*firstContentSeen {
+			*firstContentSeen = true
+			log.Printf("[AGUIClient] run=%s SSE#%d first TEXT_MESSAGE_CONTENT after %v", runID, eventCount, time.Since(runStart))
+		}
+	case agui.EventToolCallStart:
+		log.Printf("[AGUIClient] run=%s SSE#%d TOOL_CALL_START id=%s tool=%s after %v", runID, eventCount, ev.ToolCallID, ev.ToolCallName, time.Since(runStart))
+	case agui.EventToolCallResult:
+		log.Printf("[AGUIClient] run=%s SSE#%d TOOL_CALL_RESULT id=%s after %v", runID, eventCount, ev.ToolCallID, time.Since(runStart))
+	case agui.EventRunStarted:
+		log.Printf("[AGUIClient] run=%s SSE#%d RUN_STARTED threadId=%s after %v", runID, eventCount, ev.ThreadID, time.Since(runStart))
+	case agui.EventRunFinished:
+		log.Printf("[AGUIClient] run=%s SSE#%d RUN_FINISHED threadId=%s after %v", runID, eventCount, ev.ThreadID, time.Since(runStart))
+	case agui.EventRunError:
+		log.Printf("[AGUIClient] run=%s SSE#%d RUN_ERROR threadId=%s after %v", runID, eventCount, ev.ThreadID, time.Since(runStart))
+	}
 }
 
 // inactivityReadCloser 在超时无读取时关闭底层连接，避免 gatewayd SSE 流挂死。
@@ -452,7 +489,9 @@ func (r *inactivityReadCloser) monitor() {
 			}
 			r.timedOut = true
 			r.mu.Unlock()
-			_ = r.rc.Close()
+			// 关闭底层连接以唤醒阻塞的 Read，并触发 scanner 退出。
+			// 通过 Close 的 sync.Once 保证 rc 不会被重复关闭。
+			_ = r.Close()
 			return
 		case <-r.done:
 			return
@@ -467,6 +506,7 @@ func (r *inactivityReadCloser) Close() error {
 		r.timedOut = true
 		r.mu.Unlock()
 		close(r.done)
+		_ = r.rc.Close()
 	})
-	return r.rc.Close()
+	return nil
 }

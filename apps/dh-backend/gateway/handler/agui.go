@@ -55,6 +55,22 @@ type runState struct {
 	runMessageID        string
 }
 
+// cloneAGUIMessages 深拷贝 AG-UI 消息切片，避免 interceptCommands / applyIntentCommand
+// 替换最后一条消息内容时污染原始用户输入的备份。
+func cloneAGUIMessages(msgs []agui.Message) []agui.Message {
+	out := make([]agui.Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = m
+		if m.Content != nil {
+			out[i].Content = append(json.RawMessage(nil), m.Content...)
+		}
+		if m.ToolCalls != nil {
+			out[i].ToolCalls = append(json.RawMessage(nil), m.ToolCalls...)
+		}
+	}
+	return out
+}
+
 // AGUIHandler 处理 AG-UI 协议的 agent run 请求。
 type AGUIHandler struct {
 	aguiClient    *client.AGUIClient
@@ -125,6 +141,7 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 
 	// 校验并复用已存在的后端 session；不存在时让 gatewayd 创建新 thread 后再写入。
 	sessionID := input.ThreadID
+	savedEarly := false
 	if sessionID != "" && sessionID != "main" {
 		if sess, err := h.sessions.Get(r.Context(), sessionID); err == nil {
 			_ = h.sessions.UpdateActivity(r.Context(), sessionID)
@@ -133,6 +150,7 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 			if sess.WorkspacePath != "" {
 				input.Workspace = sess.WorkspacePath
 			}
+			savedEarly = true
 		} else {
 			log.Printf("[AGUIHandler] run=%s session=%s not found, will create after run", input.RunID, sessionID)
 			sessionID = ""
@@ -159,8 +177,12 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 保存用户输入消息（最后一条或全部用户消息）。
-	// 使用 ON CONFLICT DO NOTHING 避免同一消息因重试或历史消息重复发送而主键冲突。
-	h.saveUserMessages(r.Context(), sessionID, input.Messages, input.Context)
+	// 对已知 session 提前保存；新 session 的实际 threadId 在 gatewayd 返回后才能确定，
+	// 避免消息落到空 session 而丢失。message store 使用 upsert 语义，
+	// 保证同一消息因重试或历史消息重复发送时内容最终一致。
+	if savedEarly {
+		h.saveUserMessages(r.Context(), sessionID, input.Messages, input.Context)
+	}
 
 	// 设置 SSE 响应头（提前设置，意图识别的闲聊回复也需要 SSE）。
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -175,6 +197,11 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// 立即刷新 SSE 响应头，让前端 fetch() 能先拿到 HTTP 头部。
 	flusher.Flush()
+
+	// 保存原始用户消息的深拷贝，供后续落库使用。
+	// interceptCommands / applyIntentCommand 会替换最后一条用户消息的内容，
+	// 使用原始拷贝可保证持久化的是用户真实输入。
+	originalMessages := cloneAGUIMessages(input.Messages)
 
 	// 拦截斜杠指令（/prd-write、/proto-make 等），
 	// 将用户消息替换为指令专属提示词模板。
@@ -270,6 +297,11 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		}
 		// 保留旧 session 不删除，避免前端在 RUN_STARTED 更新 threadId 前
 		// 查询旧 session 时得到 404 —— 旧 session 变空但至少不会触发前端重建会话。
+	}
+
+	// 新 session 的实际 threadId 已确定，保存用户原始输入消息，避免直接调用 /api/v1/agent 时丢失首条消息。
+	if !savedEarly {
+		h.saveUserMessages(context.Background(), sessionID, originalMessages, input.Context)
 	}
 
 	// bgCtx 用于 buffer 和持久化操作，独立于 HTTP 请求生命周期。
@@ -600,6 +632,15 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[AGUIHandler] run=%s RUN_STARTED threadId=%s after %v", input.RunID, ev.ThreadID, time.Since(reqStart))
 			case agui.EventRunFinished:
 				log.Printf("[AGUIHandler] run=%s RUN_FINISHED threadId=%s after %v", input.RunID, ev.ThreadID, time.Since(reqStart))
+				finishTimer.Stop()
+				maxTimer.Stop()
+				flushPendingState(true)
+				if err := writeEvent(ev); err != nil {
+					log.Printf("[AGUIHandler] run=%s write RUN_FINISHED failed: %v", input.RunID, err)
+				}
+				persistRunAssistant()
+				h.finalizeSession(bgCtx, sessionID, input.Messages)
+				return
 			case agui.EventRunError:
 				log.Printf("[AGUIHandler] run=%s RUN_ERROR after %v: %s", input.RunID, time.Since(reqStart), ev.Message)
 				finishTimer.Stop()

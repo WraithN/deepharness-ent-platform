@@ -180,42 +180,41 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 
 	// 向 gatewayd 注入上下文（agent_type / model / workspace），
 	// 使 gatewayd 审计与后续 LLM 路由能感知当前会话使用的智能体与模型。
-	if pluginKey != "" {
+	// gatewayd 不可达时跳过这些调用，避免无意义的失败日志。
+	instanceID := ""
+	if !gatewaydUnreachable && pluginKey != "" {
 		if ctxErr := h.gatewaydClient.SetContext(r.Context(), pluginKey, threadID, workspacePath, model); ctxErr != nil {
 			log.Printf("[CreateSession] SetContext failed: %v", ctxErr)
 		}
-	}
 
-	// 根据前端指定的插件 key，在 gatewayd 上挂载对应 agent 实例，
-	// 并获取 instance_id 作为智能体唯一标识返回给前端。
-	// 将计算好的 workspacePath 传给 gatewayd，保证该会话下 agent 使用固定工作目录。
-	instanceID := ""
-	if pluginKey != "" {
+		// 根据前端指定的插件 key，在 gatewayd 上挂载对应 agent 实例，
+		// 并获取 instance_id 作为智能体唯一标识返回给前端。
+		// 将计算好的 workspacePath 传给 gatewayd，保证该会话下 agent 使用固定工作目录。
 		if id, attachErr := h.gatewaydClient.AttachAgent(r.Context(), threadID, pluginKey, workspacePath); attachErr == nil {
 			instanceID = id
 		} else {
 			log.Printf("[CreateSession] AttachAgent failed: %v", attachErr)
 		}
-	}
 
-	// 把 workspace 级别的模型配置同步到 gatewayd，使运行时能感知租户自定义的
-	// 模型、base_url、api_key、temperature、max_tokens 等参数。
-	if instanceID != "" {
-		if cfgErr == nil {
-			updateReq := client.UpdateAgentConfigRequest{
-				Model:     cfg.Model,
-				ModelType: cfg.ModelSource,
-				BaseURL:   cfg.BaseURL,
-				APIKey:    cfg.APIKey,
-			}
-			if cfg.Temperature != nil {
-				updateReq.Temperature = cfg.Temperature
-			}
-			if cfg.AdvancedConfig != nil && cfg.AdvancedConfig.MaxTokens != nil {
-				updateReq.MaxTokens = cfg.AdvancedConfig.MaxTokens
-			}
-			if syncErr := h.gatewaydClient.UpdateAgentConfig(r.Context(), threadID, instanceID, updateReq); syncErr != nil {
-				log.Printf("[CreateSession] UpdateAgentConfig failed: %v", syncErr)
+		// 把 workspace 级别的模型配置同步到 gatewayd，使运行时能感知租户自定义的
+		// 模型、base_url、api_key、temperature、max_tokens 等参数。
+		if instanceID != "" {
+			if cfgErr == nil {
+				updateReq := client.UpdateAgentConfigRequest{
+					Model:     cfg.Model,
+					ModelType: cfg.ModelSource,
+					BaseURL:   cfg.BaseURL,
+					APIKey:    cfg.APIKey,
+				}
+				if cfg.Temperature != nil {
+					updateReq.Temperature = cfg.Temperature
+				}
+				if cfg.AdvancedConfig != nil && cfg.AdvancedConfig.MaxTokens != nil {
+					updateReq.MaxTokens = cfg.AdvancedConfig.MaxTokens
+				}
+				if syncErr := h.gatewaydClient.UpdateAgentConfig(r.Context(), threadID, instanceID, updateReq); syncErr != nil {
+					log.Printf("[CreateSession] UpdateAgentConfig failed: %v", syncErr)
+				}
 			}
 		}
 	}
