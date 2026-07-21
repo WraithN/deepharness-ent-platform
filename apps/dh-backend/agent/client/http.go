@@ -71,11 +71,12 @@ func (c *GatewaydClient) ensureRunning() {
 }
 
 func (c *GatewaydClient) run() {
-	// 首次失败后使用指数退避，最多重试 5 次，避免无限打印日志。
+	// 连接成功后重置失败计数；连续失败时使用 capped backoff，
+	// 但永不永久放弃，避免 gatewayd 短暂不可达后事件通道永久中断。
 	backoff := time.Second
 	maxBackoff := 30 * time.Second
 	failures := 0
-	const maxFailures = 5
+	const maxConsecutiveFailures = 5
 
 	for {
 		select {
@@ -84,7 +85,16 @@ func (c *GatewaydClient) run() {
 		default:
 		}
 
-		c.connect()
+		connected := c.connect()
+		if connected {
+			failures = 0
+			backoff = time.Second
+		} else {
+			failures++
+			if failures >= maxConsecutiveFailures {
+				log.Printf("[GatewaydClient] reached %d consecutive failures, continuing capped backoff reconnect", maxConsecutiveFailures)
+			}
+		}
 
 		select {
 		case <-c.done:
@@ -92,26 +102,24 @@ func (c *GatewaydClient) run() {
 		case <-time.After(backoff):
 		}
 
-		failures++
-		if failures >= maxFailures {
-			log.Printf("[GatewaydClient] reached max reconnection attempts (%d), stopping background reconnect", maxFailures)
-			c.runMu.Lock()
-			c.running = false
-			c.runMu.Unlock()
-			return
-		}
-		if backoff < maxBackoff {
+		if !connected && backoff < maxBackoff {
 			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
 		}
 	}
 }
 
-func (c *GatewaydClient) connect() {
+// connect 尝试建立 WebSocket 连接并读取消息。
+// 返回 true 表示已成功建立连接并在读取循环结束后退出（正常断线），
+// 返回 false 表示初始拨号失败。
+func (c *GatewaydClient) connect() bool {
 	wsURL := c.WsURL()
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		log.Printf("[GatewaydClient] ws connect failed: %v, retrying...", err)
-		return
+		return false
 	}
 	c.connMu.Lock()
 	c.conn = conn
@@ -129,7 +137,7 @@ func (c *GatewaydClient) connect() {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			log.Printf("[GatewaydClient] ws read error: %v", err)
-			return
+			return true
 		}
 		c.handleWSMessage(msg)
 	}

@@ -114,10 +114,14 @@ func (b *RedisBuffer) Append(ctx context.Context, sessionID string, ev agui.Even
 		return fmt.Errorf("marshal event: %w", err)
 	}
 	key := b.sseKey(sessionID)
-	if err := b.client.RPush(ctx, key, data).Err(); err != nil {
+	_, err = b.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.RPush(ctx, key, data)
+		pipe.Expire(ctx, key, b.ttl)
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("rpush sse event: %w", err)
 	}
-	b.refreshTTL(ctx, key)
 	return nil
 }
 

@@ -28,8 +28,12 @@ func (m *MessageStore) Append(ctx context.Context, sessionID string, msg chat.Me
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// 避免同一消息重复追加（如历史消息随每次 run 重复发送）。
-	for _, existing := range m.messages[sessionID] {
+	// 若已存在但内容不同，按最新内容更新，保证重试场景下消息内容一致。
+	for i, existing := range m.messages[sessionID] {
 		if existing.ID == msg.ID {
+			if existing.Content != msg.Content {
+				m.messages[sessionID][i] = msg
+			}
 			return nil
 		}
 	}
@@ -50,7 +54,10 @@ func (m *MessageStore) GetHistory(ctx context.Context, sessionID string, limit i
 	if limit > len(msgs) {
 		limit = len(msgs)
 	}
-	return msgs[len(msgs)-limit:], nil
+	// 返回深拷贝，防止调用方修改内部存储。
+	result := make([]chat.Message, limit)
+	copy(result, msgs[len(msgs)-limit:])
+	return result, nil
 }
 
 // MigrateMessages 将旧 sessionID 下的所有消息迁移到新 sessionID。

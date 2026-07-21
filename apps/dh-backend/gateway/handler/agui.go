@@ -41,6 +41,20 @@ type contentPart struct {
 	Done       bool   `json:"done,omitempty"`
 }
 
+// runState 保存一次 agent run 在处理过程中的可变状态，
+// 供主循环与前端断连后的后台恢复路径共享。
+type runState struct {
+	bufMu               sync.Mutex
+	eventCount          int
+	activeToolCallCount int
+	pendingToolCallIDs    []string
+	activeTextMessageID string
+	firstResponseSeen   bool
+	runParts            []contentPart
+	runTextBuilder      strings.Builder
+	runMessageID        string
+}
+
 // AGUIHandler 处理 AG-UI 协议的 agent run 请求。
 type AGUIHandler struct {
 	aguiClient    *client.AGUIClient
@@ -156,7 +170,7 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		log.Printf("[AGUIHandler] run=%s streaming unsupported", input.RunID)
 		return
 	}
 	// 立即刷新 SSE 响应头，让前端 fetch() 能先拿到 HTTP 头部。
@@ -166,7 +180,12 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	// 将用户消息替换为指令专属提示词模板。
 	// 同时处理引用的任务卡片，将卡片信息注入提示词。
 	// 在 saveUserMessages 之后执行，确保数据库保存的是用户原始输入。
-	commandApplied := interceptCommands(input.Messages, input.Context, workspacePath, h.workItemSvc)
+	commandApplied, err := interceptCommands(input.Messages, input.Context, workspacePath, h.workItemSvc)
+	if err != nil {
+		log.Printf("[AGUIHandler] run=%s intercept commands failed: %v", input.RunID, err)
+		h.writeEvent(w, flusher, agui.RunErrorEvent(fmt.Sprintf("intercept commands: %v", err), "COMMAND_FAILED"))
+		return
+	}
 
 	// 意图识别：用户未输入斜杠指令时，先调用 LLM 判断是闲聊还是任务意图。
 	// 闲聊 → 直接返回 LLM 回复，不走正常 agent run。
@@ -176,9 +195,9 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		// 简单问候语直接返回静态回复，避免在 LLM/agent 不可用时进入长时间等待。
 		if isGreeting(userInput) {
 			log.Printf("[AGUIHandler] run=%s greeting matched, bypassing intent/agent run", input.RunID)
-			h.streamChatResponse(r, w, flusher, greetingResponse(), sessionID, input.RunID)
+			h.streamChatResponse(context.Background(), w, flusher, greetingResponse(), sessionID, input.RunID)
 			// 与正常 agent run 保持一致：更新会话活动时间并尝试生成标题。
-			h.finalizeSession(r.Context(), sessionID, input.Messages)
+			h.finalizeSession(context.Background(), sessionID, input.Messages)
 			return
 		}
 		if userInput != "" {
@@ -188,15 +207,32 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 			} else if intentResult != nil {
 				if intentResult.IsChat {
 					// 闲聊：直接流式返回回复，不走 agent run。
-					h.streamChatResponse(r, w, flusher, intentResult.Response, sessionID, input.RunID)
+					h.streamChatResponse(context.Background(), w, flusher, intentResult.Response, sessionID, input.RunID)
 					// 与正常 agent run 保持一致：更新会话活动时间并尝试生成标题。
-					h.finalizeSession(r.Context(), sessionID, input.Messages)
+					h.finalizeSession(context.Background(), sessionID, input.Messages)
 					return
 				}
 				// 任务意图：应用指令模板到用户消息。
-				applyIntentCommand(input.Messages, intentResult.Command, userInput, workspacePath)
+				if err := applyIntentCommand(input.Messages, intentResult.Command, userInput, workspacePath, input.Context, h.workItemSvc); err != nil {
+					log.Printf("[AGUIHandler] run=%s apply intent command failed: %v", input.RunID, err)
+					h.writeEvent(w, flusher, agui.RunErrorEvent(fmt.Sprintf("apply intent command: %v", err), "INTENT_FAILED"))
+					return
+				}
 				intentCommand = intentResult.Command
 				log.Printf("[AGUIHandler] intent mapped to command: %s", intentResult.Command)
+			}
+		}
+	}
+
+	// 检查 session 是否来自 gatewayd 不可达时的 fallback，避免向不存在的 gatewayd session 发送 run。
+	if sessionID != "" {
+		if sess, err := h.sessions.Get(context.Background(), sessionID); err == nil {
+			if v, ok := sess.Context["gatewaydUnreachable"]; ok {
+				if unreachable, _ := v.(bool); unreachable {
+					log.Printf("[AGUIHandler] run=%s gatewayd unreachable for session %s, aborting run", input.RunID, sessionID)
+					h.writeEvent(w, flusher, agui.RunErrorEvent("gatewayd unreachable, please create a new session", "GATEWAYD_UNREACHABLE"))
+					return
+				}
 			}
 		}
 	}
@@ -243,32 +279,40 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	finishTimer.Stop()
 	maxTimer := time.NewTimer(maxRunDuration)
 	maxTimer.Stop()
+	defer finishTimer.Stop()
+	defer maxTimer.Stop()
 
-	activeToolCallCount := 0
-	pendingToolCallIDs := []string{}
-	activeTextMessageID := ""
+	runState := &runState{
+		pendingToolCallIDs: []string{},
+	}
 
-	// run 级累加器：一次 run 的所有部件（reasoning / text / tool-call）
-	// 按实际到达顺序累积，RUN_FINISHED 时合并为一条消息入库。
-	// 替代之前按 messageID 分条入库的方式，避免同一轮回复被拆成多条消息、
-	// 以及思考/工具调用因发生在文本消息之外而丢失的问题。
-	var runParts []contentPart
-	var runTextBuilder strings.Builder
-	var runMessageID string
-	var bufMu sync.Mutex
-
-	// writeAndBuffer 将事件写入前端 SSE 流，同时写入 buffer（若启用）。
-	writeAndBuffer := func(ev agui.Event) {
+	// writeEvent 将事件写入前端 SSE 流并追加到 buffer（若启用）。
+	// 返回错误，调用方可据此决定是否继续或仅记录日志。
+	writeEvent := func(ev agui.Event) error {
 		if h.buffer != nil {
-			h.buffer.Append(bgCtx, sessionID, ev)
+			if err := h.buffer.Append(bgCtx, sessionID, ev); err != nil {
+				log.Printf("[AGUIHandler] run=%s buffer append failed: %v", input.RunID, err)
+			}
 		}
 		data, err := json.Marshal(ev)
 		if err != nil {
-			log.Printf("[AGUIHandler] marshal event failed: %v", err)
+			return fmt.Errorf("marshal event: %w", err)
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			return fmt.Errorf("write event: %w", err)
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	// bufferEvent 仅将事件追加到 buffer，用于断连恢复路径。
+	bufferEvent := func(ev agui.Event) {
+		if h.buffer == nil {
 			return
 		}
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
+		if err := h.buffer.Append(bgCtx, sessionID, ev); err != nil {
+			log.Printf("[AGUIHandler] run=%s buffer append failed: %v", input.RunID, err)
+		}
 	}
 
 	// checkpointRun 将当前 run 级累加器序列化后保存到 buffer，
@@ -277,9 +321,9 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		if h.buffer == nil || sessionID == "" || input.RunID == "" {
 			return
 		}
-		bufMu.Lock()
-		state, err := json.Marshal(runParts)
-		bufMu.Unlock()
+		runState.bufMu.Lock()
+		state, err := json.Marshal(runState.runParts)
+		runState.bufMu.Unlock()
 		if err != nil {
 			log.Printf("[AGUIHandler] checkpoint marshal failed: %v", err)
 			return
@@ -292,14 +336,14 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	// persistRunAssistant 将一次 run 累积的所有部件合并为一条消息入库，
 	// 然后清除 buffer 中的 checkpoint。在 RUN_FINISHED / RUN_ERROR / 超时 / 断连时调用。
 	persistRunAssistant := func() {
-		bufMu.Lock()
-		parts := runParts
-		text := runTextBuilder.String()
-		msgID := runMessageID
-		runParts = nil
-		runTextBuilder.Reset()
-		runMessageID = ""
-		bufMu.Unlock()
+		runState.bufMu.Lock()
+		parts := runState.runParts
+		text := runState.runTextBuilder.String()
+		msgID := runState.runMessageID
+		runState.runParts = nil
+		runState.runTextBuilder.Reset()
+		runState.runMessageID = ""
+		runState.bufMu.Unlock()
 
 		if sessionID == "" || (len(parts) == 0 && text == "") {
 			return
@@ -335,132 +379,118 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	flushPendingState := func() {
-		for _, id := range pendingToolCallIDs {
-			writeAndBuffer(agui.Event{
+	// flushPendingState 将未闭合的 tool-call / text-message 状态强制结束。
+	// writeToClient 为 true 时同时写入前端 SSE，false 时仅追加到 buffer。
+	flushPendingState := func(writeToClient bool) {
+		now := float64(time.Now().UnixMilli()) / 1000
+		for _, id := range runState.pendingToolCallIDs {
+			ev := agui.Event{
 				Type:       agui.EventToolCallEnd,
 				ToolCallID: id,
-				Timestamp:  float64(time.Now().UnixMilli()) / 1000,
-			})
+				Timestamp:  now,
+			}
+			if writeToClient {
+				if err := writeEvent(ev); err != nil {
+					log.Printf("[AGUIHandler] run=%s flush tool-call-end failed: %v", input.RunID, err)
+				}
+			} else {
+				bufferEvent(ev)
+			}
 		}
-		pendingToolCallIDs = pendingToolCallIDs[:0]
-		activeToolCallCount = 0
+		runState.pendingToolCallIDs = runState.pendingToolCallIDs[:0]
+		runState.activeToolCallCount = 0
 
-		if activeTextMessageID != "" {
-			writeAndBuffer(agui.Event{
+		if runState.activeTextMessageID != "" {
+			ev := agui.Event{
 				Type:      agui.EventTextMessageEnd,
-				MessageID: activeTextMessageID,
-				Timestamp: float64(time.Now().UnixMilli()) / 1000,
-			})
-			activeTextMessageID = ""
+				MessageID: runState.activeTextMessageID,
+				Timestamp: now,
+			}
+			if writeToClient {
+				if err := writeEvent(ev); err != nil {
+					log.Printf("[AGUIHandler] run=%s flush text-message-end failed: %v", input.RunID, err)
+				}
+			} else {
+				bufferEvent(ev)
+			}
+			runState.activeTextMessageID = ""
 		}
 	}
 
+	// completeRun 在 run 正常结束时调用。
 	completeRun := func() {
 		finishTimer.Stop()
 		maxTimer.Stop()
-		flushPendingState()
-		writeAndBuffer(agui.RunFinishedEvent(actualThreadID, input.RunID))
+		flushPendingState(true)
+		if err := writeEvent(agui.RunFinishedEvent(actualThreadID, input.RunID)); err != nil {
+			log.Printf("[AGUIHandler] run=%s write RUN_FINISHED failed: %v", input.RunID, err)
+		}
 		persistRunAssistant()
 		h.finalizeSession(bgCtx, sessionID, input.Messages)
 	}
 
-	firstEventSeen := false
-	firstContentSeen := false
-	firstResponseSeen := false
-	frontendDone := false
-	eventCount := 0
-	for {
-		select {
-		case ev, ok := <-events:
-			if !ok {
-				log.Printf("[AGUIHandler] run=%s event stream closed, total elapsed=%v totalEvents=%d",
-					input.RunID, time.Since(reqStart), eventCount)
-				completeRun()
-				return
-			}
-			eventCount++
-			// 无条件缓冲所有 gatewayd 事件，供前端重连回放。
-			if h.buffer != nil {
-				h.buffer.Append(bgCtx, sessionID, ev)
-			}
-		if !firstEventSeen {
-			firstEventSeen = true
-			log.Printf("[AGUIHandler] run=%s first SSE event from gatewayd after %v: type=%s threadId=%s",
-				input.RunID, time.Since(reqStart), ev.Type, ev.ThreadID)
-			maxTimer.Reset(maxRunDuration)
-		}
+	// processEvent 更新一次 gatewayd 事件对应的 run 状态，并返回需要继续传播的事件列表。
+	// 在断连恢复路径中，调用方仍可使用返回列表，但选择仅追加到 buffer 而非发送给前端。
+	processEvent := func(ev agui.Event) []agui.Event {
 		switch ev.Type {
-		case agui.EventThinkingStart:
-			log.Printf("[AGUIHandler] run=%s THINKING_START after %v", input.RunID, time.Since(reqStart))
 		case agui.EventTextMessageStart:
-			log.Printf("[AGUIHandler] run=%s TEXT_MESSAGE_START (TTFT) after %v", input.RunID, time.Since(reqStart))
-			firstResponseSeen = true
-			activeTextMessageID = ev.MessageID
-			bufMu.Lock()
-			if runMessageID == "" {
-				runMessageID = ev.MessageID
+			runState.activeTextMessageID = ev.MessageID
+			runState.bufMu.Lock()
+			if runState.runMessageID == "" {
+				runState.runMessageID = ev.MessageID
 			}
-			bufMu.Unlock()
+			runState.bufMu.Unlock()
 		case agui.EventTextMessageContent:
-			if !firstContentSeen {
-				firstContentSeen = true
-				log.Printf("[AGUIHandler] run=%s first TEXT_MESSAGE_CONTENT after %v", input.RunID, time.Since(reqStart))
-			}
 			if ev.Delta == "" {
-				break
+				return []agui.Event{}
 			}
-			bufMu.Lock()
-			if len(runParts) == 0 || runParts[len(runParts)-1].Type != "text" {
-				runParts = append(runParts, contentPart{Type: "text", Text: ev.Delta})
+			runState.bufMu.Lock()
+			if len(runState.runParts) == 0 || runState.runParts[len(runState.runParts)-1].Type != "text" {
+				runState.runParts = append(runState.runParts, contentPart{Type: "text", Text: ev.Delta})
 			} else {
-				runParts[len(runParts)-1].Text += ev.Delta
+				runState.runParts[len(runState.runParts)-1].Text += ev.Delta
 			}
-			runTextBuilder.WriteString(ev.Delta)
-			bufMu.Unlock()
+			runState.runTextBuilder.WriteString(ev.Delta)
+			runState.bufMu.Unlock()
 			checkpointRun()
 		case agui.EventTextMessageEnd:
-			log.Printf("[AGUIHandler] run=%s TEXT_MESSAGE_END id=%s after %v", input.RunID, ev.MessageID, time.Since(reqStart))
-			activeTextMessageID = ""
+			runState.activeTextMessageID = ""
 		case agui.EventThinkingTextMessageContent:
 			if ev.Delta == "" {
-				break
+				return []agui.Event{}
 			}
-			bufMu.Lock()
-			if len(runParts) == 0 || runParts[len(runParts)-1].Type != "reasoning" {
-				runParts = append(runParts, contentPart{Type: "reasoning", Text: ev.Delta})
+			runState.bufMu.Lock()
+			if len(runState.runParts) == 0 || runState.runParts[len(runState.runParts)-1].Type != "reasoning" {
+				runState.runParts = append(runState.runParts, contentPart{Type: "reasoning", Text: ev.Delta})
 			} else {
-				runParts[len(runParts)-1].Text += ev.Delta
+				runState.runParts[len(runState.runParts)-1].Text += ev.Delta
 			}
-			bufMu.Unlock()
+			runState.bufMu.Unlock()
 			checkpointRun()
 		case agui.EventThinkingEnd:
-			bufMu.Lock()
-			for i := len(runParts) - 1; i >= 0; i-- {
-				if runParts[i].Type == "reasoning" {
-					runParts[i].Done = true
+			runState.bufMu.Lock()
+			for i := len(runState.runParts) - 1; i >= 0; i-- {
+				if runState.runParts[i].Type == "reasoning" {
+					runState.runParts[i].Done = true
 					break
 				}
 			}
-			bufMu.Unlock()
+			runState.bufMu.Unlock()
 			checkpointRun()
 		case agui.EventToolCallStart:
-			log.Printf("[AGUIHandler] run=%s TOOL_CALL_START id=%s tool=%s after %v", input.RunID, ev.ToolCallID, ev.ToolCallName, time.Since(reqStart))
-			firstResponseSeen = true
-			activeToolCallCount++
-			pendingToolCallIDs = append(pendingToolCallIDs, ev.ToolCallID)
-			bufMu.Lock()
-			runParts = append(runParts, contentPart{
+			runState.activeToolCallCount++
+			runState.pendingToolCallIDs = append(runState.pendingToolCallIDs, ev.ToolCallID)
+			runState.bufMu.Lock()
+			runState.runParts = append(runState.runParts, contentPart{
 				Type:       "tool-call",
 				ToolCallID: ev.ToolCallID,
 				ToolName:   ev.ToolCallName,
 			})
-			bufMu.Unlock()
+			runState.bufMu.Unlock()
 			checkpointRun()
 		case agui.EventToolCallArgs:
-			log.Printf("[AGUIHandler] run=%s TOOL_CALL_ARGS id=%s tool=%s args=%.200s after %v", input.RunID, ev.ToolCallID, ev.ToolCallName, ev.Content, time.Since(reqStart))
-			if len(pendingToolCallIDs) > 0 {
-				expectedID := pendingToolCallIDs[len(pendingToolCallIDs)-1]
+			if len(runState.pendingToolCallIDs) > 0 {
+				expectedID := runState.pendingToolCallIDs[len(runState.pendingToolCallIDs)-1]
 				if ev.ToolCallID != expectedID {
 					log.Printf("[AGUIHandler] run=%s rewrite TOOL_CALL_ARGS id %s -> %s", input.RunID, ev.ToolCallID, expectedID)
 					ev.ToolCallID = expectedID
@@ -469,79 +499,132 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[AGUIHandler] run=%s TOOL_CALL_ARGS id=%s but no pending tool call", input.RunID, ev.ToolCallID)
 			}
 			if ev.Delta != "" {
-				bufMu.Lock()
-				for i := len(runParts) - 1; i >= 0; i-- {
-					if runParts[i].Type == "tool-call" && runParts[i].ToolCallID == ev.ToolCallID {
-						runParts[i].ArgsText += ev.Delta
+				runState.bufMu.Lock()
+				for i := len(runState.runParts) - 1; i >= 0; i-- {
+					if runState.runParts[i].Type == "tool-call" && runState.runParts[i].ToolCallID == ev.ToolCallID {
+						runState.runParts[i].ArgsText += ev.Delta
 						break
 					}
 				}
-				bufMu.Unlock()
+				runState.bufMu.Unlock()
 				checkpointRun()
 			}
 		case agui.EventToolCallEnd:
-			log.Printf("[AGUIHandler] run=%s TOOL_CALL_END id=%s after %v", input.RunID, ev.ToolCallID, time.Since(reqStart))
-			if len(pendingToolCallIDs) > 0 {
-				expectedID := pendingToolCallIDs[0]
-				pendingToolCallIDs = pendingToolCallIDs[1:]
-				if ev.ToolCallID != expectedID {
-					log.Printf("[AGUIHandler] run=%s rewrite TOOL_CALL_END id %s -> %s", input.RunID, ev.ToolCallID, expectedID)
-					ev.ToolCallID = expectedID
-				}
-				if activeToolCallCount > 0 {
-					activeToolCallCount--
-				}
-			} else {
+			if len(runState.pendingToolCallIDs) == 0 {
 				log.Printf("[AGUIHandler] run=%s ignore orphan TOOL_CALL_END id=%s", input.RunID, ev.ToolCallID)
-				continue
+				return []agui.Event{}
+			}
+			expectedID := runState.pendingToolCallIDs[0]
+			runState.pendingToolCallIDs = runState.pendingToolCallIDs[1:]
+			if ev.ToolCallID != expectedID {
+				log.Printf("[AGUIHandler] run=%s rewrite TOOL_CALL_END id %s -> %s", input.RunID, ev.ToolCallID, expectedID)
+				ev.ToolCallID = expectedID
+			}
+			if runState.activeToolCallCount > 0 {
+				runState.activeToolCallCount--
 			}
 		case agui.EventToolCallResult:
-			log.Printf("[AGUIHandler] run=%s TOOL_CALL_RESULT id=%s tool=%s result=%.200s after %v", input.RunID, ev.ToolCallID, ev.ToolCallName, ev.Content, time.Since(reqStart))
-			if len(pendingToolCallIDs) > 0 {
-				expectedID := pendingToolCallIDs[0]
-				pendingToolCallIDs = pendingToolCallIDs[1:]
+			var syntheticEnd *agui.Event
+			if len(runState.pendingToolCallIDs) > 0 {
+				expectedID := runState.pendingToolCallIDs[0]
+				runState.pendingToolCallIDs = runState.pendingToolCallIDs[1:]
 				if ev.ToolCallID != expectedID {
 					log.Printf("[AGUIHandler] run=%s rewrite TOOL_CALL_RESULT id %s -> %s", input.RunID, ev.ToolCallID, expectedID)
 					ev.ToolCallID = expectedID
 				}
-				writeAndBuffer(agui.Event{
+				syntheticEnd = &agui.Event{
 					Type:       agui.EventToolCallEnd,
 					ToolCallID: expectedID,
 					Timestamp:  float64(time.Now().UnixMilli()) / 1000,
-				})
-				if activeToolCallCount > 0 {
-					activeToolCallCount--
+				}
+				if runState.activeToolCallCount > 0 {
+					runState.activeToolCallCount--
 				}
 			} else {
 				log.Printf("[AGUIHandler] run=%s TOOL_CALL_RESULT id=%s but no pending tool call", input.RunID, ev.ToolCallID)
 			}
 			if ev.ToolCallID != "" {
-				bufMu.Lock()
-				for i := len(runParts) - 1; i >= 0; i-- {
-					if runParts[i].Type == "tool-call" && runParts[i].ToolCallID == ev.ToolCallID {
-						runParts[i].Result = ev.Content
+				runState.bufMu.Lock()
+				for i := len(runState.runParts) - 1; i >= 0; i-- {
+					if runState.runParts[i].Type == "tool-call" && runState.runParts[i].ToolCallID == ev.ToolCallID {
+						runState.runParts[i].Result = ev.Content
 						break
 					}
 				}
-				bufMu.Unlock()
+				runState.bufMu.Unlock()
 				checkpointRun()
 			}
-		case agui.EventRunError:
-			log.Printf("[AGUIHandler] run=%s RUN_ERROR after %v: %s", input.RunID, time.Since(reqStart), ev.Message)
-			flushPendingState()
-			writeAndBuffer(ev)
-			persistRunAssistant()
-			h.finalizeSession(bgCtx, sessionID, input.Messages)
-			return
-		}
-		writeAndBuffer(ev)
-		if firstResponseSeen {
-			if activeToolCallCount == 0 {
-				finishTimer.Reset(finishWait)
-			} else {
-				finishTimer.Stop()
+			if syntheticEnd != nil {
+				return []agui.Event{ev, *syntheticEnd}
 			}
 		}
+		return []agui.Event{ev}
+	}
+
+	firstEventSeen := false
+	firstContentSeen := false
+	frontendDone := false
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				log.Printf("[AGUIHandler] run=%s event stream closed, total elapsed=%v totalEvents=%d",
+					input.RunID, time.Since(reqStart), runState.eventCount)
+				completeRun()
+				return
+			}
+			runState.eventCount++
+			if !firstEventSeen {
+				firstEventSeen = true
+				log.Printf("[AGUIHandler] run=%s first SSE event from gatewayd after %v: type=%s threadId=%s",
+					input.RunID, time.Since(reqStart), ev.Type, ev.ThreadID)
+				maxTimer.Reset(maxRunDuration)
+			}
+			switch ev.Type {
+			case agui.EventThinkingStart:
+				log.Printf("[AGUIHandler] run=%s THINKING_START after %v", input.RunID, time.Since(reqStart))
+			case agui.EventTextMessageStart:
+				log.Printf("[AGUIHandler] run=%s TEXT_MESSAGE_START (TTFT) after %v", input.RunID, time.Since(reqStart))
+				runState.firstResponseSeen = true
+			case agui.EventTextMessageContent:
+				if !firstContentSeen {
+					firstContentSeen = true
+					log.Printf("[AGUIHandler] run=%s first TEXT_MESSAGE_CONTENT after %v", input.RunID, time.Since(reqStart))
+				}
+			case agui.EventToolCallStart:
+				log.Printf("[AGUIHandler] run=%s TOOL_CALL_START id=%s tool=%s after %v", input.RunID, ev.ToolCallID, ev.ToolCallName, time.Since(reqStart))
+				runState.firstResponseSeen = true
+			case agui.EventToolCallResult:
+				log.Printf("[AGUIHandler] run=%s TOOL_CALL_RESULT id=%s tool=%s result=%.200s after %v", input.RunID, ev.ToolCallID, ev.ToolCallName, ev.Content, time.Since(reqStart))
+			case agui.EventRunStarted:
+				log.Printf("[AGUIHandler] run=%s RUN_STARTED threadId=%s after %v", input.RunID, ev.ThreadID, time.Since(reqStart))
+			case agui.EventRunFinished:
+				log.Printf("[AGUIHandler] run=%s RUN_FINISHED threadId=%s after %v", input.RunID, ev.ThreadID, time.Since(reqStart))
+			case agui.EventRunError:
+				log.Printf("[AGUIHandler] run=%s RUN_ERROR after %v: %s", input.RunID, time.Since(reqStart), ev.Message)
+				finishTimer.Stop()
+				maxTimer.Stop()
+				flushPendingState(true)
+				if err := writeEvent(ev); err != nil {
+					log.Printf("[AGUIHandler] run=%s write RUN_ERROR failed: %v", input.RunID, err)
+				}
+				persistRunAssistant()
+				h.finalizeSession(bgCtx, sessionID, input.Messages)
+				return
+			}
+			toEmit := processEvent(ev)
+			for _, e := range toEmit {
+				if err := writeEvent(e); err != nil {
+					log.Printf("[AGUIHandler] run=%s write event failed: %v", input.RunID, err)
+				}
+			}
+			if runState.firstResponseSeen {
+				if runState.activeToolCallCount == 0 {
+					finishTimer.Reset(finishWait)
+				} else {
+					finishTimer.Stop()
+				}
+			}
 		case <-r.Context().Done():
 			if frontendDone {
 				continue
@@ -553,155 +636,74 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 			finishTimer.Stop()
 			maxTimer.Stop()
 			for ev := range events {
-				if h.buffer != nil {
-					h.buffer.Append(bgCtx, sessionID, ev)
-				}
-				// 使用与主循环相同的 run 级累加逻辑追踪部件。
-				switch ev.Type {
-				case agui.EventTextMessageStart:
-					activeTextMessageID = ev.MessageID
-					bufMu.Lock()
-					if runMessageID == "" {
-						runMessageID = ev.MessageID
-					}
-					bufMu.Unlock()
-				case agui.EventTextMessageContent:
-					if ev.Delta == "" {
-						continue
-					}
-					bufMu.Lock()
-					if len(runParts) == 0 || runParts[len(runParts)-1].Type != "text" {
-						runParts = append(runParts, contentPart{Type: "text", Text: ev.Delta})
-					} else {
-						runParts[len(runParts)-1].Text += ev.Delta
-					}
-					runTextBuilder.WriteString(ev.Delta)
-					bufMu.Unlock()
-				case agui.EventTextMessageEnd:
-					activeTextMessageID = ""
-				case agui.EventThinkingTextMessageContent:
-					if ev.Delta == "" {
-						continue
-					}
-					bufMu.Lock()
-					if len(runParts) == 0 || runParts[len(runParts)-1].Type != "reasoning" {
-						runParts = append(runParts, contentPart{Type: "reasoning", Text: ev.Delta})
-					} else {
-						runParts[len(runParts)-1].Text += ev.Delta
-					}
-					bufMu.Unlock()
-				case agui.EventThinkingEnd:
-					bufMu.Lock()
-					for i := len(runParts) - 1; i >= 0; i-- {
-						if runParts[i].Type == "reasoning" {
-							runParts[i].Done = true
-							break
-						}
-					}
-					bufMu.Unlock()
-				case agui.EventToolCallStart:
-					activeToolCallCount++
-					pendingToolCallIDs = append(pendingToolCallIDs, ev.ToolCallID)
-					bufMu.Lock()
-					runParts = append(runParts, contentPart{
-						Type:       "tool-call",
-						ToolCallID: ev.ToolCallID,
-						ToolName:   ev.ToolCallName,
-					})
-					bufMu.Unlock()
-				case agui.EventToolCallArgs:
-					if ev.Delta != "" {
-						bufMu.Lock()
-						for i := len(runParts) - 1; i >= 0; i-- {
-							if runParts[i].Type == "tool-call" && runParts[i].ToolCallID == ev.ToolCallID {
-								runParts[i].ArgsText += ev.Delta
-								break
-							}
-						}
-						bufMu.Unlock()
-					}
-				case agui.EventToolCallEnd:
-					if len(pendingToolCallIDs) > 0 {
-						pendingToolCallIDs = pendingToolCallIDs[1:]
-						if activeToolCallCount > 0 {
-							activeToolCallCount--
-						}
-					}
-				case agui.EventToolCallResult:
-					if len(pendingToolCallIDs) > 0 {
-						pendingToolCallIDs = pendingToolCallIDs[1:]
-						if activeToolCallCount > 0 {
-							activeToolCallCount--
-						}
-					}
-					if ev.ToolCallID != "" {
-						bufMu.Lock()
-						for i := len(runParts) - 1; i >= 0; i-- {
-							if runParts[i].Type == "tool-call" && runParts[i].ToolCallID == ev.ToolCallID {
-								runParts[i].Result = ev.Content
-								break
-							}
-						}
-						bufMu.Unlock()
-					}
+				toEmit := processEvent(ev)
+				for _, e := range toEmit {
+					bufferEvent(e)
 				}
 			}
 			// 缓冲最终合成事件并持久化。
-			if h.buffer != nil {
-				now := float64(time.Now().UnixMilli()) / 1000
-				for _, id := range pendingToolCallIDs {
-					h.buffer.Append(bgCtx, sessionID, agui.Event{
-						Type:       agui.EventToolCallEnd,
-						ToolCallID: id,
-						Timestamp:  now,
-					})
-				}
-				h.buffer.Append(bgCtx, sessionID, agui.RunFinishedEvent(actualThreadID, input.RunID))
-			}
+			flushPendingState(false)
+			bufferEvent(agui.RunFinishedEvent(actualThreadID, input.RunID))
 			persistRunAssistant()
 			h.finalizeSession(bgCtx, sessionID, input.Messages)
 			return
 		case <-finishTimer.C:
 			log.Printf("[AGUIHandler] run=%s finish timer fired, total elapsed=%v", input.RunID, time.Since(reqStart))
-			if activeTextMessageID != "" {
+			if runState.activeTextMessageID != "" {
 				ts := float64(time.Now().UnixMilli()) / 1000
-				writeAndBuffer(agui.Event{
-					Type:      agui.EventTextMessageContent,
-					MessageID: activeTextMessageID,
-					Delta:     "\n\n（模型响应超时或中断，请检查模型配置、网络或账户余额后重试。）",
-					Timestamp: ts,
-				})
-				writeAndBuffer(agui.Event{
-					Type:      agui.EventTextMessageEnd,
-					MessageID: activeTextMessageID,
-					Timestamp: ts,
-				})
-				activeTextMessageID = ""
+				for _, ev := range []agui.Event{
+					{
+						Type:      agui.EventTextMessageContent,
+						MessageID: runState.activeTextMessageID,
+						Delta:     "\n\n（模型响应超时或中断，请检查模型配置、网络或账户余额后重试。）",
+						Timestamp: ts,
+					},
+					{
+						Type:      agui.EventTextMessageEnd,
+						MessageID: runState.activeTextMessageID,
+						Timestamp: ts,
+					},
+				} {
+					if err := writeEvent(ev); err != nil {
+						log.Printf("[AGUIHandler] run=%s write timeout text event failed: %v", input.RunID, err)
+					}
+				}
+				runState.activeTextMessageID = ""
 			}
-			flushPendingState()
-			writeAndBuffer(agui.RunFinishedEvent(actualThreadID, input.RunID))
+			flushPendingState(true)
+			if err := writeEvent(agui.RunFinishedEvent(actualThreadID, input.RunID)); err != nil {
+				log.Printf("[AGUIHandler] run=%s write RUN_FINISHED failed: %v", input.RunID, err)
+			}
 			persistRunAssistant()
 			h.finalizeSession(bgCtx, sessionID, input.Messages)
 			return
 		case <-maxTimer.C:
 			log.Printf("[AGUIHandler] run=%s max run duration reached, total elapsed=%v", input.RunID, time.Since(reqStart))
-			if activeTextMessageID != "" {
+			if runState.activeTextMessageID != "" {
 				ts := float64(time.Now().UnixMilli()) / 1000
-				writeAndBuffer(agui.Event{
-					Type:      agui.EventTextMessageContent,
-					MessageID: activeTextMessageID,
-					Delta:     "\n\n（模型运行超过最大时长，已自动结束。）",
-					Timestamp: ts,
-				})
-				writeAndBuffer(agui.Event{
-					Type:      agui.EventTextMessageEnd,
-					MessageID: activeTextMessageID,
-					Timestamp: ts,
-				})
-				activeTextMessageID = ""
+				for _, ev := range []agui.Event{
+					{
+						Type:      agui.EventTextMessageContent,
+						MessageID: runState.activeTextMessageID,
+						Delta:     "\n\n（模型运行超过最大时长，已自动结束。）",
+						Timestamp: ts,
+					},
+					{
+						Type:      agui.EventTextMessageEnd,
+						MessageID: runState.activeTextMessageID,
+						Timestamp: ts,
+					},
+				} {
+					if err := writeEvent(ev); err != nil {
+						log.Printf("[AGUIHandler] run=%s write timeout text event failed: %v", input.RunID, err)
+					}
+				}
+				runState.activeTextMessageID = ""
 			}
-			flushPendingState()
-			writeAndBuffer(agui.RunFinishedEvent(actualThreadID, input.RunID))
+			flushPendingState(true)
+			if err := writeEvent(agui.RunFinishedEvent(actualThreadID, input.RunID)); err != nil {
+				log.Printf("[AGUIHandler] run=%s write RUN_FINISHED failed: %v", input.RunID, err)
+			}
 			persistRunAssistant()
 			h.finalizeSession(bgCtx, sessionID, input.Messages)
 			return
@@ -899,7 +901,7 @@ func extractLastUserText(messages []agui.Message) string {
 
 // streamChatResponse 将闲聊回复以 AG-UI SSE 事件格式流式发送给前端。
 // 生成完整的 TEXT_MESSAGE_START → TEXT_MESSAGE_CONTENT → TEXT_MESSAGE_END → RUN_FINISHED 事件序列。
-func (h *AGUIHandler) streamChatResponse(r *http.Request, w http.ResponseWriter, flusher http.Flusher, response, sessionID, runID string) {
+func (h *AGUIHandler) streamChatResponse(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, response, sessionID, runID string) {
 	messageID := generateMessageID()
 
 	// 构建并发送事件序列。
@@ -928,6 +930,7 @@ func (h *AGUIHandler) streamChatResponse(r *http.Request, w http.ResponseWriter,
 	for _, ev := range events {
 		data, err := json.Marshal(ev)
 		if err != nil {
+			log.Printf("[AGUIHandler] marshal chat event failed: %v", err)
 			continue
 		}
 		fmt.Fprintf(w, "data: %s\n\n", data)
@@ -935,7 +938,9 @@ func (h *AGUIHandler) streamChatResponse(r *http.Request, w http.ResponseWriter,
 
 		// 缓冲事件供前端重连时回放。
 		if h.buffer != nil {
-			_ = h.buffer.Append(r.Context(), sessionID, ev)
+			if err := h.buffer.Append(ctx, sessionID, ev); err != nil {
+				log.Printf("[AGUIHandler] buffer chat event failed: %v", err)
+			}
 		}
 	}
 
@@ -949,7 +954,9 @@ func (h *AGUIHandler) streamChatResponse(r *http.Request, w http.ResponseWriter,
 		Timestamp: time.Now(),
 	}
 	if h.messages != nil {
-		_ = h.messages.Append(r.Context(), sessionID, assistantMsg)
+		if err := h.messages.Append(ctx, sessionID, assistantMsg); err != nil {
+			log.Printf("[AGUIHandler] save chat assistant message failed: %v", err)
+		}
 	}
 
 	log.Printf("[AGUIHandler] chat response streamed: session=%s run=%s len=%d", sessionID, runID, len(response))

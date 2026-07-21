@@ -7,6 +7,9 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
 )
 
+// maxEventsPerSession 限制单个 session 在内存中缓存的最大事件数，防止异常场景下无限增长。
+const maxEventsPerSession = 10000
+
 // MemoryBuffer 是 SSEBuffer 的内存实现。
 // 使用 map[sessionID][]Event 存储每个会话的待消费事件队列，
 // 使用 map[sessionID]map[runID][]byte 存储 run 级 checkpoint 状态。
@@ -29,6 +32,11 @@ func (b *MemoryBuffer) Append(_ context.Context, sessionID string, ev agui.Event
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.pending[sessionID] = append(b.pending[sessionID], ev)
+	// 超过上限时淘汰最旧事件，保持 FIFO 并限制内存占用。
+	if len(b.pending[sessionID]) > maxEventsPerSession {
+		overflow := len(b.pending[sessionID]) - maxEventsPerSession
+		b.pending[sessionID] = b.pending[sessionID][overflow:]
+	}
 	return nil
 }
 

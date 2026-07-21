@@ -115,6 +115,7 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	// 开发或 gatewayd 未启动时，若连接被拒绝/超时，则降级为本地 UUID，
 	// 避免会话创建直接 500 导致前端不可用。
 	threadID, err := h.gatewaydClient.CreateThread(r.Context(), "")
+	gatewaydUnreachable := false
 	if err != nil {
 		if !IsGatewaydConnectionError(err) {
 			http.Error(w, `{"code":5,"message":"failed to create gatewayd thread"}`, http.StatusInternalServerError)
@@ -122,6 +123,7 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("[CreateSession] gatewayd unreachable (%v), fallback to local session id", err)
 		threadID = uuid.New().String()
+		gatewaydUnreachable = true
 	}
 
 	workspaceID := req.WorkspaceID
@@ -225,6 +227,10 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	context["pluginKey"] = pluginKey
 	context["instanceId"] = instanceID
+	// 若 gatewayd 不可达而使用本地 session id，则在上下文中标记，避免后续 /api/v1/agent 向不存在的 gatewayd session 发送 run。
+	if gatewaydUnreachable {
+		context["gatewaydUnreachable"] = true
+	}
 
 	gwAgentID := instanceID
 	if gwAgentID == "" {

@@ -50,7 +50,9 @@ func (s *PostgresStore) Get(ctx context.Context, id string) (chat.Session, error
 		return chat.Session{}, fmt.Errorf("get session failed: %w", err)
 	}
 	if len(ctxJSON) > 0 {
-		_ = json.Unmarshal(ctxJSON, &sess.Context)
+		if err := json.Unmarshal(ctxJSON, &sess.Context); err != nil {
+			return chat.Session{}, fmt.Errorf("unmarshal session context failed: %w", err)
+		}
 	}
 	return sess, nil
 }
@@ -99,7 +101,9 @@ func (s *PostgresStore) ListSessions(ctx context.Context, workspaceID, userID st
 			return nil, fmt.Errorf("scan session failed: %w", err)
 		}
 		if len(ctxJSON) > 0 {
-			_ = json.Unmarshal(ctxJSON, &sess.Context)
+			if err := json.Unmarshal(ctxJSON, &sess.Context); err != nil {
+				return nil, fmt.Errorf("unmarshal session context failed: %w", err)
+			}
 		}
 		result = append(result, sess)
 	}
@@ -137,7 +141,7 @@ func (s *PostgresStore) GetSessionTrend(ctx context.Context, workspaceID string,
 func (s *PostgresStore) GetSessionTrails(ctx context.Context, workspaceID string, limit int) ([]chat.SessionTrailInfo, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT s.id, COALESCE(s.user_id, ''), COALESCE(u.name, ''), COALESCE(s.title, ''), s.agent_type, s.created_at, s.updated_at,
-		       COUNT(m.id) AS msg_count
+		       COUNT(DISTINCT m.id) AS msg_count
 		FROM agent_sessions s
 		LEFT JOIN users u ON u.id = s.user_id
 		LEFT JOIN agent_messages m ON m.session_id = s.id
@@ -185,7 +189,7 @@ func (s *PostgresStore) GetHistory(ctx context.Context, sessionID string, limit 
 		SELECT id, session_id, role, type, content, metadata, created_at
 		FROM agent_messages
 		WHERE session_id = $1
-		ORDER BY created_at ASC
+		ORDER BY created_at DESC
 		LIMIT $2
 	`, sessionID, limit)
 	if err != nil {
@@ -193,7 +197,7 @@ func (s *PostgresStore) GetHistory(ctx context.Context, sessionID string, limit 
 	}
 	defer rows.Close()
 
-	result := make([]chat.Message, 0)
+	result := make([]chat.Message, 0, limit)
 	for rows.Next() {
 		var msg chat.Message
 		var metaJSON []byte
@@ -201,11 +205,20 @@ func (s *PostgresStore) GetHistory(ctx context.Context, sessionID string, limit 
 			return nil, fmt.Errorf("scan message failed: %w", err)
 		}
 		if len(metaJSON) > 0 {
-			_ = json.Unmarshal(metaJSON, &msg.Metadata)
+			if err := json.Unmarshal(metaJSON, &msg.Metadata); err != nil {
+				return nil, fmt.Errorf("unmarshal message metadata failed: %w", err)
+			}
 		}
 		result = append(result, msg)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate messages failed: %w", err)
+	}
+	// 按时间正序返回，与内存实现一致。
+	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
+		result[i], result[j] = result[j], result[i]
+	}
+	return result, nil
 }
 
 // MigrateMessages 将旧 sessionID 下的所有消息迁移到新 sessionID。
@@ -213,11 +226,33 @@ func (s *PostgresStore) MigrateMessages(ctx context.Context, oldSessionID, newSe
 	if oldSessionID == newSessionID {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE agent_messages SET session_id = $1 WHERE session_id = $2
-	`, newSessionID, oldSessionID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("begin migrate messages transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 预检目标 session 是否存在，不存在则创建占位记录，避免外键约束失败。
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agent_sessions WHERE id = $1)`, newSessionID).Scan(&exists); err != nil {
+		return fmt.Errorf("check target session failed: %w", err)
+	}
+	if !exists {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO agent_sessions (id, workspace_id, user_id, agent_id, agent_type, model, project_id, title, context, created_at, updated_at)
+			VALUES ($1, '', '', 'agent-default', 'chat', '', '', '', '{}', NOW(), NOW())
+		`, newSessionID); err != nil {
+			return fmt.Errorf("create target session placeholder failed: %w", err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE agent_messages SET session_id = $1 WHERE session_id = $2
+	`, newSessionID, oldSessionID); err != nil {
 		return fmt.Errorf("migrate messages failed: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migrate messages failed: %w", err)
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
+	workitemservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
 )
 
 // 意图识别相关常量。
@@ -22,15 +23,22 @@ const (
 	intentRecognitionTimeout = 15 * time.Second
 )
 
-// commandKeywordMap 为每条指令维护一组关键字，用于规则匹配快速路径。
+// commandKeyword 为单条指令维护一组关键字，用于规则匹配快速路径。
+// 使用切片保证匹配顺序稳定，避免 map 迭代随机性导致同一输入命中不同指令。
+type commandKeyword struct {
+	cmd      string
+	keywords []string
+}
+
+// commandKeywords 按优先级排列的规则关键字列表。
 // 命中关键字时直接返回任务意图，无需调用 LLM，显著降低意图识别延迟。
-var commandKeywordMap = map[string][]string{
-	"/prd-write":    {"写需求", "prd", "需求文档", "产品需求"},
-	"/prd-research": {"调研", "技术调研", "方案选型", "研究报告"},
-	"/proto-make":   {"原型", "做原型", "ui原型", "可运行原型"},
-	"/code":         {"写代码", "写个", "做一个", "开发", "实现", "编写代码", "创建工程", "写页面", "做个系统", "做个网站", "写功能"},
-	"/debug":        {"bug", "缺陷", "修复", "报错", "错误", "问题", "调试"},
-	"/review":       {"review", "审查", "代码审查", "codereview", "代码review", "评审"},
+var commandKeywords = []commandKeyword{
+	{"/prd-write", []string{"写需求", "prd", "需求文档", "产品需求"}},
+	{"/prd-research", []string{"调研", "技术调研", "方案选型", "研究报告"}},
+	{"/proto-make", []string{"原型", "做原型", "ui原型", "可运行原型"}},
+	{"/code", []string{"写代码", "写个", "做一个", "开发", "实现", "编写代码", "创建工程", "写页面", "做个系统", "做个网站", "写功能"}},
+	{"/debug", []string{"bug", "缺陷", "修复", "报错", "错误", "问题", "调试"}},
+	{"/review", []string{"review", "审查", "代码审查", "codereview", "代码review", "评审"}},
 }
 
 // ruleBasedClassify 基于关键字规则快速判断任务意图。
@@ -40,10 +48,10 @@ func ruleBasedClassify(userInput string) *IntentResult {
 	if input == "" {
 		return nil
 	}
-	for cmd, keywords := range commandKeywordMap {
-		for _, kw := range keywords {
+	for _, ck := range commandKeywords {
+		for _, kw := range ck.keywords {
 			if strings.Contains(input, strings.ToLower(kw)) {
-				return &IntentResult{IsChat: false, Command: cmd}
+				return &IntentResult{IsChat: false, Command: ck.cmd}
 			}
 		}
 	}
@@ -119,6 +127,7 @@ func recognizeIntent(ctx context.Context, aguiClient *client.AGUIClient, userInp
 // 支持格式：
 //   CHAT: <回复内容>
 //   INTENT: /<指令>
+// 兼容大小写不一致、code fence 包裹、前缀后带解释文本等 LLM 输出抖动。
 func parseIntentResponse(resp string) *IntentResult {
 	resp = strings.TrimSpace(resp)
 
@@ -127,21 +136,38 @@ func parseIntentResponse(resp string) *IntentResult {
 	resp = strings.TrimSuffix(resp, "```")
 	resp = strings.TrimSpace(resp)
 
-	if strings.HasPrefix(resp, intentPrefixChat) {
-		reply := strings.TrimSpace(strings.TrimPrefix(resp, intentPrefixChat))
+	upper := strings.ToUpper(resp)
+
+	// 大小写不敏感匹配 CHAT 前缀。
+	if strings.HasPrefix(upper, strings.ToUpper(intentPrefixChat)) {
+		reply := strings.TrimSpace(resp[len(intentPrefixChat):])
 		return &IntentResult{IsChat: true, Response: reply}
 	}
 
-	if strings.HasPrefix(resp, intentPrefixIntent) {
-		cmd := strings.TrimSpace(strings.TrimPrefix(resp, intentPrefixIntent))
-		// 验证指令是否存在。
+	// 大小写不敏感匹配 INTENT 前缀，并取第一个 token 作为指令。
+	if strings.HasPrefix(upper, strings.ToUpper(intentPrefixIntent)) {
+		rest := strings.TrimSpace(resp[len(intentPrefixIntent):])
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			return nil
+		}
+		cmd := fields[0]
 		if cfg, found := findCommandConfig(cmd); found {
 			return &IntentResult{IsChat: false, Command: cfg.Cmd}
 		}
-		// 指令不存在，尝试模糊匹配。
 		if cfg := fuzzyMatchCommand(cmd); cfg != nil {
 			return &IntentResult{IsChat: false, Command: cfg.Cmd}
 		}
+		return nil
+	}
+
+	// 无前缀时，若整段内容恰好是一个已知指令名，也视为任务意图。
+	trimmed := strings.TrimSpace(resp)
+	if cfg, found := findCommandConfig(trimmed); found {
+		return &IntentResult{IsChat: false, Command: cfg.Cmd}
+	}
+	if cfg := fuzzyMatchCommand(trimmed); cfg != nil {
+		return &IntentResult{IsChat: false, Command: cfg.Cmd}
 	}
 
 	return nil
@@ -161,24 +187,24 @@ func fuzzyMatchCommand(input string) *CommandConfig {
 	}
 	return nil
 }
+
 // applyIntentCommand 将意图识别匹配到的指令模板应用到用户消息上。
-// 用原始用户输入作为 {ARGS}，渲染指令模板并替换消息内容。
-// workspacePath 用于替换模板中的 {WORKSPACE_PATH}，与 interceptCommands 保持一致。
-func applyIntentCommand(messages []agui.Message, cmd, userInput, workspacePath string) {
+// 用原始用户输入作为 {ARGS}，复用 applyCommandConfig 统一处理模板渲染、
+// 任务卡片与代码库注入，与 interceptCommands 行为保持一致。
+func applyIntentCommand(messages []agui.Message, cmd, userInput, workspacePath string, ctxItems []agui.ContextItem, workItemSvc workitemservice.WorkItemService) error {
 	cfg, found := findCommandConfig(cmd)
 	if !found {
-		return
+		return fmt.Errorf("intent command %s not found", cmd)
 	}
-
-	rendered := renderTemplate(cfg.Template, userInput, workspacePath)
 
 	// 仅替换最后一条用户消息的内容。
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == agui.RoleUser {
-			messages[i].Content = agui.UserMessage("", rendered).Content
-			return
+			_, err := applyCommandConfig(messages, i, cfg, userInput, workspacePath, ctxItems, workItemSvc)
+			return err
 		}
 	}
+	return nil
 }
 
 // truncate 截断字符串到指定长度，超出部分用省略号替代。

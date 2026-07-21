@@ -3,26 +3,78 @@ package session
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 )
 
+const (
+	// defaultMaxSessions 是内存 session 存储的最大 session 数量，防止无限制增长。
+	defaultMaxSessions = 10000
+	// defaultSessionTTL 是内存 session 的空闲超时时间，超过此时间未更新的 session 会被回收。
+	defaultSessionTTL = 24 * time.Hour
+	// reaperInterval 是内存 session 回收器的运行间隔。
+	reaperInterval = 1 * time.Hour
+)
+
 type SessionStore struct {
-	mu       sync.RWMutex
-	sessions map[string]chat.Session
+	mu          sync.RWMutex
+	sessions    map[string]chat.Session
+	maxSessions int
+	ttl         time.Duration
 }
 
 func NewSessionStore() *SessionStore {
-	return &SessionStore{
-		sessions: make(map[string]chat.Session),
+	s := &SessionStore{
+		sessions:    make(map[string]chat.Session),
+		maxSessions: defaultMaxSessions,
+		ttl:         defaultSessionTTL,
+	}
+	go s.reaper()
+	return s
+}
+
+// reaper 定期清理长时间未更新的 session，避免内存无限增长。
+func (s *SessionStore) reaper() {
+	ticker := time.NewTicker(reaperInterval)
+	defer ticker.Stop()
+	for {
+		<-ticker.C
+		s.mu.Lock()
+		cutoff := time.Now().Add(-s.ttl)
+		for id, sess := range s.sessions {
+			if sess.UpdatedAt.Before(cutoff) {
+				delete(s.sessions, id)
+			}
+		}
+		s.mu.Unlock()
+	}
+}
+
+// evictOldestLocked 在 session 数量超过上限时淘汰最旧的一条。
+// 调用方必须持有写锁。
+func (s *SessionStore) evictOldestLocked() {
+	var oldestID string
+	var oldestTime time.Time
+	for id, sess := range s.sessions {
+		if oldestID == "" || sess.UpdatedAt.Before(oldestTime) {
+			oldestID = id
+			oldestTime = sess.UpdatedAt
+		}
+	}
+	if oldestID != "" {
+		delete(s.sessions, oldestID)
 	}
 }
 
 func (s *SessionStore) Create(ctx context.Context, sess chat.Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(s.sessions) >= s.maxSessions {
+		s.evictOldestLocked()
+	}
 	s.sessions[sess.ID] = sess
 	return nil
 }
@@ -107,7 +159,7 @@ func (s *SessionStore) GetSessionTrend(ctx context.Context, workspaceID string, 
 	return result, nil
 }
 
-// GetSessionTrails 内存实现：返回指定工作空间最近的会话轨迹（不含消息数量）。
+// GetSessionTrails 内存实现：返回指定工作空间最近的会话轨迹。
 func (s *SessionStore) GetSessionTrails(ctx context.Context, workspaceID string, limit int) ([]chat.SessionTrailInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -120,13 +172,9 @@ func (s *SessionStore) GetSessionTrails(ctx context.Context, workspaceID string,
 	}
 
 	// 按更新时间倒序排序。
-	for i := 0; i < len(all)-1; i++ {
-		for j := i + 1; j < len(all); j++ {
-			if all[j].UpdatedAt.After(all[i].UpdatedAt) {
-				all[i], all[j] = all[j], all[i]
-			}
-		}
-	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[j].UpdatedAt.Before(all[i].UpdatedAt)
+	})
 
 	if limit > len(all) {
 		limit = len(all)
@@ -135,12 +183,13 @@ func (s *SessionStore) GetSessionTrails(ctx context.Context, workspaceID string,
 	for i := 0; i < limit; i++ {
 		sess := all[i]
 		result = append(result, chat.SessionTrailInfo{
-			ID:        sess.ID,
-			UserID:    sess.UserID,
-			Title:     sess.Title,
-			AgentType: sess.AgentType,
-			CreatedAt: sess.CreatedAt,
-			UpdatedAt: sess.UpdatedAt,
+			ID:           sess.ID,
+			UserID:       sess.UserID,
+			Title:        sess.Title,
+			AgentType:    sess.AgentType,
+			MessageCount: 0, // 内存实现不维护跨 store 的消息计数
+			CreatedAt:    sess.CreatedAt,
+			UpdatedAt:    sess.UpdatedAt,
 		})
 	}
 	return result, nil
