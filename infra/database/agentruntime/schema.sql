@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS agent_runtimes (
     mem_percent REAL NOT NULL DEFAULT 0,
     sandbox_spec VARCHAR(64) NOT NULL DEFAULT '',
     gatewayd_url VARCHAR(512) NOT NULL DEFAULT '',
+    workspace_path VARCHAR(512) NOT NULL DEFAULT '',
     agents JSONB NOT NULL DEFAULT '[]'::jsonb,
     reported_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -19,6 +19,8 @@ ENT_DESKTOP_ROOT="${PLATFORM_ROOT}/../deepharness-ent-desktop"
 # 默认端口
 GATEWAYD_API_PORT="${GATEWAYD_API_PORT:-2345}"
 GATEWAYD_ADMIN_PORT="${GATEWAYD_ADMIN_PORT:-2346}"
+# gatewayd 对 AttachAgent 传入的 work_directory 做白名单校验，额外放行 workspace.root。
+GATEWAYD_WORKSPACE_ROOTS="${GATEWAYD_WORKSPACE_ROOTS:-/home/nan/test}"
 AGENT_STUB_PORT="${AGENT_STUB_PORT:-8090}"
 DH_BACKEND_PORT="${DH_BACKEND_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-8888}"
@@ -170,7 +172,7 @@ start_gatewayd() {
         return 1
     fi
 
-    "$GATEWAYD_BIN" \
+GATEWAYD_WORKSPACE_ROOTS="$GATEWAYD_WORKSPACE_ROOTS" "$GATEWAYD_BIN" \
         --port "$GATEWAYD_API_PORT" \
         --admin-port "$GATEWAYD_ADMIN_PORT" \
         --attach opencode \

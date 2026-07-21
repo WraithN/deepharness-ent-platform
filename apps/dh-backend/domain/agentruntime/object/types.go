@@ -49,7 +49,10 @@ type AgentRuntime struct {
 	MemPercent      float64         `json:"memPercent"`
 	SandboxSpec     string          `json:"sandboxSpec"`
 	Agents          []AgentInstance `json:"agents"`
-	GatewaydURL     string          `json:"gatewaydUrl"`
+	// WorkspacePath 是 gatewayd 实际使用的工作目录，格式为 ${workspace_root}/${workspace_id}/${user_id}。
+	// 由 gatewayd 通过状态上报接口回传，供 platform 后端统一文件路径与指令模板使用。
+	WorkspacePath string          `json:"workspacePath"`
+	GatewaydURL   string          `json:"gatewaydUrl"`
 	ReportedAt      time.Time       `json:"reportedAt"`
 	CreatedAt       time.Time       `json:"createdAt"`
 	UpdatedAt       time.Time       `json:"updatedAt"`
@@ -78,8 +81,11 @@ type ReportStatusRequest struct {
 	MemPercent    float64                     `json:"mem_percent"`
 	SandboxSpec   string                      `json:"sandbox_spec"`
 	Agents        []ReportStatusAgentInstance `json:"agents"`
-	GatewaydURL   string                      `json:"gatewayd_url,omitempty"`
-	ReportedAt    *time.Time                  `json:"reported_at,omitempty"`
+	// WorkspacePath 是 gatewayd 实际使用的工作目录，格式为 ${workspace_root}/${workspace_id}/${user_id}。
+	// 若上报方未提供，服务端会根据 workspace.root 配置自动计算。
+	WorkspacePath string        `json:"workspace_path,omitempty"`
+	GatewaydURL   string        `json:"gatewayd_url,omitempty"`
+	ReportedAt    *time.Time    `json:"reported_at,omitempty"`
 }
 
 // ListRuntimesFilter 是管理后台查询运行时列表的过滤条件。

@@ -78,7 +78,7 @@ func New(cfg config.Config) http.Handler {
 	initRepositoryService(db, cfg)
 	initProductDocService(db, cfg.WorkspaceRoot)
 	initPlatformTemplateService(db)
-	agentRuntimeSvc := initAgentRuntimeService(db)
+	agentRuntimeSvc := initAgentRuntimeService(db, cfg.WorkspaceRoot)
 	initTeamService(db, userService)
 
 	// Handlers
@@ -408,9 +408,9 @@ func initPlatformTemplateService(db *sql.DB) {
 	platformtemplate.Init(platformtemplateservice.NewDBPlatformTemplateService(db))
 }
 
-func initAgentRuntimeService(db *sql.DB) agentruntimeservice.AgentRuntimeService {
-	log.Println("[AgentRuntime] using postgres storage")
-	svc := agentruntimeservice.NewDBAgentRuntimeService(db)
+func initAgentRuntimeService(db *sql.DB, workspaceRoot string) agentruntimeservice.AgentRuntimeService {
+	log.Printf("[AgentRuntime] using postgres storage, workspaceRoot=%s", workspaceRoot)
+	svc := agentruntimeservice.NewDBAgentRuntimeService(db, workspaceRoot)
 	agentruntime.Init(svc)
 	return svc
 }
