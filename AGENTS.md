@@ -217,6 +217,9 @@ pnpm build
 
 # Go 测试
 pnpm --filter @repo/dh-backend test
+
+# 开发环境重启（停止旧进程 + 一键启动全部服务）
+bash scripts/restart-dev.sh
 ```
 
 ## 13. 用户自定义规则（不可覆盖）
@@ -302,4 +305,7 @@ pnpm --filter @repo/dh-backend test
 - `DESIGN.md` 是项目 UI/UX 设计的单一事实来源，涵盖色彩系统、字体系统、间距布局、组件规范、图标系统等完整的设计规范
 
 ### 规则10：规则持久化
-以上九条规则（规则1-9）在变更 AGENTS.md 时必须保留，不允许被覆盖、删除或修改。任何对 AGENTS.md 的更新都应在保留这些规则的前提下进行追加或调整其他内容。
+以上十条规则（规则1-9，规则11）在变更 AGENTS.md 时必须保留，不允许被覆盖、删除或修改。任何对 AGENTS.md 的更新都应在保留这些规则的前提下进行追加或调整其他内容。
+
+### 规则11：开发环境重启
+每次需要重启开发环境时，直接运行 `bash scripts/restart-dev.sh`，该脚本会自动停止所有旧进程（端口 8888/8080/8090/2345/2346）并重新启动 Gatewayd → Agent Stub → DH Backend → Frontend。无需手动逐条执行 kill、构建、启动命令。
