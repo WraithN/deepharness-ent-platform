@@ -801,15 +801,15 @@ html {
 /* ── Aurora 对话气泡卡片 ── */
 @layer components {
   .chat-bubble-card {
-    background: #ffffff;
-    border: 1px solid #e4e7ed;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    background: transparent;
+    border: none;
+    box-shadow: none;
   }
 
   .dark .chat-bubble-card {
-    background: linear-gradient(145deg, #272e3b, #1f2632);
-    border: 1px solid #363e4f;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    background: transparent;
+    border: none;
+    box-shadow: none;
   }
 
   .chat-bubble-fade {

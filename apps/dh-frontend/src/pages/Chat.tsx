@@ -838,7 +838,7 @@ export const Chat: React.FC = () => {
   // Auto-scroll: scroll to bottom when new messages arrive (if locked)
   useEffect(() => {
     if (isAtBottom && messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
     }
   }, [messages, isAtBottom]);
 

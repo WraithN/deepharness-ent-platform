@@ -71,7 +71,7 @@ const ChatMessageItem: React.FC<{
 export const ChatThread: React.FC<ChatThreadProps> = (props) => {
   return (
     <ThreadPrimitive.Root className="flex flex-col h-full">
-      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto space-y-4 px-1">
+      <ThreadPrimitive.Viewport className="flex-1 space-y-4 px-1">
         <ThreadPrimitive.Messages>
           {({ message }) => (
             <ChatMessageItem message={message} props={props} />
