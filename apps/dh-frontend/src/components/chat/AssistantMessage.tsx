@@ -445,7 +445,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
             </button>
           </div>
         )}
-        {isRunning && (
+        {isRunning && hasVisibleContent && (
           <div className="flex items-center gap-2 mt-1.5">
             <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/60" />
             <span className="text-[10px] text-muted-foreground/50">生成中 {elapsed} 秒 · 工具调用 {toolCallCount} 次</span>
