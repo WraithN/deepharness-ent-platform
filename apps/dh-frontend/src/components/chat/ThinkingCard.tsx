@@ -53,6 +53,7 @@ export const ThinkingCard: React.FC<ThinkingCardProps> = ({
         ) : (
           <ChevronDown className="h-3.5 w-3.5 shrink-0" />
         )}
+        <span>{isOpen ? '收起' : '展开'}</span>
         <Sparkles className="h-3 w-3 shrink-0" />
         <span>{statusLabel}</span>
         <span className="text-muted-foreground/50">·</span>

@@ -219,13 +219,28 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
 
   const showCollapsed = shouldCollapseText && !textExpanded && !isStreaming;
 
+  const toolCallCount = thinkingItems.filter((i) => i.type === 'tool-call').length;
+
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const start = new Date(message.createdAt).getTime();
+    if (!isRunning) {
+      setElapsed(Math.floor((Date.now() - start) / 1000));
+      return;
+    }
+    const tick = () => setElapsed(Math.floor((Date.now() - start) / 1000));
+    const id = setInterval(tick, 1000);
+    tick();
+    return () => clearInterval(id);
+  }, [isRunning, message.createdAt]);
+
   return (
     <div className="flex gap-3 justify-start">
       <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-1">
         <Bot className="h-4 w-4 text-primary" />
       </div>
       <div className="flex flex-col flex-1 min-w-0 items-start">
-        <div className="chat-bubble-card flex flex-col gap-2 w-fit max-w-full min-w-0 rounded-2xl rounded-tl-sm overflow-hidden">
+        <div className="chat-bubble-card flex flex-col gap-2 w-full max-w-full min-w-0 rounded-2xl rounded-tl-sm overflow-hidden">
           {showThinkingPlaceholder && (
             <div className="px-3 py-2 flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -410,9 +425,10 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
           </div>
         )}
 
-        {textContent && (
-          <div className="flex items-center gap-1 mt-1.5">
+        {textContent && !isRunning && (
+          <div className="flex items-center gap-2 mt-1.5">
             <span className="text-[10px] text-muted-foreground/50 px-1">{formatTime(message.createdAt)}</span>
+            <span className="text-[10px] text-muted-foreground/50">总耗时 {elapsed} 秒 · 工具调用 {toolCallCount} 次</span>
             <button
               onClick={onRegenerate}
               className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-colors"
@@ -427,6 +443,12 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
             >
               <Copy className="h-3.5 w-3.5" />
             </button>
+          </div>
+        )}
+        {isRunning && (
+          <div className="flex items-center gap-2 mt-1.5">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/60" />
+            <span className="text-[10px] text-muted-foreground/50">生成中 {elapsed} 秒 · 工具调用 {toolCallCount} 次</span>
           </div>
         )}
       </div>

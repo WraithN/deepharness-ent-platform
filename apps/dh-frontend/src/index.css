@@ -668,15 +668,19 @@ html {
     background: hsl(var(--background));
     border-radius: 12px;
     border-left: 4px solid hsl(var(--primary));
-    overflow-x: auto;
+    overflow-x: hidden;
+    max-width: 100%;
+    white-space: pre-wrap;
     margin: 0.75rem 0;
     box-shadow: 0 1px 8px rgba(0, 0, 0, 0.04);
   }
 
-  /* 每行作为 block 换行 */
+  /* 每行作为 block 换行，超长内容自动折行 */
   .markdown-preview pre.tree-dir .tree-line {
     display: block;
-    white-space: pre;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    min-width: 0;
   }
 
   /* 连接线（├ └ │ ─）弱化为浅灰色 */

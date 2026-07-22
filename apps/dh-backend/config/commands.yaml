@@ -104,8 +104,8 @@ commands:
          <button data-dh-id="submit-btn">提交</button>
          <div data-dh-id="user-card">...</div>
          这对后续产品标注和走查非常重要。
-      5. 工程必须包含 `npm run dev` 用于本地预览，以及 `npm run build` 用于构建生产包。
-      6. 生成完成后，执行 `npm install && npm run build`，确保产出 `dist/index.html` 和 `dist/assets/`。
+      5. 工程必须包含 `pnpm run dev` 用于本地预览，以及 `pnpm run build` 用于构建生产包。
+      6. 所有文件创建完成后，只执行一次 `pnpm install && pnpm run build`，确保产出 `dist/index.html` 和 `dist/assets/`。不要重复执行 install。
       7. 最终产物结构：
          {WORKSPACE_PATH}/products/prototypes/{工程名}/
          ├── package.json
