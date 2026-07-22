@@ -1,9 +1,19 @@
 #!/bin/bash
-
-# DeepHarness Platform - Development Startup Script
+# DeepHarness Platform - 开发环境启动脚本
 # 一键启动：DH Gatewayd（ent-desktop）→ Agent Stub → DH Backend → Frontend Web App
+#
+# 用法：
+#   bash scripts/start-dev.sh           # 前台启动，按 Ctrl+C 停止所有服务
+#   bash scripts/start-dev.sh --detach  # 后台启动，服务不受终端/任务超时影响
 
 set -e
+
+DETACH_MODE=false
+for arg in "$@"; do
+  if [ "$arg" = "--detach" ]; then
+    DETACH_MODE=true
+  fi
+done
 
 # Colors
 RED='\033[0;31m'
@@ -58,6 +68,10 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM EXIT
 
+if [ "$DETACH_MODE" = true ]; then
+  trap - SIGINT SIGTERM EXIT
+fi
+
 log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC}   $1"; }
 log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
@@ -99,19 +113,39 @@ kill_port() {
 }
 
 build_go_if_needed() {
-    local source_file=$1
+    local module_dir=$1
     local binary_file=$2
     local service_name=$3
 
-    if [ ! -f "$binary_file" ] || [ "$source_file" -nt "$binary_file" ]; then
+    if [ ! -f "$binary_file" ]; then
         log_info "Building ${service_name}..."
-        local dir
-        dir=$(dirname "$binary_file")
-        mkdir -p "$dir"
-        local module_dir
-        module_dir=$(dirname "$source_file")
-        local relative_output
-        relative_output=${binary_file#${module_dir}/}
+        mkdir -p "$(dirname "$binary_file")"
+        local relative_output=${binary_file#${module_dir}/}
+        (cd "$module_dir" && go build -o "$relative_output" .)
+        log_success "${service_name} built"
+        return
+    fi
+
+    local binary_mtime
+    binary_mtime=$(stat -c %Y "$binary_file" 2>/dev/null || stat -f %m "$binary_file" 2>/dev/null)
+    if [ -z "$binary_mtime" ]; then
+        binary_mtime=0
+    fi
+
+    local needs_rebuild=false
+    while IFS= read -r -d '' file; do
+        local file_mtime
+        file_mtime=$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null)
+        if [ -n "$file_mtime" ] && [ "$file_mtime" -gt "$binary_mtime" ]; then
+            needs_rebuild=true
+            break
+        fi
+    done < <(find "$module_dir" -name "*.go" -type f -print0)
+
+    if [ "$needs_rebuild" = true ]; then
+        log_info "Building ${service_name}..."
+        mkdir -p "$(dirname "$binary_file")"
+        local relative_output=${binary_file#${module_dir}/}
         (cd "$module_dir" && go build -o "$relative_output" .)
         log_success "${service_name} built"
     fi
@@ -155,6 +189,11 @@ start_gatewayd() {
         return 0
     fi
 
+    log_info "Cleaning up orphaned opencode processes (ports 3001-3050)..."
+    for port in $(seq 3001 3050); do
+        kill_port "$port"
+    done
+
     log_info "Starting DH Gatewayd on ports ${GATEWAYD_API_PORT}/${GATEWAYD_ADMIN_PORT}..."
 
     if check_port "$GATEWAYD_ADMIN_PORT"; then
@@ -170,13 +209,23 @@ start_gatewayd() {
         return 1
     fi
 
-"$GATEWAYD_BIN" \
-        --port "$GATEWAYD_API_PORT" \
-        --admin-port "$GATEWAYD_ADMIN_PORT" \
-        --attach opencode \
-        > /tmp/gatewayd.log 2>&1 &
-    local pid=$!
-    PIDS+=("$pid")
+    if [ "$DETACH_MODE" = true ]; then
+        setsid nohup "$GATEWAYD_BIN" \
+            --port "$GATEWAYD_API_PORT" \
+            --admin-port "$GATEWAYD_ADMIN_PORT" \
+            --attach opencode \
+            > /tmp/gatewayd.log 2>&1 &
+        disown
+        local pid=$!
+    else
+        "$GATEWAYD_BIN" \
+            --port "$GATEWAYD_API_PORT" \
+            --admin-port "$GATEWAYD_ADMIN_PORT" \
+            --attach opencode \
+            > /tmp/gatewayd.log 2>&1 &
+        local pid=$!
+        PIDS+=("$pid")
+    fi
 
     if wait_for_service "${GATEWAYD_ADMIN_URL}/health" "Gatewayd" 60; then
         log_success "Gatewayd running (PID: $pid, log: /tmp/gatewayd.log)"
@@ -197,9 +246,15 @@ start_agent_stub() {
     fi
 
     cd "$AGENT_STUB_DIR"
-    PORT=$AGENT_STUB_PORT ./dist/agent-stub > /tmp/agent-stub.log 2>&1 &
-    local pid=$!
-    PIDS+=("$pid")
+    if [ "$DETACH_MODE" = true ]; then
+        setsid nohup env PORT=$AGENT_STUB_PORT ./dist/agent-stub > /tmp/agent-stub.log 2>&1 &
+        disown
+        local pid=$!
+    else
+        PORT=$AGENT_STUB_PORT ./dist/agent-stub > /tmp/agent-stub.log 2>&1 &
+        local pid=$!
+        PIDS+=("$pid")
+    fi
     cd ../..
 
     if wait_for_service "${AGENT_STUB_URL}/health" "Agent Stub"; then
@@ -221,9 +276,15 @@ start_dh_backend() {
     fi
 
     cd "$DH_BACKEND_DIR"
-    PORT=$DH_BACKEND_PORT ./dist/dh-backend > /tmp/dh-backend.log 2>&1 &
-    local pid=$!
-    PIDS+=("$pid")
+    if [ "$DETACH_MODE" = true ]; then
+        setsid nohup env PORT=$DH_BACKEND_PORT ./dist/dh-backend > /tmp/dh-backend.log 2>&1 &
+        disown
+        local pid=$!
+    else
+        PORT=$DH_BACKEND_PORT ./dist/dh-backend > /tmp/dh-backend.log 2>&1 &
+        local pid=$!
+        PIDS+=("$pid")
+    fi
     cd ../..
 
     if wait_for_service "${API_BASE_URL}/health" "DH Backend" 60; then
@@ -245,9 +306,15 @@ start_frontend() {
     fi
 
     cd apps/dh-frontend
-    pnpm dev --port "$FRONTEND_PORT" > /tmp/frontend.log 2>&1 &
-    local pid=$!
-    PIDS+=("$pid")
+    if [ "$DETACH_MODE" = true ]; then
+        setsid nohup pnpm dev --port "$FRONTEND_PORT" > /tmp/frontend.log 2>&1 &
+        disown
+        local pid=$!
+    else
+        pnpm dev --port "$FRONTEND_PORT" > /tmp/frontend.log 2>&1 &
+        local pid=$!
+        PIDS+=("$pid")
+    fi
     cd ../..
 
     echo -n "  Waiting for Frontend..."
@@ -289,8 +356,8 @@ main() {
     fi
 
     # 构建 Go 服务
-    build_go_if_needed "${AGENT_STUB_DIR}/main.go" "$AGENT_STUB_BIN" "agent-stub"
-    build_go_if_needed "${DH_BACKEND_DIR}/main.go" "$DH_BACKEND_BIN" "dh-backend"
+    build_go_if_needed "${AGENT_STUB_DIR}" "$AGENT_STUB_BIN" "agent-stub"
+    build_go_if_needed "${DH_BACKEND_DIR}" "$DH_BACKEND_BIN" "dh-backend"
 
     # 按依赖顺序启动
     start_gatewayd
@@ -314,6 +381,13 @@ main() {
     echo -e "    DH Backend:   /tmp/dh-backend.log"
     echo -e "    Frontend:     /tmp/frontend.log"
     echo ""
+
+    if [ "$DETACH_MODE" = true ]; then
+        echo -e "  ${YELLOW}服务已在后台启动，使用 bash scripts/restart-dev.sh 重启或按端口手动停止${NC}"
+        echo ""
+        return 0
+    fi
+
     echo -e "  ${YELLOW}Press Ctrl+C to stop all services${NC}"
     echo ""
 

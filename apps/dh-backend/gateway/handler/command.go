@@ -127,6 +127,19 @@ func fetchWorkItem(svc workitemservice.WorkItemService, cardID string) (workitem
 	return item, nil
 }
 
+// commonPromptRules 是所有指令模板共享的通用提示词规则。
+// 在 renderTemplate 中自动附加到每个指令模板前，确保模型无论执行哪个指令都遵循：
+// 中文输出、不暴露内部目录、不调用后台 slash command、正确使用文件/工程/卡片标记。
+const commonPromptRules = `【通用规则】
+1. 所有回复必须使用中文，包括标题、正文、标记、代码注释、文件路径说明等。
+2. 不要在回复正文或标题中暴露内部工作目录（如 /home/.../workspace/...），只使用相对路径或项目名向用户说明。
+3. 禁止使用 /workflows、/commit、/pr、/review 等后台 slash command；所有任务都通过直接回答或调用工具完成。
+4. 在回复末尾用 [[FILE:绝对路径]] 或 [[PROJECT:绝对路径]] 标记实际创建的文件或工程。
+5. 如果指令需要生成卡片，必须在回复末尾保留对应的 [[CARD:卡片类型]] 标记。
+6. 除了 [[FILE:...]]、[[PROJECT:...]]、[[CARD:...]] 标记外，不要把普通 slash 字符串当作文件路径。
+7. 不要输出执行计划、Next Move、步骤安排、分步策略、工具调用说明等元信息；只输出用户请求的结果内容、必要的解释说明以及要求的标记。
+`
+
 // renderTemplate 将用户参数填入指令模板。
 // 模板中的 {ARGS} 占位符会被替换为用户原始输入；
 // {WORKSPACE_PATH} 会被替换为当前会话的 workspace 目录（workspace_root/{workspace_id}/{user_id}），
@@ -140,7 +153,7 @@ func renderTemplate(tmpl, args, workspacePath string) (string, error) {
 	if strings.Contains(rendered, "{WORKSPACE_PATH}") {
 		return "", fmt.Errorf("workspace path is required but empty")
 	}
-	return rendered, nil
+	return commonPromptRules + "\n\n" + rendered, nil
 }
 
 // applyCommandConfig 将单个指令配置应用到指定用户消息索引上。
@@ -185,7 +198,11 @@ func applyCommandConfig(messages []agui.Message, idx int, cfg CommandConfig, arg
 		log.Printf("[AGUIHandler] command %s ignores task card (allowTask=false)", cfg.Cmd)
 	}
 
-	messages[idx].Content = json.RawMessage(fmt.Sprintf("%q", rendered))
+	data, err := json.Marshal(rendered)
+	if err != nil {
+		return false, fmt.Errorf("marshal rendered content: %w", err)
+	}
+	messages[idx].Content = json.RawMessage(data)
 	log.Printf("[AGUIHandler] command applied: %s args=%q hasCard=%v hasRepos=%v allowTask=%v allowRepos=%v",
 		cfg.Cmd, args, workItemFetched, hasRepos, cfg.AllowTask, cfg.AllowRepos)
 	return true, nil
@@ -205,7 +222,11 @@ func tryInjectTaskCard(messages []agui.Message, idx int, rawText string, ctxItem
 		return false, err
 	}
 	rendered := rawText + buildTaskCardBlock(workItem)
-	messages[idx].Content = json.RawMessage(fmt.Sprintf("%q", rendered))
+	data, err := json.Marshal(rendered)
+	if err != nil {
+		return false, fmt.Errorf("marshal task card content: %w", err)
+	}
+	messages[idx].Content = json.RawMessage(data)
 	log.Printf("[AGUIHandler] task card injected: type=%s id=%s title=%q", workItem.Type, workItem.ID, workItem.Title)
 	return false, nil
 }
@@ -233,8 +254,9 @@ func interceptCommands(messages []agui.Message, ctxItems []agui.ContextItem, wor
 
 		cmd, args, ok := parseSlashCommand(original)
 		if !ok {
-			// 无斜杠指令，但可能有任务卡片需要注入。
-			return tryInjectTaskCard(messages, i, rawText, ctxItems, workItemSvc)
+			// 无斜杠指令，任务卡片由 caller 在意图识别后统一注入，
+			// 避免指令路径重复 fetch 工作项。
+			return false, nil
 		}
 
 		cfg, found := findCommandConfig(cmd)
@@ -256,5 +278,21 @@ func CommandsHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(GetCommandConfigs()); err != nil {
 		log.Printf("[CommandsHandler] encode failed: %v", err)
 		http.Error(w, `{"code":1,"message":"failed to encode commands"}`, http.StatusInternalServerError)
+	}
+}
+
+// injectCardForChat 在无指令匹配的纯聊天场景中，
+// 若用户消息引用了任务卡片，则将卡片信息追加到消息后发送给 agent。
+func injectCardForChat(messages []agui.Message, ctxItems []agui.ContextItem, workItemSvc workitemservice.WorkItemService, runID string) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != agui.RoleUser {
+			continue
+		}
+		rawText := messages[i].ContentText()
+		_, err := tryInjectTaskCard(messages, i, rawText, ctxItems, workItemSvc)
+		if err != nil {
+			log.Printf("[AGUIHandler] run=%s inject card for chat failed: %v", runID, err)
+		}
+		break
 	}
 }

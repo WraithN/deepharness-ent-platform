@@ -48,6 +48,8 @@ import { ChatThread } from '@/components/chat/ChatThread';
 import { InlineFilePreview } from '@/components/chat/InlineFilePreview';
 import { LivePreview, type PreviewMode } from '@/components/chat/LivePreview';
 import { MarkdownView } from '@/components/chat/MarkdownView';
+import { UserStoryPreview } from '@/components/chat/UserStoryPreview';
+import type { UserStoryData } from '@/components/chat/UserStoryCard';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -85,7 +87,8 @@ type CaseStatus = 'draft' | 'ready' | 'passed' | 'failed' | 'blocked';
 
 type PreviewHistoryEntry =
   | { type: 'file'; path: string }
-  | { type: 'project'; path: string; mode: PreviewMode };
+  | { type: 'project'; path: string; mode: PreviewMode }
+  | { type: 'user_story'; data: UserStoryData };
 
 interface ReqItem {
   id: string; title: string; description: string;
@@ -133,6 +136,8 @@ const COMMAND_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   '/bug-analysis': Search,
   '/test-report': FileBarChart,
   '/ui-spec': Layout,
+  '/ui-design': Palette,
+  '/ui-kit': Box,
   '/design-review': Eye,
   '/design-token': Palette,
   '/user-story': ListChecks,
@@ -169,16 +174,16 @@ const WELCOME_CARDS_BY_ROLE: Partial<Record<SubRole, WelcomeCard[]>> = {
     { cmd: '/test-report', title: '测试报告', desc: '汇总测试执行结果生成报告' },
   ],
   [SUB_ROLE.DESIGNER]: [
-    { cmd: '/proto-make', title: '制作原型', desc: '根据文档生成可预览的原型工程' },
     { cmd: '/ui-spec', title: 'UI 规范', desc: '生成 UI 设计规范文档' },
+    { cmd: '/ui-kit', title: 'UI 组件库', desc: '生成一套 UI 组件库规范与示例' },
     { cmd: '/design-review', title: '设计走查', desc: '检查设计稿与实现一致性' },
     { cmd: '/design-token', title: 'Design Token', desc: '生成设计 Token 定义' },
   ],
   [SUB_ROLE.PM]: [
     { cmd: '/prd-write', title: '撰写 PRD', desc: '根据需求生成产品需求文档' },
     { cmd: '/user-story', title: '用户故事拆分', desc: '将需求拆分为用户故事与验收标准' },
+    { cmd: '/proto-make', title: '制作原型', desc: '根据文档生成可预览的原型工程' },
     { cmd: '/prd-research', title: '需求调研', desc: '对需求主题进行深度调研分析' },
-    { cmd: '/data-analysis', title: '数据分析', desc: '分析数据并生成业务洞察' },
   ],
 };
 
@@ -203,8 +208,10 @@ const COMMAND_CATEGORIES: Record<string, CommandCategory> = {
   '/auto-test': 'test',
   '/bug-analysis': 'test',
   '/test-report': 'test',
-  '/proto-make': 'design',
+  '/proto-make': 'product',
   '/ui-spec': 'design',
+  '/ui-design': 'design',
+  '/ui-kit': 'design',
   '/design-review': 'design',
   '/design-token': 'design',
   '/prd-write': 'product',
@@ -525,7 +532,7 @@ export const Chat: React.FC = () => {
   const activePluginKey = activeTab?.pluginKey ?? defaultPluginKey ?? 'claude-code';
   const chatEnabled = enabledAgentOptions.length > 0;
 
-  const { runtime, sessionId, wsConnected, messages, isRunning, sendMessage, switchSession, createSession, cancelRun, tryRestoreSession } = useAgUiChat({ agentPluginKey: activePluginKey });
+  const { runtime, sessionId, wsConnected, messages, isRunning, runPhase, sendMessage, switchSession, createSession, cancelRun, tryRestoreSession } = useAgUiChat({ agentPluginKey: activePluginKey });
 
   // Auto-scroll state
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -545,7 +552,9 @@ export const Chat: React.FC = () => {
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   // Inline project preview (takes priority over file preview)
   const [projectPreview, setProjectPreview] = useState<{ path: string; mode: PreviewMode } | null>(null);
-  const showPreview = previewPath !== null || projectPreview !== null;
+  // Inline user story preview
+  const [userStoryPreview, setUserStoryPreview] = useState<UserStoryData | null>(null);
+  const showPreview = previewPath !== null || projectPreview !== null || userStoryPreview !== null;
 
   // 预览历史栈：支持前/后退导航。
   const [previewHistory, setPreviewHistory] = useState<PreviewHistoryEntry[]>([]);
@@ -554,28 +563,6 @@ export const Chat: React.FC = () => {
 
   // 可拖拽分割线的 imperative panel API。
   const previewPanelRef = useRef<ImperativePanelHandle>(null);
-
-  const handleFilePreview = useCallback(async (path: string) => {
-    if (previewPath === path) {
-      setPreviewPath(null);
-      return;
-    }
-    try {
-      await fileApi.content(path);
-    } catch {
-      toast.error('文件已被删除');
-      return;
-    }
-    setProjectPreview(null);
-    setPreviewPath(path);
-    pushPreviewHistory({ type: 'file', path });
-  }, [previewPath]);
-
-  const handleProjectPreview = useCallback((path: string, previewMode: PreviewMode) => {
-    setPreviewPath(null);
-    setProjectPreview({ path, mode: previewMode });
-    pushPreviewHistory({ type: 'project', path, mode: previewMode });
-  }, []);
 
   // pushPreviewHistory 将一条预览记录推入历史栈，
   // 截断当前位置之后的前进记录（与浏览器历史行为一致）。
@@ -591,6 +578,48 @@ export const Chat: React.FC = () => {
     setHistoryIndex(prev => prev + 1);
   }, [historyIndex]);
 
+  const handleFilePreview = useCallback(async (path: string) => {
+    if (previewPath === path) {
+      setPreviewPath(null);
+      return;
+    }
+    try {
+      await fileApi.content(path);
+    } catch {
+      toast.error('文件已被删除');
+      return;
+    }
+    setProjectPreview(null);
+    setUserStoryPreview(null);
+    setPreviewPath(path);
+    pushPreviewHistory({ type: 'file', path });
+  }, [previewPath, pushPreviewHistory]);
+
+  const handleUserStoryPreview = useCallback((data: UserStoryData) => {
+    const isSameStory = userStoryPreview != null &&
+      userStoryPreview.title === data.title &&
+      userStoryPreview.total === data.total &&
+      (userStoryPreview.stories[0]?.story === data.stories[0]?.story);
+    if (isSameStory) {
+      setPreviewPath(null);
+      setProjectPreview(null);
+      setUserStoryPreview(null);
+      setPreviewHistory([]);
+      return;
+    }
+    setPreviewPath(null);
+    setProjectPreview(null);
+    setUserStoryPreview(data);
+    pushPreviewHistory({ type: 'user_story', data });
+  }, [userStoryPreview, pushPreviewHistory]);
+
+  const handleProjectPreview = useCallback((path: string, previewMode: PreviewMode) => {
+    setPreviewPath(null);
+    setUserStoryPreview(null);
+    setProjectPreview({ path, mode: previewMode });
+    pushPreviewHistory({ type: 'project', path, mode: previewMode });
+  }, [pushPreviewHistory]);
+
   // navigatePreview 在历史栈中前进或后退，恢复对应的预览状态。
   const navigatePreview = useCallback((direction: 'back' | 'forward') => {
     const newIndex = direction === 'back' ? historyIndex - 1 : historyIndex + 1;
@@ -600,10 +629,16 @@ export const Chat: React.FC = () => {
     setHistoryIndex(newIndex);
     if (entry.type === 'file') {
       setProjectPreview(null);
+      setUserStoryPreview(null);
       setPreviewPath(entry.path);
+    } else if (entry.type === 'project') {
+      setPreviewPath(null);
+      setUserStoryPreview(null);
+      setProjectPreview({ path: entry.path, mode: entry.mode });
     } else {
       setPreviewPath(null);
-      setProjectPreview({ path: entry.path, mode: entry.mode });
+      setProjectPreview(null);
+      setUserStoryPreview(entry.data);
     }
   }, [historyIndex, previewHistory]);
 
@@ -613,6 +648,7 @@ export const Chat: React.FC = () => {
   const closePreview = useCallback(() => {
     setPreviewPath(null);
     setProjectPreview(null);
+    setUserStoryPreview(null);
     setPreviewHistory([]);
     setHistoryIndex(-1);
   }, []);
@@ -695,7 +731,7 @@ export const Chat: React.FC = () => {
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
   const [compactPlusOpen, setCompactPlusOpen] = useState(false);
-  const [compactPlusSubmenu, setCompactPlusSubmenu] = useState<'repo' | 'prompt' | 'skill' | 'cmd' | null>(null);
+  const [compactPlusSubmenu, setCompactPlusSubmenu] = useState<'doc' | 'repo' | 'prompt' | 'skill' | 'cmd' | null>(null);
   const [activeSkillTab, setActiveSkillTab] = useState('全部');
   const [activeTaskTab, setActiveTaskTab] = useState<'req' | 'defect' | 'case'>('req');
   const [activeCommandTab, setActiveCommandTab] = useState<CommandCategory>(getDefaultCommandCategory(membership?.subRole));
@@ -709,8 +745,59 @@ export const Chat: React.FC = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mentionOverlayRef = useRef<HTMLDivElement>(null);
   const compactPlusRef = useRef<HTMLDivElement>(null);
+  // 主会话区占整个面板的百分比，由 ResizablePanel 的 onResize 提供，
+  // 用于按用户指定的比例阈值决定哪些工具栏按钮直接展示、哪些收入 + 号。
+  const [mainPanelSize, setMainPanelSize] = useState(100);
+  // 工具栏折叠级别：0 = 仅任务可见；1 = 任务 + 工程/文档 + 指令可见；2 = 所有按钮可见。
+  const [toolbarLevel, setToolbarLevel] = useState<0 | 1 | 2>(2);
 
-  // Sidebar panels expand state
+  // 预览显隐切换时，直接按目标比例重置级别（无滞后）。
+  useEffect(() => {
+    setToolbarLevel(showPreview ? 0 : 2);
+  }, [showPreview]);
+
+  // 用户拖动分栏时，按方向做滞后（hysteresis）：
+  // 扩张：>= 50% 升 1 级，>= 75% 升 2 级；
+  // 收缩：<= 70% 降 1 级，<= 45% 降 2 级。
+  useEffect(() => {
+    setToolbarLevel(prev => {
+      if (prev === 2) {
+        if (mainPanelSize <= 70) return 1;
+        return 2;
+      }
+      if (prev === 1) {
+        if (mainPanelSize >= 75) return 2;
+        if (mainPanelSize <= 45) return 0;
+        return 1;
+      }
+      // prev === 0
+      if (mainPanelSize >= 75) return 2;
+      if (mainPanelSize >= 50) return 1;
+      return 0;
+    });
+  }, [mainPanelSize]);
+
+  // 工具栏自适应：根据级别决定哪些按钮直接展示。
+  const collapsibleToolbarItems = useMemo(() => {
+    const items: ('doc' | 'repo' | 'cmd' | 'prompt' | 'skill')[] = [];
+    if (canUseDocs) items.push('doc');
+    if (availableRepos.length > 0) items.push('repo');
+    items.push('cmd', 'prompt', 'skill');
+    return items;
+  }, [canUseDocs, availableRepos.length]);
+
+  const visibleToolbarCount = useMemo(
+    () => {
+      if (toolbarLevel === 0) return 0;
+      if (toolbarLevel === 1) return Math.min(3, collapsibleToolbarItems.length);
+      return collapsibleToolbarItems.length;
+    },
+    [toolbarLevel, collapsibleToolbarItems.length]
+  );
+  const collapsedToolbarItems = useMemo(
+    () => collapsibleToolbarItems.slice(visibleToolbarCount),
+    [collapsibleToolbarItems, visibleToolbarCount]
+  );
 
   // Data state
   const [requirements, setRequirements] = useState<ReqItem[]>([]);
@@ -1846,6 +1933,190 @@ export const Chat: React.FC = () => {
     );
   };
 
+  // 可复用的工具栏下拉菜单内容
+  const renderDocMenu = (onSelect: (doc: ProductDoc) => void) => (
+    <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
+      <div className="p-2 border-b border-border shrink-0">
+        <Input
+          placeholder="搜索文档..."
+          value={docMenuSearch}
+          onChange={e => setDocMenuSearch(e.target.value)}
+          className="h-8 text-sm"
+          autoFocus
+        />
+      </div>
+      <div className="flex-1 overflow-y-auto p-1">
+        {filteredDocs.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-6">暂无文档</p>
+        ) : (
+          filteredDocs.map(doc => {
+            const referenced = referencedDocs.some(d => d.docId === doc.id);
+            return (
+              <button
+                key={doc.id}
+                disabled={materializingDocId === doc.id}
+                className={cn('flex items-center gap-2 w-full px-2.5 py-2 rounded-lg text-left text-sm transition-colors', referenced ? 'opacity-50 cursor-default' : 'hover:bg-accent')}
+                onClick={() => onSelect(doc)}
+              >
+                {materializingDocId === doc.id ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+                ) : (
+                  <BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+                )}
+                <span className="flex-1 truncate">{doc.title}</span>
+                {referenced && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
+              </button>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+
+  const renderRepoMenu = (onSelect: (repo: { id: string; name: string }) => void) => (
+    <div className="absolute bottom-full left-0 mb-2 w-56 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
+      {availableRepos.map(repo => {
+        const sel = selectedRepos.some(r => r.id === repo.id);
+        const syncStatus = userRepoStatuses.find(s => s.repositoryId === repo.id);
+        const synced = syncStatus?.synced ?? false;
+        const isSyncing = syncingRepoId === repo.id || syncStatus?.syncStatus === 'syncing';
+        const syncProgress = syncStatus?.progress ?? 0;
+        return (
+          <div key={repo.id} className={`flex items-center w-full px-3 py-2 text-sm text-foreground ${synced ? 'hover:bg-accent cursor-pointer' : 'opacity-50 cursor-not-allowed'}`} onClick={() => onSelect(repo)}>
+            <GitBranch className="h-4 w-4 mr-2 text-muted-foreground shrink-0" />
+            <span className="flex-1 truncate">{repo.name}</span>
+            {isSyncing ? (
+              <span className="flex items-center gap-1 ml-2 shrink-0">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                {syncProgress > 0 && <span className="text-xs text-muted-foreground">{syncProgress}%</span>}
+              </span>
+            ) : !synced ? (
+              <RefreshCw className="h-3.5 w-3.5 ml-2 shrink-0 text-muted-foreground hover:text-primary cursor-pointer" onClick={(e) => { e.stopPropagation(); handleSyncRepo(repo.id); }} />
+            ) : sel ? (
+              <CheckCircle className="h-4 w-4 text-primary ml-2 shrink-0" />
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const renderPromptMenu = (onSelect: (prompt: WorkspacePrompt) => void) => (
+    <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
+      <div className="p-2 border-b space-y-2">
+        <div className="relative">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="搜索提示词..."
+            className="pl-8 h-8"
+            value={promptMenuSearch}
+            onChange={(e) => setPromptMenuSearch(e.target.value)}
+          />
+        </div>
+        <div className="flex gap-1 overflow-x-auto pb-1">
+          {['全部', ...sortPromptCategoriesByBuiltin(promptCategories).map(c => c.name)].map(cat => (
+            <Button
+              key={cat}
+              variant={promptMenuCategory === cat ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-7 text-xs whitespace-nowrap"
+              onClick={() => setPromptMenuCategory(cat)}
+            >
+              {cat}
+            </Button>
+          ))}
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-1">
+        {filteredAvailablePrompts.length === 0 && (
+          <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配提示词</div>
+        )}
+        {filteredAvailablePrompts.map(p => (
+          <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => onSelect(p)}>
+            <span className="font-medium text-sm mb-1">{p.name}</span>
+            <span className="text-xs text-muted-foreground line-clamp-2">{p.content || p.description}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const renderSkillMenu = (onSelect: (skill: Skill) => void) => (
+    <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
+      <Tabs value={activeSkillTab} onValueChange={setActiveSkillTab} className="w-full flex flex-col">
+        <div className="px-2 pt-2 bg-muted/30 border-b space-y-2">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="搜索技能..."
+              className="pl-8 h-8"
+              value={skillMenuSearch}
+              onChange={(e) => setSkillMenuSearch(e.target.value)}
+            />
+          </div>
+          <TabsList className="aurora-tab-bar level-2 w-full">
+            {['全部', '需求设计', 'UI设计', '代码开发', '测试编写', '需求上线'].map(tab => (
+              <TabsTrigger key={tab} value={tab} className="aurora-tab-item level-2">{tab}</TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {filteredAvailableSkills.length === 0 && (
+            <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配技能</div>
+          )}
+          {filteredAvailableSkills.map(skill => {
+            const IconComponent = skillIconMap[skill.icon || ''] || Puzzle;
+            return (
+              <div key={skill.id} className="flex items-start gap-3 p-2.5 rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors" onClick={() => onSelect(skill)}>
+                <div className="h-8 w-8 rounded-md bg-background flex items-center justify-center border shrink-0"><IconComponent className="h-4 w-4 text-muted-foreground" /></div>
+                <div className="flex flex-col flex-1 min-w-0">
+                  <span className="font-medium text-sm leading-none mb-1 text-foreground">{skill.name}</span>
+                  <span className="text-xs text-muted-foreground line-clamp-2">{skill.description}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Tabs>
+    </div>
+  );
+
+  const renderCmdMenu = (onSelect: (cmd: string) => void) => (
+    <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
+      <Tabs value={activeCommandTab} onValueChange={v => setActiveCommandTab(v as CommandCategory)} className="w-full flex flex-col">
+        <div className="px-2 pt-2 bg-muted/30 border-b">
+          <TabsList className="aurora-tab-bar level-2 w-full">
+            {COMMAND_CATEGORY_ORDER.map(cat => (
+              <TabsTrigger key={cat} value={cat} className="aurora-tab-item level-2">
+                {COMMAND_CATEGORY_LABELS[cat]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
+        <div className="flex-1 overflow-y-auto p-1">
+          {commandConfigs
+            .filter(item => COMMAND_CATEGORIES[item.cmd] === activeCommandTab)
+            .map(item => {
+              const Icon = COMMAND_ICON_MAP[item.cmd] ?? Terminal;
+              return (
+                <div
+                  key={item.cmd}
+                  className="flex items-center gap-3 px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors"
+                  onClick={() => onSelect(item.cmd)}
+                >
+                  <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-medium text-sm leading-none">{item.cmd}</span>
+                    <span className="text-xs text-muted-foreground mt-0.5">{item.label} · {item.desc}</span>
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      </Tabs>
+    </div>
+  );
+
   // ──────────────── Render ────────────────
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -1899,6 +2170,9 @@ export const Chat: React.FC = () => {
                       onClose={closePreview}
                     />
                   )}
+                  {userStoryPreview && (
+                    <UserStoryPreview data={userStoryPreview} onClose={closePreview} />
+                  )}
                 </div>
               </div>
             )}
@@ -1908,7 +2182,7 @@ export const Chat: React.FC = () => {
           <ResizableHandle withHandle className={cn(!showPreview && 'pointer-events-none opacity-0 w-0')} />
 
           {/* ── Main Chat Area ── */}
-          <ResizablePanel defaultSize={100} minSize={25} className="h-full flex flex-col min-w-0 relative overflow-hidden">
+          <ResizablePanel defaultSize={100} minSize={25} onResize={setMainPanelSize} className="h-full flex flex-col min-w-0 relative overflow-hidden">
 
         {/* Chat Header */}
         <div className="border-b border-border flex flex-col shrink-0 bg-panel/80 backdrop-blur-xl z-10 w-full">
@@ -2157,10 +2431,13 @@ export const Chat: React.FC = () => {
             ) : (
               <>
                 <ChatThread
+                  runPhase={runPhase}
                   openDetail={openDetail}
                   onArtifactClick={() => setCodeJumpOpen(true)}
                   onFilePreview={handleFilePreview}
                   onProjectPreview={handleProjectPreview}
+                  onUserStoryPreview={handleUserStoryPreview}
+                  activeUserStoryData={userStoryPreview}
                   onEditMessage={(text, context) => {
                     setInput(text);
                     setQuotedCard(context?.quotedCard ?? null);
@@ -2333,11 +2610,11 @@ export const Chat: React.FC = () => {
             )}
             </div>
             <div className="flex items-center justify-between px-3 pb-3 mt-auto">
-              <div className={cn('flex items-center gap-1.5 flex-wrap', showPreview && 'gap-1')}>
+              <div className={cn('flex items-center gap-1.5 flex-wrap', toolbarLevel === 0 && 'gap-1')}>
                 {/* 任务 */}
                 <div className="relative" ref={taskMenuRef}>
-                  <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', showPreview ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setTaskMenuOpen(!taskMenuOpen); setCmdMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); }}>
-                    <ListTodo className={cn('mr-1.5', showPreview ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{showPreview ? '' : '任务'}
+                  <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setTaskMenuOpen(!taskMenuOpen); setCmdMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); }}>
+                    <ListTodo className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '任务'}
                     {uncompletedCount > 0 && (
                       <span className="ml-1.5 h-4 min-w-4 px-1 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center">
                         {uncompletedCount}
@@ -2388,422 +2665,151 @@ export const Chat: React.FC = () => {
                   )}
                 </div>
 
-                {/* 文档：引用产品空间文档，发送时附带落盘路径供 agent 读取（仅产品职能可见） */}
-                {canUseDocs && (
-                <div className="relative" ref={docMenuRef}>
-                  <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', showPreview ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setDocMenuOpen(!docMenuOpen); setDocMention(null); setTaskMenuOpen(false); setCmdMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); }}>
-                    <BookOpen className={cn('mr-1.5', showPreview ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{showPreview ? '' : '文档'}
-                    {activeRefCount > 0 && (
-                      <span className="ml-1.5 h-4 min-w-4 px-1 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center">
-                        {activeRefCount}
-                      </span>
-                    )}
-                  </Button>
-                  {docMenuOpen && (
-                    <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
-                      <div className="p-2 border-b border-border shrink-0">
-                        <Input
-                          placeholder="搜索文档..."
-                          value={docMenuSearch}
-                          onChange={e => setDocMenuSearch(e.target.value)}
-                          className="h-8 text-sm"
-                          autoFocus
-                        />
+                {/* 直接展示的可折叠按钮：按容器宽度决定直接展示或收入 + 号菜单 */}
+                {collapsibleToolbarItems.slice(0, visibleToolbarCount).map(type => {
+                  if (type === 'doc') {
+                    return (
+                      <div className="relative" key="doc" ref={docMenuRef}>
+                        <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setDocMenuOpen(!docMenuOpen); setDocMention(null); setTaskMenuOpen(false); setCmdMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); }}>
+                          <BookOpen className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '文档'}
+                          {activeRefCount > 0 && (
+                            <span className="ml-1.5 h-4 min-w-4 px-1 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center">
+                              {activeRefCount}
+                            </span>
+                          )}
+                        </Button>
+                        {docMenuOpen && renderDocMenu(doc => handleSelectDoc(doc))}
                       </div>
-                      <div className="flex-1 overflow-y-auto p-1">
-                        {filteredDocs.length === 0 ? (
-                          <p className="text-xs text-muted-foreground text-center py-6">暂无文档</p>
-                        ) : (
-                          filteredDocs.map(doc => {
-                            const referenced = referencedDocs.some(d => d.docId === doc.id);
-                            return (
-                              <button
-                                key={doc.id}
-                                disabled={materializingDocId === doc.id}
-                                className={cn('flex items-center gap-2 w-full px-2.5 py-2 rounded-lg text-left text-sm transition-colors', referenced ? 'opacity-50 cursor-default' : 'hover:bg-accent')}
-                                onClick={() => handleSelectDoc(doc)}
-                              >
-                                {materializingDocId === doc.id ? (
-                                  <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
-                                ) : (
-                                  <BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-                                )}
-                                <span className="flex-1 truncate">{doc.title}</span>
-                                {referenced && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
-                              </button>
-                            );
-                          })
-                        )}
+                    );
+                  }
+                  if (type === 'repo') {
+                    return (
+                      <div className="relative" key="repo" ref={repoMenuRef}>
+                        <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setRepoMenuOpen(!repoMenuOpen); setSkillPopoverOpen(false); setPromptMenuOpen(false); setTaskMenuOpen(false); setCmdMenuOpen(false); }}>
+                          <Code2 className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '代码库'}
+                        </Button>
+                        {repoMenuOpen && renderRepoMenu(repo => { const syncStatus = userRepoStatuses.find(s => s.repositoryId === repo.id); if (syncStatus?.synced) toggleRepo(repo); })}
                       </div>
-                    </div>
-                  )}
-                </div>
-                )}
+                    );
+                  }
+                  if (type === 'cmd') {
+                    return (
+                      <div className="relative" key="cmd" ref={cmdMenuRef}>
+                        <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setCmdMenuOpen(!cmdMenuOpen); setTaskMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); }}>
+                          <Terminal className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '指令'}
+                        </Button>
+                        {cmdMenuOpen && renderCmdMenu(cmd => insertCommand(cmd))}
+                      </div>
+                    );
+                  }
+                  if (type === 'prompt') {
+                    return (
+                      <div className="relative" key="prompt" ref={promptMenuRef}>
+                        <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setPromptMenuOpen(!promptMenuOpen); setRepoMenuOpen(false); setSkillPopoverOpen(false); setTaskMenuOpen(false); setCmdMenuOpen(false); }}>
+                          <FileText className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '提示词'}
+                        </Button>
+                        {promptMenuOpen && renderPromptMenu(p => insertPrompt(p))}
+                      </div>
+                    );
+                  }
+                  if (type === 'skill') {
+                    return (
+                      <div className="relative" key="skill" ref={skillMenuRef}>
+                        <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setSkillPopoverOpen(!skillPopoverOpen); setRepoMenuOpen(false); setPromptMenuOpen(false); setTaskMenuOpen(false); setCmdMenuOpen(false); }}>
+                          <Wand2 className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '技能'}
+                        </Button>
+                        {skillPopoverOpen && renderSkillMenu(skill => { appendSkillTag(skill.name); setSkillPopoverOpen(false); })}
+                      </div>
+                    );
+                  }
+                  return null;
+                })}
 
-                {/* 代码库 / 指令 / 提示词 / 技能 */}
-                {showPreview ? (
+                {/* + 号菜单：收纳因宽度不足被隐藏的工具 */}
+                {collapsedToolbarItems.length > 0 && (
                   <div className="relative" ref={compactPlusRef}>
                     <Button
                       variant="outline"
                       size="sm"
-                      className={cn('rounded-full p-0', showPreview ? 'h-7 w-7' : 'h-8 w-8')}
-                      onClick={() => { setCompactPlusOpen(!compactPlusOpen); setCompactPlusSubmenu(null); setCmdMenuOpen(false); }}
+                      className={cn('rounded-full p-0', toolbarLevel === 0 ? 'h-7 w-7' : 'h-8 w-8')}
+                      onClick={() => { setCompactPlusOpen(!compactPlusOpen); setCompactPlusSubmenu(null); setCmdMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); setDocMenuOpen(false); setTaskMenuOpen(false); }}
                       title="更多工具"
                     >
                       <Plus className="h-3.5 w-3.5" />
                     </Button>
-                    {/* 一级菜单：选择类型 */}
                     {compactPlusOpen && !compactPlusSubmenu && (
                       <div className="absolute bottom-full left-0 mb-2 bg-popover border shadow-xl rounded-xl flex items-center gap-0.5 z-50 p-1 animate-in fade-in slide-in-from-bottom-2">
-                        <button
-                          className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
-                          title="指令"
-                          onClick={() => setCompactPlusSubmenu('cmd')}
-                        >
-                          <Terminal className="h-4 w-4 text-muted-foreground" />
-                        </button>
-                        <button
-                          className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
-                          title="提示词"
-                          onClick={() => setCompactPlusSubmenu('prompt')}
-                        >
-                          <FileText className="h-4 w-4 text-muted-foreground" />
-                        </button>
-                        <button
-                          className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
-                          title="技能"
-                          onClick={() => setCompactPlusSubmenu('skill')}
-                        >
-                          <Wand2 className="h-4 w-4 text-muted-foreground" />
-                        </button>
-                        {availableRepos.length > 0 && (
-                        <button
-                          className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
-                          title="代码库"
-                          onClick={() => setCompactPlusSubmenu('repo')}
-                        >
-                          <GitBranch className="h-4 w-4 text-muted-foreground" />
-                        </button>
-                        )}
-                      </div>
-                    )}
-                    {/* 二级菜单：代码库 */}
-                    {compactPlusSubmenu === 'repo' && (
-                      <div className="absolute bottom-full left-0 mb-2 w-56 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
-                        {availableRepos.map(repo => {
-                          const sel = selectedRepos.some(r => r.id === repo.id);
-                          const syncStatus = userRepoStatuses.find(s => s.repositoryId === repo.id);
-                          const synced = syncStatus?.synced ?? false;
-                          const isSyncing = syncingRepoId === repo.id || syncStatus?.syncStatus === 'syncing';
-                          const syncProgress = syncStatus?.progress ?? 0;
-                          return (
-                            <div key={repo.id} className={`flex items-center w-full px-3 py-2 text-sm text-foreground ${synced ? 'hover:bg-accent cursor-pointer' : 'opacity-50 cursor-not-allowed'}`} onClick={() => { if (synced) { toggleRepo(repo); setCompactPlusSubmenu(null); setCompactPlusOpen(false); } }}>
-                              <GitBranch className="h-4 w-4 mr-2 text-muted-foreground shrink-0" />
-                              <span className="flex-1 truncate">{repo.name}</span>
-                              {isSyncing ? (
-                                <span className="flex items-center gap-1 ml-2 shrink-0">
-                                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                  {syncProgress > 0 && <span className="text-xs text-muted-foreground">{syncProgress}%</span>}
-                                </span>
-                              ) : !synced ? (
-                                <RefreshCw className="h-3.5 w-3.5 ml-2 shrink-0 text-muted-foreground hover:text-primary cursor-pointer" onClick={(e) => { e.stopPropagation(); handleSyncRepo(repo.id); }} />
-                              ) : sel ? (
-                                <CheckCircle className="h-4 w-4 text-primary ml-2 shrink-0" />
-                              ) : null}
-                            </div>
-                          );
+                        {collapsedToolbarItems.map(type => {
+                          if (type === 'doc') {
+                            return (
+                              <button
+                                key="doc"
+                                className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
+                                title="文档"
+                                onClick={() => setCompactPlusSubmenu('doc')}
+                              >
+                                <BookOpen className="h-4 w-4 text-muted-foreground" />
+                              </button>
+                            );
+                          }
+                          if (type === 'repo') {
+                            return (
+                              <button
+                                key="repo"
+                                className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
+                                title="代码库"
+                                onClick={() => setCompactPlusSubmenu('repo')}
+                              >
+                                <GitBranch className="h-4 w-4 text-muted-foreground" />
+                              </button>
+                            );
+                          }
+                          if (type === 'cmd') {
+                            return (
+                              <button
+                                key="cmd"
+                                className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
+                                title="指令"
+                                onClick={() => setCompactPlusSubmenu('cmd')}
+                              >
+                                <Terminal className="h-4 w-4 text-muted-foreground" />
+                              </button>
+                            );
+                          }
+                          if (type === 'prompt') {
+                            return (
+                              <button
+                                key="prompt"
+                                className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
+                                title="提示词"
+                                onClick={() => setCompactPlusSubmenu('prompt')}
+                              >
+                                <FileText className="h-4 w-4 text-muted-foreground" />
+                              </button>
+                            );
+                          }
+                          if (type === 'skill') {
+                            return (
+                              <button
+                                key="skill"
+                                className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
+                                title="技能"
+                                onClick={() => setCompactPlusSubmenu('skill')}
+                              >
+                                <Wand2 className="h-4 w-4 text-muted-foreground" />
+                              </button>
+                            );
+                          }
+                          return null;
                         })}
                       </div>
                     )}
-                    {/* 二级菜单：提示词 */}
-                    {compactPlusSubmenu === 'prompt' && (
-                      <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
-                        <div className="p-2 border-b space-y-2">
-                          <div className="relative">
-                            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                              placeholder="搜索提示词..."
-                              className="pl-8 h-8"
-                              value={promptMenuSearch}
-                              onChange={(e) => setPromptMenuSearch(e.target.value)}
-                            />
-                          </div>
-                          <div className="flex gap-1 overflow-x-auto pb-1">
-                            {['全部', ...sortPromptCategoriesByBuiltin(promptCategories).map(c => c.name)].map(cat => (
-                              <Button
-                                key={cat}
-                                variant={promptMenuCategory === cat ? 'secondary' : 'ghost'}
-                                size="sm"
-                                className="h-7 text-xs whitespace-nowrap"
-                                onClick={() => setPromptMenuCategory(cat)}
-                              >
-                                {cat}
-                              </Button>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-1">
-                          {filteredAvailablePrompts.length === 0 && (
-                            <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配提示词</div>
-                          )}
-                          {filteredAvailablePrompts.map(p => (
-                            <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => { insertPrompt(p); setCompactPlusSubmenu(null); setCompactPlusOpen(false); }}>
-                              <span className="font-medium text-sm mb-1">{p.name}</span>
-                              <span className="text-xs text-muted-foreground line-clamp-2">{p.content || p.description}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {/* 二级菜单：技能 */}
-                    {compactPlusSubmenu === 'skill' && (
-                      <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
-                        <Tabs value={activeSkillTab} onValueChange={setActiveSkillTab} className="w-full flex flex-col">
-                          <div className="px-2 pt-2 bg-muted/30 border-b space-y-2">
-                            <div className="relative">
-                              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                              <Input
-                                placeholder="搜索技能..."
-                                className="pl-8 h-8"
-                                value={skillMenuSearch}
-                                onChange={(e) => setSkillMenuSearch(e.target.value)}
-                              />
-                            </div>
-                            <TabsList className="aurora-tab-bar level-2 w-full">
-                              {['全部', '需求设计', 'UI设计', '代码开发', '测试编写', '需求上线'].map(tab => (
-                                <TabsTrigger key={tab} value={tab} className="aurora-tab-item level-2">{tab}</TabsTrigger>
-                              ))}
-                            </TabsList>
-                          </div>
-                          <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                            {filteredAvailableSkills.length === 0 && (
-                              <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配技能</div>
-                            )}
-                            {filteredAvailableSkills.map(skill => {
-                                const IconComponent = skillIconMap[skill.icon || ''] || Puzzle;
-                                return (
-                                  <div key={skill.id} className="flex items-start gap-3 p-2.5 rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors" onClick={() => { appendSkillTag(skill.name); setCompactPlusSubmenu(null); setCompactPlusOpen(false); }}>
-                                    <div className="h-8 w-8 rounded-md bg-background flex items-center justify-center border shrink-0"><IconComponent className="h-4 w-4 text-muted-foreground" /></div>
-                                    <div className="flex flex-col flex-1 min-w-0">
-                                      <span className="font-medium text-sm leading-none mb-1 text-foreground">{skill.name}</span>
-                                      <span className="text-xs text-muted-foreground line-clamp-2">{skill.description}</span>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                          </div>
-                        </Tabs>
-                      </div>
-                    )}
-                    {/* 二级菜单：指令 */}
-                    {compactPlusSubmenu === 'cmd' && (
-                      <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
-                        <Tabs value={activeCommandTab} onValueChange={v => setActiveCommandTab(v as CommandCategory)} className="w-full flex flex-col">
-                          <div className="px-2 pt-2 bg-muted/30 border-b">
-                            <TabsList className="aurora-tab-bar level-2 w-full">
-                              {COMMAND_CATEGORY_ORDER.map(cat => (
-                                <TabsTrigger key={cat} value={cat} className="aurora-tab-item level-2">
-                                  {COMMAND_CATEGORY_LABELS[cat]}
-                                </TabsTrigger>
-                              ))}
-                            </TabsList>
-                          </div>
-                          <div className="flex-1 overflow-y-auto p-1">
-                            {commandConfigs
-                              .filter(item => COMMAND_CATEGORIES[item.cmd] === activeCommandTab)
-                              .map(item => {
-                                const Icon = COMMAND_ICON_MAP[item.cmd] ?? Terminal;
-                                return (
-                                  <div
-                                    key={item.cmd}
-                                    className="flex items-center gap-3 px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors"
-                                    onClick={() => { insertCommand(item.cmd); setCompactPlusSubmenu(null); setCompactPlusOpen(false); }}
-                                  >
-                                    <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
-                                    <div className="flex flex-col min-w-0">
-                                      <span className="font-medium text-sm leading-none">{item.cmd}</span>
-                                      <span className="text-xs text-muted-foreground mt-0.5">{item.label} · {item.desc}</span>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                          </div>
-                        </Tabs>
-                      </div>
-                    )}
+                    {compactPlusSubmenu === 'doc' && renderDocMenu(doc => { handleSelectDoc(doc); setCompactPlusSubmenu(null); setCompactPlusOpen(false); })}
+                    {compactPlusSubmenu === 'repo' && renderRepoMenu(repo => { const syncStatus = userRepoStatuses.find(s => s.repositoryId === repo.id); if (syncStatus?.synced) { toggleRepo(repo); setCompactPlusSubmenu(null); setCompactPlusOpen(false); } })}
+                    {compactPlusSubmenu === 'cmd' && renderCmdMenu(cmd => { insertCommand(cmd); setCompactPlusSubmenu(null); setCompactPlusOpen(false); })}
+                    {compactPlusSubmenu === 'prompt' && renderPromptMenu(p => { insertPrompt(p); setCompactPlusSubmenu(null); setCompactPlusOpen(false); })}
+                    {compactPlusSubmenu === 'skill' && renderSkillMenu(skill => { appendSkillTag(skill.name); setCompactPlusSubmenu(null); setCompactPlusOpen(false); })}
                   </div>
-                ) : (
-                  <>
-                    {/* 代码库 — 无配置仓库时隐藏 */}
-                    {availableRepos.length > 0 && (
-                    <div className="relative" ref={repoMenuRef}>
-                      <Button variant="outline" size="sm" className="h-8 rounded-full text-xs hover:bg-muted px-3" onClick={() => { setRepoMenuOpen(!repoMenuOpen); setSkillPopoverOpen(false); setPromptMenuOpen(false); setTaskMenuOpen(false); setCmdMenuOpen(false); }}>
-                        <Code2 className="h-3.5 w-3.5 mr-1.5" />代码库
-                      </Button>
-                      {repoMenuOpen && (
-                        <div className="absolute bottom-full left-0 mb-2 w-56 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
-                          {availableRepos.map(repo => {
-                            const sel = selectedRepos.some(r => r.id === repo.id);
-                            const syncStatus = userRepoStatuses.find(s => s.repositoryId === repo.id);
-                            const synced = syncStatus?.synced ?? false;
-                            const isSyncing = syncingRepoId === repo.id || syncStatus?.syncStatus === 'syncing';
-                            const syncProgress = syncStatus?.progress ?? 0;
-                            return (
-                              <div key={repo.id} className={`flex items-center w-full px-3 py-2 text-sm text-foreground ${synced ? 'hover:bg-accent cursor-pointer' : 'opacity-50 cursor-not-allowed'}`} onClick={() => synced && toggleRepo(repo)}>
-                                <GitBranch className="h-4 w-4 mr-2 text-muted-foreground shrink-0" />
-                                <span className="flex-1 truncate">{repo.name}</span>
-                                {isSyncing ? (
-                                  <span className="flex items-center gap-1 ml-2 shrink-0">
-                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                    {syncProgress > 0 && <span className="text-xs text-muted-foreground">{syncProgress}%</span>}
-                                  </span>
-                                ) : !synced ? (
-                                  <RefreshCw className="h-3.5 w-3.5 ml-2 shrink-0 text-muted-foreground hover:text-primary cursor-pointer" onClick={(e) => { e.stopPropagation(); handleSyncRepo(repo.id); }} />
-                                ) : sel ? (
-                                  <CheckCircle className="h-4 w-4 text-primary ml-2 shrink-0" />
-                                ) : null}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                    )}
-
-                    {/* 指令 */}
-                    <div className="relative" ref={cmdMenuRef}>
-                      <Button variant="outline" size="sm" className="h-8 rounded-full text-xs hover:bg-muted px-3" onClick={() => { setCmdMenuOpen(!cmdMenuOpen); setTaskMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); }}>
-                        <Terminal className="h-3.5 w-3.5 mr-1.5" />指令
-                      </Button>
-                      {cmdMenuOpen && (
-                        <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
-                          <Tabs value={activeCommandTab} onValueChange={v => setActiveCommandTab(v as CommandCategory)} className="w-full flex flex-col">
-                            <div className="px-2 pt-2 bg-muted/30 border-b">
-                              <TabsList className="aurora-tab-bar level-2 w-full">
-                                {COMMAND_CATEGORY_ORDER.map(cat => (
-                                  <TabsTrigger key={cat} value={cat} className="aurora-tab-item level-2">
-                                    {COMMAND_CATEGORY_LABELS[cat]}
-                                  </TabsTrigger>
-                                ))}
-                              </TabsList>
-                            </div>
-                            <div className="flex-1 overflow-y-auto p-1">
-                              {commandConfigs
-                                .filter(item => COMMAND_CATEGORIES[item.cmd] === activeCommandTab)
-                                .map(item => {
-                                  const Icon = COMMAND_ICON_MAP[item.cmd] ?? Terminal;
-                                  return (
-                                    <div
-                                      key={item.cmd}
-                                      className="flex items-center gap-3 px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors"
-                                      onClick={() => insertCommand(item.cmd)}
-                                    >
-                                      <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
-                                      <div className="flex flex-col min-w-0">
-                                        <span className="font-medium text-sm leading-none">{item.cmd}</span>
-                                        <span className="text-xs text-muted-foreground mt-0.5">{item.label} · {item.desc}</span>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                            </div>
-                          </Tabs>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 提示词 */}
-                    <div className="relative" ref={promptMenuRef}>
-                      <Button variant="outline" size="sm" className="h-8 rounded-full text-xs hover:bg-muted px-3" onClick={() => { setPromptMenuOpen(!promptMenuOpen); setRepoMenuOpen(false); setSkillPopoverOpen(false); setTaskMenuOpen(false); setCmdMenuOpen(false); }}>
-                        <FileText className="h-3.5 w-3.5 mr-1.5" />提示词
-                      </Button>
-                      {promptMenuOpen && (
-                        <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
-                          <div className="p-2 border-b space-y-2">
-                            <div className="relative">
-                              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                              <Input
-                                placeholder="搜索提示词..."
-                                className="pl-8 h-8"
-                                value={promptMenuSearch}
-                                onChange={(e) => setPromptMenuSearch(e.target.value)}
-                              />
-                            </div>
-                            <div className="flex gap-1 overflow-x-auto pb-1">
-                              {['全部', ...sortPromptCategoriesByBuiltin(promptCategories).map(c => c.name)].map(cat => (
-                                <Button
-                                  key={cat}
-                                  variant={promptMenuCategory === cat ? 'secondary' : 'ghost'}
-                                  size="sm"
-                                  className="h-7 text-xs whitespace-nowrap"
-                                  onClick={() => setPromptMenuCategory(cat)}
-                                >
-                                  {cat}
-                                </Button>
-                              ))}
-                            </div>
-                          </div>
-                          <div className="flex-1 overflow-y-auto p-1">
-                            {filteredAvailablePrompts.length === 0 && (
-                              <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配提示词</div>
-                            )}
-                            {filteredAvailablePrompts.map(p => (
-                              <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => insertPrompt(p)}>
-                                <span className="font-medium text-sm mb-1">{p.name}</span>
-                                <span className="text-xs text-muted-foreground line-clamp-2">{p.content || p.description}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 技能 */}
-                    <div className="relative" ref={skillMenuRef}>
-                      <Button variant="outline" size="sm" className="h-8 rounded-full text-xs hover:bg-muted px-3" onClick={() => { setSkillPopoverOpen(!skillPopoverOpen); setRepoMenuOpen(false); setPromptMenuOpen(false); setTaskMenuOpen(false); setCmdMenuOpen(false); }}>
-                        <Wand2 className="h-3.5 w-3.5 mr-1.5" />技能
-                      </Button>
-                      {skillPopoverOpen && (
-                        <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
-                          <Tabs value={activeSkillTab} onValueChange={setActiveSkillTab} className="w-full flex flex-col">
-                            <div className="px-2 pt-2 bg-muted/30 border-b space-y-2">
-                              <div className="relative">
-                                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                                <Input
-                                  placeholder="搜索技能..."
-                                  className="pl-8 h-8"
-                                  value={skillMenuSearch}
-                                  onChange={(e) => setSkillMenuSearch(e.target.value)}
-                                />
-                              </div>
-                              <TabsList className="aurora-tab-bar level-2 w-full">
-                                {['全部', '需求设计', 'UI设计', '代码开发', '测试编写', '需求上线'].map(tab => (
-                                  <TabsTrigger key={tab} value={tab} className="aurora-tab-item level-2">{tab}</TabsTrigger>
-                                ))}
-                              </TabsList>
-                            </div>
-                            <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                              {filteredAvailableSkills.length === 0 && (
-                                <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配技能</div>
-                              )}
-                              {filteredAvailableSkills.map(skill => {
-                                  const IconComponent = skillIconMap[skill.icon || ''] || Puzzle;
-                                  return (
-                                    <div key={skill.id} className="flex items-start gap-3 p-2.5 rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors" onClick={() => { appendSkillTag(skill.name); setSkillPopoverOpen(false); }}>
-                                      <div className="h-8 w-8 rounded-md bg-background flex items-center justify-center border shrink-0"><IconComponent className="h-4 w-4 text-muted-foreground" /></div>
-                                      <div className="flex flex-col flex-1 min-w-0">
-                                        <span className="font-medium text-sm leading-none mb-1 text-foreground">{skill.name}</span>
-                                        <span className="text-xs text-muted-foreground line-clamp-2">{skill.description}</span>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                            </div>
-                          </Tabs>
-                        </div>
-                      )}
-                    </div>
-                  </>
                 )}
               </div>
               <div className="flex items-center gap-2">

@@ -39,5 +39,6 @@ type ProductSpaceService interface {
 	DeleteFolder(ctx context.Context, workspaceID, userID string, req object.DeleteFolderRequest) error
 	DownloadVersion(ctx context.Context, workspaceID, userID, itemID string, version int) (string, []byte, error)
 	ListComments(ctx context.Context, workspaceID, userID, itemID string) ([]object.PrototypeComment, error)
-	AddComment(ctx context.Context, workspaceID, userID, itemID, content string) (*object.PrototypeComment, error)
+	AddComment(ctx context.Context, workspaceID, userID, itemID string, req object.AddCommentRequest) (*object.PrototypeComment, error)
+	ServeFile(ctx context.Context, workspaceID, userID, relativePath string) ([]byte, string, error)
 }

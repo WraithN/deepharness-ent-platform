@@ -36,12 +36,17 @@ type ProductSpaceVersion struct {
 
 // PrototypeComment 是原型页面的批注评论。
 // UserName 通过 LEFT JOIN users 解析，用户记录缺失时为空字符串。
+// Selector / TargetText / X / Y 记录被标注的元素与页面坐标，用于在画布上回显标记。
 type PrototypeComment struct {
 	ID          string    `json:"id"`
 	ItemID      string    `json:"itemId"`
 	WorkspaceID string    `json:"workspaceId"`
 	UserID      string    `json:"userId"`
 	UserName    string    `json:"userName"`
+	Selector    string    `json:"selector"`
+	TargetText  string    `json:"targetText"`
+	X           float64   `json:"x"`
+	Y           float64   `json:"y"`
 	Content     string    `json:"content"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
@@ -76,7 +81,11 @@ type CreateFolderRequest struct {
 }
 
 type AddCommentRequest struct {
-	Content string `json:"content"`
+	Content    string  `json:"content"`
+	Selector   string  `json:"selector"`
+	TargetText string  `json:"targetText"`
+	X          float64 `json:"x"`
+	Y          float64 `json:"y"`
 }
 
 type DeleteFolderRequest struct {

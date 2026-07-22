@@ -1,5 +1,6 @@
 import React from 'react';
 import { FileCode2, ExternalLink } from 'lucide-react';
+import { sanitizeWorkspacePaths } from '@/lib/utils';
 
 interface FilePathCardProps {
   path: string;
@@ -9,6 +10,7 @@ interface FilePathCardProps {
  * 文件路径卡片。
  *
  * 点击后在新标签页打开文件查看页面，展示文件内容并以 markdown 格式化。
+ * 展示时隐藏工作区绝对路径前缀，避免暴露服务器目录结构。
  */
 export const FilePathCard: React.FC<FilePathCardProps> = ({ path }) => {
   const handleClick = () => {
@@ -16,6 +18,8 @@ export const FilePathCard: React.FC<FilePathCardProps> = ({ path }) => {
     params.set('path', path);
     window.open(`/file-view?${params.toString()}`, '_blank', 'noopener,noreferrer');
   };
+
+  const displayPath = sanitizeWorkspacePaths(path);
 
   return (
     <button
@@ -25,7 +29,7 @@ export const FilePathCard: React.FC<FilePathCardProps> = ({ path }) => {
       title={`查看 ${path}`}
     >
       <FileCode2 className="h-3.5 w-3.5 shrink-0" />
-      <span className="font-medium truncate">{path}</span>
+      <span className="font-medium truncate">{displayPath}</span>
       <ExternalLink className="h-3 w-3 shrink-0 opacity-70" />
     </button>
   );

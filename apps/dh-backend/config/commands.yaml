@@ -22,6 +22,9 @@ commands:
     requireRepos: false
     maxRepos: 0
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深产品经理。请根据以下需求描述，生成一份结构化的 PRD（产品需求文档）。
 
       【文件输出要求】
@@ -53,6 +56,9 @@ commands:
     requireRepos: false
     maxRepos: 0
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深技术分析师。请根据以下主题，进行深入的技术调研并生成一份结构化的调研报告。
 
       【文件输出要求】
@@ -85,26 +91,35 @@ commands:
     requireRepos: false
     maxRepos: 2
     template: |
-      你是一位全栈工程师。请根据以下需求，生成一个可运行的前端+后端工程原型。
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
+      你是一位前端工程师与 UI 设计师。请根据以下需求，生成一个可运行的前端原型工程（基于 Node + Vite）。
 
       【工程输出要求】
-      1. 将工程创建在 {WORKSPACE_PATH}/projects/ 目录下，工程目录名使用需求关键词的英文命名（如 {WORKSPACE_PATH}/projects/user-login/）。
-      2. 前端使用 React + TypeScript + Tailwind CSS。
-      3. 后端使用 Node.js（Express 或 Fastify）。
-      4. 工程结构示例：
-         {WORKSPACE_PATH}/projects/{工程名}/
-         ├── frontend/    # React 前端
-         │   ├── src/
-         │   ├── package.json
-         │   └── vite.config.ts
-         └── backend/     # Node.js 后端
-             ├── src/
-             └── package.json
-      5. 前端和后端都必须有完整的 package.json，确保可以 npm install && npm run dev 启动。
+      1. 将工程创建在 {WORKSPACE_PATH}/products/prototypes/ 目录下，工程目录名使用需求关键词的英文命名（如 {WORKSPACE_PATH}/products/prototypes/user-login/）。
+      2. 使用 React + TypeScript + Tailwind CSS + Vite。
+      3. 不需要后端服务；所有数据使用本地 mock 数据（放在 src/mocks/ 或 public/mock/）。
+      4. 关键组件/可点击元素必须添加稳定的 data-dh-id 属性，例如：
+         <button data-dh-id="submit-btn">提交</button>
+         <div data-dh-id="user-card">...</div>
+         这对后续产品标注和走查非常重要。
+      5. 工程必须包含 `npm run dev` 用于本地预览，以及 `npm run build` 用于构建生产包。
+      6. 生成完成后，执行 `npm install && npm run build`，确保产出 `dist/index.html` 和 `dist/assets/`。
+      7. 最终产物结构：
+         {WORKSPACE_PATH}/products/prototypes/{工程名}/
+         ├── package.json
+         ├── vite.config.ts
+         ├── index.html
+         ├── src/
+         ├── public/mock/
+         └── dist/
+             ├── index.html
+             └── assets/
 
       【输出标记】
-      工程创建完成后，在回复末尾必须用以下格式标记工程路径（每行一个）：
-      [[PROJECT:{WORKSPACE_PATH}/projects/工程名]]
+      工程创建完成后，在回复末尾用以下格式标记工程根目录（每行一个）：
+      [[PROJECT:{WORKSPACE_PATH}/products/prototypes/{工程名}]]
       注意：路径必须是绝对路径。
 
       【需求描述】
@@ -119,6 +134,9 @@ commands:
     requireRepos: true
     maxRepos: 2
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深工程师。请根据以下需求编写代码。
 
       【代码输出要求】
@@ -142,6 +160,9 @@ commands:
     requireRepos: false
     maxRepos: 2
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深工程师。请根据以下缺陷描述，定位并修复问题。
 
       【调试要求】
@@ -165,6 +186,9 @@ commands:
     requireRepos: true
     maxRepos: 2
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深代码审查专家。请对以下代码或工程进行 Code Review。
 
       【审查要求】
@@ -187,6 +211,9 @@ commands:
     requireRepos: true
     maxRepos: 2
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深测试工程师。请根据以下代码或需求，生成完整的单元测试。
 
       【测试要求】
@@ -210,6 +237,9 @@ commands:
     requireRepos: false
     maxRepos: 0
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深测试工程师。请根据以下需求或功能描述，生成结构化的测试用例。
 
       【文件输出要求】
@@ -232,6 +262,9 @@ commands:
     requireRepos: false
     maxRepos: 1
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深测试开发工程师。请根据以下需求或接口，生成可运行的自动化测试脚本。
 
       【脚本要求】
@@ -254,6 +287,9 @@ commands:
     requireRepos: false
     maxRepos: 0
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深测试分析师。请根据以下缺陷现象，进行根因分析并评估影响范围。
 
       【分析要求】
@@ -276,6 +312,9 @@ commands:
     requireRepos: false
     maxRepos: 0
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深测试经理。请根据以下测试执行情况或数据，生成一份测试报告。
 
       【报告内容】
@@ -300,6 +339,9 @@ commands:
     requireRepos: false
     maxRepos: 0
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深 UI 设计师。请根据以下需求，生成一份 UI 设计规范文档。
 
       【文档内容】
@@ -324,6 +366,9 @@ commands:
     requireRepos: false
     maxRepos: 0
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深设计走查专家。请根据以下设计稿或实现描述，检查设计还原与一致性。
 
       【走查维度】
@@ -347,6 +392,9 @@ commands:
     requireRepos: false
     maxRepos: 0
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深设计系统专家。请根据以下品牌或设计需求，生成一份 Design Token 定义。
 
       【Token 要求】
@@ -369,6 +417,9 @@ commands:
     requireRepos: false
     maxRepos: 0
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深产品经理。请根据以下需求，拆分为结构化的用户故事与验收标准。
 
       【输出要求】
@@ -392,6 +443,9 @@ commands:
     requireRepos: false
     maxRepos: 0
     template: |
+      【语言要求】
+      你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
       你是一位资深数据分析师。请根据以下数据或分析目标，生成数据洞察报告。
 
       【报告内容】

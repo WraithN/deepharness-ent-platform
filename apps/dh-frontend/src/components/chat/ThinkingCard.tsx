@@ -1,55 +1,69 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Loader2, Sparkles } from 'lucide-react';
+import { ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface ThinkingCardProps {
   children: React.ReactNode;
   isRunning?: boolean;
   defaultOpen?: boolean;
+  /** 思考次数，用于标题展示。 */
+  thinkingCount?: number;
+  /** 工具调用统计：{ 工具显示名: 次数 }。 */
+  toolStats?: Record<string, number>;
 }
 
-const THINKING_LABEL_RUNNING = '思考中';
-const THINKING_LABEL_DONE = '思考完毕';
-
 /**
- * 可折叠的思考过程卡片。
+ * 轻量可折叠的思考过程面板。
  *
- * 用于把 reasoning 文本、工具调用等模型内部过程折叠展示，
- * 实际给用户的最终输出放在卡片外部，保持界面整洁。
+ * 去掉厚重边框，只保留一行折叠按钮；展开后内容区以浅灰背景和左侧时间线呈现，
+ * 与 Kimi/Claude 等产品的思考过程风格保持一致。
  */
 export const ThinkingCard: React.FC<ThinkingCardProps> = ({
   children,
   isRunning = false,
   defaultOpen = false,
+  thinkingCount = 1,
+  toolStats,
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
-  const label = isRunning ? THINKING_LABEL_RUNNING : THINKING_LABEL_DONE;
+
+  const stats: string[] = [];
+  if (thinkingCount > 0) {
+    stats.push(`思考 ${thinkingCount} 次`);
+  }
+  if (toolStats) {
+    Object.entries(toolStats).forEach(([name, count]) => {
+      stats.push(`${name} ${count} 次`);
+    });
+  }
+
+  const summary = stats.join('，') || (isRunning ? '思考中' : '思考完成');
+  const statusLabel = isRunning ? '思考中' : '思考完成';
 
   return (
-    <div className="my-2 rounded-xl border border-border/50 bg-muted/40 overflow-hidden">
+    <div className="my-2">
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-muted/60 transition-colors"
+        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
         aria-expanded={isOpen}
       >
         {isOpen ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+          <ChevronUp className="h-3.5 w-3.5 shrink-0" />
         ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
         )}
-        <Sparkles className="h-3.5 w-3.5 shrink-0" />
-        <span className="font-medium">{label}</span>
-        {isRunning && <Loader2 className="h-3.5 w-3.5 animate-spin ml-1" />}
+        <Sparkles className="h-3 w-3 shrink-0" />
+        <span>{statusLabel}</span>
+        <span className="text-muted-foreground/50">·</span>
+        <span>{summary}</span>
       </button>
-      <div
-        className={cn(
-          'px-3 pb-3 text-sm text-muted-foreground border-t border-border/30',
-          !isOpen && 'hidden'
-        )}
-      >
-        {children}
-      </div>
+      {isOpen && (
+        <div className="mt-2 rounded-lg bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+          <div className="text-xs font-medium text-muted-foreground/70 mb-1.5">思考过程</div>
+          {children}
+        </div>
+      )}
     </div>
   );
 };

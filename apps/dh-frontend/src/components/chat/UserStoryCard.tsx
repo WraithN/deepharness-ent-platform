@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
-import { FileText, Eye, Send, Loader2 } from 'lucide-react';
+import { FileText, Eye, EyeOff, Send, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 
 export interface UserStoryItem {
   priority: 'P0' | 'P1' | 'P2';
@@ -174,10 +177,13 @@ export function parseUserStoryFromText(text: string, filePath: string): UserStor
 
 interface UserStoryCardProps {
   data: UserStoryData;
+  isPreviewActive?: boolean;
+  onPreview?: (data: UserStoryData) => void;
 }
 
-export const UserStoryCard: React.FC<UserStoryCardProps> = ({ data }) => {
-  const [expanded, setExpanded] = useState(false);
+export const UserStoryCard: React.FC<UserStoryCardProps> = ({ data, isPreviewActive, onPreview }) => {
+  const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set(data.stories.map((_, i) => i)));
   const [submitting, setSubmitting] = useState(false);
 
   const priorityCounts: Record<string, number> = { P0: 0, P1: 0, P2: 0 };
@@ -187,11 +193,35 @@ export const UserStoryCard: React.FC<UserStoryCardProps> = ({ data }) => {
 
   const presentCounts = PRIORITY_ORDER.filter((p) => priorityCounts[p] > 0);
 
+  const handleOpenSubmitDialog = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedIds(new Set(data.stories.map((_, i) => i)));
+    setSubmitDialogOpen(true);
+  };
+
+  const handleToggleAll = (checked: boolean) => {
+    setSelectedIds(checked ? new Set(data.stories.map((_, i) => i)) : new Set());
+  };
+
+  const handleToggleOne = (idx: number, checked: boolean) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (checked) next.add(idx);
+      else next.delete(idx);
+      return next;
+    });
+  };
+
   const handleSubmit = async () => {
+    if (selectedIds.size === 0) {
+      toast.error('请至少选择一条用户故事');
+      return;
+    }
     setSubmitting(true);
     try {
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      toast.success('用户故事已提交成功');
+      toast.success(`已提交 ${selectedIds.size} 条用户故事`);
+      setSubmitDialogOpen(false);
     } catch {
       toast.error('提交失败，请重试');
     } finally {
@@ -199,108 +229,136 @@ export const UserStoryCard: React.FC<UserStoryCardProps> = ({ data }) => {
     }
   };
 
-  const toggleExpanded = () => setExpanded(!expanded);
+  const handlePreview = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onPreview?.(data);
+  };
 
   return (
     <>
       <div
-        className="relative w-full p-6 rounded-2xl border border-border/60 bg-card cursor-pointer hover:shadow-md transition-all duration-300"
-        style={{
-          backgroundImage: 'radial-gradient(#e9e9f8 1px, transparent 1px)',
-          backgroundSize: '20px 20px',
-          backgroundPosition: '0 0, 10px 10px',
-        }}
-        onClick={toggleExpanded}
+        className={cn(
+          'w-full p-4 rounded-2xl border shadow-sm hover:shadow-md transition-all duration-300 hover:-translate-y-0.5 animate-in fade-in slide-in-from-bottom-2 duration-500 cursor-pointer',
+          isPreviewActive
+            ? 'border-violet-500 bg-violet-50/80 dark:bg-violet-900/20 ring-2 ring-violet-500/20'
+            : 'border-border/60 bg-card hover:border-violet-500/30'
+        )}
+        onClick={handlePreview}
       >
-        <div className="w-10 h-10 rounded-xl bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center mb-4">
-          <FileText className="h-5 w-5 text-violet-600 dark:text-violet-400" />
-        </div>
+        <div className="flex items-start gap-4">
+          <div className="h-12 w-12 rounded-xl bg-violet-500/15 flex items-center justify-center shrink-0">
+            <FileText className="h-6 w-6 text-violet-600 dark:text-violet-400" />
+          </div>
 
-        <h3 className="text-lg font-semibold text-foreground mb-1">
-          {data.title}
-        </h3>
-        <p className="text-sm text-muted-foreground mb-4">{data.generatedAt}</p>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-semibold text-foreground truncate">{data.title}</p>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300 font-medium">
+                共 {data.total} 条
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">{data.generatedAt}</p>
 
-        <div className="flex items-center gap-2 mb-5 flex-wrap">
-          {presentCounts.map((p) => (
-            <span
-              key={p}
-              className={cn('text-xs px-2.5 py-1 rounded-full font-medium', PRIORITY_TAG_CLASS[p])}
-            >
-              {p} &times; {priorityCounts[p]}
-            </span>
-          ))}
-          <span className="text-xs px-2.5 py-1 rounded-full bg-muted text-muted-foreground">
-            总计 {data.total}条
-          </span>
-        </div>
-
-        <div className="flex items-center gap-3 justify-end">
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); toggleExpanded(); }}
-              className="relative w-10 h-10 rounded-lg border border-border bg-card text-foreground/70 hover:bg-accent hover:text-foreground hover:border-primary/40 flex items-center justify-center transition-colors shadow-sm"
-              title="一键查看所有故事点"
-            >
-            <Eye className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={(e) => { e.stopPropagation(); handleSubmit(); }}
-            className="relative w-10 h-10 rounded-lg bg-violet-600 text-white hover:bg-violet-700 flex items-center justify-center transition-colors disabled:opacity-60"
-            title="一键提交全部故事点"
-          >
-            {submitting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </button>
+            <div className="flex items-center gap-3 mt-3 flex-wrap">
+              {presentCounts.map((p) => (
+                <span
+                  key={p}
+                  className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium', PRIORITY_TAG_CLASS[p])}
+                >
+                  {p} &times; {priorityCounts[p]}
+                </span>
+              ))}
+              <button
+                type="button"
+                onClick={handlePreview}
+                className={cn(
+                  'inline-flex items-center gap-1 text-xs font-medium transition-transform duration-200 hover:scale-105 active:scale-95',
+                  isPreviewActive
+                    ? 'text-violet-700 dark:text-violet-300 underline'
+                    : 'text-violet-600 dark:text-violet-400 hover:underline'
+                )}
+              >
+                {isPreviewActive ? (
+                  <EyeOff className="h-3.5 w-3.5" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5" />
+                )}
+                {isPreviewActive ? '关闭预览' : '查看全部'}
+              </button>
+              <button
+                type="button"
+                onClick={handleOpenSubmitDialog}
+                className="inline-flex items-center gap-1 text-xs font-medium text-violet-600 dark:text-violet-400 hover:underline transition-transform duration-200 hover:scale-105 active:scale-95"
+              >
+                <Send className="h-3.5 w-3.5" />
+                提交
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
-      {expanded && (
-        <div className="mt-4 p-4 rounded-2xl border border-border/60 bg-card">
-          <h4 className="text-lg font-semibold mb-4">
-            {data.title}（共{data.total}条）
-          </h4>
-          <div className="space-y-4">
+      <Dialog open={submitDialogOpen} onOpenChange={setSubmitDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>提交用户故事</DialogTitle>
+            <DialogDescription>
+              选择需要提交的用户故事，默认全选。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex items-center gap-2 py-2 border-b border-border/50">
+            <Checkbox
+              id="select-all"
+              checked={selectedIds.size === data.stories.length && data.stories.length > 0}
+              onCheckedChange={(checked) => handleToggleAll(checked === true)}
+            />
+            <label htmlFor="select-all" className="text-sm font-medium cursor-pointer">
+              全选 ({selectedIds.size}/{data.stories.length})
+            </label>
+          </div>
+
+          <div className="flex-1 overflow-y-auto py-2 space-y-3">
             {data.stories.map((item, idx) => (
               <div
                 key={idx}
-                className="rounded-xl border border-border/50 p-5 bg-muted/20"
+                className="flex items-start gap-3 p-3 rounded-xl border border-border/50 bg-muted/20"
               >
-                <span
-                  className={cn(
-                    'text-xs px-2.5 py-1 rounded-full font-medium inline-block mb-3',
-                    PRIORITY_TAG_CLASS[item.priority],
-                  )}
-                >
-                  {item.priority}
-                </span>
-                <p className="text-sm text-foreground leading-relaxed mb-3">
-                  {item.story}
-                </p>
-                <p className="text-xs font-medium text-muted-foreground mb-2">
-                  验收标准 Given / When / Then
-                </p>
-                <ul className="space-y-2">
-                  {item.criteria.map((line, ci) => (
-                    <li
-                      key={ci}
-                      className="text-xs text-muted-foreground leading-relaxed flex gap-2"
+                <Checkbox
+                  id={`story-${idx}`}
+                  checked={selectedIds.has(idx)}
+                  onCheckedChange={(checked) => handleToggleOne(idx, checked === true)}
+                  className="mt-1"
+                />
+                <label htmlFor={`story-${idx}`} className="flex-1 min-w-0 cursor-pointer">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span
+                      className={cn(
+                        'text-xs px-2 py-0.5 rounded-full font-medium',
+                        PRIORITY_TAG_CLASS[item.priority],
+                      )}
                     >
-                      <span className="text-primary shrink-0 mt-0.5">&#8226;</span>
-                      <span>{line}</span>
-                    </li>
-                  ))}
-                </ul>
+                      {item.priority}
+                    </span>
+                    <span className="text-xs text-muted-foreground">#{idx + 1}</span>
+                  </div>
+                  <p className="text-sm text-foreground leading-relaxed">{item.story}</p>
+                </label>
               </div>
             ))}
           </div>
-        </div>
-      )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSubmitDialogOpen(false)} disabled={submitting}>
+              取消
+            </Button>
+            <Button onClick={handleSubmit} disabled={submitting || selectedIds.size === 0}>
+              {submitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              提交 ({selectedIds.size})
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };

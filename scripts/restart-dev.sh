@@ -22,4 +22,4 @@ done
 sleep 1
 
 echo -e "${GREEN}  Restarting all services...${NC}"
-exec bash "${PLATFORM_ROOT}/scripts/start-dev.sh"
+exec bash "${PLATFORM_ROOT}/scripts/start-dev.sh" --detach

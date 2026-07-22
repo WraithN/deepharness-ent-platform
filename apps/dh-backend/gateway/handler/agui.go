@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -203,6 +205,23 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	// 使用原始拷贝可保证持久化的是用户真实输入。
 	originalMessages := cloneAGUIMessages(input.Messages)
 
+	// 在执行指令模板替换前，先记录用户输入的斜杠指令名，用于后续进度反馈。
+	slashCommand := ""
+	for i := len(input.Messages) - 1; i >= 0; i-- {
+		if input.Messages[i].Role != agui.RoleUser {
+			continue
+		}
+		rawText := input.Messages[i].ContentText()
+		original := extractOriginalUserPrompt(rawText)
+		if original == "" {
+			original = rawText
+		}
+		if cmd, _, ok := parseSlashCommand(original); ok {
+			slashCommand = cmd
+		}
+		break
+	}
+
 	// 拦截斜杠指令（/prd-write、/proto-make 等），
 	// 将用户消息替换为指令专属提示词模板。
 	// 同时处理引用的任务卡片，将卡片信息注入提示词。
@@ -213,6 +232,8 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		h.writeEvent(w, flusher, agui.RunErrorEvent(fmt.Sprintf("intercept commands: %v", err), "COMMAND_FAILED"))
 		return
 	}
+	// 将最终发送给 agent 的提示词写入调试文件，方便排查提示词是否过长或包含敏感路径。
+	logPrompt(input.RunID, input.Messages)
 
 	// 意图识别：用户未输入斜杠指令时，先调用 LLM 判断是闲聊还是任务意图。
 	// 闲聊 → 直接返回 LLM 回复，不走正常 agent run。
@@ -246,9 +267,15 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				intentCommand = intentResult.Command
+				slashCommand = intentResult.Command
 				log.Printf("[AGUIHandler] intent mapped to command: %s", intentResult.Command)
 			}
 		}
+	}
+
+	// 无斜杠指令且无意图指令 → 纯聊天场景，若有引用任务卡片则注入卡片信息。
+	if !commandApplied && intentCommand == "" {
+		injectCardForChat(input.Messages, input.Context, h.workItemSvc, input.RunID)
 	}
 
 	// 检查 session 是否来自 gatewayd 不可达时的 fallback，避免向不存在的 gatewayd session 发送 run。
@@ -595,6 +622,7 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 
 	firstEventSeen := false
 	firstContentSeen := false
+	feedbackEmitted := false
 	frontendDone := false
 	for {
 		select {
@@ -611,6 +639,12 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[AGUIHandler] run=%s first SSE event from gatewayd after %v: type=%s threadId=%s",
 					input.RunID, time.Since(reqStart), ev.Type, ev.ThreadID)
 				maxTimer.Reset(maxRunDuration)
+				if !feedbackEmitted {
+					feedbackEmitted = true
+					if err := emitLongTaskFeedback(slashCommand, input.RunID, sessionID, writeEvent); err != nil {
+						log.Printf("[AGUIHandler] run=%s emit long task feedback failed: %v", input.RunID, err)
+					}
+				}
 			}
 			switch ev.Type {
 			case agui.EventThinkingStart:
@@ -1006,4 +1040,89 @@ func (h *AGUIHandler) streamChatResponse(ctx context.Context, w http.ResponseWri
 // generateMessageID 生成消息 ID。
 func generateMessageID() string {
 	return "msg-" + uuid.New().String()[:8]
+}
+
+// LONG_TASK_COMMANDS 需要在前端显示中间进度反馈的斜杠指令集合。
+// 这些指令通常涉及文件写入、工程生成等长耗时操作，模型可能长时间无 text token 输出。
+var LONG_TASK_COMMANDS = map[string]bool{
+	"/proto-make":  true,
+	"/code":        true,
+	"/user-story":  true,
+	"/prd-write":   true,
+	"/prd-research": true,
+	"/ui-kit":      true,
+	"/test-case":   true,
+	"/auto-test":   true,
+	"/unit-test":   true,
+}
+
+// logPrompt 将最终发送给 agent 的提示词写入调试文件，避免主日志膨胀。
+// 主日志只记录提示词长度和文件路径，排查时可直接查看对应文件。
+func logPrompt(runID string, messages []agui.Message) {
+	if runID == "" {
+		return
+	}
+	dir := "/tmp/dh-prompts"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("[AGUIHandler] create prompt log dir failed: %v", err)
+		return
+	}
+	path := filepath.Join(dir, runID+".txt")
+	f, err := os.Create(path)
+	if err != nil {
+		log.Printf("[AGUIHandler] create prompt log file failed: %v", err)
+		return
+	}
+	defer f.Close()
+
+	var totalLen int
+	for i, m := range messages {
+		text := m.ContentText()
+		totalLen += len(text)
+		fmt.Fprintf(f, "--- Message %d (%s) ---\n%s\n\n", i+1, m.Role, text)
+	}
+	log.Printf("[AGUIHandler] prompt logged to %s, messages=%d totalChars=%d", path, len(messages), totalLen)
+}
+
+// emitLongTaskFeedback 对长耗时指令发送合成进度反馈，避免前端长时间显示"思考中"。
+// 收到第一个 SSE 事件后即发送，告诉用户任务已启动并正在执行。
+func emitLongTaskFeedback(command, runID, sessionID string, writeEvent func(agui.Event) error) error {
+	if command == "" || !LONG_TASK_COMMANDS[command] {
+		return nil
+	}
+	label := map[string]string{
+		"/proto-make":  "正在生成原型工程",
+		"/code":        "正在编写代码",
+		"/user-story":  "正在拆分用户故事",
+		"/prd-write":   "正在撰写 PRD",
+		"/prd-research": "正在进行技术调研",
+		"/ui-kit":      "正在生成 UI 组件库规范",
+		"/test-case":   "正在生成测试用例",
+		"/auto-test":   "正在生成自动化脚本",
+		"/unit-test":   "正在生成单元测试",
+	}[command]
+	if label == "" {
+		label = "正在处理任务"
+	}
+
+	msgID := "feedback-" + runID[:8]
+	ts := float64(time.Now().UnixMilli()) / 1000
+	// 先发送一个独立的 thinking 内容，前端会把它渲染为 reasoning 部件。
+	if err := writeEvent(agui.Event{
+		Type:      agui.EventThinkingTextMessageContent,
+		MessageID: msgID,
+		Delta:     fmt.Sprintf("%s，可能需要一些时间，请稍候...", label),
+		Timestamp: ts,
+		ThreadID:  sessionID,
+		RunID:     runID,
+	}); err != nil {
+		return err
+	}
+	return writeEvent(agui.Event{
+		Type:      agui.EventThinkingEnd,
+		MessageID: msgID,
+		Timestamp: ts + 0.001,
+		ThreadID:  sessionID,
+		RunID:     runID,
+	})
 }

@@ -218,8 +218,11 @@ pnpm build
 # Go 测试
 pnpm --filter @repo/dh-backend test
 
-# 开发环境重启（停止旧进程 + 一键启动全部服务）
+# 开发环境重启（停止旧进程 + 一键启动全部服务，后台运行）
 bash scripts/restart-dev.sh
+
+# 停止后台运行的开发服务
+bash scripts/stop-dev.sh
 ```
 
 ## 13. 用户自定义规则（不可覆盖）

@@ -42,6 +42,7 @@ function convertPartToContent(part: ChatPart): ThreadMessageLike['content'][numb
   if (part.type === 'thinking') {
     return { type: 'reasoning', text: part.content || '思考中...' };
   }
+  // tool_use / tool_result 等旧协议部件仍作为 data 处理，由 AssistantMessage 的 legacyDataParts 渲染。
   return { type: 'data', name: part.type, data: part };
 }
 

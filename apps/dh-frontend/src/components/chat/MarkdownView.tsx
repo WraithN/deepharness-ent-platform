@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import { ChatCodeBlock } from './ChatCodeBlock';
 import { MermaidBlock } from './MermaidBlock';
 import { TreeDirBlock, isTreeDirContent } from './TreeDirBlock';
+import { sanitizeWorkspacePaths } from '@/lib/utils';
 
 const COLLAPSE_LINE_THRESHOLD = 12;
 const COLLAPSE_CHAR_THRESHOLD = 600;
@@ -18,8 +19,10 @@ interface MarkdownViewProps {
 export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, collapsible = true }) => {
   const [expanded, setExpanded] = useState(false);
 
-  const lineCount = content.split('\n').length;
-  const shouldCollapse = collapsible && (lineCount > COLLAPSE_LINE_THRESHOLD || content.length > COLLAPSE_CHAR_THRESHOLD);
+  const sanitizedContent = sanitizeWorkspacePaths(content);
+
+  const lineCount = sanitizedContent.split('\n').length;
+  const shouldCollapse = collapsible && (lineCount > COLLAPSE_LINE_THRESHOLD || sanitizedContent.length > COLLAPSE_CHAR_THRESHOLD);
 
   return (
     <div className="relative">
@@ -46,7 +49,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, collapsible
             },
           }}
         >
-          {content}
+          {sanitizedContent}
         </ReactMarkdown>
       </div>
       {shouldCollapse && !expanded && (

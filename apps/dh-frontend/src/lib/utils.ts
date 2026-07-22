@@ -69,6 +69,14 @@ export function isSameDay(a: Date, b: Date): boolean {
 }
 
 /**
+ * 将内容中的工作区绝对路径前缀脱敏为相对路径。
+ * 例如 /home/nan/test/{workspaceId}/projects/... 展示为 projects/...。
+ */
+export function sanitizeWorkspacePaths(text: string): string {
+  return text.replace(/\/home\/nan\/test\/[^\/]+\//g, '');
+}
+
+/**
  * 将日期格式化为友好的人类可读日期标签（用于聊天日期分隔线）。
  * 今天 →「今天」、昨天 →「昨天」、今年 →「M月D日」、其他 →「YYYY年M月D日」。
  */

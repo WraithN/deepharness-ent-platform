@@ -1,6 +1,7 @@
 package productspace
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,109 @@ const (
 	errMsgForbidden            = "forbidden"
 	errMsgUnauthorized         = "unauthorized"
 )
+
+// 注入到原型页面中的标注脚本与样式，用于在 iframe 预览中实现点击标注和标记回显。
+const (
+	prototypeAnnotationStyle = `.dh-annotate-mode, .dh-annotate-mode * { cursor: crosshair !important; }
+.dh-annotate-mode [data-dh-id]:hover { outline: 2px dashed #ef4444 !important; }`
+
+	prototypeAnnotationScript = `(function() {
+  var MARKER_CLASS = 'dh-prototype-marker';
+  var annotateMode = false;
+
+  function removeMarkers() {
+    var nodes = document.querySelectorAll('.' + MARKER_CLASS);
+    for (var i = 0; i < nodes.length; i++) nodes[i].remove();
+  }
+
+  function renderMarkers(markers) {
+    removeMarkers();
+    if (!markers) return;
+    for (var i = 0; i < markers.length; i++) {
+      var m = markers[i];
+      var el = document.createElement('div');
+      el.className = MARKER_CLASS;
+      el.style.position = 'absolute';
+      el.style.left = (m.x || 0) + 'px';
+      el.style.top = (m.y || 0) + 'px';
+      el.style.width = '12px';
+      el.style.height = '12px';
+      el.style.background = '#ef4444';
+      el.style.border = '2px solid #ffffff';
+      el.style.borderRadius = '50%';
+      el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
+      el.style.zIndex = '9999';
+      el.style.transform = 'translate(-50%, -50%)';
+      el.style.pointerEvents = 'none';
+      el.title = (m.userName || '') + ': ' + (m.content || '');
+      document.body.appendChild(el);
+    }
+  }
+
+  function setAnnotateMode(active) {
+    annotateMode = active;
+    document.body.classList.toggle('dh-annotate-mode', active);
+  }
+
+  function getSelector(el) {
+    var dh = el.closest ? el.closest('[data-dh-id]') : null;
+    if (dh && dh.getAttribute('data-dh-id')) return '[data-dh-id="' + dh.getAttribute('data-dh-id') + '"]';
+    if (el.id) return '#' + el.id;
+    var path = [];
+    var node = el;
+    while (node && node !== document.body) {
+      var tag = node.tagName.toLowerCase();
+      if (node.className && typeof node.className === 'string') {
+        var cls = node.className.split(/\\s+/).filter(function(c) { return c && c.indexOf('dh-') !== 0; }).join('.');
+        if (cls) tag += '.' + cls;
+      }
+      path.unshift(tag);
+      node = node.parentElement;
+    }
+    return path.join(' > ');
+  }
+
+  window.addEventListener('message', function(e) {
+    var data = e.data || {};
+    if (data.type === 'dh-render-markers') {
+      renderMarkers(data.markers);
+    } else if (data.type === 'dh-set-annotate-mode') {
+      setAnnotateMode(!!data.active);
+    }
+  });
+
+  document.addEventListener('click', function(e) {
+    if (!annotateMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var target = e.target;
+    var selector = getSelector(target);
+    var rect = target.getBoundingClientRect();
+    var x = rect.left + rect.width / 2 + window.scrollX;
+    var y = rect.top + rect.height / 2 + window.scrollY;
+    var text = (target.innerText || target.textContent || '').slice(0, 200);
+    window.parent.postMessage({
+      type: 'dh-annotate-click',
+      selector: selector,
+      targetText: text,
+      x: x,
+      y: y
+    }, '*');
+  }, true);
+})();`
+)
+
+// injectPrototypeAnnotationScript 将标注脚本与样式注入 HTML 页面，优先放在 </body> 前。
+func injectPrototypeAnnotationScript(html []byte) []byte {
+	block := []byte("<style>" + prototypeAnnotationStyle + "</style><script id=\"dh-prototype-annotation-script\">" + prototypeAnnotationScript + "</script>")
+	if bytes.Contains(html, []byte("</body>")) {
+		return bytes.Replace(html, []byte("</body>"), append(block, []byte("</body>")...), 1)
+	}
+	if bytes.Contains(html, []byte("</html>")) {
+		return bytes.Replace(html, []byte("</html>"), append(block, []byte("</html>")...), 1)
+	}
+	return append(html, block...)
+}
 
 // Handler 是 product-space 模块的 HTTP 处理器。
 type Handler struct {
@@ -394,13 +498,48 @@ func (h *Handler) Comments(w http.ResponseWriter, r *http.Request) {
 		if !h.decodeJSONBody(w, r, &req) {
 			return
 		}
-		comment, err := h.svc.AddComment(r.Context(), workspaceID, userID, itemID, req.Content)
+		comment, err := h.svc.AddComment(r.Context(), workspaceID, userID, itemID, req)
 		if err != nil {
 			h.handleServiceError(w, err, "failed to add prototype comment")
 			return
 		}
 		h.writeJSON(w, http.StatusCreated, comment)
 	}
+}
+
+// ServePrototype 处理 GET /api/v1/workspaces/{id}/product-space/serve/{path...}。
+// 静态服务原型页面及其资源；返回 HTML 时自动注入标注脚本与样式。
+func (h *Handler) ServePrototype(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	userID, err := h.userID(r)
+	if err != nil {
+		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
+		return
+	}
+
+	workspaceID := h.workspaceID(r)
+	path := r.PathValue("path")
+	if path == "" {
+		h.writeError(w, http.StatusBadRequest, "serve path is required")
+		return
+	}
+
+	data, contentType, err := h.svc.ServeFile(r.Context(), workspaceID, userID, path)
+	if err != nil {
+		h.handleServiceError(w, err, "failed to serve prototype file")
+		return
+	}
+
+	if strings.Contains(contentType, "text/html") {
+		data = injectPrototypeAnnotationScript(data)
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 // handleServiceError 统一处理服务层错误，按错误类型映射为对应的 HTTP 状态码。

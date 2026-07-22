@@ -19,7 +19,7 @@ import (
 
 const (
 	// SSE_IDLE_TIMEOUT gatewayd SSE 流无数据超时（agent 进程异常退出后 gatewayd 可能不关闭流）
-	SSE_IDLE_TIMEOUT = 2 * time.Minute
+	SSE_IDLE_TIMEOUT = 10 * time.Minute
 	// runRequestTimeout 是 POST /sessions/{id}/chat 的最大等待时间，
 	// 覆盖整个 run 生命周期，避免 gatewayd 挂死导致后端无限等待。
 	runRequestTimeout = 12 * time.Minute
@@ -273,12 +273,19 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 }
 
 // isSessionNotFound 判断 attach 错误是否因为 gatewayd session 丢失。
+// gatewayd 两种 session 丢失回包格式：
+//   - {"error":"session not found"}   (旧格式)
+//   - {"error":"session <session_id>"} (新格式，含 session ID)
+// 后者不含 "not found" 字样，需通过 404 状态码 + session 关键字综合判断。
 func isSessionNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "not found") && strings.Contains(msg, "session")
+	hasSession := strings.Contains(msg, "session")
+	hasNotFound := strings.Contains(msg, "not found")
+	hasStatus404 := strings.Contains(msg, "status 404")
+	return hasSession && (hasNotFound || hasStatus404)
 }
 
 // isInstanceAlreadyExists 判断 attach 错误是否因为 session 已有 instance（可复用）。

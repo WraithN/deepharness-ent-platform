@@ -263,6 +263,7 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}/download", middleware.Auth(http.HandlerFunc(psH.DownloadVersion)))
 	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}/comments", middleware.Auth(http.HandlerFunc(psH.Comments)))
 	mux.Handle("/api/v1/workspaces/{id}/product-space/folders", middleware.Auth(http.HandlerFunc(psH.Folders)))
+	mux.Handle("/api/v1/workspaces/{id}/product-space/serve/{path...}", middleware.Auth(http.HandlerFunc(psH.ServePrototype)))
 
 	// Team skills / prompts
 	mux.HandleFunc("/api/v1/team/skills", team.Skills)

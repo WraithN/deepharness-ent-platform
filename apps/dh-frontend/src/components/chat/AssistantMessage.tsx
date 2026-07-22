@@ -35,16 +35,25 @@ function extractCardTypes(text: string): string[] {
 
 interface AssistantMessageProps {
   message: MessageState;
+  runPhase?: 'connecting' | 'thinking' | null;
   onArtifactClick?: () => void;
   onRegenerate?: () => void;
   onFilePreview?: (path: string) => void;
   onProjectPreview?: (path: string, mode: PreviewMode) => void;
+  onUserStoryPreview?: (data: UserStoryData) => void;
+  activeUserStoryData?: UserStoryData | null;
 }
 
-export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview }) => {
+export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, runPhase, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview, onUserStoryPreview, activeUserStoryData }) => {
   const thread = useThread();
   const content = Array.isArray(message.content) ? message.content : [];
   const [textExpanded, setTextExpanded] = useState(false);
+
+  const isUserStoryActive = (data: UserStoryData) =>
+    activeUserStoryData != null &&
+    activeUserStoryData.title === data.title &&
+    activeUserStoryData.total === data.total &&
+    (activeUserStoryData.stories[0]?.story === data.stories[0]?.story);
 
   let artifact: { type: string; title: string } | undefined;
   const legacyDataParts: { name: string; data: ChatPart }[] = [];
@@ -111,6 +120,17 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
 
   const hasThinkingContent = thinkingItems.length > 0;
   const hasOutputText = outputParts.some((p) => Boolean(p.text));
+
+  // 计算思考次数和工具调用统计，用于折叠卡片标题展示。
+  const thinkingCount = thinkingItems.filter((item) => item.type === 'reasoning').length;
+  const toolStats = thinkingItems.reduce<Record<string, number>>((acc, item) => {
+    if (item.type !== 'tool-call') return acc;
+    const name = item.part.toolName || '工具调用';
+    const displayName =
+      { write: '写入文件', file_write: '写入文件', read: '读取文件', file_read: '读取文件', bash: '执行命令', terminal: '执行命令', execute: '执行命令', search: '搜索', web_search: '搜索' }[name.toLowerCase()] || name;
+    acc[displayName] = (acc[displayName] || 0) + 1;
+    return acc;
+  }, {});
 
   // 检测 reasoning 部件是否全部标记为 done（已收到 THINKING_END 事件）。
   const reasoningParts = content.filter((p): p is ReasoningMessagePart & { done?: boolean } => p.type === 'reasoning');
@@ -209,7 +229,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
           {showThinkingPlaceholder && (
             <div className="px-3 py-2 flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span>思考中</span>
+              <span>{runPhase === 'connecting' ? '正在连接个人助手' : '思考中'}</span>
               <span className="inline-flex">
                 <span className="animate-bounce mx-0.5">.</span>
                 <span className="animate-bounce mx-0.5" style={{ animationDelay: '0.2s' }}>.</span>
@@ -220,7 +240,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
 
           {/* 思考/工具过程统一折叠在 ThinkingCard 中，按实际出现顺序用时间线连接 */}
           {hasThinkingContent && (
-            <ThinkingCard isRunning={isThinkingRunning} defaultOpen={isRunning}>
+            <ThinkingCard isRunning={isThinkingRunning} defaultOpen={false} thinkingCount={thinkingCount} toolStats={toolStats}>
               <div className="relative py-1">
                 {/* 中心贯穿时间线，从圆点中心穿过 */}
                 <div className="absolute left-[11px] top-2 bottom-2 w-px bg-border/60" />
@@ -323,7 +343,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
 
           {/* 从 [[CARD:user_story]] 标记自动检测到的用户故事卡片 */}
           {!hasUserStoryFromLegacy && hasUserStoryFromMarker && userStoryData && (
-            <div className="px-3 py-2"><UserStoryCard data={userStoryData} /></div>
+            <div className="px-3 py-2"><UserStoryCard data={userStoryData} isPreviewActive={isUserStoryActive(userStoryData)} onPreview={onUserStoryPreview} /></div>
           )}
 
           {/* legacy data 部件（diff / task_list / tool_use / tool_result 等） */}
@@ -352,7 +372,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, onA
             if (name === 'user_story') {
               const storyData = (data.content ? JSON.parse(data.content) : data.metadata) as UserStoryData;
               if (storyData && storyData.stories) {
-                return <div key={idx} className="px-3 py-2"><UserStoryCard data={storyData} /></div>;
+                return <div key={idx} className="px-3 py-2"><UserStoryCard data={storyData} isPreviewActive={isUserStoryActive(storyData)} onPreview={onUserStoryPreview} /></div>;
               }
               return null;
             }

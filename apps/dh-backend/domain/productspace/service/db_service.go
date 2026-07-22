@@ -41,6 +41,11 @@ const (
 
 	// maxCommentLength 是原型批注内容的最大长度（按 rune 计，避免截断多字节字符）。
 	maxCommentLength = 2000
+
+	// maxSelectorLength 是元素选择器的最大长度，与数据库 VARCHAR(500) 对齐。
+	maxSelectorLength = 500
+	// maxTargetTextLength 是选中元素文本快照的最大长度。
+	maxTargetTextLength = 500
 )
 
 const (
@@ -796,6 +801,113 @@ func (s *DBProductSpaceService) insertProductDoc(
 	return &item, nil
 }
 
+// syncPrototypeFilesFromDisk 扫描磁盘 products/prototypes 目录，将未在 product_docs 中注册的 .html 文件自动入库。
+// 自动注册仅用于适配 /proto-make 等 AI 指令生成的纯前端工程页面，使其无需手动创建即可在产品空间展示。
+// 注册失败的文件仅记录日志，不影响整体目录树返回。
+func (s *DBProductSpaceService) syncPrototypeFilesFromDisk(ctx context.Context, workspaceID, userID string, root map[string]*object.ProductSpaceTreeNode) error {
+	protoPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, object.ProductSpacePrototypesDir)
+	if err != nil {
+		return err
+	}
+	if err := rejectSymlink(protoPath); err != nil {
+		return fmt.Errorf("prototypes directory symlink check failed: %w", err)
+	}
+
+	existing := make(map[string]struct{})
+	var collect func(nodes []object.ProductSpaceTreeNode)
+	collect = func(nodes []object.ProductSpaceTreeNode) {
+		for _, n := range nodes {
+			if n.Type == object.ItemTypePrototype {
+				existing[n.Path] = struct{}{}
+			}
+			collect(n.Children)
+		}
+	}
+	for _, catName := range []string{object.ProductSpaceDocsDir, object.ProductSpacePrototypesDir} {
+		collect(root[catName].Children)
+	}
+
+	return filepath.WalkDir(protoPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == protoPath || d.IsDir() {
+			return nil
+		}
+		if strings.ToLower(filepath.Ext(path)) != ".html" {
+			return nil
+		}
+		if err := rejectSymlink(path); err != nil {
+			log.Printf("reject symlink for prototype file %s failed: %v", path, err)
+			return nil
+		}
+		rel, err := filepath.Rel(protoPath, path)
+		if err != nil {
+			log.Printf("compute relative path for prototype file %s failed: %v", path, err)
+			return nil
+		}
+		relPath := filepath.Join(object.ProductSpacePrototypesDir, filepath.ToSlash(rel))
+		if _, ok := existing[relPath]; ok {
+			return nil
+		}
+
+		// 对 Node/Vite 工程，优先使用 dist/index.html 作为产品空间入口。
+		// 如果工程根目录存在 dist/index.html，则忽略根目录的 index.html（无法直接预览）。
+		if strings.EqualFold(filepath.Base(path), "index.html") {
+			dirParts := strings.Split(filepath.ToSlash(filepath.Dir(rel)), "/")
+			if len(dirParts) == 1 {
+				distIndex := filepath.Join(filepath.Dir(path), "dist", "index.html")
+				if info, err := os.Stat(distIndex); err == nil && !info.IsDir() {
+					return nil
+				}
+			}
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("read prototype file %s failed: %v", path, err)
+			return nil
+		}
+
+		title := filepath.Base(path)
+		size := int64(len(data))
+		content := base64.StdEncoding.EncodeToString(data)
+		id := uuid.NewString()
+		item, err := s.insertProductDoc(
+			ctx, s.db, id, workspaceID, userID, object.ItemTypePrototype, title, id, relPath,
+			content, ItemStatusDraft, 1, "html", mimeTypeForExt("html"), size, userID,
+		)
+		if err != nil {
+			log.Printf("register prototype file %s failed: %v", relPath, err)
+			return nil
+		}
+		existing[relPath] = struct{}{}
+
+		category, folder, name, _, err := parseRelativePath(item.RelativePath)
+		if err != nil {
+			log.Printf("parse relative path %s failed: %v", item.RelativePath, err)
+			return nil
+		}
+		rootNode, ok := root[category]
+		if !ok {
+			return nil
+		}
+		fileNode := object.ProductSpaceTreeNode{
+			ID:   item.ID,
+			Name: name,
+			Path: item.RelativePath,
+			Type: item.Type,
+		}
+		if folder == "" {
+			rootNode.Children = append(rootNode.Children, fileNode)
+			return nil
+		}
+		folderNode := findOrCreateFolder(rootNode, folder)
+		folderNode.Children = append(folderNode.Children, fileNode)
+		return nil
+	})
+}
+
 // GetTree 返回指定用户产品空间的目录树。
 func (s *DBProductSpaceService) GetTree(ctx context.Context, workspaceID, userID string) ([]object.ProductSpaceTreeNode, error) {
 	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
@@ -846,6 +958,12 @@ func (s *DBProductSpaceService) GetTree(ctx context.Context, workspaceID, userID
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate items failed: %w", err)
+	}
+
+	// 自动扫描并注册磁盘上未入库的 .html 原型文件（如 /proto-make 等 AI 指令生成的工程）。
+	// 注册失败仅记录日志，不影响已有目录树返回。
+	if err := s.syncPrototypeFilesFromDisk(ctx, workspaceID, userID, root); err != nil {
+		log.Printf("sync prototype files from disk failed: %v", err)
 	}
 
 	roots := []object.ProductSpaceTreeNode{*root[object.ProductSpaceDocsDir], *root[object.ProductSpacePrototypesDir]}
@@ -1619,10 +1737,45 @@ func (s *DBProductSpaceService) DownloadVersion(ctx context.Context, workspaceID
 	return buildVersionFileName(name, ext, version), data, nil
 }
 
-// scanPrototypeComment 从数据库行扫描批注评论对象。
+// ServeFile 按相对路径从产品空间文件系统读取文件，返回内容（不修改）与 MIME 类型。
+// 仅允许访问 prototypes 目录下的文件，用于 iframe 静态预览原型页面及其资源。
+func (s *DBProductSpaceService) ServeFile(ctx context.Context, workspaceID, userID, relativePath string) ([]byte, string, error) {
+	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
+		return nil, "", err
+	}
+	if err := validateRelativePath(relativePath); err != nil {
+		return nil, "", invalidInput(err)
+	}
+	// 仅开放原型目录，避免通过 serve 接口访问 docs 或 versions 等业务文件。
+	if !strings.HasPrefix(filepath.ToSlash(relativePath), object.ProductSpacePrototypesDir+"/") {
+		return nil, "", invalidInput(errors.New("serve path must be under prototypes"))
+	}
+
+	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, relativePath)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := rejectSymlink(absPath); err != nil {
+		return nil, "", fmt.Errorf("symlink check failed: %w", err)
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, "", fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
+		}
+		return nil, "", fmt.Errorf("read file failed: %w", err)
+	}
+	ext := parseExtFromName(absPath)
+	return data, mimeTypeForExt(ext), nil
+}
+
+// scanPrototypeComment 从数据库行扫描批注评论对象（含位置/元素信息）。
 // 查询需通过 LEFT JOIN users 提供 userName 列（用户记录缺失时为空字符串）。
 func scanPrototypeComment(sc scanner, c *object.PrototypeComment) error {
-	return sc.Scan(&c.ID, &c.ItemID, &c.WorkspaceID, &c.UserID, &c.UserName, &c.Content, &c.CreatedAt)
+	return sc.Scan(
+		&c.ID, &c.ItemID, &c.WorkspaceID, &c.UserID, &c.UserName,
+		&c.Content, &c.Selector, &c.TargetText, &c.X, &c.Y, &c.CreatedAt,
+	)
 }
 
 // ListComments 返回指定条目下的原型批注评论，按创建时间倒序排列。
@@ -1636,7 +1789,8 @@ func (s *DBProductSpaceService) ListComments(ctx context.Context, workspaceID, u
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.id, c.item_id, c.workspace_id, c.user_id, COALESCE(u.name, ''), c.content, c.created_at
+		SELECT c.id, c.item_id, c.workspace_id, c.user_id, COALESCE(u.name, ''), c.content,
+		       c.selector, c.target_text, c.x, c.y, c.created_at
 		FROM product_prototype_comments c
 		LEFT JOIN users u ON u.id = c.user_id
 		WHERE c.item_id = $1 AND c.workspace_id = $2
@@ -1661,9 +1815,9 @@ func (s *DBProductSpaceService) ListComments(ctx context.Context, workspaceID, u
 	return comments, nil
 }
 
-// AddComment 为指定条目新增原型批注评论，返回包含用户名的完整对象。
+// AddComment 为指定条目新增原型批注评论，返回包含用户名与位置信息的完整对象。
 // 插入通过 CTE 一次性完成 INSERT 与 LEFT JOIN users，避免二次查询获取用户名。
-func (s *DBProductSpaceService) AddComment(ctx context.Context, workspaceID, userID, itemID, content string) (*object.PrototypeComment, error) {
+func (s *DBProductSpaceService) AddComment(ctx context.Context, workspaceID, userID, itemID string, req object.AddCommentRequest) (*object.PrototypeComment, error) {
 	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
 		return nil, err
 	}
@@ -1671,7 +1825,7 @@ func (s *DBProductSpaceService) AddComment(ctx context.Context, workspaceID, use
 		return nil, err
 	}
 
-	content = strings.TrimSpace(content)
+	content := strings.TrimSpace(req.Content)
 	if content == "" {
 		return nil, invalidInput(errors.New(errMsgCommentEmpty))
 	}
@@ -1679,17 +1833,27 @@ func (s *DBProductSpaceService) AddComment(ctx context.Context, workspaceID, use
 		return nil, invalidInput(errors.New(errMsgCommentTooLong))
 	}
 
+	selector := strings.TrimSpace(req.Selector)
+	targetText := strings.TrimSpace(req.TargetText)
+	if len([]rune(selector)) > maxSelectorLength {
+		selector = string([]rune(selector)[:maxSelectorLength])
+	}
+	if len([]rune(targetText)) > maxTargetTextLength {
+		targetText = string([]rune(targetText)[:maxTargetTextLength])
+	}
+
 	var c object.PrototypeComment
 	err := scanPrototypeComment(s.db.QueryRowContext(ctx, `
 		WITH ins AS (
-			INSERT INTO product_prototype_comments (id, item_id, workspace_id, user_id, content)
-			VALUES ($1, $2, $3, $4, $5)
-			RETURNING id, item_id, workspace_id, user_id, content, created_at
+			INSERT INTO product_prototype_comments (id, item_id, workspace_id, user_id, content, selector, target_text, x, y)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			RETURNING id, item_id, workspace_id, user_id, content, selector, target_text, x, y, created_at
 		)
-		SELECT ins.id, ins.item_id, ins.workspace_id, ins.user_id, COALESCE(u.name, ''), ins.content, ins.created_at
+		SELECT ins.id, ins.item_id, ins.workspace_id, ins.user_id, COALESCE(u.name, ''),
+		       ins.content, ins.selector, ins.target_text, ins.x, ins.y, ins.created_at
 		FROM ins
 		LEFT JOIN users u ON u.id = ins.user_id
-	`, uuid.NewString(), itemID, workspaceID, userID, content), &c)
+	`, uuid.NewString(), itemID, workspaceID, userID, content, selector, targetText, req.X, req.Y), &c)
 	if err != nil {
 		return nil, fmt.Errorf("insert prototype comment failed: %w", err)
 	}

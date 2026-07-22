@@ -67,7 +67,23 @@ export interface PrototypeComment {
   /** 评论人姓名（后端 LEFT JOIN users 解析，用户缺失时为空） */
   userName: string;
   content: string;
+  /** 被标注元素的选择器（优先 data-dh-id） */
+  selector?: string;
+  /** 被标注元素的文本快照 */
+  targetText?: string;
+  /** 标注点在页面中的 X 坐标 */
+  x?: number;
+  /** 标注点在页面中的 Y 坐标 */
+  y?: number;
   createdAt: string;
+}
+
+export interface AddCommentRequest {
+  content: string;
+  selector?: string;
+  targetText?: string;
+  x?: number;
+  y?: number;
 }
 
 export interface CreatePrototypeRequest {
@@ -150,6 +166,6 @@ export const productSpaceApi = {
     api.get<PrototypeComment[]>(`${ITEMS_PATH(workspaceId)}/${itemId}/comments`),
 
   /** 新增批注评论。 */
-  addComment: (workspaceId: string, itemId: string, content: string) =>
-    api.post<PrototypeComment>(`${ITEMS_PATH(workspaceId)}/${itemId}/comments`, { content }),
+  addComment: (workspaceId: string, itemId: string, req: AddCommentRequest) =>
+    api.post<PrototypeComment>(`${ITEMS_PATH(workspaceId)}/${itemId}/comments`, req),
 };

@@ -11,8 +11,10 @@ import {
   FolderPlus,
   Fullscreen,
   Grid3x3,
+  History,
   Loader2,
   Lock,
+  MessageSquare,
   Minus,
   MonitorPlay,
   Plus,
@@ -68,6 +70,7 @@ import {
   decodeBase64Utf8,
   type ProductSpaceItem,
   type ProductSpaceTreeNode,
+  type ProductSpaceVersion,
   type PrototypeComment,
   productSpaceApi,
 } from '@/lib/productspace-api';
@@ -423,7 +426,7 @@ const CommentsPanel: React.FC<CommentsPanelProps> = ({
   onDraftChange,
   onSubmit,
 }) => (
-  <div className="h-[38%] min-h-[220px] border-t border-border/50 flex flex-col shrink-0">
+  <div className="h-[30%] min-h-[200px] border-t border-border/50 flex flex-col shrink-0">
     <div className="px-3 py-2 text-xs font-semibold text-foreground/80 shrink-0 flex items-center gap-1.5">
       批注评论
       <span className="text-muted-foreground font-normal">({comments.length})</span>
@@ -486,22 +489,46 @@ interface PrototypeCanvasProps {
   zoom: number;
   grid: boolean;
   interactive: boolean;
+  annotateMode: boolean;
   canvasRef: React.RefObject<HTMLDivElement | null>;
+  iframeRef: React.RefObject<HTMLIFrameElement | null>;
   onViewportChange: (v: string) => void;
   onZoomChange: (v: number) => void;
   onGridChange: (v: boolean) => void;
   onInteractiveChange: (v: boolean) => void;
+  onAnnotateModeChange: (v: boolean) => void;
+  onFrameLoad: () => void;
   onCreateProduct: () => void;
   onCreatePage: () => void;
 }
 
-/** 画布工具栏：视口、缩放、网格、交互模式开关。 */
+/** 画布工具栏：视口、缩放、网格、交互模式、标注模式开关。 */
 const CanvasToolbar: React.FC<
   Pick<
     PrototypeCanvasProps,
-    'viewport' | 'zoom' | 'grid' | 'interactive' | 'onViewportChange' | 'onZoomChange' | 'onGridChange' | 'onInteractiveChange'
+    | 'viewport'
+    | 'zoom'
+    | 'grid'
+    | 'interactive'
+    | 'annotateMode'
+    | 'onViewportChange'
+    | 'onZoomChange'
+    | 'onGridChange'
+    | 'onInteractiveChange'
+    | 'onAnnotateModeChange'
   >
-> = ({ viewport, zoom, grid, interactive, onViewportChange, onZoomChange, onGridChange, onInteractiveChange }) => {
+> = ({
+  viewport,
+  zoom,
+  grid,
+  interactive,
+  annotateMode,
+  onViewportChange,
+  onZoomChange,
+  onGridChange,
+  onInteractiveChange,
+  onAnnotateModeChange,
+}) => {
   const isFit = viewport === 'fit';
   return (
     <div className="flex items-center gap-2 px-3 py-2 border-b border-border/50 bg-background/80 shrink-0 flex-wrap">
@@ -570,6 +597,17 @@ const CanvasToolbar: React.FC<
         <Eye className="h-3.5 w-3.5" />
         交互演示
       </Button>
+
+      <Button
+        variant={annotateMode ? 'secondary' : 'ghost'}
+        size="sm"
+        className="h-8 text-xs gap-1.5"
+        title={annotateMode ? '标注模式已开启：点击页面元素添加批注' : '标注模式已关闭'}
+        onClick={() => onAnnotateModeChange(!annotateMode)}
+      >
+        <MessageSquare className="h-3.5 w-3.5" />
+        标注
+      </Button>
     </div>
   );
 };
@@ -593,18 +631,26 @@ const CanvasEmptyGuide: React.FC<{
   </div>
 );
 
-/** iframe 渲染单元：始终启用 sandbox；交互演示模式追加 allow-scripts 允许脚本执行，关闭时脚本被完全禁用（纯静态预览）。 */
-const PrototypeFrame: React.FC<{ page: SelectedPage; interactive: boolean }> = ({ page, interactive }) => (
+/** iframe 渲染单元：通过 src 加载后端静态服务，交互模式追加 allow-scripts 允许脚本执行。 */
+const PrototypeFrame: React.FC<{
+  page: SelectedPage;
+  interactive: boolean;
+  src: string;
+  iframeRef: React.RefObject<HTMLIFrameElement | null>;
+  onLoad: () => void;
+}> = ({ page, interactive, src, iframeRef, onLoad }) => (
   <iframe
     key={`${page.itemId}-${interactive}`}
+    ref={iframeRef}
     title={page.item.title}
-    srcDoc={page.html}
+    src={src}
     sandbox={interactive ? 'allow-scripts' : ''}
     className="w-full h-full border-0 bg-white"
+    onLoad={onLoad}
   />
 );
 
-/** 原型画布：iframe srcDoc 渲染，支持视口/缩放/网格/交互模式。 */
+/** 原型画布：iframe 静态服务渲染，支持视口/缩放/网格/交互/标注模式。 */
 const PrototypeCanvas: React.FC<PrototypeCanvasProps> = ({
   page,
   loading,
@@ -613,11 +659,15 @@ const PrototypeCanvas: React.FC<PrototypeCanvasProps> = ({
   zoom,
   grid,
   interactive,
+  annotateMode,
   canvasRef,
+  iframeRef,
   onViewportChange,
   onZoomChange,
   onGridChange,
   onInteractiveChange,
+  onAnnotateModeChange,
+  onFrameLoad,
   onCreateProduct,
   onCreatePage,
 }) => {
@@ -626,6 +676,10 @@ const PrototypeCanvas: React.FC<PrototypeCanvasProps> = ({
   // 适配屏幕模式下缩放不生效（始终 100%），固定视口按 zoom 缩放；高度取预设的真实设备视口高
   const scale = isFit ? 1 : zoom / 100;
   const frameHeight = viewportDef.height;
+  const frameSrc = useMemo(() => {
+    if (!page) return '';
+    return `/api/v1/workspaces/${page.item.workspace_id}/product-space/serve/${encodeURI(page.item.relative_path)}`;
+  }, [page]);
 
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0">
@@ -634,10 +688,12 @@ const PrototypeCanvas: React.FC<PrototypeCanvasProps> = ({
         zoom={zoom}
         grid={grid}
         interactive={interactive}
+        annotateMode={annotateMode}
         onViewportChange={onViewportChange}
         onZoomChange={onZoomChange}
         onGridChange={onGridChange}
         onInteractiveChange={onInteractiveChange}
+        onAnnotateModeChange={onAnnotateModeChange}
       />
 
       <div
@@ -676,7 +732,7 @@ const PrototypeCanvas: React.FC<PrototypeCanvasProps> = ({
         {!loading && page && isFit && (
           <div className="absolute inset-0 p-6">
             <div className="bg-white shadow-lg rounded-lg overflow-hidden ring-1 ring-border/40 w-full h-full">
-              <PrototypeFrame page={page} interactive={interactive} />
+              <PrototypeFrame page={page} interactive={interactive} src={frameSrc} iframeRef={iframeRef} onLoad={onFrameLoad} />
             </div>
           </div>
         )}
@@ -694,7 +750,7 @@ const PrototypeCanvas: React.FC<PrototypeCanvasProps> = ({
                   transformOrigin: 'top left',
                 }}
               >
-                <PrototypeFrame page={page} interactive={interactive} />
+                <PrototypeFrame page={page} interactive={interactive} src={frameSrc} iframeRef={iframeRef} onLoad={onFrameLoad} />
               </div>
             </div>
           </div>
@@ -916,6 +972,129 @@ const PermissionDialog: React.FC<{ open: boolean; onOpenChange: (open: boolean) 
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 子组件：标注与版本历史面板
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 添加标注批注对话框：点击页面元素后弹出，允许输入产品描述。 */
+interface AnnotationDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  targetText?: string;
+  onSubmit: (content: string) => Promise<void>;
+}
+
+const AnnotationDialog: React.FC<AnnotationDialogProps> = ({ open, onOpenChange, targetText, onSubmit }) => {
+  const [content, setContent] = useState('');
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (open) setContent('');
+  }, [open]);
+
+  const handleSubmit = async () => {
+    const trimmed = content.trim();
+    if (!trimmed) {
+      toast.error('请输入批注内容');
+      return;
+    }
+    setSending(true);
+    try {
+      await onSubmit(trimmed);
+      onOpenChange(false);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <MessageSquare className="h-4 w-4" />
+            添加批注
+          </DialogTitle>
+          <DialogDescription>为选中的页面元素添加产品描述</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          {targetText && (
+            <div className="text-xs text-muted-foreground bg-muted rounded px-2 py-1.5 truncate">
+              选中：{targetText}
+            </div>
+          )}
+          <Textarea
+            value={content}
+            onChange={e => setContent(e.target.value.slice(0, COMMENT_MAX_LENGTH))}
+            placeholder="输入产品描述或批注…"
+            className="min-h-[80px] max-h-[160px] text-xs resize-none"
+            disabled={sending}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={sending}>
+            取消
+          </Button>
+          <Button onClick={handleSubmit} disabled={sending || !content.trim()}>
+            {sending && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+            发布
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+interface VersionsPanelProps {
+  versions: ProductSpaceVersion[];
+  loading: boolean;
+  disabled: boolean;
+  currentVersion: number;
+  onRestore: (version: number) => void;
+}
+
+/** 版本历史面板：列出历史版本并提供恢复入口。 */
+const VersionsPanel: React.FC<VersionsPanelProps> = ({ versions, loading, disabled, currentVersion, onRestore }) => (
+  <div className="h-[30%] min-h-[180px] border-t border-border/50 flex flex-col shrink-0">
+    <div className="px-3 py-2 text-xs font-semibold text-foreground/80 flex items-center gap-1.5 shrink-0">
+      <History className="h-3.5 w-3.5" />
+      版本历史
+      <span className="text-muted-foreground font-normal">({versions.length})</span>
+    </div>
+    <ScrollArea className="flex-1 min-h-0 px-3">
+      {loading ? (
+        <div className="flex justify-center py-4">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        </div>
+      ) : disabled ? (
+        <p className="text-xs text-muted-foreground text-center py-4">选择页面后可查看版本历史</p>
+      ) : versions.length === 0 ? (
+        <p className="text-xs text-muted-foreground text-center py-4">暂无历史版本</p>
+      ) : (
+        <div className="space-y-2 pb-2">
+          {versions.map(v => (
+            <div key={v.id} className="flex items-center justify-between gap-2 text-xs">
+              <div className="min-w-0">
+                <div className="font-medium">
+                  v{v.version}
+                  {v.version === currentVersion && <span className="ml-1 text-muted-foreground">(当前)</span>}
+                </div>
+                <div className="text-muted-foreground truncate">{v.change_summary || '无描述'}</div>
+                <div className="text-[10px] text-muted-foreground">{formatTime(v.created_at)}</div>
+              </div>
+              {v.version !== currentVersion && (
+                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onRestore(v.version)}>
+                  恢复
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </ScrollArea>
+  </div>
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 主组件
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -946,6 +1125,19 @@ export const PrototypeWorkspace: React.FC = () => {
   const [commentDraft, setCommentDraft] = useState('');
   const [sendingComment, setSendingComment] = useState(false);
 
+  const [versions, setVersions] = useState<ProductSpaceVersion[]>([]);
+  const [loadingVersions, setLoadingVersions] = useState(false);
+  const [restoringVersion, setRestoringVersion] = useState<number | null>(null);
+
+  const [annotateMode, setAnnotateMode] = useState(false);
+  const [annotationDialogOpen, setAnnotationDialogOpen] = useState(false);
+  const [pendingAnnotation, setPendingAnnotation] = useState<{
+    selector?: string;
+    targetText?: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
   const [createProductOpen, setCreateProductOpen] = useState(false);
   const [createPageOpen, setCreatePageOpen] = useState(false);
   const [permissionOpen, setPermissionOpen] = useState(false);
@@ -954,6 +1146,7 @@ export const PrototypeWorkspace: React.FC = () => {
   const [exporting, setExporting] = useState(false);
 
   const canvasRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   // 分享深链仅应用一次，避免刷新树后重复跳转
   const deepLinkAppliedRef = useRef(false);
 
@@ -980,6 +1173,22 @@ export const PrototypeWorkspace: React.FC = () => {
     [workspaceId]
   );
 
+  const loadVersions = useCallback(
+    async (itemId: string) => {
+      if (!workspaceId) return;
+      setLoadingVersions(true);
+      try {
+        const list = await productSpaceApi.listVersions(workspaceId, itemId);
+        setVersions(list ?? []);
+      } catch {
+        toast.error('加载版本历史失败');
+      } finally {
+        setLoadingVersions(false);
+      }
+    },
+    [workspaceId]
+  );
+
   const loadPage = useCallback(
     async (itemId: string) => {
       if (!workspaceId) return;
@@ -987,7 +1196,9 @@ export const PrototypeWorkspace: React.FC = () => {
       try {
         const detail = await productSpaceApi.getItem(workspaceId, itemId);
         setPage({ itemId, item: detail, html: decodeBase64Utf8(detail.content) });
+        setAnnotateMode(false);
         loadComments(itemId);
+        loadVersions(itemId);
       } catch {
         toast.error('加载原型页面失败');
         setPage(null);
@@ -995,7 +1206,7 @@ export const PrototypeWorkspace: React.FC = () => {
         setLoadingPage(false);
       }
     },
-    [workspaceId, loadComments]
+    [workspaceId, loadComments, loadVersions]
   );
 
   const loadTree = useCallback(async () => {
@@ -1039,12 +1250,125 @@ export const PrototypeWorkspace: React.FC = () => {
     setSelectedProduct(name);
     setPage(null);
     setComments([]);
+    setVersions([]);
+    setAnnotateMode(false);
   };
 
   const handleSelectPage = (node: ProductSpaceTreeNode) => {
     if (!node.id) return;
+    setAnnotateMode(false);
+    setPendingAnnotation(null);
     loadPage(node.id);
   };
+
+  // 与 iframe 的标注脚本通信：切换标注模式、渲染标记。
+  const postToFrame = useCallback((message: unknown) => {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage(message, '*');
+  }, []);
+
+  const toFrameMarkers = useCallback((list: PrototypeComment[]) => {
+    return list
+      .filter(c => typeof c.x === 'number' && typeof c.y === 'number')
+      .map(c => ({
+        selector: c.selector,
+        targetText: c.targetText,
+        x: c.x,
+        y: c.y,
+        content: c.content,
+        userName: c.userName,
+        createdAt: c.createdAt,
+      }));
+  }, []);
+
+  const handleFrameLoad = useCallback(() => {
+    if (!page) return;
+    postToFrame({ type: 'dh-set-annotate-mode', active: annotateMode });
+    postToFrame({ type: 'dh-render-markers', markers: toFrameMarkers(comments) });
+  }, [annotateMode, comments, page, postToFrame, toFrameMarkers]);
+
+  useEffect(() => {
+    if (!page) return;
+    postToFrame({ type: 'dh-set-annotate-mode', active: annotateMode });
+  }, [annotateMode, page, postToFrame]);
+
+  useEffect(() => {
+    if (!page) return;
+    postToFrame({ type: 'dh-render-markers', markers: toFrameMarkers(comments) });
+  }, [comments, page, postToFrame, toFrameMarkers]);
+
+  // 监听 iframe 发送的标注点击事件，弹出批注对话框。
+  useEffect(() => {
+    const handleMessage = (e: MessageEvent) => {
+      if (e.source !== iframeRef.current?.contentWindow) return;
+      const data = e.data || {};
+      if (data.type === 'dh-annotate-click') {
+        setPendingAnnotation({
+          selector: data.selector,
+          targetText: data.targetText,
+          x: data.x,
+          y: data.y,
+        });
+        setAnnotationDialogOpen(true);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  const handleInteractiveChange = useCallback((v: boolean) => {
+    setInteractive(v);
+    if (!v) setAnnotateMode(false);
+  }, []);
+
+  const handleAnnotateModeChange = useCallback((v: boolean) => {
+    setAnnotateMode(v);
+    if (v) setInteractive(true);
+  }, []);
+
+  const handleAnnotationSubmit = useCallback(
+    async (content: string) => {
+      if (!page || !pendingAnnotation) return;
+      setSendingComment(true);
+      try {
+        await productSpaceApi.addComment(workspaceId, page.itemId, {
+          content,
+          selector: pendingAnnotation.selector,
+          targetText: pendingAnnotation.targetText,
+          x: pendingAnnotation.x,
+          y: pendingAnnotation.y,
+        });
+        toast.success('批注已添加');
+        setAnnotateMode(false);
+        setPendingAnnotation(null);
+        await loadComments(page.itemId);
+      } catch {
+        toast.error('添加批注失败');
+      } finally {
+        setSendingComment(false);
+      }
+    },
+    [workspaceId, page, pendingAnnotation, loadComments]
+  );
+
+  const handleRestoreVersion = useCallback(
+    async (version: number) => {
+      if (!page) return;
+      if (!window.confirm(`确认恢复至 v${version}？当前未保存的修改将丢失。`)) return;
+      setRestoringVersion(version);
+      try {
+        await productSpaceApi.restoreVersion(workspaceId, page.itemId, version);
+        toast.success(`已恢复至 v${version}`);
+        await loadPage(page.itemId);
+      } catch {
+        toast.error('恢复版本失败');
+      } finally {
+        setRestoringVersion(null);
+      }
+    },
+    [workspaceId, page, loadPage]
+  );
 
   const handleCreateProduct = async (name: string) => {
     try {
@@ -1085,6 +1409,8 @@ export const PrototypeWorkspace: React.FC = () => {
       if (page?.itemId === deleteTarget.id) {
         setPage(null);
         setComments([]);
+        setVersions([]);
+        setAnnotateMode(false);
       }
       await loadTree();
     } catch {
@@ -1158,7 +1484,7 @@ export const PrototypeWorkspace: React.FC = () => {
     if (!page || !content) return;
     setSendingComment(true);
     try {
-      const created = await productSpaceApi.addComment(workspaceId, page.itemId, content);
+      const created = await productSpaceApi.addComment(workspaceId, page.itemId, { content });
       setComments(prev => [created, ...prev]);
       setCommentDraft('');
     } catch {
@@ -1219,16 +1545,20 @@ export const PrototypeWorkspace: React.FC = () => {
           zoom={zoom}
           grid={grid}
           interactive={interactive}
+          annotateMode={annotateMode}
           canvasRef={canvasRef}
+          iframeRef={iframeRef}
           onViewportChange={setViewport}
           onZoomChange={setZoom}
           onGridChange={setGrid}
-          onInteractiveChange={setInteractive}
+          onInteractiveChange={handleInteractiveChange}
+          onAnnotateModeChange={handleAnnotateModeChange}
+          onFrameLoad={handleFrameLoad}
           onCreateProduct={() => setCreateProductOpen(true)}
           onCreatePage={() => setCreatePageOpen(true)}
         />
 
-        {/* 右侧栏：页面树 + 批注评论 */}
+        {/* 右侧栏：页面树 + 版本历史 + 批注评论 */}
         <aside className="w-[340px] border-l border-border/50 flex flex-col min-h-0 shrink-0 bg-background/60">
           <PageTreePanel
             products={products}
@@ -1243,6 +1573,13 @@ export const PrototypeWorkspace: React.FC = () => {
             onCreateProduct={() => setCreateProductOpen(true)}
             onCreatePage={() => setCreatePageOpen(true)}
             onRefresh={loadTree}
+          />
+          <VersionsPanel
+            versions={versions}
+            loading={loadingVersions}
+            disabled={!page}
+            currentVersion={page?.item.current_version ?? 0}
+            onRestore={handleRestoreVersion}
           />
           <CommentsPanel
             comments={comments}
@@ -1265,6 +1602,15 @@ export const PrototypeWorkspace: React.FC = () => {
         onSubmit={handleCreatePage}
       />
       <PermissionDialog open={permissionOpen} onOpenChange={setPermissionOpen} />
+      <AnnotationDialog
+        open={annotationDialogOpen}
+        onOpenChange={open => {
+          if (!open) setAnnotateMode(false);
+          setAnnotationDialogOpen(open);
+        }}
+        targetText={pendingAnnotation?.targetText}
+        onSubmit={handleAnnotationSubmit}
+      />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={open => !open && setDeleteTarget(null)}>
         <AlertDialogContent>

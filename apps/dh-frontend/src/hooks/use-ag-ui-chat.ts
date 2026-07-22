@@ -16,12 +16,18 @@ interface UseAgUiChatOptions {
   agentPluginKey?: string;
 }
 
+const PHASE_CONNECTING = 'connecting' as const;
+const PHASE_THINKING = 'thinking' as const;
+
+type RunPhase = typeof PHASE_CONNECTING | typeof PHASE_THINKING | null;
+
 interface UseAgUiChatReturn {
   runtime: AssistantRuntime;
   sessionId: string | null;
   instanceId: string | null;
   wsConnected: boolean;
   isRunning: boolean;
+  runPhase: RunPhase;
   messages: ThreadMessageLike[];
   sendMessage: (text: string, context?: SendContext) => Promise<void>;
   switchSession: (nextSessionId: string | null) => Promise<void>;
@@ -31,8 +37,8 @@ interface UseAgUiChatReturn {
 }
 
 const AGENT_URL = '/api/v1/agent';
-// 工具调用后模型整理长报告可能较长时间无 token，60s 容易误触发，延长到 180s。
-const NO_EVENT_TIMEOUT_MS = 180000;
+// 工具调用后模型整理长报告可能较长时间无 token，延长到 10 分钟。
+const NO_EVENT_TIMEOUT_MS = 600000;
 const NO_EVENT_TIMER_INTERVAL_MS = 5000;
 
 const USER_PROMPT_MARKER = '__USER_PROMPT__';
@@ -66,7 +72,7 @@ function classifyAgentError(errorMsg: string): string {
  */
 function buildPromptRules(sessionId: string): string {
   return `请严格遵循以下规则回答：
-1. 回答必须使用中文。
+1. 回答必须使用中文，包括思考过程、工具调用说明、错误分析等所有内部推理文本也必须使用中文。
 2. 禁止使用 /workflows、/commit、/pr、/review 等 slash command；所有任务都通过直接回答或调用工具完成，不要引导用户去其他页面或后台工作流查看结果。
 3. 工具调用结束后，请立即先用一两句话告诉用户"正在整理结果"或"结果如下"，不要让用户长时间看不到任何回复；整理完成后再给出完整内容。
 4. 创建工程代码时，必须将文件写入当前工作目录下的 projects/{项目名}/ 子目录中。
@@ -79,7 +85,9 @@ function buildPromptRules(sessionId: string): string {
    一个回复中可以标记多个工程，每个工程单独一行 [[PROJECT:...]]。
 7. 如果只是创建单个文件（非工程），仍然使用 [[FILE:/abs/path/to/file.md]] 格式标记。
 8. 除了 [[PROJECT:...]] 和 [[FILE:...]] 格式外，不要把 "/workflows"、"/Computer/Super" 等普通 slash 字符串当作文件路径。
-9. [[PROJECT:...]] 路径标记会渲染为可点击的工程卡片，用户可预览工程文件（目录树+代码详情）或查看修改 diff，并可同步到仓库配置中。`;
+9. [[PROJECT:...]] 路径标记会渲染为可点击的工程卡片，用户可预览工程文件（目录树+代码详情）或查看修改 diff，并可同步到仓库配置中。
+10. 不要在最终回答正文中展示文件或工程的绝对路径；只使用 [[FILE:...]] 和 [[PROJECT:...]] 标记，前端会自动渲染为卡片。
+11. 不要输出思考过程、Next Move、Relevant Files、计划步骤等中间信息；只输出用户要求的最终结果和必要的简短说明。`;
 }
 
 /**
@@ -274,6 +282,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
   const [instanceId, setInstanceId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ThreadMessageLike[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [runPhase, setRunPhase] = useState<RunPhase>(null);
 
   const sessionIdRef = useRef(sessionId);
   useEffect(() => {
@@ -308,6 +317,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         }
         activeRunSessionIdRef.current = null;
         setIsRunning(false);
+        setRunPhase(null);
         setSessionId(null);
         setInstanceId(null);
         setMessages([]);
@@ -410,6 +420,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       }
       activeRunSessionIdRef.current = null;
       setIsRunning(false);
+      setRunPhase(null);
       setSessionId(nextSessionId);
       setInstanceId(null);
       await loadMessages(nextSessionId);
@@ -423,6 +434,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
       setIsRunning(false);
+      setRunPhase(null);
       activeRunSessionIdRef.current = null;
     }
   }, []);
@@ -490,6 +502,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       };
 
       setIsRunning(true);
+      setRunPhase(PHASE_CONNECTING);
       activeRunSessionIdRef.current = currentSessionId;
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
@@ -557,6 +570,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
               switch (ev.type) {
                 case 'RUN_STARTED':
                   setIsRunning(true);
+                  setRunPhase(PHASE_THINKING);
                   // gatewayd 在 session 丢失后会创建新 thread，RUN_STARTED
                   // 携带新的 threadId。将此 threadId 同步为当前会话 ID，
                   // 确保前端 localStorage 与后端持久化的一致。
@@ -803,6 +817,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
 
                 case 'RUN_FINISHED':
                   setIsRunning(false);
+                  setRunPhase(null);
                   if (assistantMessageId) {
                     setMessages((prev) =>
                       prev.map((m) =>
@@ -828,6 +843,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
 
                 case 'RUN_ERROR': {
                   setIsRunning(false);
+                  setRunPhase(null);
                   activeRunSessionIdRef.current = null;
                   const errorMsg = ev.message || 'Agent 运行出错';
                   const classifiedMsg = classifyAgentError(errorMsg);
@@ -854,6 +870,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         // 强制重置运行状态，避免前端一直显示“思考中”。
         if (activeRunSessionIdRef.current === currentSessionId) {
           setIsRunning(false);
+          setRunPhase(null);
           activeRunSessionIdRef.current = null;
           if (assistantMessageId) {
             setMessages((prev) =>
@@ -881,6 +898,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         console.log('[useAgUiChat] <<< CATCH', { runId, errorName: error.name, errorMessage: error.message, elapsedMs: catchTime - sendTime, noEventTimeoutFired });
         if (error.name === 'AbortError') {
           setIsRunning(false);
+          setRunPhase(null);
           activeRunSessionIdRef.current = null;
           if (noEventTimeoutFired) {
             // 超时自动取消：给出明确超时提示，避免用户困惑。
@@ -909,6 +927,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         console.error('[useAgUiChat] send failed:', error);
         toast.error(`发送失败：${error.message}`);
         setIsRunning(false);
+        setRunPhase(null);
         activeRunSessionIdRef.current = null;
       } finally {
         console.log('[useAgUiChat] <<< FINALLY', { runId, msgCount: messages.length, elapsedMs: Date.now() - sendTime });
@@ -967,6 +986,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
     instanceId,
     wsConnected: !isRunning,
     isRunning,
+    runPhase,
     messages,
     sendMessage: handleSend,
     switchSession,
