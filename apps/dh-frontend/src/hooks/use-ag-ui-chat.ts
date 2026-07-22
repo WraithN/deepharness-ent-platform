@@ -43,9 +43,13 @@ const NO_EVENT_TIMER_INTERVAL_MS = 5000;
 
 const USER_PROMPT_MARKER = '__USER_PROMPT__';
 const SESSION_ID_KEY_PREFIX = 'dh_chat_session_id';
+const IN_PROGRESS_MSG_KEY_PREFIX = 'dh_chat_in_progress_msg';
 
 // 会话 ID 按工作区隔离存储，避免切换工作区后恢复其他工作区的会话
 const getSessionIdKey = (workspaceId: string) => `${SESSION_ID_KEY_PREFIX}:${workspaceId}`;
+
+// 进行中的 AI 回复按会话 ID 隔离存储，用于页面刷新/关闭后恢复未完成的输出
+const getInProgressMsgKey = (sessionId: string) => `${IN_PROGRESS_MSG_KEY_PREFIX}:${sessionId}`;
 
 const ERROR_CLASSIFICATIONS: { keywords: RegExp; specificMsg: string }[] = [
   { keywords: /(api.?key|密钥|apikey|unauthorized|401.*invalid)/i, specificMsg: 'API 密钥无效或已过期，请检查模型配置中的 API Key 与 Base URL。' },
@@ -239,6 +243,37 @@ function messageToBackendText(msg: ThreadMessageLike): string {
     .join('\n');
 }
 
+/**
+ * 将进行中的 AI 回复缓存到 localStorage，用于页面刷新/关闭后恢复未完成的输出。
+ */
+function saveInProgressMessage(sessionId: string, msg: ThreadMessageLike): void {
+  try {
+    localStorage.setItem(getInProgressMsgKey(sessionId), JSON.stringify(msg));
+  } catch (err) {
+    console.error('[useAgUiChat] save in-progress message failed:', err);
+  }
+}
+
+/**
+ * 从 localStorage 恢复进行中的 AI 回复。
+ */
+function loadInProgressMessage(sessionId: string): ThreadMessageLike | null {
+  try {
+    const raw = localStorage.getItem(getInProgressMsgKey(sessionId));
+    if (!raw) return null;
+    return JSON.parse(raw) as ThreadMessageLike;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 清除进行中的 AI 回复缓存。
+ */
+function clearInProgressMessage(sessionId: string): void {
+  localStorage.removeItem(getInProgressMsgKey(sessionId));
+}
+
 interface AgUiEvent {
   type: string;
   timestamp?: number;
@@ -289,13 +324,29 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
     sessionIdRef.current = sessionId;
   }, [sessionId]);
 
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   const abortControllerRef = useRef<AbortController | null>(null);
   const activeRunSessionIdRef = useRef<string | null>(null);
   const lastWorkspaceIdRef = useRef<string>(getCurrentWorkspaceId());
 
   // 组件卸载时中止所有进行中的 SSE 连接，避免卸载后仍持续 setState 阻塞导航。
+  // 同时监听 beforeunload，在页面关闭/刷新前立即缓存未完成的 AI 回复到 localStorage。
   useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (sessionIdRef.current) {
+        const runningAssistant = messagesRef.current.find((m) => m.role === 'assistant' && m.status?.type === 'running');
+        if (runningAssistant) {
+          saveInProgressMessage(sessionIdRef.current, runningAssistant);
+        }
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
@@ -314,6 +365,9 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
           abortControllerRef.current = null;
+        }
+        if (sessionIdRef.current) {
+          clearInProgressMessage(sessionIdRef.current);
         }
         activeRunSessionIdRef.current = null;
         setIsRunning(false);
@@ -334,7 +388,16 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
     try {
       const workspaceId = getCurrentWorkspaceId();
       const msgs = await api.get<BackendMessage[]>(`/v1/sessions/${targetSessionId}/messages?workspaceId=${encodeURIComponent(workspaceId)}`);
-      setMessages(msgs.map(backendMessageToThreadMessageLike));
+      const restoredMessages = msgs.map(backendMessageToThreadMessageLike);
+      // 恢复未完成的 AI 回复：如果 localStorage 中有该会话的 in-progress 消息且后端未持久化，追加到末尾
+      const inProgress = loadInProgressMessage(targetSessionId);
+      if (inProgress && !restoredMessages.some((m) => m.id === inProgress.id)) {
+        restoredMessages.push({
+          ...inProgress,
+          status: { type: 'incomplete' as const, reason: 'error' as const, error: '连接已中断，生成未完成' },
+        });
+      }
+      setMessages(restoredMessages);
     } catch (err) {
       console.error('[useAgUiChat] load messages failed:', err);
       // 会话不属于当前工作区时，不需要弹窗报错；上层会感知到消息为空并自动创建新会话。
@@ -353,7 +416,16 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
     if (!saved) return null;
     try {
       const msgs = await api.get<BackendMessage[]>(`/v1/sessions/${saved}/messages?workspaceId=${encodeURIComponent(wsId)}`);
-      setMessages(msgs.map(backendMessageToThreadMessageLike));
+      const restoredMessages = msgs.map(backendMessageToThreadMessageLike);
+      // 恢复未完成的 AI 回复：如果 localStorage 中有该会话的 in-progress 消息且后端未持久化，追加到末尾
+      const inProgress = loadInProgressMessage(saved);
+      if (inProgress && !restoredMessages.some((m) => m.id === inProgress.id)) {
+        restoredMessages.push({
+          ...inProgress,
+          status: { type: 'incomplete' as const, reason: 'error' as const, error: '连接已中断，生成未完成' },
+        });
+      }
+      setMessages(restoredMessages);
       setSessionId(saved);
       setInstanceId(null);
       console.log('[useAgUiChat] session restored:', saved);
@@ -372,6 +444,18 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       localStorage.setItem(getSessionIdKey(workspaceId), sessionId);
     }
   }, [sessionId]);
+
+  // 流式输出期间，将未完成的 AI 回复防抖缓存到 localStorage，用于页面刷新/关闭后恢复。
+  // 500ms 防抖避免每个 SSE delta 都触发 localStorage 写入。
+  useEffect(() => {
+    if (!sessionId) return;
+    const runningAssistant = messages.find((m) => m.role === 'assistant' && m.status?.type === 'running');
+    if (!runningAssistant) return;
+    const timer = setTimeout(() => {
+      saveInProgressMessage(sessionId, runningAssistant);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [messages, sessionId]);
 
   const createSession = useCallback(
     async (pluginKey?: string): Promise<{ sessionId: string; instanceId: string } | null> => {
@@ -418,6 +502,10 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
+      // 清除当前会话的 in-progress 缓存，避免切换后旧消息被恢复。
+      if (sessionIdRef.current) {
+        clearInProgressMessage(sessionIdRef.current);
+      }
       activeRunSessionIdRef.current = null;
       setIsRunning(false);
       setRunPhase(null);
@@ -433,6 +521,9 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
+      if (sessionIdRef.current) {
+        clearInProgressMessage(sessionIdRef.current);
+      }
       setIsRunning(false);
       setRunPhase(null);
       activeRunSessionIdRef.current = null;
@@ -818,6 +909,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
                 case 'RUN_FINISHED':
                   setIsRunning(false);
                   setRunPhase(null);
+                  clearInProgressMessage(currentSessionId);
                   if (assistantMessageId) {
                     setMessages((prev) =>
                       prev.map((m) =>
@@ -844,6 +936,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
                 case 'RUN_ERROR': {
                   setIsRunning(false);
                   setRunPhase(null);
+                  clearInProgressMessage(currentSessionId);
                   activeRunSessionIdRef.current = null;
                   const errorMsg = ev.message || 'Agent 运行出错';
                   const classifiedMsg = classifyAgentError(errorMsg);
@@ -871,6 +964,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         if (activeRunSessionIdRef.current === currentSessionId) {
           setIsRunning(false);
           setRunPhase(null);
+          clearInProgressMessage(currentSessionId);
           activeRunSessionIdRef.current = null;
           if (assistantMessageId) {
             setMessages((prev) =>
@@ -899,6 +993,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         if (error.name === 'AbortError') {
           setIsRunning(false);
           setRunPhase(null);
+          clearInProgressMessage(currentSessionId);
           activeRunSessionIdRef.current = null;
           if (noEventTimeoutFired) {
             // 超时自动取消：给出明确超时提示，避免用户困惑。
@@ -968,17 +1063,6 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
 
   const shared = useExternalStoreSharedOptions({});
   const runtime = useExternalStoreRuntime({ ...shared, ...adapter });
-
-  // 组件卸载时中止所有进行中的 SSE 连接，避免卸载后仍持续 setState 阻塞导航。
-  useEffect(() => {
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
-      activeRunSessionIdRef.current = null;
-    };
-  }, []);
 
   return {
     runtime,
