@@ -106,7 +106,7 @@ func New(cfg config.Config) http.Handler {
 	// 为 workspace 模块注入同步补全能力，用于规范的智能生成。
 	workspace.InitStandardCompleter(aguiHandler.QuickComplete)
 	sseReplayHandler := handler.NewSSEReplayHandler(sseBuffer)
-	statsHandler := handler.NewStatsHandler(sessions, cfg.WorkspaceRoot, workspaceService, workItemSvc)
+	statsHandler := handler.NewStatsHandler(sessions, messages, cfg.WorkspaceRoot, workspaceService, workItemSvc)
 
 	// agent-stub 反向代理：将文件/工程/预览请求转发到 agent-stub 服务。
 	// agent-stub 部署在 WORKSPACE_ROOT 所在服务器上，直接操作文件系统和 git。
@@ -176,6 +176,7 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/stats/trend", middleware.Auth(http.HandlerFunc(statsHandler.Trend)))
 	mux.Handle("/api/v1/stats/commits", middleware.Auth(http.HandlerFunc(statsHandler.CodeCommits)))
 	mux.Handle("/api/v1/stats/trails", middleware.Auth(http.HandlerFunc(statsHandler.Trails)))
+	mux.Handle("/api/v1/stats/trails/{sessionId}/messages", middleware.Auth(http.HandlerFunc(statsHandler.TrailMessages)))
 	mux.Handle("/api/v1/stats/requirements", middleware.Auth(http.HandlerFunc(statsHandler.WorkItemSummary)))
 	mux.HandleFunc("/api/v1/commands", handler.CommandsHandler)
 

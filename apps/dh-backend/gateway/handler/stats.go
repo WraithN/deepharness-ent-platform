@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	statsTrendDays  = 7
-	statsTrailLimit = 50
+	statsTrendDays       = 7
+	statsTrailLimit      = 50
+	statsTrailMsgLimit   = 100
 )
 
 // WorkItemStatsSvc 定义工作项统计所需的服务接口。
@@ -33,14 +34,16 @@ type WorkItemStatsSvc interface {
 // StatsHandler 处理数据大盘统计请求。
 type StatsHandler struct {
 	sessions      chat.SessionStore
+	messages      chat.MessageStore
 	workspaceRoot string
 	workspaceSvc  workspaceservice.WorkspaceService
 	workItemSvc   WorkItemStatsSvc
 }
 
 // NewStatsHandler 创建统计 handler。
-func NewStatsHandler(sessions chat.SessionStore, workspaceRoot string, workspaceSvc workspaceservice.WorkspaceService, workItemSvc WorkItemStatsSvc) *StatsHandler {
-	return &StatsHandler{sessions: sessions, workspaceRoot: workspaceRoot, workspaceSvc: workspaceSvc, workItemSvc: workItemSvc}
+// messages 用于成员会话轨迹详情拉取历史消息（跨用户但按 workspace 隔离）。
+func NewStatsHandler(sessions chat.SessionStore, messages chat.MessageStore, workspaceRoot string, workspaceSvc workspaceservice.WorkspaceService, workItemSvc WorkItemStatsSvc) *StatsHandler {
+	return &StatsHandler{sessions: sessions, messages: messages, workspaceRoot: workspaceRoot, workspaceSvc: workspaceSvc, workItemSvc: workItemSvc}
 }
 
 // SummaryResponse 统计卡片响应。
@@ -144,6 +147,72 @@ func (h *StatsHandler) Trails(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, TrailsResponse{Data: data})
+}
+
+// TrailMessages 处理 GET /api/v1/stats/trails/{sessionId}/messages 请求。
+// 返回指定会话的历史消息，用于数据大盘成员会话轨迹详情的信息流展示。
+// 与 /sessions/{id}/messages 不同：此处允许跨用户读取（大盘场景需查看他人会话），
+// 但严格按 workspaceId 隔离，确保只能读取当前工作空间内的会话。
+func (h *StatsHandler) TrailMessages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+
+	workspaceID, err := workspaceIDFromQuery(r)
+	if err != nil {
+		WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		return
+	}
+
+	sessionID := r.PathValue("sessionId")
+	if sessionID == "" {
+		WriteJSONError(w, http.StatusBadRequest, 1, "missing sessionId")
+		return
+	}
+
+	if h.messages == nil {
+		writeJSON(w, []chat.Message{})
+		return
+	}
+
+	// 校验会话存在且属于当前工作空间，防止跨空间读取。
+	sess, err := h.sessions.Get(r.Context(), sessionID)
+	if err != nil {
+		WriteJSONError(w, http.StatusNotFound, 1, "session not found")
+		return
+	}
+	if sess.WorkspaceID != "" && sess.WorkspaceID != workspaceID {
+		WriteJSONError(w, http.StatusForbidden, 1, "session not in this workspace")
+		return
+	}
+
+	messages, err := h.messages.GetHistory(r.Context(), sessionID, statsTrailMsgLimit)
+	if err != nil {
+		log.Printf("[Stats] GetHistory for trail %s failed: %v", sessionID, err)
+		writeJSON(w, []chat.Message{})
+		return
+	}
+	if messages == nil {
+		messages = []chat.Message{}
+	}
+
+	// 兼容历史数据：提取用户消息的原始输入，与 /sessions/{id}/messages 行为一致。
+	for i := range messages {
+		if messages[i].Role != "user" {
+			continue
+		}
+		original := extractOriginalUserPrompt(messages[i].Content)
+		if original == "" {
+			continue
+		}
+		if messages[i].Metadata == nil {
+			messages[i].Metadata = map[string]any{}
+		}
+		messages[i].Metadata["originalText"] = original
+	}
+
+	writeJSON(w, messages)
 }
 
 // splitWeekCounts 将 14 天趋势数据拆分为本周（后 7 天）和上周（前 7 天）的总会话数。

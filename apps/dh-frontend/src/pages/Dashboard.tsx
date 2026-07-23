@@ -1,12 +1,13 @@
-import { BarChart3, Box, CheckSquare, Clock, Code2, FileText, LineChart as LineChartIcon, ListTodo, MessageSquare, PieChart as PieChartIcon, Wand2 } from 'lucide-react';
+import { BarChart3, Bot, Box, Clock, Code2, Eye, LineChart as LineChartIcon, ListTodo, Loader2, MessageSquare, PieChart as PieChartIcon } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { toast } from 'sonner';
+import { MarkdownView } from '@/components/chat/MarkdownView';
 import { RecordPaginationBar } from '@/components/RecordPaginationBar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
 import type { UserDTO } from '@/lib/api-types';
@@ -51,6 +52,21 @@ interface SessionTrail {
   messageCount: number;
 }
 
+/** 会话消息 DTO（来自后端 agent_messages，用于轨迹详情信息流）。 */
+interface TrailMessageDTO {
+  id: string;
+  sessionId: string;
+  role: string;
+  type: string;
+  content: string;
+  metadata?: { originalText?: string } & Record<string, unknown>;
+  timestamp: string;
+}
+
+/** 消息角色常量。 */
+const ROLE_USER = 'user';
+const ROLE_ASSISTANT = 'assistant';
+
 /** 将 ISO 时间戳转为相对时间描述（如"10分钟前"）。 */
 function formatRelativeTime(iso: string): string {
   const now = Date.now();
@@ -86,10 +102,57 @@ function formatDateShort(date: string): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
+/** 将 ISO 时间戳转为"MM-DD HH:mm"格式用于消息信息流时间显示。 */
+function formatMessageTime(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${mm}-${dd} ${hh}:${mi}`;
+}
+
+/** 单条会话消息信息流卡片。用户消息展示原始输入，AI 消息以 Markdown 渲染。 */
+const TrailMessageItem: React.FC<{ msg: TrailMessageDTO; user: UserDTO }> = ({ msg, user }) => {
+  const isUser = msg.role === ROLE_USER;
+  const content = isUser ? (msg.metadata?.originalText || msg.content) : msg.content;
+  const displayName = isUser ? user.name : 'AI 助手';
+
+  return (
+    <div className="rounded-xl border border-border/50 bg-card p-4">
+      <div className="flex items-center gap-2 mb-2">
+        {isUser ? (
+          <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center text-primary font-medium text-xs shrink-0">
+            {user.name.charAt(0)}
+          </div>
+        ) : (
+          <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+            <Bot className="h-4 w-4 text-primary" />
+          </div>
+        )}
+        <span className="text-sm font-medium">{displayName}</span>
+        {msg.timestamp && (
+          <span className="text-xs text-muted-foreground">{formatMessageTime(msg.timestamp)}</span>
+        )}
+      </div>
+      {isUser ? (
+        <p className="text-sm whitespace-pre-wrap break-words">{content || '(空消息)'}</p>
+      ) : (
+        <div className="text-sm">
+          {content ? <MarkdownView content={content} collapsible={false} /> : <span className="text-muted-foreground">(空消息)</span>}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const Dashboard: React.FC = () => {
   const workspaceId = getCurrentWorkspaceId();
   const statsQuery = `?workspaceId=${encodeURIComponent(workspaceId)}`;
   const [selectedUserSession, setSelectedUserSession] = useState<any>(null);
+  const [trailMessages, setTrailMessages] = useState<TrailMessageDTO[]>([]);
+  const [trailMessagesLoading, setTrailMessagesLoading] = useState(false);
   const [sessionPage, setSessionPage] = useState(1);
   const [users, setUsers] = useState<UserDTO[]>([]);
   const [sessionTrails, setSessionTrails] = useState<SessionTrail[]>([]);
@@ -116,6 +179,27 @@ export const Dashboard: React.FC = () => {
       platformRole: 'user',
       createdAt: '',
     };
+  }
+
+  /** 打开成员会话轨迹详情，并拉取该会话的历史消息渲染为信息流。 */
+  function openTrailDetail(trail: SessionTrail) {
+    setSelectedUserSession(trail);
+    setTrailMessages([]);
+    setTrailMessagesLoading(true);
+    api.get<TrailMessageDTO[]>(`/v1/stats/trails/${trail.id}/messages${statsQuery}`)
+      .then(msgs => setTrailMessages(msgs || []))
+      .catch(err => {
+        console.error('[Dashboard] fetch trail messages failed:', err);
+        toast.error('加载会话消息失败');
+      })
+      .finally(() => setTrailMessagesLoading(false));
+  }
+
+  /** 关闭轨迹详情面板并清空已加载的消息。 */
+  function closeTrailDetail() {
+    setSelectedUserSession(null);
+    setTrailMessages([]);
+    setTrailMessagesLoading(false);
   }
 
   useEffect(() => {
@@ -283,12 +367,13 @@ export const Dashboard: React.FC = () => {
                     <TableHead className="px-4 py-4 font-medium text-muted-foreground">消息数</TableHead>
                     <TableHead className="px-4 py-4 font-medium text-muted-foreground">会话时长</TableHead>
                     <TableHead className="px-4 py-4 font-medium text-muted-foreground">时间</TableHead>
+                    <TableHead className="px-4 py-4 font-medium text-muted-foreground text-right">操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {paginatedSessions.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                         暂无会话记录
                       </TableCell>
                     </TableRow>
@@ -297,7 +382,7 @@ export const Dashboard: React.FC = () => {
                       <TableRow
                         key={trail.id}
                         className="cursor-pointer transition-colors hover:bg-primary/5"
-                        onClick={() => setSelectedUserSession(trail)}
+                        onClick={() => openTrailDetail(trail)}
                       >
                         <TableCell className="px-4 py-5 whitespace-nowrap">
                           <div className="flex items-center gap-2">
@@ -328,6 +413,17 @@ export const Dashboard: React.FC = () => {
                             {trail.time}
                           </div>
                         </TableCell>
+                        <TableCell className="px-4 py-5 whitespace-nowrap text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 gap-1 text-primary hover:bg-primary/10"
+                            onClick={(e) => { e.stopPropagation(); openTrailDetail(trail); }}
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            查看
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))
                   )}
@@ -344,63 +440,57 @@ export const Dashboard: React.FC = () => {
         </Card>
       </div>
 
-      {/* Member Session Detail Sheet */}
-      <Sheet open={!!selectedUserSession} onOpenChange={(open) => !open && setSelectedUserSession(null)}>
-        <SheetContent side="right" className="w-full sm:max-w-lg md:max-w-xl lg:max-w-2xl overflow-y-auto p-0 flex flex-col">
+      {/* Member Session Detail Dialog */}
+      <Dialog open={!!selectedUserSession} onOpenChange={(open) => !open && closeTrailDetail()}>
+        <DialogContent className="max-w-3xl w-full p-0 gap-0 overflow-hidden flex flex-col max-h-[85vh]">
           {selectedUserSession && (
             <>
-              <div className="p-6 border-b border-border/50 shrink-0 pr-12 bg-muted/10">
-                <SheetHeader>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <SheetTitle className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-lg shrink-0 soft-shadow">
-                        {selectedUserSession.user.name.charAt(0)}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="truncate">{selectedUserSession.user.name} 的会话轨迹</div>
-                        <div className="text-sm font-normal text-muted-foreground mt-1 truncate">
-                          会话时长: {selectedUserSession.duration} · {selectedUserSession.time} · {selectedUserSession.messageCount} 条消息
-                        </div>
-                      </div>
-                    </SheetTitle>
-                    <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
-                      <Button onClick={() => toast.success('已生成会话复盘报告')} variant="outline" size="sm" className="flex-1 sm:flex-none">
-                        <FileText className="h-4 w-4 mr-2" />
-                        会话复盘
-                      </Button>
-                      <Button onClick={() => toast.success('已总结为新技能')} size="sm" className="flex-1 sm:flex-none">
-                        <Wand2 className="h-4 w-4 mr-2" />
-                        总结技能
-                      </Button>
+              <div className="p-6 border-b border-border/50 shrink-0 bg-muted/10">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-3 pr-10">
+                    <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-lg shrink-0 soft-shadow">
+                      {selectedUserSession.user.name.charAt(0)}
                     </div>
-                  </div>
-                  <SheetDescription className="sr-only">
+                    <div className="min-w-0">
+                      <div className="truncate">{selectedUserSession.user.name} 的会话轨迹</div>
+                      <div className="text-sm font-normal text-muted-foreground mt-1 truncate">
+                        会话时长: {selectedUserSession.duration} · {selectedUserSession.time} · {selectedUserSession.messageCount} 条消息
+                      </div>
+                    </div>
+                  </DialogTitle>
+                  <DialogDescription className="sr-only">
                     成员详细会话历史信息流
-                  </SheetDescription>
-                </SheetHeader>
+                  </DialogDescription>
+                </DialogHeader>
               </div>
 
-              <div className="flex-1 p-6 bg-muted/5">
+              <div className="flex-1 p-6 bg-muted/5 overflow-y-auto">
                 <h3 className="font-semibold mb-6 flex items-center">
                   <MessageSquare className="h-5 w-5 mr-2 text-primary" />
                   会话主题：{selectedUserSession.title}
                 </h3>
 
-                <div className="space-y-6 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-border before:to-transparent">
-                  <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
-                    <div className="flex items-center justify-center w-10 h-10 rounded-full border-4 border-background bg-green-500 text-white shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 shadow">
-                      <CheckSquare className="h-4 w-4" />
-                    </div>
-                    <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-4 rounded-xl glass-card flex justify-center">
-                      <span className="text-sm font-medium text-green-600 dark:text-green-500">会话记录 (历时 {selectedUserSession.duration}，共 {selectedUserSession.messageCount} 条消息)</span>
-                    </div>
+                {trailMessagesLoading ? (
+                  <div className="flex items-center justify-center py-12 text-muted-foreground">
+                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                    加载会话消息...
                   </div>
-                </div>
+                ) : trailMessages.length === 0 ? (
+                  <div className="text-center text-muted-foreground py-12">
+                    暂无消息记录
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {trailMessages.map(msg => (
+                      <TrailMessageItem key={msg.id} msg={msg} user={selectedUserSession.user} />
+                    ))}
+                  </div>
+                )}
               </div>
             </>
           )}
-        </SheetContent>
-      </Sheet>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
