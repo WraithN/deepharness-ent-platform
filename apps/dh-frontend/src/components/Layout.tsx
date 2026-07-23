@@ -13,7 +13,6 @@ import {
   Code2,
   Briefcase,
   Palette,
-  Bot,
   Sun,
   Moon,
   LogOut
@@ -65,7 +64,7 @@ const tenantNavItems: NavItem[] = [
   { path: '/chat', label: '智能会话', icon: MessageCircle },
   { path: '/personal-space', label: '研发空间', icon: Code2, perm: 'canViewCode' },
   { path: '/dashboard', label: '数据大盘', icon: LayoutDashboard, perm: 'canViewDashboard' },
-  { path: '/personal-assistant', label: '虾班智守', icon: Bot },
+  // 虾班智守功能暂时屏蔽，侧边栏不展示。
   { path: '/settings', label: '空间设置', icon: Settings, perm: 'canViewSettings' },
 ];
 

@@ -22,6 +22,7 @@ import { AdminPage } from "@/pages/AdminPage";
 import { Profile } from "@/pages/Profile";
 
 import { AdminDashboard } from "@/pages/AdminDashboard";
+import { CommandManagement } from "@/pages/CommandManagement";
 import { TemplateManagement } from "@/pages/TemplateManagement";
 import { AgentRuntimePage } from "@/pages/AgentRuntimePage";
 
@@ -47,6 +48,7 @@ export const routes: RouteObject[] = [
       { path: "agent-runtimes", element: <AgentRuntimePage /> },
       { path: "skills", element: <AdminPage /> },
       { path: "prompts", element: <AdminPage /> },
+      { path: "commands", element: <CommandManagement /> },
       { path: "templates", element: <TemplateManagement /> },
     ],
   },

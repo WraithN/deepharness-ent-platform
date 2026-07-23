@@ -67,6 +67,13 @@ import { type SendContext, useAgUiChat } from '@/hooks/use-ag-ui-chat';
 import { agentConfigApi } from '@/lib/agent-config-api';
 import { api } from '@/lib/api';
 import type { AgentSessionDTO, WorkItemDTO } from '@/lib/api-types';
+import {
+  type CommandCategory,
+  type CommandConfig,
+  COMMAND_CATEGORIES,
+  COMMAND_CATEGORY_LABELS,
+  COMMAND_CATEGORY_ORDER,
+} from '@/lib/commands';
 import { PROTO_MAKE_PENDING_KEY } from '@/lib/constants';
 import { fileApi } from '@/lib/file-api';
 import { type ProductDoc, productDocApi } from '@/lib/productdoc-api';
@@ -111,16 +118,7 @@ const MAX_INPUT_QUEUE = 3;
 const CHAT_SYNC_POLL_INTERVAL_MS = 2000;
 
 /** 后端指令配置（从 /v1/commands 加载）。 */
-interface CommandConfig {
-  cmd: string;
-  label: string;
-  desc: string;
-  icon: string;
-  allowTask: boolean;
-  allowRepos: boolean;
-  requireRepos: boolean;
-  maxRepos: number;
-}
+// CommandConfig / 指令分类映射已抽取至 @/lib/commands 共享。
 
 // 指令 -> 图标的映射（图标为 React 组件，无法放入配置文件）。
 const COMMAND_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
@@ -188,37 +186,8 @@ const WELCOME_CARDS_BY_ROLE: Partial<Record<SubRole, WelcomeCard[]>> = {
 };
 
 /** 指令分类（用于上拉菜单按角色展示）。 */
-type CommandCategory = 'product' | 'design' | 'dev' | 'test';
-
-const COMMAND_CATEGORY_LABELS: Record<CommandCategory, string> = {
-  product: '产品',
-  design: 'UI',
-  dev: '研发',
-  test: '测试',
-};
-
-const COMMAND_CATEGORY_ORDER: CommandCategory[] = ['product', 'design', 'dev', 'test'];
-
-const COMMAND_CATEGORIES: Record<string, CommandCategory> = {
-  '/code': 'dev',
-  '/debug': 'dev',
-  '/review': 'dev',
-  '/unit-test': 'dev',
-  '/test-case': 'test',
-  '/auto-test': 'test',
-  '/bug-analysis': 'test',
-  '/test-report': 'test',
-  '/proto-make': 'product',
-  '/ui-spec': 'design',
-  '/ui-design': 'design',
-  '/ui-kit': 'design',
-  '/design-review': 'design',
-  '/design-token': 'design',
-  '/prd-write': 'product',
-  '/prd-research': 'product',
-  '/user-story': 'product',
-  '/data-analysis': 'product',
-};
+// CommandCategory / COMMAND_CATEGORY_LABELS / COMMAND_CATEGORY_ORDER / COMMAND_CATEGORIES
+// 已抽取至 @/lib/commands 共享。
 
 /** 根据用户子角色返回默认激活的指令分类 tab。 */
 const getDefaultCommandCategory = (subRole?: SubRole): CommandCategory => {
@@ -2185,7 +2154,10 @@ export const Chat: React.FC = () => {
           <ResizablePanel defaultSize={100} minSize={25} onResize={setMainPanelSize} className="h-full flex flex-col min-w-0 relative overflow-hidden">
 
         {/* Chat Header */}
-        <div className="border-b border-border flex flex-col shrink-0 bg-panel/80 backdrop-blur-xl z-10 w-full">
+        {/* z-20：使 header（及其内部 z-50 的历史会话/指令等下拉框）的层叠上下文
+            高于会话消息区的折叠渐隐层(chat-bubble-fade z-10)与输入框(z-10)，
+            避免未展开消息的模糊/渐隐效果遮挡从 header 下拉的历史会话项。 */}
+        <div className="border-b border-border flex flex-col shrink-0 bg-panel/80 backdrop-blur-xl z-20 w-full">
           {/* 第一层：助手标题 + 智能体 tabs + 新增智能体 */}
           <div className={cn('flex items-center px-4 gap-2', showPreview ? 'h-10' : 'h-12')}>
             <Bot className={cn('text-primary shrink-0', showPreview ? 'h-3.5 w-3.5' : 'h-4 w-4')} />
