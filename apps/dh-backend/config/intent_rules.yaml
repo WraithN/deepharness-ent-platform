@@ -1,0 +1,40 @@
+# 意图识别规则层配置（ruleBasedClassify 使用）。
+# 规则层在 LLM 意图识别之前做快速初筛，降低延迟。
+#
+# 打分模型：
+#   - strong 关键字命中 = 2 分；weak 关键字命中 = 1 分（同一条规则内累加）。
+#   - 某指令总分 >= threshold 即判定为该任务意图，直接套用指令模板；
+#     未达 threshold 则交给 LLM 意图识别。
+#   - 多条指令达标时取最高分；同分取靠前的规则（顺序稳定）。
+#
+# 上下文降级：
+#   输入命中任一 downgradeWords 时，即使关键字得分达标也不判任务，
+#   一律交给 LLM（避免「怎么 review」「了解一下开发」「不要写代码」被误判为任务）。
+#
+# 调参建议：
+#   - 想更激进地快路径 -> 把关键字从 weak 移到 strong，或降低 threshold。
+#   - 想更保守、减少误判 -> 把歧义词从 strong 移到 weak，或提高 threshold。
+threshold: 2
+
+rules:
+  - cmd: "/prd-write"
+    strong: ["写需求", "需求文档", "写prd"]
+    weak: ["prd", "产品需求"]
+  - cmd: "/prd-research"
+    strong: ["技术调研", "方案选型", "做调研"]
+    weak: ["调研", "研究报告"]
+  - cmd: "/proto-make"
+    strong: ["做原型", "可运行原型", "ui原型", "生成原型"]
+    weak: ["原型"]
+  - cmd: "/code"
+    strong: ["写代码", "编写代码", "创建工程"]
+    weak: ["开发", "实现", "写个", "做一个", "写页面", "做个系统", "做个网站", "写功能"]
+  - cmd: "/debug"
+    strong: ["修bug", "解bug", "修复bug", "修复缺陷"]
+    weak: ["bug", "缺陷", "报错", "错误", "问题", "调试", "修复"]
+  - cmd: "/review"
+    strong: ["代码审查", "codereview", "代码review", "review代码"]
+    weak: ["review", "审查", "评审"]
+
+# 降级词：疑问 / 探讨 / 否定类，命中即跳过规则快路径交给 LLM。
+downgradeWords: ["怎么", "如何", "什么是", "介绍一下", "了解一下", "请问", "区别", "原理", "不要", "先别"]

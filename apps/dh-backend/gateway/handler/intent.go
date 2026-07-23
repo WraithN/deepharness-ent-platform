@@ -23,39 +23,70 @@ const (
 	intentRecognitionTimeout = 15 * time.Second
 )
 
-// commandKeyword 为单条指令维护一组关键字，用于规则匹配快速路径。
-// 使用切片保证匹配顺序稳定，避免 map 迭代随机性导致同一输入命中不同指令。
-type commandKeyword struct {
-	cmd      string
-	keywords []string
-}
-
-// commandKeywords 按优先级排列的规则关键字列表。
-// 命中关键字时直接返回任务意图，无需调用 LLM，显著降低意图识别延迟。
-var commandKeywords = []commandKeyword{
-	{"/prd-write", []string{"写需求", "prd", "需求文档", "产品需求"}},
-	{"/prd-research", []string{"调研", "技术调研", "方案选型", "研究报告"}},
-	{"/proto-make", []string{"原型", "做原型", "ui原型", "可运行原型"}},
-	{"/code", []string{"写代码", "写个", "做一个", "开发", "实现", "编写代码", "创建工程", "写页面", "做个系统", "做个网站", "写功能"}},
-	{"/debug", []string{"bug", "缺陷", "修复", "报错", "错误", "问题", "调试"}},
-	{"/review", []string{"review", "审查", "代码审查", "codereview", "代码review", "评审"}},
-}
-
-// ruleBasedClassify 基于关键字规则快速判断任务意图。
-// 未命中任何关键字时返回 nil，调用方应 fallback 到 LLM 意图识别。
+// ruleBasedClassify 基于配置化关键字规则快速判断任务意图（置信度打分 + 上下文降级）。
+// 打分：strong=2 分、weak=1 分，同一条规则内累加；总分 >= threshold 判为该任务意图。
+// 降级：输入命中任一 downgradeWords（疑问/探讨/否定）时一律返回 nil，交给 LLM，
+// 避免「怎么 review」「了解一下开发」「不要写代码」等被误判为任务。
+// 未达阈值或无命中时返回 nil，调用方应 fallback 到 LLM 意图识别。
 func ruleBasedClassify(userInput string) *IntentResult {
 	input := strings.ToLower(strings.TrimSpace(userInput))
 	if input == "" {
 		return nil
 	}
-	for _, ck := range commandKeywords {
-		for _, kw := range ck.keywords {
-			if strings.Contains(input, strings.ToLower(kw)) {
-				return &IntentResult{IsChat: false, Command: ck.cmd}
+
+	cfg := GetIntentRulesConfig()
+
+	// 上下文降级：含疑问/探讨/否定词时不走规则快路径。
+	if containsAnyKeyword(input, cfg.DowngradeWords) {
+		return nil
+	}
+
+	threshold := cfg.Threshold
+	if threshold <= 0 {
+		threshold = defaultIntentThreshold
+	}
+
+	// 多条规则达标时取最高分；同分取靠前规则（顺序稳定）。
+	var bestCmd string
+	var bestScore int
+	for _, rule := range cfg.Rules {
+		score := 0
+		for _, kw := range rule.Strong {
+			if containsKeyword(input, kw) {
+				score += strongKeywordScore
 			}
 		}
+		for _, kw := range rule.Weak {
+			if containsKeyword(input, kw) {
+				score += weakKeywordScore
+			}
+		}
+		if score >= threshold && score > bestScore {
+			bestScore = score
+			bestCmd = rule.Cmd
+		}
 	}
-	return nil
+	if bestCmd == "" {
+		return nil
+	}
+	log.Printf("[Intent] rule-based mapped to command: %s (score=%d threshold=%d)", bestCmd, bestScore, threshold)
+	return &IntentResult{IsChat: false, Command: bestCmd}
+}
+
+// containsKeyword 大小写不敏感的子串匹配（input 已小写）。
+func containsKeyword(input, kw string) bool {
+	kw = strings.ToLower(strings.TrimSpace(kw))
+	return kw != "" && strings.Contains(input, kw)
+}
+
+// containsAnyKeyword 判断 input 是否命中任一关键字（大小写不敏感）。
+func containsAnyKeyword(input string, keywords []string) bool {
+	for _, kw := range keywords {
+		if containsKeyword(input, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // IntentResult 意图识别结果。
@@ -90,7 +121,6 @@ func intentRecognitionPrompt(userInput string, commands []CommandConfig) string 
 func recognizeIntent(ctx context.Context, aguiClient *client.AGUIClient, userInput string) (*IntentResult, error) {
 	// 先用规则快速路径匹配常见任务关键字，避免每次意图识别都启动 agent run。
 	if result := ruleBasedClassify(userInput); result != nil {
-		log.Printf("[Intent] rule-based mapped to command: %s", result.Command)
 		return result, nil
 	}
 
