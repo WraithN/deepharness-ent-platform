@@ -35,7 +35,7 @@ done
 
 # 兜底：按名称清理可能残留的子进程
 pkill -f "dh-gatewayd" 2>/dev/null || true
-pkill -f "agent-stub" 2>/dev/null || true
+pkill -f "personal-stub" 2>/dev/null || true
 pkill -f "dh-backend" 2>/dev/null || true
 pkill -f "vite --host --port 8888" 2>/dev/null || true
 pkill -f "pnpm dev --port 8888" 2>/dev/null || true

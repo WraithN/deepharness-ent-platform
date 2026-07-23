@@ -15,7 +15,7 @@ import (
 
 // AgentRuntimeService 定义 Agent 运行时模块的服务接口。
 type AgentRuntimeService interface {
-	// ReportStatus 接收外部 gatewayd / agent-stub 上报的状态并写入数据库（upsert）。
+	// ReportStatus 接收外部 gatewayd / personal-stub 上报的状态并写入数据库（upsert）。
 	ReportStatus(runtimeID string, req object.ReportStatusRequest) (object.AgentRuntime, error)
 	// List 查询运行时列表，支持按租户、空间、成员、智能体类型过滤，并返回分页结果。
 	List(filter object.ListRuntimesFilter) (object.ListRuntimesResult, error)

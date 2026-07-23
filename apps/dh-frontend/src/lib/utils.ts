@@ -61,33 +61,45 @@ export function formatTime(date: Date | string | number): string {
 
 /**
  * 判断两个日期是否为同一天。
+ * 入参可能是 Date、ISO 字符串或时间戳数字（SSE 重放后 createdAt 常为字符串），
+ * 统一用 new Date() 规整，无效值返回 false 避免崩溃。
  */
-export function isSameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear()
-    && a.getMonth() === b.getMonth()
-    && a.getDate() === b.getDate();
+export function isSameDay(a: Date | string | number, b: Date | string | number): boolean {
+  const da = new Date(a);
+  const db = new Date(b);
+  if (Number.isNaN(da.getTime()) || Number.isNaN(db.getTime())) return false;
+  return da.getFullYear() === db.getFullYear()
+    && da.getMonth() === db.getMonth()
+    && da.getDate() === db.getDate();
 }
 
 /**
  * 将内容中的工作区绝对路径前缀脱敏为相对路径。
- * 例如 /home/nan/test/{workspaceId}/projects/... 展示为 projects/...。
+ * 先剥离 {workspaceRoot}/{workspaceId}/{userId}/ 两层 ID 段，
+ * 再剥离 products/prototypes/ 业务前缀，仅保留原型工程名起头的相对路径。
+ * 例如 /home/nan/test/{wsId}/{userId}/products/prototypes/marketing-campaign/index.html
+ *     展示为 marketing-campaign/index.html。
  */
 export function sanitizeWorkspacePaths(text: string): string {
-  return text.replace(/\/home\/nan\/test\/[^\/]+\//g, '');
+  return text
+    .replace(/\/home\/nan\/test\/[^\/]+\/[^\/]+\//g, '')
+    .replace(/products\/prototypes\//g, '');
 }
 
 /**
  * 将日期格式化为友好的人类可读日期标签（用于聊天日期分隔线）。
  * 今天 →「今天」、昨天 →「昨天」、今年 →「M月D日」、其他 →「YYYY年M月D日」。
  */
-export function formatDateLabel(date: Date): string {
+export function formatDateLabel(date: Date | string | number): string {
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
   const now = new Date();
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
-  if (isSameDay(date, now)) return '今天';
-  if (isSameDay(date, yesterday)) return '昨天';
-  if (date.getFullYear() === now.getFullYear()) {
-    return `${date.getMonth() + 1}月${date.getDate()}日`;
+  if (isSameDay(d, now)) return '今天';
+  if (isSameDay(d, yesterday)) return '昨天';
+  if (d.getFullYear() === now.getFullYear()) {
+    return `${d.getMonth() + 1}月${d.getDate()}日`;
   }
-  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 }

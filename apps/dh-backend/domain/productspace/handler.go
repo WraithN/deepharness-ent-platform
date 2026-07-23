@@ -13,6 +13,8 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+
+	gatewayhandler "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 )
 
 const (
@@ -122,7 +124,12 @@ const (
 
 // injectPrototypeAnnotationScript 将标注脚本与样式注入 HTML 页面，优先放在 </body> 前。
 func injectPrototypeAnnotationScript(html []byte) []byte {
-	block := []byte("<style>" + prototypeAnnotationStyle + "</style><script id=\"dh-prototype-annotation-script\">" + prototypeAnnotationScript + "</script>")
+	block := []byte(
+		"<style>" + gatewayhandler.ScaffoldCSS + "</style>" +
+			"<script>" + gatewayhandler.ScaffoldJS + "</script>" +
+			"<style>" + prototypeAnnotationStyle + "</style>" +
+			"<script id=\"dh-prototype-annotation-script\">" + prototypeAnnotationScript + "</script>",
+	)
 	if bytes.Contains(html, []byte("</body>")) {
 		return bytes.Replace(html, []byte("</body>"), append(block, []byte("</body>")...), 1)
 	}

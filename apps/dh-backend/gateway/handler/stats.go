@@ -9,13 +9,13 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workitem"
 )
 
@@ -283,13 +283,17 @@ func (h *StatsHandler) getCodeCommitTrend(ctx context.Context, workspaceID strin
 }
 
 // execGitLogDates 在指定 git 仓库中执行 log 命令，返回最近 since 天内每条提交的短日期（YYYY-MM-DD）。
+// 架构合规：通过 stubclient 委托 personal-stub 执行 git 命令，不直接 exec git。
 func execGitLogDates(ctx context.Context, dir, since string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "log", "--all", "--no-merges", "--since="+since, "--format=%as")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("git log failed: %w (output: %s)", err, string(out))
+	sc := stubclient.Default()
+	if sc == nil {
+		return "", errors.New("personal-stub client not initialized")
 	}
-	return string(out), nil
+	out, err := sc.GitExec(ctx, dir, "log", "--all", "--no-merges", "--since="+since, "--format=%as")
+	if err != nil {
+		return "", fmt.Errorf("git log failed: %w (output: %s)", err, out)
+	}
+	return out, nil
 }
 
 // buildDateTrend 根据日期计数构造最近 days 天的趋势数组（升序，含零填充）。

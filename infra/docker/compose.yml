@@ -1,0 +1,82 @@
+version: "3.8"
+
+volumes:
+  workspace_data:
+  postgres_data:
+
+services:
+  dh-frontend:
+    build:
+      context: ../..
+      dockerfile: apps/dh-frontend/Dockerfile
+    ports:
+      - "8888:80"
+    depends_on:
+      - dh-backend
+    restart: unless-stopped
+
+  dh-backend:
+    build:
+      context: ../..
+      dockerfile: apps/dh-backend/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - WORKSPACE_ROOT=/workspace
+      - GATEWAYD_ADMIN_URL=http://gatewayd:2346
+      - GATEWAYD_AGENT_ID=opencode
+      - PERSONAL_STUB_URL=http://personal-stub:8090
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-deepharness}
+      - DB_PASSWORD=${DB_PASSWORD:-deepharness}
+      - DB_NAME=${DB_NAME:-deepharness}
+    volumes:
+      - workspace_data:/workspace
+    depends_on:
+      personal-stub:
+        condition: service_started
+      gatewayd:
+        condition: service_started
+    restart: unless-stopped
+
+  personal-stub:
+    build:
+      context: ../..
+      dockerfile: apps/personal-stub/Dockerfile
+    ports:
+      - "8090:8090"
+    environment:
+      - PORT=8090
+      - WORKSPACE_ROOT=/workspace
+    volumes:
+      - workspace_data:/workspace
+    restart: unless-stopped
+
+  gatewayd:
+    build:
+      context: ../../../deepharness-ent-desktop
+      dockerfile: apps/gatewayd/Dockerfile
+    ports:
+      - "2345:2345"
+      - "2346:2346"
+    environment:
+      - GATEWAYD_PORT=2345
+      - GATEWAYD_ADMIN_PORT=2346
+    volumes:
+      - workspace_data:/workspace
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=deepharness
+      - POSTGRES_PASSWORD=deepharness
+      - POSTGRES_DB=deepharness
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../../infra/database:/docker-entrypoint-initdb.d
+    restart: unless-stopped

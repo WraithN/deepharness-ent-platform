@@ -41,9 +41,9 @@ database:
 workspace:
   root: "/home/nan/test"
 
-# agent-stub 服务地址（部署在 WORKSPACE_ROOT 所在服务器上）
+# personal-stub 服务地址（部署在 WORKSPACE_ROOT 所在服务器上）
 # dh-backend 将文件/工程/预览相关请求代理到此地址
-agent_stub:
+personal_stub:
   url: "http://127.0.0.1:8090"
 
 # 平台支持的 coding agent 与模型池配置
@@ -110,7 +110,7 @@ coding_agents:
         - hunyuan-standard
 
 # Agent 运行时状态上报配置
-# bearer_token 是外部 gatewayd / agent-stub 调用状态上报接口时必须携带的 Bearer Token。
+# bearer_token 是外部 gatewayd / personal-stub 调用状态上报接口时必须携带的 Bearer Token。
 # 生产环境请通过环境变量 AGENT_RUNTIME_BEARER_TOKEN 注入强随机字符串。
 agent_runtime:
   bearer_token: "96be41dbe1875010dafbe237c7082df1379a503c33412cd5f19d256a5c566c92"

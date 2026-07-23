@@ -45,11 +45,11 @@ func (s *DBProductDocService) ListDocs(filter ProductDocFilter) ([]object.Produc
 		argIdx++
 	}
 
+	conditions = append(conditions, "(type IS NULL OR type != 'prototype')")
+
 	query := `SELECT id, workspace_id, title, slug, content, status, category, COALESCE(folder_id, ''), created_by, created_at, updated_at
 		FROM product_docs`
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
+	query += " WHERE " + strings.Join(conditions, " AND ")
 	query += " ORDER BY updated_at DESC"
 
 	rows, err := s.db.Query(query, args...)

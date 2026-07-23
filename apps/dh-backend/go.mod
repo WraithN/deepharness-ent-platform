@@ -1,6 +1,6 @@
 module github.com/deepharness/deepharness-ent-platform/apps/dh-backend
 
-go 1.25.0
+go 1.22
 
 require (
 	github.com/deepharness/deepharness-ent-platform/packages/go-sdk v0.0.0

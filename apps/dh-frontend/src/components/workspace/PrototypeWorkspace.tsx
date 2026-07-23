@@ -75,6 +75,7 @@ import {
   productSpaceApi,
 } from '@/lib/productspace-api';
 import { cn } from '@/lib/utils';
+import { AUTH_TOKEN_KEY } from '@/lib/constants';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 常量
@@ -678,7 +679,8 @@ const PrototypeCanvas: React.FC<PrototypeCanvasProps> = ({
   const frameHeight = viewportDef.height;
   const frameSrc = useMemo(() => {
     if (!page) return '';
-    return `/api/v1/workspaces/${page.item.workspace_id}/product-space/serve/${encodeURI(page.item.relative_path)}`;
+    const token = localStorage.getItem(AUTH_TOKEN_KEY) ?? '';
+    return `/api/v1/workspaces/${page.item.workspace_id}/product-space/serve/${encodeURI(page.item.relative_path)}?auth=${encodeURIComponent(token)}`;
   }, [page]);
 
   return (

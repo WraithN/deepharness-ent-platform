@@ -1,18 +1,25 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"log"
-	"os"
 	"path/filepath"
+
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 )
 
 // ensureWorkspaceDir 保证 gatewayd 工作目录存在；创建失败返回错误。
+// 架构合规：通过 stubclient 在共享目录创建目录，不直接操作文件系统。
 func ensureWorkspaceDir(path string) error {
 	if path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(path, 0o755); err != nil {
+	sc := stubclient.Default()
+	if sc == nil {
+		return errors.New("personal-stub client not initialized")
+	}
+	if err := sc.MkdirAll(context.Background(), path); err != nil {
 		log.Printf("[ensureWorkspaceDir] failed to create workspace dir %s: %v", path, err)
 		return err
 	}

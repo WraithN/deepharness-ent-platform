@@ -2,20 +2,30 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { api } from '@/lib/api';
 import type { UserDTO, MineWorkspaceDTO } from '@/lib/api-types';
 import { PLATFORM_ROLE, SYSTEM_TENANT_ID, type PlatformRole, type SpaceRole, type SubRole } from '@/lib/role-constants';
+import { AUTH_TOKEN_KEY, AUTH_COOKIE_NAME, AUTH_COOKIE_MAX_AGE } from '@/lib/constants';
 
 /**
  * 认证上下文
  *
  * 身份保持机制（开发期）：
  * - 登录成功后，后端返回用户信息，前端将 user.id 存入 localStorage 作为 token。
+ * - 同时写入 dh_auth cookie，使 iframe / <img> 等无法设置 Authorization 头的请求也能鉴权。
  * - api 客户端（lib/api.ts）自动附带 Authorization: Bearer <userId> 头。
- * - 后端 Auth 中间件解析该头，将 userId 注入请求上下文。
+ * - 后端 Auth 中间件解析该头（或 cookie / query param），将 userId 注入请求上下文。
  * - 生产环境应替换为 JWT。
  */
 
-const TOKEN_STORAGE_KEY = 'token';
-
 import { getCurrentWorkspaceIdOrNull, removeCurrentWorkspaceId, setCurrentWorkspaceId } from '@/lib/workspace-utils';
+
+/** 将 token 写入 cookie，供 iframe 等浏览器原生请求自动携带。 */
+function setAuthCookie(token: string) {
+  document.cookie = `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; path=/; max-age=${AUTH_COOKIE_MAX_AGE}`;
+}
+
+/** 清除鉴权 cookie。 */
+function clearAuthCookie() {
+  document.cookie = `${AUTH_COOKIE_NAME}=; path=/; max-age=0`;
+}
 
 export interface AuthUser {
   id: string;
@@ -79,7 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // 启动时根据已存 token 恢复登录态
   useEffect(() => {
-    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+    const token = localStorage.getItem(AUTH_TOKEN_KEY);
     if (!token) {
       setLoading(false);
       return;
@@ -92,13 +102,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const me = await api.get<UserDTO>('/v1/identity/users/me');
       const authUser = toAuthUser(me);
       setUser(authUser);
+      // 恢复登录态时补写 cookie，确保 iframe 子资源请求也能鉴权
+      setAuthCookie(token);
       // 超级管理员不绑定工作空间
       if (authUser.platformRole !== PLATFORM_ROLE.SUPER_ADMIN) {
         await loadMembership(authUser);
       }
     } catch {
       // token 失效，清理本地凭证
-      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+      clearAuthCookie();
     } finally {
       setLoading(false);
     }
@@ -143,7 +156,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await api.post<{ code: number; data: UserDTO }>('/v1/identity/login', { email, password });
     const authUser = toAuthUser(res.data);
     // 开发期 token 即用户 ID，api 客户端会自动附带 Authorization 头
-    localStorage.setItem(TOKEN_STORAGE_KEY, authUser.id);
+    localStorage.setItem(AUTH_TOKEN_KEY, authUser.id);
+    setAuthCookie(authUser.id);
     setUser(authUser);
     if (authUser.platformRole !== PLATFORM_ROLE.SUPER_ADMIN) {
       await loadMembership(authUser);
@@ -152,7 +166,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function signOut() {
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    clearAuthCookie();
     removeCurrentWorkspaceId();
     setUser(null);
     setMembership(null);

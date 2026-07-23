@@ -33,7 +33,7 @@ export const TreeDirBlock: React.FC<TreeDirBlockProps> = ({ code }) => {
   const lines = code.split('\n');
 
   return (
-    <pre className="tree-dir">
+    <div className="tree-dir">
       {lines.map((line, idx) => {
         // 将每行拆分为：缩进/连接线部分 + 可选图标 + 内容
         const iconMatch = line.match(ICON_REGEX);
@@ -54,6 +54,6 @@ export const TreeDirBlock: React.FC<TreeDirBlockProps> = ({ code }) => {
           </span>
         );
       })}
-    </pre>
+    </div>
   );
 };

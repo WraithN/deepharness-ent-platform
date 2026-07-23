@@ -3,6 +3,8 @@
  * 统一 baseURL /api，提供 get/post/put/delete 方法
  */
 
+import { AUTH_TOKEN_KEY } from './constants';
+
 const BASE_URL = "/api";
 
 /** API 请求的默认缓存模式：禁用浏览器缓存，避免 POST/PUT 后 GET 拿到旧数据。 */
@@ -32,13 +34,17 @@ async function request<T>(
   options?: RequestInit
 ): Promise<T> {
   const url = `${BASE_URL}${path}`;
+  // FormData 上传时不设置 Content-Type，交由浏览器自动附加 multipart boundary。
+  const isFormData = body instanceof FormData;
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
     Accept: "application/json",
     ...((options?.headers as Record<string, string>) || {}),
   };
+  if (!isFormData) {
+    headers["Content-Type"] = "application/json";
+  }
 
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
@@ -46,7 +52,7 @@ async function request<T>(
   const res = await fetch(url, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: isFormData ? (body as BodyInit) : body ? JSON.stringify(body) : undefined,
     cache: DEFAULT_CACHE_MODE,
     ...options,
   });
@@ -84,6 +90,9 @@ export const api = {
     request<T>("PATCH", path, body, options),
   delete: <T>(path: string, options?: RequestInit) =>
     request<T>("DELETE", path, undefined, options),
+  /** 以 multipart/form-data 上传 FormData（如文件上传）。 */
+  postForm: <T>(path: string, form: FormData, options?: RequestInit) =>
+    request<T>("POST", path, form, options),
 };
 
 export { ApiError };

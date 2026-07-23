@@ -1,0 +1,8 @@
+# Personal Stub 运行时配置
+# 优先级：环境变量 > config.yaml > 代码默认值
+
+server:
+  port: "8090"
+
+workspace:
+  root: "/home/nan/test"

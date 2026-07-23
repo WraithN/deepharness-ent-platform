@@ -81,17 +81,9 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     }
   }
 
-  // 把消息内容拆分为：给用户的最终输出、思考/工具过程、legacy data 三种。
-  // 启发式规则：最后一段连续 text 之前的 text 都视为模型内部过程，
-  // 只有位于最后一个 reasoning 部件之后的 text 才作为最终给用户的输出。
-  // tool-call 不视为边界，因为模型可能在生成文本后调用工具。
-  let lastNonTextIndex = -1;
-  content.forEach((part, idx) => {
-    if (part.type === 'reasoning') {
-      lastNonTextIndex = idx;
-    }
-  });
-
+  // 把消息内容拆分为：给用户的最终输出、思考/工具过程。
+  // 所有 text 部件都作为最终输出展示，不再根据 reasoning 位置隐藏。
+  // reasoning 和 tool-call 归入思考过程，可折叠查看。
   const outputParts: TextMessagePart[] = [];
   const thinkingItems: (
     | { type: 'reasoning'; text: string }
@@ -104,11 +96,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     if (part.type === 'text') {
       const textPart = part as TextMessagePart;
       if (textPart.text) {
-        if (i > lastNonTextIndex) {
-          outputParts.push(textPart);
-        } else {
-          thinkingItems.push({ type: 'text', text: textPart.text });
-        }
+        outputParts.push(textPart);
       }
     } else if (part.type === 'reasoning') {
       const text = (part as ReasoningMessagePart).text;
@@ -225,7 +213,14 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
   useEffect(() => {
     const start = new Date(message.createdAt).getTime();
     if (!isRunning) {
-      setElapsed(Math.floor((Date.now() - start) / 1000));
+      // 历史消息：不显示错误的"耗时"（Date.now - createdAt 是消息年龄而非运行时长）
+      // 仅当消息 createdAt 在 5 分钟内时才计算（可能是刚完成的实时消息）
+      const duration = Math.floor((Date.now() - start) / 1000);
+      if (duration >= 0 && duration < 300) {
+        setElapsed(duration);
+      } else {
+        setElapsed(0);
+      }
       return;
     }
     const tick = () => setElapsed(Math.floor((Date.now() - start) / 1000));
@@ -425,10 +420,16 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
           </div>
         )}
 
-        {textContent && !isRunning && (
+        {/* 页脚操作栏：所有内容（文本、思考、工具调用）完成后都展示 */}
+        {hasVisibleContent && !isRunning && (
           <div className="flex items-center gap-2 mt-1.5">
             <span className="text-[10px] text-muted-foreground/50 px-1">{formatTime(message.createdAt)}</span>
-            <span className="text-[10px] text-muted-foreground/50">总耗时 {elapsed} 秒 · 工具调用 {toolCallCount} 次</span>
+            {elapsed > 0 && (
+              <span className="text-[10px] text-muted-foreground/50">总耗时 {elapsed} 秒 · 工具调用 {toolCallCount} 次</span>
+            )}
+            {toolCallCount > 0 && elapsed === 0 && (
+              <span className="text-[10px] text-muted-foreground/50">工具调用 {toolCallCount} 次</span>
+            )}
             <button
               onClick={onRegenerate}
               className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-colors"
@@ -436,13 +437,15 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
             >
               <RefreshCw className="h-3.5 w-3.5" />
             </button>
-            <button
-              onClick={() => { navigator.clipboard.writeText(textContent); toast.success('已复制'); }}
-              className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-colors"
-              title="复制"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </button>
+            {textContent && (
+              <button
+                onClick={() => { navigator.clipboard.writeText(textContent); toast.success('已复制'); }}
+                className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-colors"
+                title="复制"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         )}
         {isRunning && hasVisibleContent && (

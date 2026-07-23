@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>航班行程时间轴</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #e7ecef;
+        color: #0f172a;
+        font-family: Inter, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+        overflow-x: hidden;
+      }
+
+      .responsive-stage {
+        width: 100%;
+        max-width: 1080px;
+        margin: 0 auto;
+        overflow: hidden;
+      }
+
+      .canvas {
+        width: 1080px;
+        min-height: 1440px;
+        margin: 0 auto;
+        padding: 64px;
+        background:
+          linear-gradient(90deg, rgba(14, 165, 233, 0.08) 1px, transparent 1px),
+          linear-gradient(180deg, #fbfdff 0%, #f7fafc 100%);
+        background-size: 54px 54px, auto;
+      }
+
+      .responsive-stage > .canvas {
+        margin: 0;
+        transform-origin: top left;
+      }
+
+      .header {
+        padding: 42px 44px;
+        border-radius: 32px;
+        background: #0f172a;
+        color: #ffffff;
+      }
+
+      .kicker {
+        color: #93c5fd;
+        font-size: 25px;
+        font-weight: 800;
+      }
+
+      h1 {
+        margin: 14px 0 0;
+        font-size: 66px;
+        line-height: 1.1;
+        letter-spacing: 0;
+      }
+
+      .summary {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin-top: 28px;
+      }
+
+      .summary div {
+        padding: 18px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .summary b {
+        display: block;
+        font-size: 30px;
+      }
+
+      .summary span {
+        display: block;
+        margin-top: 5px;
+        color: #cbd5e1;
+        font-size: 19px;
+      }
+
+      .section-title {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin: 48px 0 22px;
+        color: #0f172a;
+        font-size: 34px;
+        font-weight: 950;
+      }
+
+      .pill {
+        padding: 8px 16px;
+        border-radius: 999px;
+        background: #dbeafe;
+        color: #0b75e5;
+        font-size: 20px;
+        font-weight: 850;
+      }
+
+      .timeline {
+        position: relative;
+        display: grid;
+        gap: 18px;
+      }
+
+      .timeline::before {
+        content: "";
+        position: absolute;
+        left: 35px;
+        top: 42px;
+        bottom: 42px;
+        width: 4px;
+        border-radius: 999px;
+        background: #cbd5e1;
+      }
+
+      .leg {
+        position: relative;
+        display: grid;
+        grid-template-columns: 92px 1fr;
+        gap: 20px;
+        padding: 26px 28px 26px 0;
+        border-radius: 28px;
+        background: #ffffff;
+        border: 2px solid #e2e8f0;
+      }
+
+      .dot {
+        position: relative;
+        z-index: 1;
+        width: 70px;
+        height: 70px;
+        margin-left: 2px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background: #0ea5e9;
+        color: #ffffff;
+        font-size: 28px;
+        font-weight: 950;
+      }
+
+      .leg.transfer .dot {
+        background: #f97316;
+      }
+
+      .airport-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 24px;
+      }
+
+      .time {
+        font-size: 42px;
+        font-weight: 950;
+      }
+
+      .airport {
+        color: #0f172a;
+        font-size: 34px;
+        font-weight: 900;
+      }
+
+      .meta {
+        margin-top: 10px;
+        color: #475569;
+        font-size: 24px;
+        line-height: 1.36;
+        font-weight: 650;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      .chip {
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: #f1f5f9;
+        color: #334155;
+        font-size: 20px;
+        font-weight: 800;
+      }
+
+      .warning {
+        margin-top: 42px;
+        padding: 32px 34px;
+        border-radius: 30px;
+        background: #fff7ed;
+        border: 3px solid #fed7aa;
+      }
+
+      .warning h2 {
+        margin: 0 0 18px;
+        color: #9a3412;
+        font-size: 34px;
+      }
+
+      .warning ul {
+        margin: 0;
+        padding-left: 28px;
+        color: #7c2d12;
+        font-size: 24px;
+        line-height: 1.48;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="responsive-stage">
+    <main class="canvas">
+      <section class="header">
+        <div class="kicker">FLIGHT TIMELINE / 小红书行程单</div>
+        <h1>上海往返东京<br />这样安排更顺</h1>
+        <div class="summary">
+          <div><b>2 段</b><span>直飞航班</span></div>
+          <div><b>不同机场</b><span>成田进 / 羽田出</span></div>
+          <div><b>4-6 天</b><span>适合关东短假</span></div>
+        </div>
+      </section>
+
+      <div class="section-title"><span class="pill">去程</span>上海浦东 → 东京成田</div>
+      <section class="timeline">
+        <div class="leg">
+          <div class="dot">起</div>
+          <div>
+            <div class="airport-row">
+              <div class="time">09:20</div>
+              <div class="airport">PVG 上海浦东</div>
+            </div>
+            <div class="meta">建议提前 2.5 小时到达, 国际出发值机和安检预留缓冲。</div>
+          </div>
+        </div>
+        <div class="leg transfer">
+          <div class="dot">飞</div>
+          <div>
+            <div class="airport-row">
+              <div class="time">2h50m</div>
+              <div class="airport">直飞航段</div>
+            </div>
+            <div class="meta">上午起飞、午后落地, 第一天还能安排市区晚餐。</div>
+            <div class="chips"><span class="chip">无中转</span><span class="chip">适合轻行李</span></div>
+          </div>
+        </div>
+        <div class="leg">
+          <div class="dot">到</div>
+          <div>
+            <div class="airport-row">
+              <div class="time">13:10</div>
+              <div class="airport">NRT 东京成田</div>
+            </div>
+            <div class="meta">成田到市区时间较长, 酒店位置建议优先看上野 / 东京站沿线。</div>
+          </div>
+        </div>
+      </section>
+
+      <div class="section-title"><span class="pill">返程</span>东京羽田 → 上海虹桥</div>
+      <section class="timeline">
+        <div class="leg">
+          <div class="dot">返</div>
+          <div>
+            <div class="airport-row">
+              <div class="time">16:30</div>
+              <div class="airport">HND 东京羽田</div>
+            </div>
+            <div class="meta">返程不浪费上午, 但要确认酒店到羽田的交通时间。</div>
+          </div>
+        </div>
+        <div class="leg">
+          <div class="dot">落</div>
+          <div>
+            <div class="airport-row">
+              <div class="time">19:10</div>
+              <div class="airport">SHA 上海虹桥</div>
+            </div>
+            <div class="meta">晚上到达, 市区交通友好。具体航班号、行李额按订单为准。</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="warning">
+        <h2>⚠️ 下单前一定看</h2>
+        <ul>
+          <li>东京进出不是同一机场, 订酒店和交通时别看错。</li>
+          <li>价格截图只代表查询时刻, 发布请补查询日期。</li>
+        </ul>
+      </section>
+    </main>
+    </div>
+    <script>
+      (() => {
+        const designWidth = 1080;
+        const stage = document.querySelector(".responsive-stage");
+        const canvas = document.querySelector(".canvas");
+        const fit = () => {
+          if (!stage || !canvas) return;
+          const scale = Math.min(1, window.innerWidth / designWidth);
+          stage.style.width = `${designWidth * scale}px`;
+          stage.style.height = `${canvas.scrollHeight * scale}px`;
+          canvas.style.transform = `scale(${scale})`;
+        };
+        window.addEventListener("resize", fit);
+        window.addEventListener("load", fit);
+        if (document.fonts?.ready) document.fonts.ready.then(fit);
+        requestAnimationFrame(fit);
+      })();
+    </script>
+  </body>
+</html>

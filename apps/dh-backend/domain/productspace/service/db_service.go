@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
 	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
@@ -93,6 +93,8 @@ var mimeTypeByExt = map[string]string{
 	"jpeg":                "image/jpeg",
 	"pdf":                 "application/pdf",
 	"html":                "text/html; charset=utf-8",
+	"css":                 "text/css; charset=utf-8",
+	"js":                  "application/javascript; charset=utf-8",
 }
 
 // DBProductSpaceService 是基于 PostgreSQL 与本地文件系统的产品空间服务实现。
@@ -257,44 +259,41 @@ func resolveProductSpacePath(workspaceRoot, workspaceID, userID, relativePath st
 }
 
 // safeMkdirAll 在 baseAbs 下安全地创建到达 targetAbs 所经过的每一级目录。
-// 逐级检查已存在的目录段，若发现符号链接或非目录文件则立即返回错误，防止
-// 通过软链接将文件写入工作区之外。
+// safeMkdirAll 通过 personal-stub 在共享目录中递归创建目录。
+// 架构合规：dh-backend 不直接写共享目录，委托 personal-stub 执行。
+// 保留路径逃逸校验（targetAbs 必须在 baseAbs 下），防止恶意路径穿越。
 func safeMkdirAll(baseAbs, targetAbs string) error {
 	if !strings.HasPrefix(targetAbs, baseAbs+string(filepath.Separator)) {
 		return errors.New(errMsgPathTraversal)
 	}
-	rel, err := filepath.Rel(baseAbs, targetAbs)
-	if err != nil {
-		return fmt.Errorf("compute relative path failed: %w", err)
+	sc := stubclient.Default()
+	if sc == nil {
+		return errors.New("personal-stub client not initialized")
 	}
-	parts := strings.Split(filepath.ToSlash(rel), "/")
-	current := baseAbs
-	for _, part := range parts {
-		if part == "" || part == "." {
-			continue
-		}
-		if part == ".." {
-			return errors.New(errMsgPathTraversal)
-		}
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if err != nil {
-			if os.IsNotExist(err) {
-				if err := os.Mkdir(current, defaultDirPerm); err != nil {
-					return fmt.Errorf("create directory failed: %w", err)
-				}
-				continue
-			}
-			return fmt.Errorf("lstat directory failed: %w", err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("symlinks are not allowed in product space path")
-		}
-		if !info.IsDir() {
-			return errors.New("path component is not a directory")
-		}
+	return sc.MkdirAll(context.Background(), targetAbs)
+}
+
+// stubWriteFile 通过 personal-stub 写入文件内容。
+// 架构合规：dh-backend 不直接写共享目录。
+func stubWriteFile(path string, data []byte) error {
+	sc := stubclient.Default()
+	if sc == nil {
+		return errors.New("personal-stub client not initialized")
 	}
-	return nil
+	return sc.WriteFile(context.Background(), path, string(data))
+}
+
+// stubDeleteFile 通过 personal-stub 删除文件，文件不存在时视为成功。
+// 架构合规：dh-backend 不直接删除共享目录中的文件。
+func stubDeleteFile(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return nil // 文件不存在，视为删除成功
+	}
+	sc := stubclient.Default()
+	if sc == nil {
+		return errors.New("personal-stub client not initialized")
+	}
+	return sc.DeleteFile(context.Background(), path)
 }
 
 // resolveVersionFilePath 解析 product_doc_versions 中存储的文件路径。
@@ -409,21 +408,14 @@ func buildVersionFileName(name, ext string, version int) string {
 }
 
 // copyFile 将 src 文件完整复制到 dst。
+// copyFile 通过 personal-stub 复制文件：读取源文件（读操作，允许直接 os.ReadFile）
+// 再通过 stubclient 写入目标文件（写操作，需委托 personal-stub）。
 func copyFile(src, dst string) error {
-	in, err := os.Open(src)
+	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
+	return stubWriteFile(dst, data)
 }
 
 // sanitizeName 清理名称中的文件系统危险字符，防止跨目录或非法文件名。
@@ -640,7 +632,7 @@ func deleteVersionFiles(dir, name, ext string) error {
 		if !strings.HasSuffix(fname, suffix) {
 			continue
 		}
-		if err := os.Remove(filepath.Join(dir, fname)); err != nil {
+		if err := stubDeleteFile(filepath.Join(dir, fname)); err != nil {
 			return fmt.Errorf("remove version file %s failed: %w", fname, err)
 		}
 	}
@@ -785,15 +777,15 @@ func (s *DBProductSpaceService) insertProductDoc(
 	now := time.Now().UTC()
 	var item object.ProductSpaceItem
 	err := scanProductSpaceItem(q.QueryRowContext(ctx, `
-		INSERT INTO product_docs (
-			id, workspace_id, user_id, type, title, slug, relative_path, content,
-			status, current_version, file_ext, mime_type, size_bytes, created_by, created_at, updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-		RETURNING id, workspace_id, user_id, type, title, relative_path, current_version,
-		          file_ext, mime_type, size_bytes, status, created_by, created_at, updated_at
+	INSERT INTO product_docs (
+		id, workspace_id, user_id, type, title, slug, relative_path, content,
+		status, current_version, file_ext, mime_type, size_bytes, created_by, category, created_at, updated_at
+	)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+	RETURNING id, workspace_id, user_id, type, title, relative_path, current_version,
+	          file_ext, mime_type, size_bytes, status, created_by, created_at, updated_at
 	`, id, workspaceID, userID, itemType, title, slug, relativePath, content,
-		status, currentVersion, fileExt, mimeType, sizeBytes, createdBy, now, now,
+		status, currentVersion, fileExt, mimeType, sizeBytes, createdBy, itemType, now, now,
 	), &item)
 	if err != nil {
 		return nil, fmt.Errorf("insert product doc failed: %w", err)
@@ -1150,14 +1142,14 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 		return nil, err
 	}
 
-	if err := os.WriteFile(absPath, data, defaultFilePerm); err != nil {
+	if err := stubWriteFile(absPath, data); err != nil {
 		_ = tx.Rollback()
-		_ = os.Remove(absPath)
+		_ = stubDeleteFile(absPath)
 		return nil, fmt.Errorf("write initial file failed: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		_ = os.Remove(absPath)
+		_ = stubDeleteFile(absPath)
 		return nil, fmt.Errorf("commit transaction failed: %w", err)
 	}
 
@@ -1259,20 +1251,20 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 		return nil, fmt.Errorf("backup current version failed: %w", err)
 	}
 
-	if err := os.WriteFile(currentAbsPath, newData, defaultFilePerm); err != nil {
-		_ = os.Remove(versionAbsPath)
+	if err := stubWriteFile(currentAbsPath, newData); err != nil {
+		_ = stubDeleteFile(versionAbsPath)
 		return nil, fmt.Errorf("write new content failed: %w", err)
 	}
 
 	if err := s.saveVersionAndUpdateTx(ctx, tx, item, versionRelPath, req.Content, req.ChangeSummary, userID, oldBytes, newData); err != nil {
-		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
-		_ = os.Remove(versionAbsPath)
+		_ = stubWriteFile(currentAbsPath, oldBytes)
+		_ = stubDeleteFile(versionAbsPath)
 		return nil, err
 	}
 
 	if err := tx.Commit(); err != nil {
-		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
-		_ = os.Remove(versionAbsPath)
+		_ = stubWriteFile(currentAbsPath, oldBytes)
+		_ = stubDeleteFile(versionAbsPath)
 		return nil, fmt.Errorf("commit transaction failed: %w", err)
 	}
 
@@ -1444,8 +1436,8 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	}
 
 	rollbackFS := func() {
-		_ = os.WriteFile(currentAbsPath, oldBytes, defaultFilePerm)
-		_ = os.Remove(snapshotAbsPath)
+		_ = stubWriteFile(currentAbsPath, oldBytes)
+		_ = stubDeleteFile(snapshotAbsPath)
 	}
 
 	if err := copyFile(sourceVersionAbsPath, currentAbsPath); err != nil {
@@ -1459,7 +1451,7 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 		return nil, fmt.Errorf("read restored file failed: %w", err)
 	}
 
-	if err := os.WriteFile(snapshotAbsPath, restoredBytes, defaultFilePerm); err != nil {
+	if err := stubWriteFile(snapshotAbsPath, restoredBytes); err != nil {
 		rollbackFS()
 		return nil, fmt.Errorf("create restore snapshot failed: %w", err)
 	}
@@ -1579,7 +1571,7 @@ func (s *DBProductSpaceService) DeleteItem(ctx context.Context, workspaceID, use
 		return nil
 	}
 
-	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
+	if err := stubDeleteFile(absPath); err != nil {
 		log.Printf("remove current file %s failed: %v", absPath, err)
 	}
 	if err := deleteVersionFiles(versionDir, name, ext); err != nil {
@@ -1676,7 +1668,7 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 	if len(entries) > 0 {
 		return fmt.Errorf("%w: %s", ErrConflict, errMsgFolderNotEmpty)
 	}
-	if err := os.Remove(absPath); err != nil {
+	if err := stubDeleteFile(absPath); err != nil {
 		return fmt.Errorf("remove folder failed: %w", err)
 	}
 
@@ -1684,7 +1676,7 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 	versionsAbsPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, filepath.Join(object.ProductSpaceVersionsDir, req.Category, folder))
 	if err == nil {
 		if entries, err := os.ReadDir(versionsAbsPath); err == nil && len(entries) == 0 {
-			_ = os.Remove(versionsAbsPath)
+			_ = stubDeleteFile(versionsAbsPath)
 		}
 	}
 	return nil

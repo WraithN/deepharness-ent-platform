@@ -82,7 +82,7 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({ code }) => {
           <AlertCircle className="h-3.5 w-3.5" />
           <span>图表渲染失败：{error}</span>
         </div>
-        <pre className="text-xs text-muted-foreground overflow-auto font-mono">{code}</pre>
+        <div className="text-xs text-muted-foreground overflow-auto font-mono whitespace-pre-wrap">{code}</div>
       </div>
     );
   }

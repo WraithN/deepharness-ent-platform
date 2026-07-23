@@ -40,11 +40,25 @@ const USER_PROMPT_MARKER = "__USER_PROMPT__"
 type contentPart struct {
 	Type       string `json:"type"`
 	Text       string `json:"text,omitempty"`
+	MessageID  string `json:"messageId,omitempty"`
 	ToolCallID string `json:"toolCallId,omitempty"`
 	ToolName   string `json:"toolName,omitempty"`
 	ArgsText   string `json:"argsText,omitempty"`
-	Result     string `json:"result,omitempty"`
-	Done       bool   `json:"done,omitempty"`
+	// Result 不使用 omitempty：空结果也需要持久化，
+	// 否则历史恢复时 result 为 undefined，前端误判为"执行中"。
+	Result string `json:"result"`
+	Done   bool   `json:"done,omitempty"`
+}
+
+// removeToolCallID 从列表中移除第一个匹配的工具调用 ID，返回是否找到并移除。
+func removeToolCallID(ids *[]string, target string) bool {
+	for i, id := range *ids {
+		if id == target {
+			*ids = append((*ids)[:i], (*ids)[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // runState 保存一次 agent run 在处理过程中的可变状态，
@@ -53,7 +67,10 @@ type runState struct {
 	bufMu               sync.Mutex
 	eventCount          int
 	activeToolCallCount int
-	pendingToolCallIDs    []string
+	pendingToolCallIDs  []string
+	// endedToolCallIDs 跟踪已收到 END 但尚未收到 RESULT 的工具调用 ID。
+	// flushPendingState 会为这些 ID 补发合成 RESULT，防止前端永久卡在"执行中"。
+	endedToolCallIDs    []string
 	activeTextMessageID string
 	firstResponseSeen   bool
 	runParts            []contentPart
@@ -446,22 +463,60 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	// writeToClient 为 true 时同时写入前端 SSE，false 时仅追加到 buffer。
 	flushPendingState := func(writeToClient bool) {
 		now := float64(time.Now().UnixMilli()) / 1000
+		// 为仍在 pending（未收到 END）的工具调用补发 END + RESULT
 		for _, id := range runState.pendingToolCallIDs {
-			ev := agui.Event{
+			endEv := agui.Event{
 				Type:       agui.EventToolCallEnd,
 				ToolCallID: id,
 				Timestamp:  now,
 			}
+			resultEv := agui.Event{
+				Type:       agui.EventToolCallResult,
+				ToolCallID: id,
+				Content:    "",
+				Timestamp:  now,
+			}
 			if writeToClient {
-				if err := writeEvent(ev); err != nil {
+				if err := writeEvent(endEv); err != nil {
 					log.Printf("[AGUIHandler] run=%s flush tool-call-end failed: %v", input.RunID, err)
 				}
+				if err := writeEvent(resultEv); err != nil {
+					log.Printf("[AGUIHandler] run=%s flush tool-call-result failed: %v", input.RunID, err)
+				}
 			} else {
-				bufferEvent(ev)
+				bufferEvent(endEv)
+				bufferEvent(resultEv)
 			}
 		}
 		runState.pendingToolCallIDs = runState.pendingToolCallIDs[:0]
 		runState.activeToolCallCount = 0
+
+		// 为已收到 END 但未收到 RESULT 的工具调用补发合成 RESULT
+		for _, id := range runState.endedToolCallIDs {
+			resultEv := agui.Event{
+				Type:       agui.EventToolCallResult,
+				ToolCallID: id,
+				Content:    "",
+				Timestamp:  now,
+			}
+			if writeToClient {
+				if err := writeEvent(resultEv); err != nil {
+					log.Printf("[AGUIHandler] run=%s flush tool-call-result (ended) failed: %v", input.RunID, err)
+				}
+			} else {
+				bufferEvent(resultEv)
+			}
+			// 同时更新 runParts 中的 Result 字段
+			runState.bufMu.Lock()
+			for i := len(runState.runParts) - 1; i >= 0; i-- {
+				if runState.runParts[i].Type == "tool-call" && runState.runParts[i].ToolCallID == id {
+					runState.runParts[i].Result = ""
+					break
+				}
+			}
+			runState.bufMu.Unlock()
+		}
+		runState.endedToolCallIDs = runState.endedToolCallIDs[:0]
 
 		if runState.activeTextMessageID != "" {
 			ev := agui.Event{
@@ -508,10 +563,27 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 				return []agui.Event{}
 			}
 			runState.bufMu.Lock()
-			if len(runState.runParts) == 0 || runState.runParts[len(runState.runParts)-1].Type != "text" {
-				runState.runParts = append(runState.runParts, contentPart{Type: "text", Text: ev.Delta})
-			} else {
+			// 用 messageId 区分不同文本块：仅当最后一个 text 部件的 messageId 与当前一致时追加，
+			// 否则新建部件，避免多个文本块的 delta 在 runParts 中合并错乱（影响断连恢复）。
+			msgID := ev.MessageID
+			if msgID == "" {
+				msgID = runState.activeTextMessageID
+			}
+			shouldAppend := false
+			if len(runState.runParts) > 0 {
+				last := runState.runParts[len(runState.runParts)-1]
+				if last.Type == "text" {
+					if msgID == "" {
+						shouldAppend = true
+					} else {
+						shouldAppend = last.MessageID == msgID
+					}
+				}
+			}
+			if shouldAppend {
 				runState.runParts[len(runState.runParts)-1].Text += ev.Delta
+			} else {
+				runState.runParts = append(runState.runParts, contentPart{Type: "text", Text: ev.Delta, MessageID: msgID})
 			}
 			runState.runTextBuilder.WriteString(ev.Delta)
 			runState.bufMu.Unlock()
@@ -523,10 +595,16 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 				return []agui.Event{}
 			}
 			runState.bufMu.Lock()
-			if len(runState.runParts) == 0 || runState.runParts[len(runState.runParts)-1].Type != "reasoning" {
-				runState.runParts = append(runState.runParts, contentPart{Type: "reasoning", Text: ev.Delta})
-			} else {
+			// 上一段思考已结束（Done）时另起一段，避免多个思考阶段被合并成一段。
+			shouldAppend := false
+			if len(runState.runParts) > 0 {
+				last := runState.runParts[len(runState.runParts)-1]
+				shouldAppend = last.Type == "reasoning" && !last.Done
+			}
+			if shouldAppend {
 				runState.runParts[len(runState.runParts)-1].Text += ev.Delta
+			} else {
+				runState.runParts = append(runState.runParts, contentPart{Type: "reasoning", Text: ev.Delta})
 			}
 			runState.bufMu.Unlock()
 			checkpointRun()
@@ -552,15 +630,6 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 			runState.bufMu.Unlock()
 			checkpointRun()
 		case agui.EventToolCallArgs:
-			if len(runState.pendingToolCallIDs) > 0 {
-				expectedID := runState.pendingToolCallIDs[len(runState.pendingToolCallIDs)-1]
-				if ev.ToolCallID != expectedID {
-					log.Printf("[AGUIHandler] run=%s rewrite TOOL_CALL_ARGS id %s -> %s", input.RunID, ev.ToolCallID, expectedID)
-					ev.ToolCallID = expectedID
-				}
-			} else {
-				log.Printf("[AGUIHandler] run=%s TOOL_CALL_ARGS id=%s but no pending tool call", input.RunID, ev.ToolCallID)
-			}
 			if ev.Delta != "" {
 				runState.bufMu.Lock()
 				for i := len(runState.runParts) - 1; i >= 0; i-- {
@@ -573,39 +642,25 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 				checkpointRun()
 			}
 		case agui.EventToolCallEnd:
-			if len(runState.pendingToolCallIDs) == 0 {
-				log.Printf("[AGUIHandler] run=%s ignore orphan TOOL_CALL_END id=%s", input.RunID, ev.ToolCallID)
-				return []agui.Event{}
-			}
-			expectedID := runState.pendingToolCallIDs[0]
-			runState.pendingToolCallIDs = runState.pendingToolCallIDs[1:]
-			if ev.ToolCallID != expectedID {
-				log.Printf("[AGUIHandler] run=%s rewrite TOOL_CALL_END id %s -> %s", input.RunID, ev.ToolCallID, expectedID)
-				ev.ToolCallID = expectedID
-			}
-			if runState.activeToolCallCount > 0 {
-				runState.activeToolCallCount--
-			}
-		case agui.EventToolCallResult:
-			var syntheticEnd *agui.Event
-			if len(runState.pendingToolCallIDs) > 0 {
-				expectedID := runState.pendingToolCallIDs[0]
-				runState.pendingToolCallIDs = runState.pendingToolCallIDs[1:]
-				if ev.ToolCallID != expectedID {
-					log.Printf("[AGUIHandler] run=%s rewrite TOOL_CALL_RESULT id %s -> %s", input.RunID, ev.ToolCallID, expectedID)
-					ev.ToolCallID = expectedID
-				}
-				syntheticEnd = &agui.Event{
-					Type:       agui.EventToolCallEnd,
-					ToolCallID: expectedID,
-					Timestamp:  float64(time.Now().UnixMilli()) / 1000,
-				}
+			// gatewayd 已按 AG-UI 协议在 RESULT 之前发送 END，后端仅跟踪活跃数量，
+			// 不再重映射 ID（每个工具调用使用 gatewayd 原始 ID，避免并行调用错配）。
+			if removeToolCallID(&runState.pendingToolCallIDs, ev.ToolCallID) {
 				if runState.activeToolCallCount > 0 {
 					runState.activeToolCallCount--
 				}
-			} else {
-				log.Printf("[AGUIHandler] run=%s TOOL_CALL_RESULT id=%s but no pending tool call", input.RunID, ev.ToolCallID)
+				// 记录到 endedToolCallIDs，等 RESULT 到达后移除；
+				// 若 RESULT 最终未到达，flushPendingState 会补发合成 RESULT。
+				runState.endedToolCallIDs = append(runState.endedToolCallIDs, ev.ToolCallID)
 			}
+		case agui.EventToolCallResult:
+			// 若 END 已到达则 ID 已从 pending 移除；若 END 未到达（兼容旧版 gatewayd），此处移除并递减。
+			if removeToolCallID(&runState.pendingToolCallIDs, ev.ToolCallID) {
+				if runState.activeToolCallCount > 0 {
+					runState.activeToolCallCount--
+				}
+			}
+			// 从 endedToolCallIDs 移除（RESULT 已到达，无需补发）
+			removeToolCallID(&runState.endedToolCallIDs, ev.ToolCallID)
 			if ev.ToolCallID != "" {
 				runState.bufMu.Lock()
 				for i := len(runState.runParts) - 1; i >= 0; i-- {
@@ -616,9 +671,6 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 				}
 				runState.bufMu.Unlock()
 				checkpointRun()
-			}
-			if syntheticEnd != nil {
-				return []agui.Event{ev, *syntheticEnd}
 			}
 		}
 		return []agui.Event{ev}

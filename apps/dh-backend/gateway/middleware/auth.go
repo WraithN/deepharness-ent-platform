@@ -31,17 +31,27 @@ func Auth(next http.Handler) http.Handler {
 	})
 }
 
+// authCookieName 是鉴权 cookie 的名称，供 iframe 等无法设置 Authorization 头的请求使用。
+const authCookieName = "dh_auth"
+
 // extractBearerToken 从 Authorization 头中提取 Bearer token。
+// iframe / <img> 等浏览器原生请求无法设置 Authorization 头，
+// 依次回退到 ?auth= query 参数和 dh_auth cookie，使静态资源端点（如原型预览）也能通过鉴权。
 func extractBearerToken(r *http.Request) (string, bool) {
 	auth := r.Header.Get("Authorization")
-	if auth == "" {
-		return "", false
+	if auth != "" {
+		const bearerPrefix = "Bearer "
+		if strings.HasPrefix(auth, bearerPrefix) {
+			return strings.TrimSpace(strings.TrimPrefix(auth, bearerPrefix)), true
+		}
 	}
-	const bearerPrefix = "Bearer "
-	if !strings.HasPrefix(auth, bearerPrefix) {
-		return "", false
+	if q := r.URL.Query().Get("auth"); q != "" {
+		return q, true
 	}
-	return strings.TrimSpace(strings.TrimPrefix(auth, bearerPrefix)), true
+	if c, err := r.Cookie(authCookieName); err == nil && c.Value != "" {
+		return c.Value, true
+	}
+	return "", false
 }
 
 // UserIDFromContext 从请求上下文中取出 auth 中间件注入的用户 ID。
@@ -50,7 +60,7 @@ func UserIDFromContext(ctx context.Context) (string, bool) {
 	return v, ok
 }
 
-// BearerAuth 返回一个校验固定 Bearer Token 的中间件，供外部系统（如 gatewayd / agent-stub）上报状态使用。
+// BearerAuth 返回一个校验固定 Bearer Token 的中间件，供外部系统（如 gatewayd / personal-stub）上报状态使用。
 // token 为空时所有请求都会被拒绝，避免未配置时意外开放接口。
 func BearerAuth(token string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

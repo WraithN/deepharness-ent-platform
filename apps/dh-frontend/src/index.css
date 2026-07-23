@@ -660,7 +660,7 @@ html {
 
 /* ── 树形目录结构美化 ── */
 @layer components {
-  .markdown-preview pre.tree-dir {
+  .markdown-preview .tree-dir {
     font-family: "Menlo", "Monaco", "JetBrains Mono", monospace;
     font-size: 14px;
     line-height: 1.8;
@@ -676,7 +676,7 @@ html {
   }
 
   /* 每行作为 block 换行，超长内容自动折行 */
-  .markdown-preview pre.tree-dir .tree-line {
+  .markdown-preview .tree-dir .tree-line {
     display: block;
     white-space: pre-wrap;
     overflow-wrap: break-word;
@@ -684,45 +684,45 @@ html {
   }
 
   /* 连接线（├ └ │ ─）弱化为浅灰色 */
-  .markdown-preview pre.tree-dir .tree-indent {
+  .markdown-preview .tree-dir .tree-indent {
     color: hsl(var(--border));
   }
 
   /* 一级模块图标放大 + 主色高亮 */
-  .markdown-preview pre.tree-dir .tree-icon {
+  .markdown-preview .tree-dir .tree-icon {
     font-size: 18px;
     color: hsl(var(--primary));
     margin-right: 2px;
   }
 
   /* 内容文字保持正常颜色 */
-  .markdown-preview pre.tree-dir .tree-text {
+  .markdown-preview .tree-dir .tree-text {
     color: hsl(var(--foreground));
   }
 
   /* 层级缩进：每层 ┃ 渐变竖线视觉分层 */
-  .markdown-preview pre.tree-dir .tree-line .tree-indent {
+  .markdown-preview .tree-dir .tree-line .tree-indent {
     border-image: none;
   }
 }
 
 /* ── 树形块暗色模式适配 ── */
 @layer components {
-  .dark .markdown-preview pre.tree-dir {
+  .dark .markdown-preview .tree-dir {
     background: hsl(222 47% 11% / 0.6);
     border-left-color: hsl(var(--primary));
     box-shadow: 0 1px 8px rgba(0, 0, 0, 0.2);
   }
 
-  .dark .markdown-preview pre.tree-dir .tree-indent {
+  .dark .markdown-preview .tree-dir .tree-indent {
     color: hsl(var(--muted-foreground) / 0.6);
   }
 
-  .dark .markdown-preview pre.tree-dir .tree-icon {
+  .dark .markdown-preview .tree-dir .tree-icon {
     color: hsl(var(--primary));
   }
 
-  .dark .markdown-preview pre.tree-dir .tree-text {
+  .dark .markdown-preview .tree-dir .tree-text {
     color: hsl(var(--foreground));
   }
 }

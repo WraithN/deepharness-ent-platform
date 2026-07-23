@@ -94,33 +94,69 @@ commands:
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
 
-      你是一位前端工程师与 UI 设计师。请根据以下需求，生成一个可运行的前端原型工程（基于 Node + Vite）。
+      你是一位前端工程师与 UI 设计师。请根据以下需求生成可运行的前端原型。
 
-      【工程输出要求】
-      1. 将工程创建在 {WORKSPACE_PATH}/products/prototypes/ 目录下，工程目录名使用需求关键词的英文命名（如 {WORKSPACE_PATH}/products/prototypes/user-login/）。
-      2. 使用 React + TypeScript + Tailwind CSS + Vite。
-      3. 不需要后端服务；所有数据使用本地 mock 数据（放在 src/mocks/ 或 public/mock/）。
-      4. 关键组件/可点击元素必须添加稳定的 data-dh-id 属性，例如：
-         <button data-dh-id="submit-btn">提交</button>
-         <div data-dh-id="user-card">...</div>
-         这对后续产品标注和走查非常重要。
-      5. 工程必须包含 `pnpm run dev` 用于本地预览，以及 `pnpm run build` 用于构建生产包。
-      6. 所有文件创建完成后，只执行一次 `pnpm install && pnpm run build`，确保产出 `dist/index.html` 和 `dist/assets/`。不要重复执行 install。
-      7. 最终产物结构：
-         {WORKSPACE_PATH}/products/prototypes/{工程名}/
-         ├── package.json
-         ├── vite.config.ts
-         ├── index.html
-         ├── src/
-         ├── public/mock/
-         └── dist/
-             ├── index.html
-             └── assets/
+      {PROTO_TEMPLATES}
 
-      【输出标记】
-      工程创建完成后，在回复末尾用以下格式标记工程根目录（每行一个）：
-      [[PROJECT:{WORKSPACE_PATH}/products/prototypes/{工程名}]]
-      注意：路径必须是绝对路径。
+      【产出规则】
+      一、若上方「可用工程模版」列出了模版，且存在与需求场景匹配的模版：
+      1. 选择最匹配的一个模版（按其「场景」「标签」描述判断）。若所有模版都不匹配，跳到规则二。
+      2. 将该模版工程复制到 {WORKSPACE_PATH}/products/prototypes/{工程名}/（工程名用需求关键词英文命名）：
+         - 复制时排除 node_modules 与 dist 目录。
+         - 复制后，将 {工程名}/node_modules 软链接到模版路径下的 node_modules（依赖已预装），避免重复安装：
+           ln -s {模版路径}/node_modules {WORKSPACE_PATH}/products/prototypes/{工程名}/node_modules
+      3. 仅在模版约定的页面目录（如 src/pages/）下新增或修改页面，复用模版已有的组件、路由、布局与样式；不要改动 package.json 的依赖与构建配置。
+      4. 关键可点击元素必须添加稳定的 data-dh-id 属性，这对后续产品标注与走查非常重要。
+      5. 完成后在工程根目录执行一次 `pnpm run build`（禁止执行 pnpm install，依赖已由模版预装），确保产出 dist/。
+      6. 输出标记（绝对路径）：
+         [[PROJECT:{WORKSPACE_PATH}/products/prototypes/{工程名}]]
+
+      二、若上方「可用工程模版」为空，或没有任何模版匹配需求：
+      采用「拆分式单页 HTML」方案，使用内置脚手架保证样式与功能一致：
+
+      步骤 1 — 写入脚手架文件（原样写入，不要修改内容）：
+      将以下内容写入 {WORKSPACE_PATH}/products/prototypes/{工程名}/dh-base.css：
+      ---dh-base.css 开始---
+      {HTML_SCAFFOLD_CSS}
+      ---dh-base.css 结束---
+
+      将以下内容写入 {WORKSPACE_PATH}/products/prototypes/{工程名}/dh-base.js：
+      ---dh-base.js 开始---
+      {HTML_SCAFFOLD_JS}
+      ---dh-base.js 结束---
+
+      步骤 2 — 编写页面 HTML：
+      1. 在 {WORKSPACE_PATH}/products/prototypes/{工程名}/ 目录下产出多个独立 HTML，每个页面一个文件（如 index.html、dashboard.html、detail.html）。
+      2. 每个 HTML 的 <head> 必须按此顺序引入：
+         <link rel="stylesheet" href="dh-base.css">
+         <script src="dh-base.js"></script>
+         <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+         图表使用 ECharts CDN，不需要后端服务，数据使用 dh-store（localStorage）或页面内 mock。
+      3. 直接使用 dh-base.css 的组件类，不要自己写基础样式。可用类名：
+         布局：page-container / page-header / page-title / page-subtitle / content-wrapper / sidebar / main-content
+         导航：navbar / navbar-logo / navbar-nav / navbar-user / navbar-avatar
+         按钮：btn / btn-primary / btn-secondary / btn-danger / btn-success / btn-sm
+         卡片：card / card-body / stat-grid / stat-card / stat-card-label / stat-card-value
+         表格：table-wrap / table
+         表单：form-group / form-label / form-input / form-select / form-textarea / form-row
+         标签：tag / tag-blue / tag-green / tag-yellow / tag-red / tag-gray
+         模态框：modal-overlay / modal / modal-header / modal-close / modal-body / modal-footer
+         筛选：filter-bar / filter-search / filter-tabs / filter-tab
+         进度条：progress-bar / progress-bar-fill（green/yellow/red）
+         其他：toast-container / toast / empty-state / empty-state-title / empty-state-desc / actions
+      4. dh-base.js 提供的函数（直接调用，不要重复定义）：
+         dhStore.get(key, fallback) / dhStore.set(key, val) / dhStore.remove(key)
+         formatMoney(n) / formatDate(d) / formatDateTime(d)
+         showToast(msg, type) / getUrlParam(name)
+         getStatusLabel(status) / getStatusTagClass(status) / debounce(fn, delay)
+      5. 关键可点击元素必须添加稳定的 data-dh-id 属性，这对后续产品标注与走查非常重要。
+      6. 不要生成登录页、注册页或任何认证流程，除非用户在需求中明确要求。
+      7. 每个文件均用 [[FILE:绝对路径]] 标记输出，例如：
+         [[FILE:{WORKSPACE_PATH}/products/prototypes/{工程名}/index.html]]
+         [[FILE:{WORKSPACE_PATH}/products/prototypes/{工程名}/dh-base.css]]
+         [[FILE:{WORKSPACE_PATH}/products/prototypes/{工程名}/dh-base.js]]
+      8. 最后用 [[PROJECT:绝对路径]] 标记工程根目录作为结果卡片：
+         [[PROJECT:{WORKSPACE_PATH}/products/prototypes/{工程名}]]
 
       【需求描述】
       {ARGS}

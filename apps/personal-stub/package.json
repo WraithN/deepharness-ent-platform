@@ -1,0 +1,9 @@
+{
+  "name": "@repo/personal-stub",
+  "private": true,
+  "scripts": {
+    "dev": "go run .",
+    "build": "go build -o personal-stub .",
+    "start": "./personal-stub"
+  }
+}

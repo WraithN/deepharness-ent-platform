@@ -1,12 +1,14 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 )
 
 const (
@@ -18,10 +20,6 @@ const (
 	materializeDocFileExt = "md"
 	// materializeDocMimeType 默认落盘文件 MIME 类型。
 	materializeDocMimeType = "text/markdown"
-	// materializeDirPerm 落盘目录权限。
-	materializeDirPerm = 0o755
-	// materializeFilePerm 落盘文件权限。
-	materializeFilePerm = 0o644
 )
 
 // MaterializeDoc 将数据库中的产品文档按需写入 agent 工作目录下的 products/ 目录，
@@ -88,21 +86,16 @@ func (s *DBProductDocService) resolveMaterializeTarget(workspaceID, userID, rela
 	return target, nil
 }
 
-// writeMaterializedDoc 安全写入文档内容：父目录按需创建；
-// 若目标已存在且为符号链接则拒绝写入，避免通过软链接把工作区文件重定向到外部路径。
+// writeMaterializedDoc 通过 personal-stub 安全写入文档内容。
+// 架构合规：dh-backend 不直接写共享目录，委托 personal-stub 执行文件写入。
+// personal-stub 的 FileWrite 会自动创建父目录并进行路径安全校验。
 func writeMaterializedDoc(target, content string) error {
-	if err := os.MkdirAll(filepath.Dir(target), materializeDirPerm); err != nil {
-		return fmt.Errorf("create materialize directory failed: %w", err)
+	sc := stubclient.Default()
+	if sc == nil {
+		return errors.New("personal-stub client not initialized")
 	}
-	info, err := os.Lstat(target)
-	if err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("文档落盘目标为符号链接，拒绝写入")
-	}
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("lstat materialize target failed: %w", err)
-	}
-	if err := os.WriteFile(target, []byte(content), materializeFilePerm); err != nil {
-		return fmt.Errorf("write materialized doc failed: %w", err)
+	if err := sc.WriteFile(context.Background(), target, content); err != nil {
+		return fmt.Errorf("write materialized doc via stub failed: %w", err)
 	}
 	return nil
 }

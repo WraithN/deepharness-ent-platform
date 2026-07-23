@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>机票比价榜单卡</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #d8e1eb;
+        color: #101828;
+        font-family: Inter, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+        overflow-x: hidden;
+      }
+
+      .responsive-stage {
+        width: 100%;
+        max-width: 1080px;
+        margin: 0 auto;
+        overflow: hidden;
+      }
+
+      .canvas {
+        width: 1080px;
+        min-height: 1440px;
+        margin: 0 auto;
+        padding: 58px;
+        background: #f3f7fb;
+      }
+
+      .responsive-stage > .canvas {
+        margin: 0;
+        transform-origin: top left;
+      }
+
+      .hero {
+        padding: 38px 42px 46px;
+        border-radius: 34px;
+        background:
+          radial-gradient(circle at 88% 12%, rgba(56, 189, 248, 0.32), transparent 190px),
+          linear-gradient(135deg, #071d33 0%, #102a43 100%);
+        color: #ffffff;
+      }
+
+      .hero-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        color: #a6c8e8;
+        font-size: 24px;
+        font-weight: 800;
+      }
+
+      h1 {
+        margin: 26px 0 22px;
+        font-size: 68px;
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      .filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .filter {
+        padding: 11px 17px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        color: #ffffff;
+        font-size: 22px;
+        font-weight: 800;
+      }
+
+      .rank-list {
+        display: grid;
+        gap: 20px;
+        margin-top: 30px;
+      }
+
+      .item {
+        display: grid;
+        grid-template-columns: 90px 1fr 210px;
+        gap: 22px;
+        align-items: center;
+        min-height: 182px;
+        padding: 28px;
+        border-radius: 30px;
+        background: #ffffff;
+        border: 2px solid #e2e8f0;
+        box-shadow: 0 16px 38px rgba(15, 23, 42, 0.08);
+      }
+
+      .rank {
+        width: 70px;
+        height: 70px;
+        display: grid;
+        place-items: center;
+        border-radius: 22px;
+        background: #e0f2fe;
+        color: #0369a1;
+        font-size: 32px;
+        font-weight: 950;
+      }
+
+      .item.best .rank {
+        background: #111827;
+        color: #ffffff;
+      }
+
+      .route {
+        min-width: 0;
+      }
+
+      .route strong {
+        display: block;
+        color: #0f172a;
+        font-size: 36px;
+        line-height: 1.18;
+      }
+
+      .route span {
+        display: block;
+        margin-top: 10px;
+        color: #64748b;
+        font-size: 23px;
+        line-height: 1.35;
+        font-weight: 650;
+      }
+
+      .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .tag {
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: #f1f5f9;
+        color: #334155;
+        font-size: 18px;
+        font-weight: 800;
+      }
+
+      .price {
+        text-align: right;
+      }
+
+      .price b {
+        color: #e11d48;
+        font-size: 52px;
+        line-height: 1;
+      }
+
+      .price span {
+        display: block;
+        margin-top: 9px;
+        color: #64748b;
+        font-size: 20px;
+        font-weight: 750;
+      }
+
+      .takeaway {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+        margin-top: 34px;
+      }
+
+      .take {
+        min-height: 164px;
+        padding: 24px;
+        border-radius: 28px;
+        background: #fff7ed;
+        border: 2px solid #fed7aa;
+      }
+
+      .take:nth-child(2) {
+        background: #ecfdf5;
+        border-color: #bbf7d0;
+      }
+
+      .take:nth-child(3) {
+        background: #eef2ff;
+        border-color: #c7d2fe;
+      }
+
+      .take b {
+        display: block;
+        font-size: 27px;
+      }
+
+      .take span {
+        display: block;
+        margin-top: 12px;
+        color: #475569;
+        font-size: 21px;
+        line-height: 1.32;
+        font-weight: 680;
+      }
+
+      .footnote {
+        margin-top: 30px;
+        color: #64748b;
+        font-size: 22px;
+        line-height: 1.5;
+        font-weight: 650;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="responsive-stage">
+    <main class="canvas">
+      <section class="hero">
+        <div class="hero-top">
+          <span>Flight Compare / 2026-07-08 10:40</span>
+          <span>上海 → 首尔</span>
+        </div>
+        <h1>同一天去首尔<br />这 3 个方案差很多</h1>
+        <div class="filters">
+          <span class="filter">9 月第二周</span>
+          <span class="filter">含税参考价</span>
+          <span class="filter">优先直飞</span>
+          <span class="filter">不含托运行李差异</span>
+        </div>
+      </section>
+
+      <section class="rank-list">
+        <article class="item best">
+          <div class="rank">1</div>
+          <div class="route">
+            <strong>直飞早去午回</strong>
+            <span>PVG 08:40 → ICN 11:45, 飞行约 2h05m。时间舒服, 第一天可直接进市区。</span>
+            <div class="tags"><span class="tag">最推荐</span><span class="tag">直飞</span><span class="tag">省心</span></div>
+          </div>
+          <div class="price"><b>¥860</b><span>参考起</span></div>
+        </article>
+
+        <article class="item">
+          <div class="rank">2</div>
+          <div class="route">
+            <strong>晚班直飞</strong>
+            <span>到达偏晚, 适合下班后出发; 首晚酒店交通要提前确认。</span>
+            <div class="tags"><span class="tag">直飞</span><span class="tag">到达晚</span></div>
+          </div>
+          <div class="price"><b>¥780</b><span>参考起</span></div>
+        </article>
+
+        <article class="item">
+          <div class="rank">3</div>
+          <div class="route">
+            <strong>青岛中转低价</strong>
+            <span>总时长约 5h40m, 预算差超过 250 再考虑, 需确认行李是否直挂。</span>
+            <div class="tags"><span class="tag">最低价</span><span class="tag">中转</span><span class="tag">看行李</span></div>
+          </div>
+          <div class="price"><b>¥690</b><span>参考起</span></div>
+        </article>
+      </section>
+
+      <section class="takeaway">
+        <div class="take"><b>最低价</b><span>中转方案便宜, 但时间成本明显更高。</span></div>
+        <div class="take"><b>最省心</b><span>第一次去首尔优先直飞早去午回。</span></div>
+        <div class="take"><b>带行李</b><span>不要只看票价, 行李额可能改变总成本。</span></div>
+      </section>
+
+      <p class="footnote">示例仅用于模板预览。真实发布需替换为对应平台的实时查询结果, 并注明查询时间和价格口径。</p>
+    </main>
+    </div>
+    <script>
+      (() => {
+        const designWidth = 1080;
+        const stage = document.querySelector(".responsive-stage");
+        const canvas = document.querySelector(".canvas");
+        const fit = () => {
+          if (!stage || !canvas) return;
+          const scale = Math.min(1, window.innerWidth / designWidth);
+          stage.style.width = `${designWidth * scale}px`;
+          stage.style.height = `${canvas.scrollHeight * scale}px`;
+          canvas.style.transform = `scale(${scale})`;
+        };
+        window.addEventListener("resize", fit);
+        window.addEventListener("load", fit);
+        if (document.fonts?.ready) document.fonts.ready.then(fit);
+        requestAnimationFrame(fit);
+      })();
+    </script>
+  </body>
+</html>

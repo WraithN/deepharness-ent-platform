@@ -25,6 +25,7 @@ import { AdminDashboard } from "@/pages/AdminDashboard";
 import { CommandManagement } from "@/pages/CommandManagement";
 import { TemplateManagement } from "@/pages/TemplateManagement";
 import { AgentRuntimePage } from "@/pages/AgentRuntimePage";
+import { PrototypeTemplateManagement } from "@/pages/PrototypeTemplateManagement";
 
 export const routes: RouteObject[] = [
   { path: "/login", element: <Login /> },
@@ -50,6 +51,7 @@ export const routes: RouteObject[] = [
       { path: "prompts", element: <AdminPage /> },
       { path: "commands", element: <CommandManagement /> },
       { path: "templates", element: <TemplateManagement /> },
+      { path: "proto-templates", element: <PrototypeTemplateManagement /> },
     ],
   },
   {

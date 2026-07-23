@@ -44,6 +44,9 @@ tasks
 *.test
 *.out
 apps/dh-backend/dh-backend
+apps/personal-stub/personal-stub
+apps/personal-stub/agent-stub
+apps/dh-frontend/dist/
 apps/agent-stub/agent-stub
 go.work
 

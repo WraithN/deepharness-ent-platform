@@ -19,6 +19,7 @@ import {
   Menu,
   X,
   Bot,
+  Boxes,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTheme } from 'next-themes';
@@ -64,6 +65,12 @@ const adminNavGroups: NavGroup[] = [
       { path: '/admin/prompts', label: '提示词管理', icon: MessageSquareQuote, description: '审核、上架或禁用系统内的提示词' },
       { path: '/admin/commands', label: '指令管理', icon: Terminal, description: '查看系统指令、所属分类及对应的提示词模板' },
       { path: '/admin/templates', label: '模板管理', icon: LayoutTemplate, description: '管理平台级需求、设计、研发规范模板' },
+    ],
+  },
+  {
+    title: '元数据管理',
+    items: [
+      { path: '/admin/proto-templates', label: '原型模版管理', icon: Boxes, description: '上传与管理工程原型模版，供 /proto-make 按场景选用' },
     ],
   },
 ];

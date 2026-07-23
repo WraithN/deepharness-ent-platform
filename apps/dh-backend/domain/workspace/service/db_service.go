@@ -7,11 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
@@ -115,10 +115,13 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 	}
 
 	// 创建工作空间根目录 WORKSPACE_ROOT/{workspace_id}
+	// 架构合规：通过 stubclient 在共享目录创建目录，不直接操作文件系统
 	if s.workspaceRoot != "" {
 		wsDir := filepath.Join(s.workspaceRoot, ws.ID)
-		if err := os.MkdirAll(wsDir, 0o755); err != nil {
-			log.Printf("[Workspace] create workspace dir %s failed: %v", wsDir, err)
+		if sc := stubclient.Default(); sc != nil {
+			if err := sc.MkdirAll(context.Background(), wsDir); err != nil {
+				log.Printf("[Workspace] create workspace dir %s failed: %v", wsDir, err)
+			}
 		}
 	}
 
@@ -199,8 +202,13 @@ func (s *DBWorkspaceService) EnsureUserWorkspaceDirs(ctx context.Context, worksp
 		filepath.Join(base, "products", "docs"),
 		filepath.Join(base, "products", "prototypes"),
 	}
+	// 架构合规：通过 stubclient 在共享目录创建用户工作区目录结构
+	sc := stubclient.Default()
+	if sc == nil {
+		return errors.New("personal-stub client not initialized")
+	}
 	for _, d := range dirs {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := sc.MkdirAll(context.Background(), d); err != nil {
 			return fmt.Errorf("create dir %s: %w", d, err)
 		}
 	}

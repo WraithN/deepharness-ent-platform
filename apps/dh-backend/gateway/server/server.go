@@ -26,6 +26,8 @@ import (
 	paservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/platformtemplate"
 	platformtemplateservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/platformtemplate/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/prototypetemplate"
+	prototypetemplateservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/prototypetemplate/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent"
 	pragentservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/pragent/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc"
@@ -42,6 +44,7 @@ import (
 	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	sdkpostgres "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/postgres"
 	"github.com/redis/go-redis/v9"
@@ -78,6 +81,7 @@ func New(cfg config.Config) http.Handler {
 	initRepositoryService(db, cfg)
 	initProductDocService(db, cfg.WorkspaceRoot)
 	initPlatformTemplateService(db)
+	initPrototypeTemplateService(db, cfg.WorkspaceRoot)
 	agentRuntimeSvc := initAgentRuntimeService(db, cfg.WorkspaceRoot)
 	initTeamService(db, userService)
 
@@ -108,9 +112,13 @@ func New(cfg config.Config) http.Handler {
 	sseReplayHandler := handler.NewSSEReplayHandler(sseBuffer)
 	statsHandler := handler.NewStatsHandler(sessions, messages, cfg.WorkspaceRoot, workspaceService, workItemSvc)
 
-	// agent-stub 反向代理：将文件/工程/预览请求转发到 agent-stub 服务。
-	// agent-stub 部署在 WORKSPACE_ROOT 所在服务器上，直接操作文件系统和 git。
-	stubProxy := handler.NewStubProxy(cfg.AgentStubURL)
+	// personal-stub 反向代理：将文件/工程/预览请求转发到 personal-stub 服务。
+	// personal-stub 部署在 WORKSPACE_ROOT 所在服务器上，直接操作文件系统和 git。
+	stubProxy := handler.NewStubProxy(cfg.PersonalStubURL)
+
+	// 初始化全局 stubclient，供各 domain service 委托 personal-stub 执行文件/git 操作。
+	// 架构合规：dh-backend 不直接写共享目录、不直接 exec git/npm，全部通过 stubclient 代理。
+	stubclient.SetDefault(stubclient.New(cfg.PersonalStubURL))
 
 	// Routes
 	mux.HandleFunc("/health", handler.HealthCheck)
@@ -122,7 +130,7 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/sessions/{id}/sse", sseReplayHandler.ServeSSE)
 	mux.HandleFunc("/api/v1/hello", handler.Hello)
 
-	// 文件/工程/预览 → 代理到 agent-stub
+	// 文件/工程/预览 → 代理到 personal-stub
 	mux.HandleFunc("/api/v1/files/", stubProxy.ServeHTTP)
 	mux.HandleFunc("/api/v1/projects/", stubProxy.ServeHTTP)
 	mux.HandleFunc("/api/v1/preview/", stubProxy.ServeHTTP)
@@ -159,7 +167,12 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/templates/{key}/publish", middleware.Auth(http.HandlerFunc(platformtemplate.TemplatePublish)))
 	mux.Handle("/api/v1/templates/{key}", middleware.Auth(http.HandlerFunc(platformtemplate.TemplateByKey)))
 
-	// Agent 运行时：外部 gatewayd / agent-stub 通过固定 Bearer Token 上报状态；列表/详情超级管理员可看全部，普通用户仅可看自己的运行时
+	// 原型工程模版：仅超级管理员可上传/安装/管理，供 /proto-make 按场景描述自动选用
+	mux.Handle("/api/v1/proto-templates", middleware.Auth(http.HandlerFunc(prototypetemplate.Templates)))
+	mux.Handle("/api/v1/proto-templates/{id}/install", middleware.Auth(http.HandlerFunc(prototypetemplate.TemplateInstall)))
+	mux.Handle("/api/v1/proto-templates/{id}", middleware.Auth(http.HandlerFunc(prototypetemplate.TemplateByID)))
+
+	// Agent 运行时：外部 gatewayd / personal-stub 通过固定 Bearer Token 上报状态；列表/详情超级管理员可看全部，普通用户仅可看自己的运行时
 	mux.Handle("/api/v1/agent-runtimes/{id}/status", middleware.BearerAuth(cfg.AgentRuntimeBearerToken)(http.HandlerFunc(agentruntime.ReportStatus)))
 	mux.Handle("/api/v1/agent-runtimes", middleware.Auth(http.HandlerFunc(agentruntime.ListRuntimes)))
 	mux.Handle("/api/v1/agent-runtimes/{id}", middleware.Auth(http.HandlerFunc(agentruntime.GetRuntime)))
@@ -408,6 +421,14 @@ func initProductDocService(db *sql.DB, workspaceRoot string) {
 func initPlatformTemplateService(db *sql.DB) {
 	log.Println("[PlatformTemplate] using postgres storage")
 	platformtemplate.Init(platformtemplateservice.NewDBPlatformTemplateService(db))
+}
+
+func initPrototypeTemplateService(db *sql.DB, workspaceRoot string) {
+	log.Printf("[PrototypeTemplate] using postgres storage, workspaceRoot=%s", workspaceRoot)
+	svc := prototypetemplateservice.NewDBPrototypeTemplateService(db, workspaceRoot)
+	prototypetemplate.Init(svc)
+	// 注册模版清单提供者，供 /proto-make 渲染 {PROTO_TEMPLATES} 占位符。
+	handler.SetProtoTemplatesProvider(svc.BuildProtoTemplatesBlock)
 }
 
 func initAgentRuntimeService(db *sql.DB, workspaceRoot string) agentruntimeservice.AgentRuntimeService {

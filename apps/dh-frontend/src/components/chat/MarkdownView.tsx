@@ -34,12 +34,16 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, collapsible
               const match = /language-(\w+)/.exec(className || '');
               const codeString = String(children).replace(/\n$/, '');
 
-              // 树形目录结构：检测连接线字符，优先于语言判断。
-              if (!inline && isTreeDirContent(codeString)) {
+              // react-markdown v10 移除了 inline prop，通过 className（fenced 块有 language-xxx）
+              // 和换行符判断是否为块级代码，避免内联代码被误判为块级。
+              const isBlock = !!match || codeString.includes('\n');
+
+              // 树形目录结构：仅块级代码检测，优先于语言判断。
+              if (isBlock && isTreeDirContent(codeString)) {
                 return <TreeDirBlock code={codeString} />;
               }
 
-              if (!inline && match) {
+              if (isBlock && match) {
                 if (match[1] === MERMAID_LANGUAGE) {
                   return <MermaidBlock code={codeString} />;
                 }

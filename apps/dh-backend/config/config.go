@@ -27,9 +27,9 @@ type Config struct {
 	DBPassword       string
 	DBName           string
 	WorkspaceRoot    string
-	// AgentStubURL 是 agent-stub 服务地址，用于代理文件/工程/预览相关请求。
-	// agent-stub 部署在 WORKSPACE_ROOT 所在的服务器上，直接操作文件系统和 git。
-	AgentStubURL string
+	// PersonalStubURL 是 personal-stub 服务地址，用于代理文件/工程/预览相关请求。
+	// personal-stub 部署在 WORKSPACE_ROOT 所在的服务器上，直接操作文件系统和 git。
+	PersonalStubURL string
 
 	// Redis（Buffer 存储后端，可选）
 	RedisAddrs    []string
@@ -61,7 +61,7 @@ type Config struct {
 	// CodingAgentModelVendors 按厂商分组的模型池，供前端分组下拉展示。
 	CodingAgentModelVendors []ModelVendorGroup
 
-	// AgentRuntimeBearerToken 是外部 gatewayd / agent-stub 上报运行状态时必须携带的 Bearer Token。
+	// AgentRuntimeBearerToken 是外部 gatewayd / personal-stub 上报运行状态时必须携带的 Bearer Token。
 	AgentRuntimeBearerToken string
 }
 
@@ -114,9 +114,9 @@ type yamlConfig struct {
 	Workspace struct {
 		Root string `yaml:"root"`
 	} `yaml:"workspace"`
-	AgentStub struct {
+	PersonalStub struct {
 		URL string `yaml:"url"`
-	} `yaml:"agent_stub"`
+	} `yaml:"personal_stub"`
 	Workitem struct {
 		Platforms []string `yaml:"platforms"`
 		Sync      struct {
@@ -188,7 +188,7 @@ func Load() (Config, error) {
 	cfg.DBMaxIdleConns = yc.Database.MaxIdleConns
 	cfg.DBConnMaxLifetime = parseDurationOrZero(yc.Database.ConnMaxLifetime)
 	cfg.WorkspaceRoot = yc.Workspace.Root
-	cfg.AgentStubURL = yc.AgentStub.URL
+	cfg.PersonalStubURL = yc.PersonalStub.URL
 	cfg.RedisAddrs = yc.Redis.Addrs
 	cfg.RedisPassword = yc.Redis.Password
 	cfg.RedisDB = yc.Redis.DB
@@ -236,7 +236,7 @@ func Load() (Config, error) {
 	cfg.DBPassword = getEnv("DB_PASSWORD", cfg.DBPassword)
 	cfg.DBName = getEnv("DB_NAME", cfg.DBName)
 	cfg.WorkspaceRoot = getEnv("WORKSPACE_ROOT", cfg.WorkspaceRoot)
-	cfg.AgentStubURL = getEnv("AGENT_STUB_URL", cfg.AgentStubURL)
+	cfg.PersonalStubURL = getEnv("PERSONAL_STUB_URL", cfg.PersonalStubURL)
 	cfg.DBMaxOpenConns = getIntEnv("DB_MAX_OPEN_CONNS", cfg.DBMaxOpenConns)
 	cfg.DBMaxIdleConns = getIntEnv("DB_MAX_IDLE_CONNS", cfg.DBMaxIdleConns)
 	cfg.DBConnMaxLifetime = getDurationEnv("DB_CONN_MAX_LIFETIME", cfg.DBConnMaxLifetime)
@@ -301,8 +301,8 @@ func (c Config) validate() error {
 	if c.WorkspaceRoot == "" {
 		missing = append(missing, "workspace.root")
 	}
-	if c.AgentStubURL == "" {
-		missing = append(missing, "agent_stub.url")
+	if c.PersonalStubURL == "" {
+		missing = append(missing, "personal_stub.url")
 	}
 	if c.DBMaxOpenConns <= 0 {
 		missing = append(missing, "database.max_open_conns")

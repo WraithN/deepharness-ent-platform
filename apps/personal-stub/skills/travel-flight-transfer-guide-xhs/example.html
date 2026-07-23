@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>联程中转避坑卡</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #dde7e4;
+        color: #11201c;
+        font-family: Inter, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+        overflow-x: hidden;
+      }
+
+      .responsive-stage {
+        width: 100%;
+        max-width: 1080px;
+        margin: 0 auto;
+        overflow: hidden;
+      }
+
+      .canvas {
+        width: 1080px;
+        min-height: 1440px;
+        margin: 0 auto;
+        padding: 66px;
+        background:
+          radial-gradient(circle at 10% 12%, rgba(45, 212, 191, 0.22), transparent 210px),
+          linear-gradient(180deg, #f9fffc 0%, #f2faf6 100%);
+      }
+
+      .responsive-stage > .canvas {
+        margin: 0;
+        transform-origin: top left;
+      }
+
+      .cover {
+        padding: 44px;
+        border-radius: 36px;
+        background: #123c34;
+        color: #ffffff;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        padding: 12px 18px;
+        border-radius: 999px;
+        background: #f97316;
+        color: #ffffff;
+        font-size: 24px;
+        font-weight: 900;
+      }
+
+      h1 {
+        margin: 24px 0 18px;
+        font-size: 66px;
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        margin: 0;
+        color: #c6f6e8;
+        font-size: 29px;
+        line-height: 1.42;
+        font-weight: 700;
+      }
+
+      .score {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin-top: 30px;
+      }
+
+      .score b {
+        padding: 14px 20px;
+        border-radius: 18px;
+        background: #ffffff;
+        color: #123c34;
+        font-size: 31px;
+      }
+
+      .score span {
+        color: #a7f3d0;
+        font-size: 24px;
+        font-weight: 750;
+      }
+
+      .checks {
+        display: grid;
+        gap: 18px;
+        margin-top: 36px;
+      }
+
+      .check {
+        display: grid;
+        grid-template-columns: 86px 1fr 130px;
+        gap: 20px;
+        align-items: center;
+        min-height: 144px;
+        padding: 24px 26px;
+        border-radius: 30px;
+        background: #ffffff;
+        border: 2px solid #d9eee7;
+      }
+
+      .num {
+        width: 62px;
+        height: 62px;
+        display: grid;
+        place-items: center;
+        border-radius: 20px;
+        background: #ccfbf1;
+        color: #0f766e;
+        font-size: 30px;
+        font-weight: 950;
+      }
+
+      .check h2 {
+        margin: 0;
+        font-size: 33px;
+        line-height: 1.14;
+      }
+
+      .check p {
+        margin: 10px 0 0;
+        color: #4b635d;
+        font-size: 22px;
+        line-height: 1.36;
+        font-weight: 650;
+      }
+
+      .risk {
+        justify-self: end;
+        padding: 10px 14px;
+        border-radius: 999px;
+        color: #ffffff;
+        font-size: 22px;
+        font-weight: 900;
+        white-space: nowrap;
+      }
+
+      .risk.low {
+        background: #0f766e;
+      }
+
+      .risk.mid {
+        background: #f97316;
+      }
+
+      .risk.high {
+        background: #dc2626;
+      }
+
+      .bottom {
+        margin-top: 36px;
+        padding: 34px;
+        border-radius: 32px;
+        background: #111827;
+        color: #ffffff;
+      }
+
+      .bottom h2 {
+        margin: 0 0 16px;
+        font-size: 34px;
+      }
+
+      .bottom p {
+        margin: 0;
+        color: #d1d5db;
+        font-size: 25px;
+        line-height: 1.42;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="responsive-stage">
+    <main class="canvas">
+      <section class="cover">
+        <div class="eyebrow">中转便宜很多, 先别急着买</div>
+        <h1>联程机票<br />下单前看这 5 项</h1>
+        <p class="lead">低价不是唯一指标。真正影响体验的是误机风险、行李、签证、跨天成本和机场切换。</p>
+        <div class="score">
+          <b>结论: 便宜 30% 再认真算</b>
+          <span>否则优先直飞或官方联程</span>
+        </div>
+      </section>
+
+      <section class="checks">
+        <article class="check">
+          <div class="num">1</div>
+          <div>
+            <h2>是不是同一票号</h2>
+            <p>同一订单通常更省心; 不同票号遇到延误, 后段风险可能要自己承担。</p>
+          </div>
+          <div class="risk high">高风险</div>
+        </article>
+
+        <article class="check">
+          <div class="num">2</div>
+          <div>
+            <h2>行李能不能直挂</h2>
+            <p>不能直挂就要入境取行李再托运, 时间和签证要求都会变化。</p>
+          </div>
+          <div class="risk high">必查</div>
+        </article>
+
+        <article class="check">
+          <div class="num">3</div>
+          <div>
+            <h2>转机时间够不够</h2>
+            <p>国际转国际建议预留 2.5 小时以上; 换航站楼要继续加时间。</p>
+          </div>
+          <div class="risk mid">中风险</div>
+        </article>
+
+        <article class="check">
+          <div class="num">4</div>
+          <div>
+            <h2>是否需要签证 / 入境</h2>
+            <p>涉及取行李、换机场、过夜时, 一定查官方入境和过境要求。</p>
+          </div>
+          <div class="risk high">必查</div>
+        </article>
+
+        <article class="check">
+          <div class="num">5</div>
+          <div>
+            <h2>跨天成本算进去</h2>
+            <p>住宿、交通、餐饮加起来, 可能把低价优势全部吃掉。</p>
+          </div>
+          <div class="risk low">可计算</div>
+        </article>
+      </section>
+
+      <section class="bottom">
+        <h2>下单前截图清单</h2>
+        <p>订单详情、航司规则、行李额、航站楼、转机机场页面都保存。涉及签证和入境, 以官方信息为准。</p>
+      </section>
+    </main>
+    </div>
+    <script>
+      (() => {
+        const designWidth = 1080;
+        const stage = document.querySelector(".responsive-stage");
+        const canvas = document.querySelector(".canvas");
+        const fit = () => {
+          if (!stage || !canvas) return;
+          const scale = Math.min(1, window.innerWidth / designWidth);
+          stage.style.width = `${designWidth * scale}px`;
+          stage.style.height = `${canvas.scrollHeight * scale}px`;
+          canvas.style.transform = `scale(${scale})`;
+        };
+        window.addEventListener("resize", fit);
+        window.addEventListener("load", fit);
+        if (document.fonts?.ready) document.fonts.ready.then(fit);
+        requestAnimationFrame(fit);
+      })();
+    </script>
+  </body>
+</html>

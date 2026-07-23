@@ -32,7 +32,7 @@ func Init(svc service.AgentRuntimeService) {
 	defaultAgentRuntimeService = svc
 }
 
-// ReportStatus 处理 POST /api/v1/agent-runtimes/{id}/status，供外部 gatewayd / agent-stub 上报状态。
+// ReportStatus 处理 POST /api/v1/agent-runtimes/{id}/status，供外部 gatewayd / personal-stub 上报状态。
 // 该接口使用固定 Bearer Token 认证，不依赖用户登录态。
 func ReportStatus(w http.ResponseWriter, r *http.Request) {
 	if defaultAgentRuntimeService == nil {

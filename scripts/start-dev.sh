@@ -1,6 +1,6 @@
 #!/bin/bash
 # DeepHarness Platform - 开发环境启动脚本
-# 一键启动：DH Gatewayd（ent-desktop）→ Agent Stub → DH Backend → Frontend Web App
+# 一键启动：DH Gatewayd（ent-desktop）→ Personal Stub → DH Backend → Frontend Web App
 #
 # 用法：
 #   bash scripts/start-dev.sh           # 前台启动，按 Ctrl+C 停止所有服务
@@ -29,18 +29,18 @@ ENT_DESKTOP_ROOT="${PLATFORM_ROOT}/../deepharness-ent-desktop"
 # 默认端口
 GATEWAYD_API_PORT="${GATEWAYD_API_PORT:-2345}"
 GATEWAYD_ADMIN_PORT="${GATEWAYD_ADMIN_PORT:-2346}"
-AGENT_STUB_PORT="${AGENT_STUB_PORT:-8090}"
+PERSONAL_STUB_PORT="${PERSONAL_STUB_PORT:-8090}"
 DH_BACKEND_PORT="${DH_BACKEND_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-8888}"
 
 # 基础 URL
 GATEWAYD_ADMIN_URL="http://localhost:${GATEWAYD_ADMIN_PORT}"
-AGENT_STUB_URL="http://localhost:${AGENT_STUB_PORT}"
+PERSONAL_STUB_URL="http://localhost:${PERSONAL_STUB_PORT}"
 API_BASE_URL="http://localhost:${DH_BACKEND_PORT}"
 
 # 服务二进制路径
-AGENT_STUB_DIR="apps/agent-stub"
-AGENT_STUB_BIN="${AGENT_STUB_DIR}/dist/agent-stub"
+PERSONAL_STUB_DIR="apps/personal-stub"
+PERSONAL_STUB_BIN="${PERSONAL_STUB_DIR}/dist/personal-stub"
 DH_BACKEND_DIR="apps/dh-backend"
 DH_BACKEND_BIN="${DH_BACKEND_DIR}/dist/dh-backend"
 GATEWAYD_RELEASE="${ENT_DESKTOP_ROOT}/target/release/dh-gatewayd"
@@ -60,7 +60,7 @@ cleanup() {
     done
     # 兜底：按名称清理可能残留的子进程
     pkill -f "dh-gatewayd" 2>/dev/null || true
-    pkill -f "agent-stub" 2>/dev/null || true
+    pkill -f "personal-stub" 2>/dev/null || true
     pkill -f "dh-backend" 2>/dev/null || true
     echo -e "${GREEN}All services stopped${NC}"
     exit 0
@@ -236,32 +236,32 @@ start_gatewayd() {
     fi
 }
 
-# ── Start Agent Stub ─────────────────────────────────────────────
-start_agent_stub() {
-    log_info "Starting Agent Stub on port ${AGENT_STUB_PORT}..."
+# ── Start Personal Stub ─────────────────────────────────────────────
+start_personal_stub() {
+    log_info "Starting Personal Stub on port ${PERSONAL_STUB_PORT}..."
 
-    if check_port "$AGENT_STUB_PORT"; then
-        log_warn "Port ${AGENT_STUB_PORT} in use, killing existing..."
-        kill_port "$AGENT_STUB_PORT"
+    if check_port "$PERSONAL_STUB_PORT"; then
+        log_warn "Port ${PERSONAL_STUB_PORT} in use, killing existing..."
+        kill_port "$PERSONAL_STUB_PORT"
     fi
 
-    cd "$AGENT_STUB_DIR"
+    cd "$PERSONAL_STUB_DIR"
     if [ "$DETACH_MODE" = true ]; then
-        setsid nohup env PORT=$AGENT_STUB_PORT ./dist/agent-stub > /tmp/agent-stub.log 2>&1 &
+        setsid nohup env PORT=$PERSONAL_STUB_PORT ./dist/personal-stub > /tmp/personal-stub.log 2>&1 &
         disown
         local pid=$!
     else
-        PORT=$AGENT_STUB_PORT ./dist/agent-stub > /tmp/agent-stub.log 2>&1 &
+        PORT=$PERSONAL_STUB_PORT ./dist/personal-stub > /tmp/personal-stub.log 2>&1 &
         local pid=$!
         PIDS+=("$pid")
     fi
     cd ../..
 
-    if wait_for_service "${AGENT_STUB_URL}/health" "Agent Stub"; then
-        log_success "Agent Stub running (PID: $pid, log: /tmp/agent-stub.log)"
+    if wait_for_service "${PERSONAL_STUB_URL}/health" "Personal Stub"; then
+        log_success "Personal Stub running (PID: $pid, log: /tmp/personal-stub.log)"
     else
-        log_error "Agent Stub failed to start"
-        cat /tmp/agent-stub.log
+        log_error "Personal Stub failed to start"
+        cat /tmp/personal-stub.log
         exit 1
     fi
 }
@@ -341,7 +341,7 @@ main() {
     echo -e "${GREEN}  DeepHarness Platform - Development Mode${NC}"
     echo ""
 
-    if [ ! -f "package.json" ] || [ ! -d "apps/dh-backend" ] || [ ! -d "apps/agent-stub" ]; then
+    if [ ! -f "package.json" ] || [ ! -d "apps/dh-backend" ] || [ ! -d "apps/personal-stub" ]; then
         log_error "Please run this script from the platform project root"
         exit 1
     fi
@@ -356,12 +356,12 @@ main() {
     fi
 
     # 构建 Go 服务
-    build_go_if_needed "${AGENT_STUB_DIR}" "$AGENT_STUB_BIN" "agent-stub"
+    build_go_if_needed "${PERSONAL_STUB_DIR}" "$PERSONAL_STUB_BIN" "personal-stub"
     build_go_if_needed "${DH_BACKEND_DIR}" "$DH_BACKEND_BIN" "dh-backend"
 
     # 按依赖顺序启动
     start_gatewayd
-    start_agent_stub
+    start_personal_stub
     start_dh_backend
     start_frontend
 
@@ -371,13 +371,13 @@ main() {
     echo -e "  ${BLUE}Service URLs:${NC}"
     echo -e "    Gatewayd:     ${GREEN}http://localhost:${GATEWAYD_API_PORT}${NC} (API)"
     echo -e "    Gatewayd:     ${GREEN}http://localhost:${GATEWAYD_ADMIN_PORT}${NC} (Admin/Health)"
-    echo -e "    Agent Stub:   ${GREEN}http://localhost:${AGENT_STUB_PORT}${NC}"
+    echo -e "    Personal Stub:   ${GREEN}http://localhost:${PERSONAL_STUB_PORT}${NC}"
     echo -e "    DH Backend:   ${GREEN}http://localhost:${DH_BACKEND_PORT}${NC}"
     echo -e "    Frontend:     ${GREEN}http://localhost:${FRONTEND_PORT}${NC}"
     echo ""
     echo -e "  ${BLUE}Logs:${NC}"
     echo -e "    Gatewayd:     /tmp/gatewayd.log"
-    echo -e "    Agent Stub:   /tmp/agent-stub.log"
+    echo -e "    Personal Stub:   /tmp/personal-stub.log"
     echo -e "    DH Backend:   /tmp/dh-backend.log"
     echo -e "    Frontend:     /tmp/frontend.log"
     echo ""

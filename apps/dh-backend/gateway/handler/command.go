@@ -1,6 +1,7 @@
 package handler
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,6 +12,12 @@ import (
 	workitemservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workitem"
 )
+
+//go:embed scaffolds/dh-base.css
+var ScaffoldCSS string
+
+//go:embed scaffolds/dh-base.js
+var ScaffoldJS string
 
 // 指令前缀，所有聊天指令均以 / 开头。
 const commandPrefix = "/"
@@ -140,10 +147,22 @@ const commonPromptRules = `【通用规则】
 7. 不要输出执行计划、Next Move、步骤安排、分步策略、工具调用说明等元信息；只输出用户请求的结果内容、必要的解释说明以及要求的标记。
 `
 
+// protoTemplatesProvider 由 prototypetemplate 模块注册，用于在 /proto-make 模板中
+// 注入「可用工程模版」清单。为空（未注册或无就绪模版）时占位符替换为空串，
+// /proto-make 据此回退到单页 HTML 方案。
+var protoTemplatesProvider func() string
+
+// SetProtoTemplatesProvider 注册原型模版清单提供者，供 server 初始化时调用。
+func SetProtoTemplatesProvider(fn func() string) {
+	protoTemplatesProvider = fn
+}
+
 // renderTemplate 将用户参数填入指令模板。
 // 模板中的 {ARGS} 占位符会被替换为用户原始输入；
 // {WORKSPACE_PATH} 会被替换为当前会话的 workspace 目录（workspace_root/{workspace_id}/{user_id}），
 // 保证 AI 生成的文件写入正确的用户隔离目录，而非 agent 当前工作目录下的 projects/。
+// {PROTO_TEMPLATES} 仅 /proto-make 使用，替换为就绪模版清单（无则空串，触发单页 HTML 回退）。
+// {HTML_SCAFFOLD_CSS} / {HTML_SCAFFOLD_JS} 替换为内置脚手架文件内容，供 agent 写入原型目录。
 // 若 workspacePath 为空但模板仍残留 {WORKSPACE_PATH}，则返回错误，防止生成错误路径。
 func renderTemplate(tmpl, args, workspacePath string) (string, error) {
 	rendered := strings.ReplaceAll(tmpl, "{ARGS}", args)
@@ -153,6 +172,17 @@ func renderTemplate(tmpl, args, workspacePath string) (string, error) {
 	if strings.Contains(rendered, "{WORKSPACE_PATH}") {
 		return "", fmt.Errorf("workspace path is required but empty")
 	}
+	// {PROTO_TEMPLATES} 仅 /proto-make 模板使用；未注册提供者或无就绪模版时替换为空串。
+	if strings.Contains(rendered, "{PROTO_TEMPLATES}") {
+		block := ""
+		if protoTemplatesProvider != nil {
+			block = protoTemplatesProvider()
+		}
+		rendered = strings.ReplaceAll(rendered, "{PROTO_TEMPLATES}", block)
+	}
+	// 脚手架内容注入：dh-backend 仅做 prompt 渲染，不写共享目录；agent 收到内容后自行写入文件。
+	rendered = strings.ReplaceAll(rendered, "{HTML_SCAFFOLD_CSS}", ScaffoldCSS)
+	rendered = strings.ReplaceAll(rendered, "{HTML_SCAFFOLD_JS}", ScaffoldJS)
 	return commonPromptRules + "\n\n" + rendered, nil
 }
 

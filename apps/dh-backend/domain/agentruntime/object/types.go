@@ -68,7 +68,7 @@ type ReportStatusAgentInstance struct {
 	LastActive string              `json:"last_active"`
 }
 
-// ReportStatusRequest 是外部 gatewayd / agent-stub 上报状态时使用的请求体。
+// ReportStatusRequest 是外部 gatewayd / personal-stub 上报状态时使用的请求体。
 // 字段采用 snake_case，方便外部（如 Python/Rust gatewayd）直接序列化。
 // 租户信息由服务端根据 workspace_id 反查得到，名称由服务端自动查询填充，
 // 上报方只需传 workspace_id、user_id 等业务 ID。

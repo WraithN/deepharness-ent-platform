@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"bytes"
 	"sort"
@@ -16,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/repository"
 	gitrepo "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/repository"
@@ -203,8 +203,10 @@ func (s *DBRepositoryService) Delete(workspaceID, repoID string) error {
 	}
 
 	if r.LocalPath != "" {
-		if err := os.RemoveAll(r.LocalPath); err != nil {
-			log.Printf("[Repository] failed to remove local path %s: %v", r.LocalPath, err)
+		if sc := stubclient.Default(); sc != nil {
+			if err := sc.RemoveDir(context.Background(), r.LocalPath); err != nil {
+				log.Printf("[Repository] failed to remove local path %s: %v", r.LocalPath, err)
+			}
 		}
 	}
 	return nil
@@ -237,7 +239,8 @@ func (s *DBRepositoryService) syncRepository(r repository.Repository, sshKey str
 	if exists {
 		err = s.gitClient.Pull(r.LocalPath, r.URL, sshKey)
 	} else {
-		err = s.gitClient.Clone(r.URL, r.LocalPath, sshKey, r.DefaultBranch, func(int) {})
+		// 架构合规：传 nil 进度回调使 Clone 使用 go-git 纯 Go 库，不 exec git 命令。
+	err = s.gitClient.Clone(r.URL, r.LocalPath, sshKey, r.DefaultBranch, nil)
 	}
 
 	if err != nil {
@@ -319,30 +322,34 @@ func (s *DBRepositoryService) hasSyncLock(workspaceID, userID, repoName string) 
 	return err == nil
 }
 
-// writeSyncLock 写入同步锁文件，内容为进度百分比。
+// writeSyncLock 通过 personal-stub 写入同步锁文件，内容为进度百分比。
+// 架构合规：dh-backend 不直接写共享目录，委托 personal-stub 执行。
 func (s *DBRepositoryService) writeSyncLock(workspaceID, userID, repoName string, progress int) error {
 	lockPath := s.userSyncLockPath(workspaceID, userID, repoName)
 	if lockPath == "" {
 		return errors.New("workspace root is not configured")
 	}
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
-		log.Printf("[Repository] writeSyncLock mkdir failed for %s: %v", repoName, err)
-		return err
+	sc := stubclient.Default()
+	if sc == nil {
+		return errors.New("personal-stub client not initialized")
 	}
-	if err := os.WriteFile(lockPath, []byte(strconv.Itoa(progress)), 0o644); err != nil {
-		log.Printf("[Repository] writeSyncLock write failed for %s: %v", repoName, err)
-		return err
-	}
-	return nil
+	return sc.WriteFile(context.Background(), lockPath, strconv.Itoa(progress))
 }
 
-// deleteSyncLock 删除同步锁文件（同步完成或失败后清理）。
+// deleteSyncLock 通过 personal-stub 删除同步锁文件（同步完成或失败后清理）。
 func (s *DBRepositoryService) deleteSyncLock(workspaceID, userID, repoName string) {
 	lockPath := s.userSyncLockPath(workspaceID, userID, repoName)
 	if lockPath == "" {
 		return
 	}
-	if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
+	if _, err := os.Stat(lockPath); err != nil {
+		return // 锁文件不存在，无需删除
+	}
+	sc := stubclient.Default()
+	if sc == nil {
+		return
+	}
+	if err := sc.DeleteFile(context.Background(), lockPath); err != nil {
 		log.Printf("[Repository] deleteSyncLock failed for %s: %v", repoName, err)
 	}
 }
@@ -373,18 +380,19 @@ func (s *DBRepositoryService) userSyncErrorPath(workspaceID, userID, repoName st
 	return filepath.Join(s.workspaceRoot, workspaceID, userID, "projects", safeName+".clone.error")
 }
 
-// writeSyncError 写入同步错误信息到 .clone.error 文件。
+// writeSyncError 通过 personal-stub 写入同步错误信息到 .clone.error 文件。
+// 架构合规：dh-backend 不直接写共享目录，委托 personal-stub 执行。
 func (s *DBRepositoryService) writeSyncError(workspaceID, userID, repoName, errMsg string) {
 	errPath := s.userSyncErrorPath(workspaceID, userID, repoName)
 	if errPath == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(errPath), 0o755); err != nil {
-		log.Printf("[Repository] writeSyncError mkdir failed for %s: %v", repoName, err)
+	sc := stubclient.Default()
+	if sc == nil {
 		return
 	}
-	if err := os.WriteFile(errPath, []byte(errMsg), 0o644); err != nil {
-		log.Printf("[Repository] writeSyncError write failed for %s: %v", repoName, err)
+	if err := sc.WriteFile(context.Background(), errPath, errMsg); err != nil {
+		log.Printf("[Repository] writeSyncError failed for %s: %v", repoName, err)
 	}
 }
 
@@ -401,13 +409,20 @@ func (s *DBRepositoryService) readSyncError(workspaceID, userID, repoName string
 	return strings.TrimSpace(string(data))
 }
 
-// deleteSyncError 删除同步错误文件（重新同步时清理）。
+// deleteSyncError 通过 personal-stub 删除同步错误文件（重新同步时清理）。
 func (s *DBRepositoryService) deleteSyncError(workspaceID, userID, repoName string) {
 	errPath := s.userSyncErrorPath(workspaceID, userID, repoName)
 	if errPath == "" {
 		return
 	}
-	if err := os.Remove(errPath); err != nil && !os.IsNotExist(err) {
+	if _, err := os.Stat(errPath); err != nil {
+		return // 错误文件不存在，无需删除
+	}
+	sc := stubclient.Default()
+	if sc == nil {
+		return
+	}
+	if err := sc.DeleteFile(context.Background(), errPath); err != nil {
 		log.Printf("[Repository] deleteSyncError failed for %s: %v", repoName, err)
 	}
 }
@@ -502,17 +517,23 @@ func (s *DBRepositoryService) SyncUserRepo(workspaceID, repoID, userID string) e
 		// 清理上次同步残留的错误信息
 		s.deleteSyncError(workspaceID, userID, r.Name)
 
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		// 架构合规：通过 stubclient 在共享目录创建父目录，不直接操作文件系统
+		sc := stubclient.Default()
+		if sc == nil {
+			s.writeSyncError(workspaceID, userID, r.Name, "personal-stub client not initialized")
+			return
+		}
+		if err := sc.MkdirAll(context.Background(), filepath.Dir(dest)); err != nil {
 			s.writeSyncError(workspaceID, userID, r.Name, fmt.Sprintf("创建项目目录失败: %v", err))
 			log.Printf("[Repository] create user project dir %s failed: %v", dest, err)
 			return
 		}
 		if _, err := os.Stat(dest); err == nil {
-			_ = os.RemoveAll(dest)
+			_ = sc.RemoveDir(context.Background(), dest)
 		}
-		if err := s.gitClient.Clone(r.URL, dest, sshKey, r.DefaultBranch, func(pct int) {
-			_ = s.writeSyncLock(workspaceID, userID, r.Name, pct)
-		}); err != nil {
+		// 架构合规：传 nil 进度回调使 Clone 使用 go-git 纯 Go 库，不 exec git 命令。
+		// 进度锁文件已在同步开始时写入 0%，用户可看到"同步中"状态。
+		if err := s.gitClient.Clone(r.URL, dest, sshKey, r.DefaultBranch, nil); err != nil {
 			s.writeSyncError(workspaceID, userID, r.Name, fmt.Sprintf("克隆仓库失败: %v", err))
 			log.Printf("[Repository] user repo sync failed for %s: %v", r.Name, err)
 			return
@@ -589,7 +610,12 @@ func scanRepository(row scannable) (repository.Repository, error) {
 func (s *DBRepositoryService) Scan(workspaceID string) ([]ScannedRepository, error) {
 	workspaceRoot := filepath.Join(s.gitClient.Root(), workspaceID)
 	if _, err := os.Stat(workspaceRoot); os.IsNotExist(err) {
-		if err := os.MkdirAll(workspaceRoot, 0755); err != nil {
+		// 架构合规：通过 stubclient 在共享目录创建工作空间目录
+		sc := stubclient.Default()
+		if sc == nil {
+			return nil, fmt.Errorf("personal-stub client not initialized")
+		}
+		if err := sc.MkdirAll(context.Background(), workspaceRoot); err != nil {
 			return nil, fmt.Errorf("create workspace directory failed: %w", err)
 		}
 	}
@@ -799,14 +825,14 @@ func (s *DBRepositoryService) GetDetails(workspaceID, repoID string) (*Repositor
 	return details, nil
 }
 
+// gitExec 通过 personal-stub 在指定目录执行 git 命令。
+// 架构合规：dh-backend 不直接 exec git，委托 personal-stub 执行。
 func gitExec(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
+	sc := stubclient.Default()
+	if sc == nil {
+		return "", fmt.Errorf("personal-stub client not initialized")
 	}
-	return string(out), nil
+	return sc.GitExec(context.Background(), dir, args...)
 }
 
 func gitExecInt(dir string, args ...string) (int, error) {
@@ -1537,14 +1563,12 @@ func (s *DBRepositoryService) SaveFileContent(workspaceID, repoID, path, content
 
 	fullPath := filepath.Join(repo.LocalPath, path)
 
-	// Ensure parent directory exists
-	dir := filepath.Dir(fullPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
+	// 架构合规：通过 stubclient 写入文件（自动创建父目录），不直接操作共享目录
+	sc := stubclient.Default()
+	if sc == nil {
+		return fmt.Errorf("personal-stub client not initialized")
 	}
-
-	// Write file content
-	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+	if err := sc.WriteFile(context.Background(), fullPath, content); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 

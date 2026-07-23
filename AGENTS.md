@@ -7,8 +7,8 @@
 **DeepHarness Enterprise Platform** 是一个面向开发团队的多租户 AI 辅助编码平台。仓库采用 **Turborepo + pnpm workspaces + Go workspaces** 组织的 monorepo 结构，包含：
 
 - `apps/dh-frontend`：React + Vite + TypeScript 前端应用（包名 `@repo/dh-frontend`）。
-- `apps/agent-runtime`：Agent 运行时（包名 `@repo/agent-runtime`），定位为外部 Rust 可执行程序（OpenCode / Claude Code 等智能体封装），当前为 Go 占位实现。
-- `apps/dh-backend`：DeepHarness 后端统一入口（包名 `@repo/dh-backend`），包含管理控制台接口、WebSocket 会话、Agent Runtime 生命周期管理，以及 identity / project / workitem / orchestrator / pr-agent / audit 等业务模块。
+- `apps/personal-stub`：用户个人管理服务（包名 `@repo/personal-stub`），管理用户目录结构、查询/读写个人目录文件、启动/停止 npm dev server。
+- `apps/dh-backend`：DeepHarness 后端统一入口（包名 `@repo/dh-backend`），包含管理控制台接口、WebSocket 会话、Agent（gatewayd）生命周期管理，以及 identity / project / workitem / orchestrator / pr-agent / audit 等业务模块。
 - `packages/go-sdk`：共享 Go SDK，包含 DDD 领域模型和基础设施抽象。
 - `packages/ui`：共享 React UI 组件库。
 - `packages/api-types`：前后端共享 API TypeScript 类型。
@@ -40,7 +40,7 @@
 │   │   ├── index.html
 │   │   ├── public/
 │   │   └── src/
-│   ├── agent-runtime/        # Agent 运行时（Rust 占位，当前为 Go 占位实现）
+│   ├── personal-stub/        # 用户个人管理服务（目录管理 / 文件 CRUD / dev server）
 │   │   ├── main.go
 │   │   ├── go.mod
 │   │   ├── Dockerfile
@@ -146,9 +146,72 @@
 - **页面组件**：位于 `src/pages/`，在 `src/routes.tsx` 中集中注册路由
 - **服务端口**：
   - DH Backend: 8080
-  - Agent Runtime: 8090
+  - Personal Stub: 8090
+  - Gatewayd: 2345 (API) / 2346 (Admin/Health)
+  - Frontend: 8888
 
-## 5. 构建与开发命令
+## 5. 系统架构与数据流
+
+### 整体架构
+
+```
+dh-frontend (React, :8888)
+  ↓ HTTP / WebSocket
+dh-backend (Go, :8080) - 用户管理后台
+  ↓ HTTP 代理
+personal-stub (Go, :8090) - 用户个人管理服务
+  ↓ 文件系统操作 / 进程管理
+共享目录 ({workspaceRoot}/{workspaceId}/{userId}/)
+
+dh-frontend (React, :8888)
+  ↓ HTTP / WebSocket（会话）
+dh-backend (Go, :8080) - 用户管理后台
+  ↓ SSE（命令下发） / SSE（事件回流）
+gatewayd (Rust, :2345) - Agent 代理服务（每空间×每用户一个容器）
+  ↓ 封装 coding agent（opencode / claude）
+共享目录（读写原型/项目代码）
+```
+
+### 三后端服务职责
+
+| 服务 | 端口 | 职责 | 禁止事项 |
+|------|------|------|----------|
+| **dh-backend** | 8080 | 用户管理后台：用户/工作空间/会话管理、指令模板渲染、原型文件 serve（只读）+ 标注注入、共享资源管理（`shares/`） | 不直接写用户工作区目录；不直接执行 agent CLI；不直接执行 git/npm 命令 |
+| **personal-stub** | 8090 | 用户个人管理服务：管理用户目录结构、查询/读写个人目录文件、启动/停止 npm dev server | 不执行 coding agent；不管理 agent 会话 |
+| **gatewayd** | 2345 | Agent 代理服务：封装 coding agent（opencode/claude）供用户使用、执行工具调用（bash/文件写入）、SSE 事件流 | 不能访问 dh-backend 源码；只能访问共享目录 |
+
+### 各层职责与边界
+
+| 层 | 职责 | 禁止事项 |
+|----|------|----------|
+| dh-frontend | UI 渲染、用户交互、iframe 预览、标注交互 | 不直接访问文件系统或 agent |
+| dh-backend | 管理后台 API、WebSocket 会话、Agent 生命周期管理、原型文件 serve（只读）、标注脚本注入、指令模板渲染 | 不直接写共享目录（`shares/` 除外）；不直接执行 agent/git/npm 命令 |
+| personal-stub | 用户目录管理、文件 CRUD、dev server 进程管理 | 不执行 coding agent |
+| gatewayd | Agent 代理服务、执行工具调用、SSE 事件流 | 不能访问 dh-backend 源码；只能访问共享目录 |
+| 共享目录 | 原型代码、项目代码、模板、脚手架等文件资源 | - |
+
+### 共享目录结构
+
+```
+{workspaceRoot}/
+├── {workspaceId}/{userId}/          # 用户工作区
+│   ├── products/prototypes/         # 原型工程（agent 写入，dh-backend serve）
+│   └── projects/                    # 项目代码
+└── shares/                          # 全局共享资源（dh-backend 部署，agent 只读）
+    ├── prototypes-templates/        # 原型模版（Vite 工程）
+    └── scaffolds/                   # HTML 脚手架（dh-base.css / dh-base.js）
+```
+
+### 关键数据流
+
+1. **命令下发**：dh-frontend -> dh-backend（HTTP/WebSocket）-> gatewayd（SSE）
+2. **事件回流**：gatewayd（SSE 事件）-> dh-backend（转发/缓冲/重放）-> dh-frontend（消费渲染）
+3. **文件写入**：agent 在 gatewayd 容器中写入共享目录
+4. **文件读取**：dh-backend serve 端点读取共享目录 -> 注入标注脚本 -> dh-frontend iframe 加载
+5. **个人目录管理**：dh-frontend -> dh-backend（代理）-> personal-stub（文件 CRUD / dev server）
+6. **指令模板渲染**：dh-backend 读取自身源码中的脚手架/配置 -> 渲染为 prompt -> 通过 gatewayd 下发给 agent
+
+## 6. 构建与开发命令
 
 所有命令均在仓库根目录执行。
 
@@ -177,17 +240,17 @@ pnpm --filter @repo/dh-frontend dev
 pnpm --filter @repo/dh-backend dev
 ```
 
-## 6. 代码风格与检查
+## 7. 代码风格与检查
 
 与改造前一致，详见原 `apps/dh-frontend/.rules/` 和 `biome.json`。
 
-## 7. 测试说明
+## 8. 测试说明
 
 - **当前仓库中没有测试文件**。
 - **后端**：各服务可通过 `go test -v ./...` 运行测试；目前尚无测试。
 - **前端**：`package.json` 未配置测试命令和测试运行器。
 
-## 8. 安全与部署注意事项
+## 9. 安全与部署注意事项
 
 - 后端 CORS 中间件当前设置为 `Access-Control-Allow-Origin: *`，生产环境应收紧。
 - `apps/dh-backend` 目前无身份校验、无请求限流，生产需补充。
@@ -199,7 +262,7 @@ pnpm --filter @repo/dh-backend dev
 - `infra/helm/` 提供了 Helm Chart 模板。
 - 仓库中未提供 CI/CD 配置，部署流程需自行补充。
 
-## 9. 快速参考
+## 10. 快速参考
 
 ```bash
 # 安装并启动开发环境
@@ -225,7 +288,7 @@ bash scripts/restart-dev.sh
 bash scripts/stop-dev.sh
 ```
 
-## 13. 用户自定义规则（不可覆盖）
+## 11. 用户自定义规则（不可覆盖）
 
 以下规则为硬性约束，在任何代码变更或 AGENTS.md 更新中**必须保留**，不得删除或修改：
 
@@ -308,7 +371,15 @@ bash scripts/stop-dev.sh
 - `DESIGN.md` 是项目 UI/UX 设计的单一事实来源，涵盖色彩系统、字体系统、间距布局、组件规范、图标系统等完整的设计规范
 
 ### 规则10：规则持久化
-以上十条规则（规则1-9，规则11）在变更 AGENTS.md 时必须保留，不允许被覆盖、删除或修改。任何对 AGENTS.md 的更新都应在保留这些规则的前提下进行追加或调整其他内容。
+以上规则（规则1-9，规则11-12）在变更 AGENTS.md 时必须保留，不允许被覆盖、删除或修改。任何对 AGENTS.md 的更新都应在保留这些规则的前提下进行追加或调整其他内容。
 
 ### 规则11：开发环境重启
 每次需要重启开发环境时，直接运行 `bash scripts/restart-dev.sh`，该脚本会自动停止所有旧进程（端口 8888/8080/8090/2345/2346）并重新启动 Gatewayd → Agent Stub → DH Backend → Frontend。无需手动逐条执行 kill、构建、启动命令。
+
+### 规则12：架构合规性检查
+所有需求设计在实施前，**必须首先检查是否满足第 5 节定义的系统架构约束**：
+1. **资源可达性**：agent（gatewayd）需要的资源（模板、脚手架、配置文件等）必须放在共享目录（`{workspaceRoot}/shares/`），由 dh-backend 在启动时或按需部署。**不能**放在 dh-backend 源码目录中期望 agent 直接访问。
+2. **命令代理**：dh-backend 不直接执行 agent 命令，通过 gatewayd 代理下发。
+3. **文件流向**：原型/项目文件由 agent 写入共享目录，由 dh-backend serve 端点读取提供给前端。
+4. **后处理注入**：标注脚本等后处理由 dh-backend 在 serve 时注入，不要求 agent 生成。
+5. **容器隔离**：gatewayd 每空间×每用户一个容器，只能访问共享目录，不能访问 dh-backend 源码。
