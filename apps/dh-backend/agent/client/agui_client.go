@@ -18,11 +18,14 @@ import (
 )
 
 const (
-	// SSE_IDLE_TIMEOUT gatewayd SSE 流无数据超时（agent 进程异常退出后 gatewayd 可能不关闭流）
-	SSE_IDLE_TIMEOUT = 10 * time.Minute
+	// SSE_IDLE_TIMEOUT gatewayd SSE 流无数据超时（agent 进程异常退出后 gatewayd 可能不关闭流）。
+	// 必须足够长以覆盖合法的长时间静默（agent 冷启动、长思考），gatewayd 的 SSE
+	// keepalive 会在静默期持续保活，因此该超时只应在 gatewayd 真正挂死时触发。
+	SSE_IDLE_TIMEOUT = 30 * time.Minute
 	// runRequestTimeout 是 POST /sessions/{id}/chat 的最大等待时间，
 	// 覆盖整个 run 生命周期，避免 gatewayd 挂死导致后端无限等待。
-	runRequestTimeout = 12 * time.Minute
+	// 必须大于 AGUIHandler 的 maxRunDuration，让优雅超时路径先触发。
+	runRequestTimeout = 35 * time.Minute
 	// sseEventBufferSize 是 SSE 事件输出通道的缓冲大小，降低背压下的事件丢失概率。
 	sseEventBufferSize = 1024
 	// sseScannerMaxTokenSize 是单个 SSE 事件的最大字节数，工具结果可能较大。

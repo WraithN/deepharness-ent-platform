@@ -24,8 +24,12 @@ import (
 )
 
 const (
-	finishWait     = 300 * time.Second
-	maxRunDuration = 10 * time.Minute
+	// finishWait 是 run 开始响应后、无新事件时的优雅结束等待时间。
+	// 需要覆盖模型长时间思考（无事件输出）的场景，避免误判超时提前结束 run。
+	finishWait = 10 * time.Minute
+	// maxRunDuration 是单次 run 的总时长上限。PRD/原型生成等长任务可能超过 10 分钟，
+	// 过短会在 agent 仍在正常工作时强制终止，导致回复丢失。
+	maxRunDuration = 30 * time.Minute
 )
 
 // USER_PROMPT_MARKER 与前端 useAgUiChat 保持一致，用于从包装后的提示词中提取原始用户输入。

@@ -37,19 +37,32 @@ interface UseAgUiChatReturn {
 }
 
 const AGENT_URL = '/api/v1/agent';
+const SESSIONS_API_URL = '/api/v1/sessions';
 // 工具调用后模型整理长报告可能较长时间无 token，延长到 10 分钟。
 const NO_EVENT_TIMEOUT_MS = 600000;
 const NO_EVENT_TIMER_INTERVAL_MS = 5000;
+// 活跃 run 记录的有效期：超过 30 分钟视为已失效，恢复时直接丢弃。
+const ACTIVE_RUN_TTL_MS = 30 * 60 * 1000;
+// 断连重放的轮询间隔：每 3 秒拉取一次后端缓冲的 AG-UI 事件。
+const SSE_REPLAY_POLL_INTERVAL_MS = 3000;
+// SSE 重放接口在无缓冲事件时返回的标记事件类型。
+const SSE_NO_PENDING_EVENTS_TYPE = 'NO_PENDING_EVENTS';
+// localStorage 中登录 token 的键名，与 @/lib/api 的鉴权方式保持一致。
+const AUTH_TOKEN_STORAGE_KEY = 'token';
 
 const USER_PROMPT_MARKER = '__USER_PROMPT__';
 const SESSION_ID_KEY_PREFIX = 'dh_chat_session_id';
 const IN_PROGRESS_MSG_KEY_PREFIX = 'dh_chat_in_progress_msg';
+const ACTIVE_RUN_KEY_PREFIX = 'dh_chat_active_run';
 
 // 会话 ID 按工作区隔离存储，避免切换工作区后恢复其他工作区的会话
 const getSessionIdKey = (workspaceId: string) => `${SESSION_ID_KEY_PREFIX}:${workspaceId}`;
 
 // 进行中的 AI 回复按会话 ID 隔离存储，用于页面刷新/关闭后恢复未完成的输出
 const getInProgressMsgKey = (sessionId: string) => `${IN_PROGRESS_MSG_KEY_PREFIX}:${sessionId}`;
+
+// 活跃 run 按会话 ID 隔离存储，用于页面导航/刷新后恢复"思考中"状态并断点续传
+const getActiveRunKey = (sessionId: string) => `${ACTIVE_RUN_KEY_PREFIX}:${sessionId}`;
 
 const ERROR_CLASSIFICATIONS: { keywords: RegExp; specificMsg: string }[] = [
   { keywords: /(api.?key|密钥|apikey|unauthorized|401.*invalid)/i, specificMsg: 'API 密钥无效或已过期，请检查模型配置中的 API Key 与 Base URL。' },
@@ -274,6 +287,56 @@ function clearInProgressMessage(sessionId: string): void {
   localStorage.removeItem(getInProgressMsgKey(sessionId));
 }
 
+/**
+ * 持久化的活跃 run 状态：run 进行中离开页面后，回来时据此恢复运行态并断点续传。
+ */
+interface ActiveRunState {
+  runId: string;
+  sessionId: string;
+  startedAt: number;
+  phase: NonNullable<RunPhase>;
+}
+
+/**
+ * 将活跃 run 状态缓存到 localStorage，用于页面导航/刷新后恢复"思考中"。
+ */
+function saveActiveRun(state: ActiveRunState): void {
+  try {
+    localStorage.setItem(getActiveRunKey(state.sessionId), JSON.stringify(state));
+  } catch (err) {
+    console.error('[useAgUiChat] save active run failed:', err);
+  }
+}
+
+/**
+ * 从 localStorage 读取活跃 run 状态。
+ */
+function loadActiveRun(sessionId: string): ActiveRunState | null {
+  try {
+    const raw = localStorage.getItem(getActiveRunKey(sessionId));
+    if (!raw) return null;
+    return JSON.parse(raw) as ActiveRunState;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 清除活跃 run 状态缓存。
+ */
+function clearActiveRun(sessionId: string): void {
+  localStorage.removeItem(getActiveRunKey(sessionId));
+}
+
+/**
+ * run 阶段变化时同步更新缓存中的 phase，保证恢复后展示正确的阶段文案。
+ */
+function updateActiveRunPhase(sessionId: string, phase: NonNullable<RunPhase>): void {
+  const saved = loadActiveRun(sessionId);
+  if (!saved) return;
+  saveActiveRun({ ...saved, phase });
+}
+
 interface AgUiEvent {
   type: string;
   timestamp?: number;
@@ -310,6 +373,45 @@ function parseSSE(text: string): AgUiEvent[] {
   return events;
 }
 
+/**
+ * processAgUiEvent 的上下文：live SSE 流与断连重放共用同一套事件分发逻辑，
+ * 通过该上下文携带 run 级可变状态。
+ */
+interface AgUiEventProcessContext {
+  /** 事件归属的会话 ID；gatewayd 改换 threadId 时会更新为最新会话。 */
+  sessionId: string;
+  /** 当前 run ID，用于日志与运行态持久化。 */
+  runId: string;
+  /** 当前 run 的 assistant 消息 ID，处理 TEXT_MESSAGE_START 等事件时回写。 */
+  assistantMessageId: string | null;
+}
+
+/**
+ * 拉取后端缓冲的 AG-UI 事件（GET /api/v1/sessions/{id}/sse）。
+ * 网络或 HTTP 错误时返回 null，由调用方在下个轮询周期重试。
+ */
+async function fetchSseReplayEvents(sessionId: string): Promise<AgUiEvent[] | null> {
+  try {
+    const headers: Record<string, string> = { Accept: 'text/event-stream' };
+    const token = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    const res = await fetch(`${SESSIONS_API_URL}/${encodeURIComponent(sessionId)}/sse`, {
+      headers,
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      console.warn('[useAgUiChat] sse replay fetch failed:', res.status);
+      return null;
+    }
+    return parseSSE(await res.text());
+  } catch (err) {
+    console.warn('[useAgUiChat] sse replay fetch error:', err);
+    return null;
+  }
+}
+
 export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn {
   const { agentPluginKey = 'claude-code' } = options;
 
@@ -332,28 +434,45 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
   const abortControllerRef = useRef<AbortController | null>(null);
   const activeRunSessionIdRef = useRef<string | null>(null);
   const lastWorkspaceIdRef = useRef<string>(getCurrentWorkspaceId());
+  // 断连重放轮询的定时器与会话标记：同一时间只允许一个会话的重放循环。
+  const reattachTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reattachSessionIdRef = useRef<string | null>(null);
+
+  // 停止断连重放轮询（如果存在）。
+  const stopRunReattach = useCallback(() => {
+    if (reattachTimerRef.current) {
+      clearInterval(reattachTimerRef.current);
+      reattachTimerRef.current = null;
+    }
+    reattachSessionIdRef.current = null;
+  }, []);
+
+  // 缓存当前运行中的 assistant 消息快照，供页面刷新/导航后恢复未完成的输出。
+  const saveRunningSnapshot = useCallback(() => {
+    if (!sessionIdRef.current) return;
+    const runningAssistant = messagesRef.current.find((m) => m.role === 'assistant' && m.status?.type === 'running');
+    if (runningAssistant) {
+      saveInProgressMessage(sessionIdRef.current, runningAssistant);
+    }
+  }, []);
 
   // 组件卸载时中止所有进行中的 SSE 连接，避免卸载后仍持续 setState 阻塞导航。
   // 同时监听 beforeunload，在页面关闭/刷新前立即缓存未完成的 AI 回复到 localStorage。
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (sessionIdRef.current) {
-        const runningAssistant = messagesRef.current.find((m) => m.role === 'assistant' && m.status?.type === 'running');
-        if (runningAssistant) {
-          saveInProgressMessage(sessionIdRef.current, runningAssistant);
-        }
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('beforeunload', saveRunningSnapshot);
     return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('beforeunload', saveRunningSnapshot);
+      // 路由卸载（SPA 导航）不是失败：保留 localStorage 中的快照与活跃 run 记录，
+      // 重进页面后据此恢复"思考中"并通过 SSE 重放断点续传。
+      saveRunningSnapshot();
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
       activeRunSessionIdRef.current = null;
+      stopRunReattach();
     };
-  }, []);
+  }, [saveRunningSnapshot, stopRunReattach]);
 
   // 检测工作区切换：localStorage 中的 currentWorkspaceId 变化时重置当前会话状态，
   // 防止用新工作区 ID 去加载旧工作区的 session，导致后端报 "session not in this workspace"。
@@ -368,8 +487,10 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         }
         if (sessionIdRef.current) {
           clearInProgressMessage(sessionIdRef.current);
+          clearActiveRun(sessionIdRef.current);
         }
         activeRunSessionIdRef.current = null;
+        stopRunReattach();
         setIsRunning(false);
         setRunPhase(null);
         setSessionId(null);
@@ -378,7 +499,423 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       }
     }, 500);
     return () => clearInterval(interval);
+  }, [stopRunReattach]);
+
+  // 处理单条 AG-UI 事件：live SSE 流与断连重放共用同一套分发逻辑。
+  // ctx 携带 run 级可变状态，assistantMessageId 会在处理过程中回写。
+  const processAgUiEvent = useCallback((ev: AgUiEvent, ctx: AgUiEventProcessContext) => {
+    const evLog = { type: ev.type, delta: ev.delta?.slice(0, 80), messageId: ev.messageId, toolCallId: ev.toolCallId, toolCallName: ev.toolCallName, runId: ctx.runId };
+    if (ev.type === 'RUN_STARTED' || ev.type === 'RUN_FINISHED' || ev.type === 'RUN_ERROR' || ev.type === 'TOOL_CALL_START' || ev.type === 'TOOL_CALL_RESULT') {
+      console.log('[useAgUiChat] SSE', evLog);
+    }
+
+    switch (ev.type) {
+      case 'RUN_STARTED': {
+        setIsRunning(true);
+        setRunPhase(PHASE_THINKING);
+        // gatewayd 在 session 丢失后会创建新 thread，RUN_STARTED
+        // 携带新的 threadId。将此 threadId 同步为当前会话 ID，
+        // 确保前端 localStorage 与后端持久化的一致。
+        if (ev.threadId && ev.threadId !== ctx.sessionId) {
+          console.log('[useAgUiChat] threadId changed by gatewayd: %s -> %s', ctx.sessionId, ev.threadId);
+          // 运行态记录与进行中快照随会话迁移，避免旧会话残留的缓存被误恢复。
+          clearActiveRun(ctx.sessionId);
+          clearInProgressMessage(ctx.sessionId);
+          setSessionId(ev.threadId);
+          ctx.sessionId = ev.threadId;
+          saveActiveRun({ runId: ctx.runId, sessionId: ctx.sessionId, startedAt: Date.now(), phase: PHASE_THINKING });
+        } else {
+          // 阶段由 connecting 推进为 thinking，同步更新缓存中的运行态。
+          updateActiveRunPhase(ctx.sessionId, PHASE_THINKING);
+        }
+        break;
+      }
+
+      case 'TEXT_MESSAGE_START': {
+        // 单次 run 内只创建一个 assistant 消息，保证一轮回复只有一个 AI 头像。
+        if (!ctx.assistantMessageId) {
+          ctx.assistantMessageId = ev.messageId ?? generateId();
+          const assistant: ThreadMessageLike = {
+            id: ctx.assistantMessageId,
+            role: 'assistant',
+            content: [{ type: 'text', text: '' }],
+            createdAt: new Date(),
+            status: { type: 'running' },
+          };
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === ctx.assistantMessageId)) return prev;
+            return [...prev, assistant];
+          });
+        } else {
+          // 消息已存在。如果最后一个部件不是 text（例如前面有 reasoning 或
+          // tool-call），则创建新的 text 部件，避免多轮文本输出被合并到
+          // 同一个 text 部件中，导致 AssistantMessage 误判为思考内容。
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== ctx.assistantMessageId || m.role !== 'assistant') return m;
+              const content = Array.isArray(m.content) ? m.content : [{ type: 'text' as const, text: String(m.content ?? '') }];
+              const lastPart = content.length > 0 ? content[content.length - 1] : null;
+              if (lastPart && lastPart.type === 'text') return m;
+              return { ...m, content: [...content, { type: 'text' as const, text: '' }] as ThreadMessageLike['content'] };
+            })
+          );
+        }
+        break;
+      }
+
+      case 'TEXT_MESSAGE_CONTENT': {
+        if (!ev.delta) break;
+        // 兜底：如果还没有 assistant 消息，创建一个（某些协议实现可能先 content 后 start）。
+        if (!ctx.assistantMessageId) {
+          const msgId = ev.messageId ?? generateId();
+          ctx.assistantMessageId = msgId;
+          const deltaText = ev.delta || '';
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === msgId)) return prev;
+            return [...prev, {
+              id: msgId,
+              role: 'assistant',
+              content: [{ type: 'text', text: deltaText }],
+              createdAt: new Date(),
+              status: { type: 'running' },
+            }];
+          });
+          break;
+        }
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== ctx.assistantMessageId || m.role !== 'assistant') return m;
+            const content: readonly { type: string; text?: string }[] = Array.isArray(m.content)
+              ? (m.content as readonly { type: string; text?: string }[])
+              : [{ type: 'text' as const, text: String(m.content ?? '') }];
+            // 找最后一个 text 部件（可能有多个 text 部件，分别对应不同轮次的输出）
+            let lastTextIdx = -1;
+            for (let i = content.length - 1; i >= 0; i--) {
+              if (content[i].type === 'text') {
+                lastTextIdx = i;
+                break;
+              }
+            }
+            if (lastTextIdx >= 0) {
+              const newContent = content.map((part, i) =>
+                i === lastTextIdx ? { ...part, text: ((part as { text?: string }).text ?? '') + ev.delta } : part
+              );
+              return { ...m, content: newContent as ThreadMessageLike['content'] };
+            }
+            // 尚无 text 部件（消息由 thinking 事件先创建），添加一个
+            return { ...m, content: [...content, { type: 'text' as const, text: ev.delta }] as ThreadMessageLike['content'] };
+          })
+        );
+        break;
+      }
+
+      case 'THINKING_TEXT_MESSAGE_CONTENT': {
+        // 将 thinking 内容存储为独立的 'reasoning' 类型部件，
+        // 与最终输出 ('text' 类型) 分开存储。
+        // AssistantMessage 会把 'reasoning' 部件直接渲染在 ThinkingCard 中，
+        // 而 'text' 部件渲染为最终输出。
+        const delta = ev.delta;
+        if (!delta) break;
+        if (!ctx.assistantMessageId) {
+          const msgId = generateId();
+          ctx.assistantMessageId = msgId;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: msgId,
+              role: 'assistant',
+              content: [{ type: 'reasoning', text: delta }],
+              createdAt: new Date(),
+              status: { type: 'running' },
+            },
+          ]);
+          break;
+        }
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== ctx.assistantMessageId || m.role !== 'assistant') return m;
+            const content: readonly { type: string; text?: string }[] = Array.isArray(m.content)
+              ? (m.content as readonly { type: string; text?: string }[])
+              : [{ type: 'text' as const, text: String(m.content ?? '') }];
+            const lastPart = content.length > 0 ? content[content.length - 1] : null;
+            if (lastPart && lastPart.type === 'reasoning') {
+              // 最后一个部件也是 reasoning，追加 delta 到它
+              const newContent = content.map((p, i) =>
+                i === content.length - 1 ? { ...p, text: ((p as { text?: string }).text ?? '') + delta } : p
+              );
+              return { ...m, content: newContent as ThreadMessageLike['content'] };
+            }
+            // 最后一个部件不是 reasoning（或内容为空），
+            // 在末尾创建新的 reasoning 部件，保持实际事件顺序
+            return { ...m, content: [...content, { type: 'reasoning', text: delta }] as ThreadMessageLike['content'] };
+          })
+        );
+        break;
+      }
+
+      case 'THINKING_END':
+      case 'THINKING_TEXT_MESSAGE_END':
+        // 思考结束，标记所有 reasoning 部件为 done，
+        // AssistantMessage 据此让 ThinkingCard 显示"思考过程"而非"思考中"。
+        if (!ctx.assistantMessageId) break;
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== ctx.assistantMessageId || m.role !== 'assistant') return m;
+            const content = Array.isArray(m.content) ? m.content : [];
+            const hasReasoning = content.some((p) => p.type === 'reasoning');
+            if (!hasReasoning) return m;
+            return {
+              ...m,
+              content: content.map((p) =>
+                p.type === 'reasoning' ? { ...p, done: true } : p
+              ) as ThreadMessageLike['content'],
+            };
+          })
+        );
+        break;
+
+      case 'TEXT_MESSAGE_END':
+        // 忽略中途的 TEXT_MESSAGE_END，避免把一次 run 拆成多个消息。
+        // 最终完成状态由 RUN_FINISHED 统一设置。
+        break;
+
+      case 'TOOL_CALL_START': {
+        if (!ev.toolCallId || !ev.toolCallName) break;
+        setMessages((prev) => {
+          const lastAssistant = [...prev].reverse().find((m) => m.role === 'assistant');
+          if (!lastAssistant) return prev;
+          return prev.map((m) => {
+            if (m.id !== lastAssistant.id) return m;
+            const content = Array.isArray(m.content) ? m.content : [];
+            if (content.some((p) => p.type === 'tool-call' && (p as { toolCallId?: string }).toolCallId === ev.toolCallId)) {
+              return m;
+            }
+            return {
+              ...m,
+              content: [
+                ...content,
+                {
+                  type: 'tool-call' as const,
+                  toolCallId: ev.toolCallId,
+                  toolName: ev.toolCallName,
+                  args: undefined,
+                  argsText: '',
+                },
+              ],
+            };
+          });
+        });
+        break;
+      }
+
+      case 'TOOL_CALL_ARGS': {
+        if (!ev.toolCallId || ev.delta === undefined) break;
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.role !== 'assistant') return m;
+            const content = Array.isArray(m.content) ? m.content : [];
+            const hasTarget = content.some(
+              (p) => p.type === 'tool-call' && (p as { toolCallId?: string }).toolCallId === ev.toolCallId
+            );
+            if (!hasTarget) return m;
+            return {
+              ...m,
+              content: content.map((p) => {
+                if (p.type !== 'tool-call' || (p as { toolCallId?: string }).toolCallId !== ev.toolCallId) return p;
+                const argsText = ((p as { argsText?: string }).argsText ?? '') + ev.delta;
+                let args = undefined;
+                try {
+                  args = JSON.parse(argsText);
+                } catch {
+                  // partial args
+                }
+                return { ...p, args, argsText };
+              }),
+            };
+          })
+        );
+        break;
+      }
+
+      case 'TOOL_CALL_RESULT': {
+        if (!ev.toolCallId || ev.content === undefined) break;
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.role !== 'assistant') return m;
+            const content = Array.isArray(m.content) ? m.content : [];
+            const hasTarget = content.some(
+              (p) => p.type === 'tool-call' && (p as { toolCallId?: string }).toolCallId === ev.toolCallId
+            );
+            if (!hasTarget) return m;
+            return {
+              ...m,
+              content: content.map((p) => {
+                if (p.type !== 'tool-call' || (p as { toolCallId?: string }).toolCallId !== ev.toolCallId) return p;
+                const raw = ev.content ?? '';
+                let result: unknown = raw;
+                try {
+                  result = JSON.parse(raw);
+                } catch {
+                  // keep as string
+                }
+                return { ...p, result };
+              }),
+            };
+          })
+        );
+        break;
+      }
+
+      case 'RUN_FINISHED':
+        setIsRunning(false);
+        setRunPhase(null);
+        clearInProgressMessage(ctx.sessionId);
+        clearActiveRun(ctx.sessionId);
+        if (ctx.assistantMessageId) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === ctx.assistantMessageId && m.role === 'assistant' && m.status?.type === 'running'
+                ? { ...m, status: { type: 'complete', reason: 'unknown' } as const }
+                : m
+            )
+          );
+        } else {
+          // 整个 run 没有任何 assistant 消息返回，给出明确提示。
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: generateId(),
+              role: 'assistant',
+              content: [{ type: 'text', text: '模型未返回任何内容，请检查模型配置、网络或账户余额后重试。' }],
+              status: { type: 'incomplete', reason: 'error', error: 'empty response' },
+            },
+          ]);
+        }
+        activeRunSessionIdRef.current = null;
+        break;
+
+      case 'RUN_ERROR': {
+        setIsRunning(false);
+        setRunPhase(null);
+        clearInProgressMessage(ctx.sessionId);
+        clearActiveRun(ctx.sessionId);
+        activeRunSessionIdRef.current = null;
+        const errorMsg = ev.message || 'Agent 运行出错';
+        const classifiedMsg = classifyAgentError(errorMsg);
+        const errorMessage: ThreadMessageLike = {
+          id: generateId(),
+          role: 'assistant',
+          content: [{ type: 'text', text: classifiedMsg }],
+          status: { type: 'incomplete', reason: 'error', error: errorMsg },
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+        break;
+      }
+
+      default:
+        break;
+    }
   }, []);
+
+  // 拉取会话历史消息并恢复未完成的 AI 回复快照（如有）。
+  // loadMessages / tryRestoreSession / 断连重放收尾共用。
+  const restoreSessionMessages = useCallback(async (targetSessionId: string, workspaceId?: string) => {
+    const wsId = workspaceId || getCurrentWorkspaceId();
+    const msgs = await api.get<BackendMessage[]>(`/v1/sessions/${targetSessionId}/messages?workspaceId=${encodeURIComponent(wsId)}`);
+    const restoredMessages = msgs.map(backendMessageToThreadMessageLike);
+    // 恢复未完成的 AI 回复：如果 localStorage 中有该会话的 in-progress 消息且后端未持久化，追加到末尾
+    const inProgress = loadInProgressMessage(targetSessionId);
+    if (inProgress && !restoredMessages.some((m) => m.id === inProgress.id)) {
+      restoredMessages.push({
+        ...inProgress,
+        status: { type: 'incomplete' as const, reason: 'error' as const, error: '连接已中断，生成未完成' },
+      });
+    }
+    setMessages(restoredMessages);
+  }, []);
+
+  // 启动断连重放：周期性拉取后端缓冲的 AG-UI 事件并复用 live 流的事件处理逻辑，
+  // 直到收到终局事件（RUN_FINISHED / RUN_ERROR）后重新拉取服务端消息收尾。
+  const startRunReattach = useCallback(
+    (targetSessionId: string, runId: string, assistantMessageId: string | null) => {
+      // 同一会话的重放循环只启动一次，避免重复调用产生多个定时器。
+      if (reattachSessionIdRef.current === targetSessionId && reattachTimerRef.current) return;
+      stopRunReattach();
+      reattachSessionIdRef.current = targetSessionId;
+      const ctx: AgUiEventProcessContext = { sessionId: targetSessionId, runId, assistantMessageId };
+      let pollInFlight = false;
+
+      // 终局事件收尾：停止轮询并重新拉取服务端消息，
+      // 用后端持久化的最终回复替换本地的合成占位消息。
+      const finishReattach = async () => {
+        stopRunReattach();
+        try {
+          await restoreSessionMessages(targetSessionId);
+        } catch (err) {
+          console.warn('[useAgUiChat] reload messages after replay failed:', err);
+        }
+      };
+
+      const poll = async () => {
+        if (reattachSessionIdRef.current !== targetSessionId || pollInFlight) return;
+        pollInFlight = true;
+        try {
+          const events = await fetchSseReplayEvents(targetSessionId);
+          if (!events) return;
+          for (const ev of events) {
+            if (ev.type === SSE_NO_PENDING_EVENTS_TYPE) continue;
+            // 处理事件期间会话可能已切换，中止本次回放。
+            if (reattachSessionIdRef.current !== targetSessionId) return;
+            processAgUiEvent(ev, ctx);
+            if (ev.type === 'RUN_FINISHED' || ev.type === 'RUN_ERROR') {
+              await finishReattach();
+              return;
+            }
+          }
+        } finally {
+          pollInFlight = false;
+        }
+      };
+
+      console.log('[useAgUiChat] start sse replay reattach:', targetSessionId, runId);
+      void poll();
+      reattachTimerRef.current = setInterval(() => {
+        void poll();
+      }, SSE_REPLAY_POLL_INTERVAL_MS);
+    },
+    [processAgUiEvent, restoreSessionMessages, stopRunReattach]
+  );
+
+  // 恢复指定会话的 run 级状态：存在未过期的活跃 run 记录时恢复"思考中"并启动断连重放；
+  // 过期记录直接丢弃，避免误恢复早已结束的 run。
+  const maybeRestoreActiveRun = useCallback(
+    (targetSessionId: string) => {
+      const activeRun = loadActiveRun(targetSessionId);
+      if (!activeRun) return;
+      if (Date.now() - activeRun.startedAt > ACTIVE_RUN_TTL_MS) {
+        clearActiveRun(targetSessionId);
+        return;
+      }
+      setIsRunning(true);
+      setRunPhase(activeRun.phase ?? PHASE_THINKING);
+      // 纯思考阶段离开页面时本地没有任何 assistant 消息快照，
+      // 补一条合成的运行中消息让"思考中"指示器渲染，重放事件也会汇入该消息。
+      const syntheticId = generateId();
+      setMessages((prev) => {
+        if (prev.some((m) => m.role === 'assistant' && m.status?.type === 'running')) return prev;
+        const synthetic: ThreadMessageLike = {
+          id: syntheticId,
+          role: 'assistant',
+          content: [{ type: 'text', text: '' }],
+          createdAt: new Date(),
+          status: { type: 'running' },
+        };
+        return [...prev, synthetic];
+      });
+      startRunReattach(targetSessionId, activeRun.runId, syntheticId);
+    },
+    [startRunReattach]
+  );
 
   const loadMessages = useCallback(async (targetSessionId: string | null) => {
     if (!targetSessionId) {
@@ -386,18 +923,8 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       return;
     }
     try {
-      const workspaceId = getCurrentWorkspaceId();
-      const msgs = await api.get<BackendMessage[]>(`/v1/sessions/${targetSessionId}/messages?workspaceId=${encodeURIComponent(workspaceId)}`);
-      const restoredMessages = msgs.map(backendMessageToThreadMessageLike);
-      // 恢复未完成的 AI 回复：如果 localStorage 中有该会话的 in-progress 消息且后端未持久化，追加到末尾
-      const inProgress = loadInProgressMessage(targetSessionId);
-      if (inProgress && !restoredMessages.some((m) => m.id === inProgress.id)) {
-        restoredMessages.push({
-          ...inProgress,
-          status: { type: 'incomplete' as const, reason: 'error' as const, error: '连接已中断，生成未完成' },
-        });
-      }
-      setMessages(restoredMessages);
+      await restoreSessionMessages(targetSessionId);
+      maybeRestoreActiveRun(targetSessionId);
     } catch (err) {
       console.error('[useAgUiChat] load messages failed:', err);
       // 会话不属于当前工作区时，不需要弹窗报错；上层会感知到消息为空并自动创建新会话。
@@ -407,7 +934,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       }
       setMessages([]);
     }
-  }, []);
+  }, [restoreSessionMessages, maybeRestoreActiveRun]);
 
   const tryRestoreSession = useCallback(async (workspaceId?: string): Promise<string | null> => {
     const wsId = workspaceId || getCurrentWorkspaceId();
@@ -415,17 +942,8 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
     const saved = localStorage.getItem(key);
     if (!saved) return null;
     try {
-      const msgs = await api.get<BackendMessage[]>(`/v1/sessions/${saved}/messages?workspaceId=${encodeURIComponent(wsId)}`);
-      const restoredMessages = msgs.map(backendMessageToThreadMessageLike);
-      // 恢复未完成的 AI 回复：如果 localStorage 中有该会话的 in-progress 消息且后端未持久化，追加到末尾
-      const inProgress = loadInProgressMessage(saved);
-      if (inProgress && !restoredMessages.some((m) => m.id === inProgress.id)) {
-        restoredMessages.push({
-          ...inProgress,
-          status: { type: 'incomplete' as const, reason: 'error' as const, error: '连接已中断，生成未完成' },
-        });
-      }
-      setMessages(restoredMessages);
+      await restoreSessionMessages(saved, wsId);
+      maybeRestoreActiveRun(saved);
       setSessionId(saved);
       setInstanceId(null);
       console.log('[useAgUiChat] session restored:', saved);
@@ -435,7 +953,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       localStorage.removeItem(key);
       return null;
     }
-  }, []);
+  }, [restoreSessionMessages, maybeRestoreActiveRun]);
 
   // 会话 ID 变更时持久化到 localStorage（按工作区隔离），用于页面刷新后恢复。
   useEffect(() => {
@@ -502,18 +1020,20 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
-      // 清除当前会话的 in-progress 缓存，避免切换后旧消息被恢复。
+      // 清除当前会话的 in-progress 与活跃 run 缓存，避免切换后旧消息/旧运行态被恢复。
       if (sessionIdRef.current) {
         clearInProgressMessage(sessionIdRef.current);
+        clearActiveRun(sessionIdRef.current);
       }
       activeRunSessionIdRef.current = null;
+      stopRunReattach();
       setIsRunning(false);
       setRunPhase(null);
       setSessionId(nextSessionId);
       setInstanceId(null);
       await loadMessages(nextSessionId);
     },
-    [loadMessages]
+    [loadMessages, stopRunReattach]
   );
 
   const cancelRun = useCallback(() => {
@@ -521,14 +1041,25 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
-      if (sessionIdRef.current) {
-        clearInProgressMessage(sessionIdRef.current);
-      }
-      setIsRunning(false);
-      setRunPhase(null);
-      activeRunSessionIdRef.current = null;
     }
-  }, []);
+    stopRunReattach();
+    if (sessionIdRef.current) {
+      clearInProgressMessage(sessionIdRef.current);
+      clearActiveRun(sessionIdRef.current);
+    }
+    setIsRunning(false);
+    setRunPhase(null);
+    activeRunSessionIdRef.current = null;
+    // 断连重放期间没有本地 SSE 可中断（abortController 为空），AbortError 分支不会触发，
+    // 直接在本地把运行中的消息标记为已取消；live 流场景下该消息已是 incomplete，不会重复标记。
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.role === 'assistant' && m.status?.type === 'running'
+          ? { ...m, status: { type: 'incomplete', reason: 'cancelled' } as const }
+          : m
+      )
+    );
+  }, [stopRunReattach]);
 
   const handleSend = useCallback(
     async (text: string, context: SendContext = {}) => {
@@ -595,6 +1126,8 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       setIsRunning(true);
       setRunPhase(PHASE_CONNECTING);
       activeRunSessionIdRef.current = currentSessionId;
+      // 持久化 run 级状态：run 进行中页面导航/刷新后，据此恢复"思考中"并通过 SSE 重放断点续传。
+      saveActiveRun({ runId, sessionId: currentSessionId, startedAt: Date.now(), phase: PHASE_CONNECTING });
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
 
@@ -630,7 +1163,8 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         const reader = response.body.getReader();
         const decoder = new TextDecoder('utf-8', { fatal: false });
         let sseBuffer = '';
-        let assistantMessageId: string | null = null;
+        // 事件处理上下文：与断连重放共用的 processAgUiEvent 通过它回写 assistant 消息 ID。
+        const eventCtx: AgUiEventProcessContext = { sessionId: currentSessionId, runId, assistantMessageId: null };
 
         noEventTimer = setInterval(() => {
           if (Date.now() - lastEventAt > NO_EVENT_TIMEOUT_MS) {
@@ -653,323 +1187,25 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
               if (activeRunSessionIdRef.current !== currentSessionId) continue;
 
               lastEventAt = Date.now();
-              const evLog = { type: ev.type, delta: ev.delta?.slice(0, 80), messageId: ev.messageId, toolCallId: ev.toolCallId, toolCallName: ev.toolCallName, runId };
-              if (ev.type === 'RUN_STARTED' || ev.type === 'RUN_FINISHED' || ev.type === 'RUN_ERROR' || ev.type === 'TOOL_CALL_START' || ev.type === 'TOOL_CALL_RESULT') {
-                console.log('[useAgUiChat] SSE', evLog);
-              }
-
-              switch (ev.type) {
-                case 'RUN_STARTED':
-                  setIsRunning(true);
-                  setRunPhase(PHASE_THINKING);
-                  // gatewayd 在 session 丢失后会创建新 thread，RUN_STARTED
-                  // 携带新的 threadId。将此 threadId 同步为当前会话 ID，
-                  // 确保前端 localStorage 与后端持久化的一致。
-                  if (ev.threadId && ev.threadId !== currentSessionId) {
-                    console.log('[useAgUiChat] threadId changed by gatewayd: %s -> %s', currentSessionId, ev.threadId);
-                    setSessionId(ev.threadId);
-                  }
-                  break;
-
-                case 'TEXT_MESSAGE_START': {
-                  // 单次 run 内只创建一个 assistant 消息，保证一轮回复只有一个 AI 头像。
-                  if (!assistantMessageId) {
-                    assistantMessageId = ev.messageId ?? generateId();
-                    const assistant: ThreadMessageLike = {
-                      id: assistantMessageId,
-                      role: 'assistant',
-                      content: [{ type: 'text', text: '' }],
-                      createdAt: new Date(),
-                      status: { type: 'running' },
-                    };
-                    setMessages((prev) => {
-                      if (prev.some((m) => m.id === assistantMessageId)) return prev;
-                      return [...prev, assistant];
-                    });
-                  } else {
-                    // 消息已存在。如果最后一个部件不是 text（例如前面有 reasoning 或
-                    // tool-call），则创建新的 text 部件，避免多轮文本输出被合并到
-                    // 同一个 text 部件中，导致 AssistantMessage 误判为思考内容。
-                    setMessages((prev) =>
-                      prev.map((m) => {
-                        if (m.id !== assistantMessageId || m.role !== 'assistant') return m;
-                        const content = Array.isArray(m.content) ? m.content : [{ type: 'text' as const, text: String(m.content ?? '') }];
-                        const lastPart = content.length > 0 ? content[content.length - 1] : null;
-                        if (lastPart && lastPart.type === 'text') return m;
-                        return { ...m, content: [...content, { type: 'text' as const, text: '' }] as ThreadMessageLike['content'] };
-                      })
-                    );
-                  }
-                  break;
-                }
-
-                case 'TEXT_MESSAGE_CONTENT': {
-                  if (!ev.delta) break;
-                  // 兜底：如果还没有 assistant 消息，创建一个（某些协议实现可能先 content 后 start）。
-                  if (!assistantMessageId) {
-                    const msgId = ev.messageId ?? generateId();
-                    assistantMessageId = msgId;
-                    const deltaText = ev.delta || '';
-                    setMessages((prev) => {
-                      if (prev.some((m) => m.id === msgId)) return prev;
-                      return [...prev, {
-                        id: msgId,
-                        role: 'assistant',
-                        content: [{ type: 'text', text: deltaText }],
-                        createdAt: new Date(),
-                        status: { type: 'running' },
-                      }];
-                    });
-                    break;
-                  }
-                  setMessages((prev) =>
-                    prev.map((m) => {
-                      if (m.id !== assistantMessageId || m.role !== 'assistant') return m;
-                      const content: readonly { type: string; text?: string }[] = Array.isArray(m.content)
-                        ? (m.content as readonly { type: string; text?: string }[])
-                        : [{ type: 'text' as const, text: String(m.content ?? '') }];
-                      // 找最后一个 text 部件（可能有多个 text 部件，分别对应不同轮次的输出）
-                      let lastTextIdx = -1;
-                      for (let i = content.length - 1; i >= 0; i--) {
-                        if (content[i].type === 'text') {
-                          lastTextIdx = i;
-                          break;
-                        }
-                      }
-                      if (lastTextIdx >= 0) {
-                        const newContent = content.map((part, i) =>
-                          i === lastTextIdx ? { ...part, text: ((part as { text?: string }).text ?? '') + ev.delta } : part
-                        );
-                        return { ...m, content: newContent as ThreadMessageLike['content'] };
-                      }
-                      // 尚无 text 部件（消息由 thinking 事件先创建），添加一个
-                      return { ...m, content: [...content, { type: 'text' as const, text: ev.delta }] as ThreadMessageLike['content'] };
-                    })
-                  );
-                  break;
-                }
-
-                case 'THINKING_TEXT_MESSAGE_CONTENT': {
-                  // 将 thinking 内容存储为独立的 'reasoning' 类型部件，
-                  // 与最终输出 ('text' 类型) 分开存储。
-                  // AssistantMessage 会把 'reasoning' 部件直接渲染在 ThinkingCard 中，
-                  // 而 'text' 部件渲染为最终输出。
-                  const delta = ev.delta;
-                  if (!delta) break;
-                  if (!assistantMessageId) {
-                    const msgId = generateId();
-                    assistantMessageId = msgId;
-                    setMessages((prev) => [
-                      ...prev,
-                      {
-                        id: msgId,
-                        role: 'assistant',
-                        content: [{ type: 'reasoning', text: delta }],
-                        createdAt: new Date(),
-                        status: { type: 'running' },
-                      },
-                    ]);
-                    break;
-                  }
-                  setMessages((prev) =>
-                    prev.map((m) => {
-                      if (m.id !== assistantMessageId || m.role !== 'assistant') return m;
-                      const content: readonly { type: string; text?: string }[] = Array.isArray(m.content)
-                        ? (m.content as readonly { type: string; text?: string }[])
-                        : [{ type: 'text' as const, text: String(m.content ?? '') }];
-                      const lastPart = content.length > 0 ? content[content.length - 1] : null;
-                      if (lastPart && lastPart.type === 'reasoning') {
-                        // 最后一个部件也是 reasoning，追加 delta 到它
-                        const newContent = content.map((p, i) =>
-                          i === content.length - 1 ? { ...p, text: ((p as { text?: string }).text ?? '') + delta } : p
-                        );
-                        return { ...m, content: newContent as ThreadMessageLike['content'] };
-                      }
-                      // 最后一个部件不是 reasoning（或内容为空），
-                      // 在末尾创建新的 reasoning 部件，保持实际事件顺序
-                      return { ...m, content: [...content, { type: 'reasoning', text: delta }] as ThreadMessageLike['content'] };
-                    })
-                  );
-                  break;
-                }
-
-                case 'THINKING_END':
-                case 'THINKING_TEXT_MESSAGE_END':
-                  // 思考结束，标记所有 reasoning 部件为 done，
-                  // AssistantMessage 据此让 ThinkingCard 显示"思考过程"而非"思考中"。
-                  if (!assistantMessageId) break;
-                  setMessages((prev) =>
-                    prev.map((m) => {
-                      if (m.id !== assistantMessageId || m.role !== 'assistant') return m;
-                      const content = Array.isArray(m.content) ? m.content : [];
-                      const hasReasoning = content.some((p) => p.type === 'reasoning');
-                      if (!hasReasoning) return m;
-                      return {
-                        ...m,
-                        content: content.map((p) =>
-                          p.type === 'reasoning' ? { ...p, done: true } : p
-                        ) as ThreadMessageLike['content'],
-                      };
-                    })
-                  );
-                  break;
-
-                case 'TEXT_MESSAGE_END':
-                  // 忽略中途的 TEXT_MESSAGE_END，避免把一次 run 拆成多个消息。
-                  // 最终完成状态由 RUN_FINISHED 统一设置。
-                  break;
-
-                case 'TOOL_CALL_START': {
-                  if (!ev.toolCallId || !ev.toolCallName) break;
-                  setMessages((prev) => {
-                    const lastAssistant = [...prev].reverse().find((m) => m.role === 'assistant');
-                    if (!lastAssistant) return prev;
-                    return prev.map((m) => {
-                      if (m.id !== lastAssistant.id) return m;
-                      const content = Array.isArray(m.content) ? m.content : [];
-                      if (content.some((p) => p.type === 'tool-call' && (p as { toolCallId?: string }).toolCallId === ev.toolCallId)) {
-                        return m;
-                      }
-                      return {
-                        ...m,
-                        content: [
-                          ...content,
-                          {
-                            type: 'tool-call' as const,
-                            toolCallId: ev.toolCallId,
-                            toolName: ev.toolCallName,
-                            args: undefined,
-                            argsText: '',
-                          },
-                        ],
-                      };
-                    });
-                  });
-                  break;
-                }
-
-                case 'TOOL_CALL_ARGS': {
-                  if (!ev.toolCallId || ev.delta === undefined) break;
-                  setMessages((prev) =>
-                    prev.map((m) => {
-                      if (m.role !== 'assistant') return m;
-                      const content = Array.isArray(m.content) ? m.content : [];
-                      const hasTarget = content.some(
-                        (p) => p.type === 'tool-call' && (p as { toolCallId?: string }).toolCallId === ev.toolCallId
-                      );
-                      if (!hasTarget) return m;
-                      return {
-                        ...m,
-                        content: content.map((p) => {
-                          if (p.type !== 'tool-call' || (p as { toolCallId?: string }).toolCallId !== ev.toolCallId) return p;
-                          const argsText = ((p as { argsText?: string }).argsText ?? '') + ev.delta;
-                          let args = undefined;
-                          try {
-                            args = JSON.parse(argsText);
-                          } catch {
-                            // partial args
-                          }
-                          return { ...p, args, argsText };
-                        }),
-                      };
-                    })
-                  );
-                  break;
-                }
-
-                case 'TOOL_CALL_RESULT': {
-                  if (!ev.toolCallId || ev.content === undefined) break;
-                  setMessages((prev) =>
-                    prev.map((m) => {
-                      if (m.role !== 'assistant') return m;
-                      const content = Array.isArray(m.content) ? m.content : [];
-                      const hasTarget = content.some(
-                        (p) => p.type === 'tool-call' && (p as { toolCallId?: string }).toolCallId === ev.toolCallId
-                      );
-                      if (!hasTarget) return m;
-                      return {
-                        ...m,
-                        content: content.map((p) => {
-                          if (p.type !== 'tool-call' || (p as { toolCallId?: string }).toolCallId !== ev.toolCallId) return p;
-                          const raw = ev.content ?? '';
-                          let result: unknown = raw;
-                          try {
-                            result = JSON.parse(raw);
-                          } catch {
-                            // keep as string
-                          }
-                          return { ...p, result };
-                        }),
-                      };
-                    })
-                  );
-                  break;
-                }
-
-                case 'RUN_FINISHED':
-                  setIsRunning(false);
-                  setRunPhase(null);
-                  clearInProgressMessage(currentSessionId);
-                  if (assistantMessageId) {
-                    setMessages((prev) =>
-                      prev.map((m) =>
-                        m.id === assistantMessageId && m.role === 'assistant' && m.status?.type === 'running'
-                          ? { ...m, status: { type: 'complete', reason: 'unknown' } as const }
-                          : m
-                      )
-                    );
-                  } else {
-                    // 整个 run 没有任何 assistant 消息返回，给出明确提示。
-                    setMessages((prev) => [
-                      ...prev,
-                      {
-                        id: generateId(),
-                        role: 'assistant',
-                        content: [{ type: 'text', text: '模型未返回任何内容，请检查模型配置、网络或账户余额后重试。' }],
-                        status: { type: 'incomplete', reason: 'error', error: 'empty response' },
-                      },
-                    ]);
-                  }
-                  activeRunSessionIdRef.current = null;
-                  break;
-
-                case 'RUN_ERROR': {
-                  setIsRunning(false);
-                  setRunPhase(null);
-                  clearInProgressMessage(currentSessionId);
-                  activeRunSessionIdRef.current = null;
-                  const errorMsg = ev.message || 'Agent 运行出错';
-                  const classifiedMsg = classifyAgentError(errorMsg);
-                  const errorMessage: ThreadMessageLike = {
-                    id: generateId(),
-                    role: 'assistant',
-                    content: [{ type: 'text', text: classifiedMsg }],
-                    status: { type: 'incomplete', reason: 'error', error: errorMsg },
-                  };
-                  setMessages((prev) => [...prev, errorMessage]);
-                  break;
-                }
-
-                default:
-                  break;
-              }
+              processAgUiEvent(ev, eventCtx);
             }
           }
         }
 
         const streamEndTime = Date.now();
-        console.log('[useAgUiChat] <<< SSE stream END', { runId, assistantMessageId, elapsedMs: streamEndTime - sendTime, activeRunSession: activeRunSessionIdRef.current, totalSSEEvents: 'see logs above' });
+        console.log('[useAgUiChat] <<< SSE stream END', { runId, assistantMessageId: eventCtx.assistantMessageId, elapsedMs: streamEndTime - sendTime, activeRunSession: activeRunSessionIdRef.current, totalSSEEvents: 'see logs above' });
         // 兜底：SSE 流已结束但未收到 RUN_FINISHED/RUN_ERROR 时，
         // 强制重置运行状态，避免前端一直显示“思考中”。
         if (activeRunSessionIdRef.current === currentSessionId) {
           setIsRunning(false);
           setRunPhase(null);
-          clearInProgressMessage(currentSessionId);
+          clearInProgressMessage(eventCtx.sessionId);
+          clearActiveRun(eventCtx.sessionId);
           activeRunSessionIdRef.current = null;
-          if (assistantMessageId) {
+          if (eventCtx.assistantMessageId) {
             setMessages((prev) =>
               prev.map((m) =>
-                m.id === assistantMessageId && m.role === 'assistant' && m.status?.type === 'running'
+                m.id === eventCtx.assistantMessageId && m.role === 'assistant' && m.status?.type === 'running'
                   ? { ...m, status: { type: 'incomplete', reason: 'error', error: '连接已中断，未收到完整响应' } as const }
                   : m
               )
@@ -991,23 +1227,36 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         const error = err instanceof Error ? err : new Error(String(err));
         console.log('[useAgUiChat] <<< CATCH', { runId, errorName: error.name, errorMessage: error.message, elapsedMs: catchTime - sendTime, noEventTimeoutFired });
         if (error.name === 'AbortError') {
-          setIsRunning(false);
-          setRunPhase(null);
-          clearInProgressMessage(currentSessionId);
-          activeRunSessionIdRef.current = null;
+          // abort 有三种来源：用户手动取消 / 切换会话 / 页面导航卸载（这些入口已各自清理状态，
+          // activeRunSessionIdRef 已被置空）；以及长时间无事件的超时自动取消（真实失败，
+          // 需要清理缓存避免之后被误恢复）。页面导航场景必须保留 localStorage 中的
+          // 快照与活跃 run 记录，重进页面后据此恢复"思考中"并断点续传。
+          const stillActive = activeRunSessionIdRef.current === currentSessionId;
           if (noEventTimeoutFired) {
-            // 超时自动取消：给出明确超时提示，避免用户困惑。
-            const timeoutMsg = '模型响应超时，未收到任何输出。请检查网络、模型配置或账户余额后重试。';
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: generateId(),
-                role: 'assistant',
-                content: [{ type: 'text', text: timeoutMsg }],
-                status: { type: 'incomplete', reason: 'error', error: 'timeout' },
-              },
-            ]);
-          } else {
+            clearInProgressMessage(currentSessionId);
+            clearActiveRun(currentSessionId);
+            if (stillActive) {
+              setIsRunning(false);
+              setRunPhase(null);
+              activeRunSessionIdRef.current = null;
+              // 超时自动取消：给出明确超时提示，避免用户困惑。
+              const timeoutMsg = '模型响应超时，未收到任何输出。请检查网络、模型配置或账户余额后重试。';
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: generateId(),
+                  role: 'assistant',
+                  content: [{ type: 'text', text: timeoutMsg }],
+                  status: { type: 'incomplete', reason: 'error', error: 'timeout' },
+                },
+              ]);
+            }
+            return;
+          }
+          if (stillActive) {
+            setIsRunning(false);
+            setRunPhase(null);
+            activeRunSessionIdRef.current = null;
             // 用户手动取消：保留用户消息，把未完成的 assistant 消息标记为 incomplete。
             setMessages((prev) =>
               prev.map((m) =>
@@ -1021,16 +1270,21 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         }
         console.error('[useAgUiChat] send failed:', error);
         toast.error(`发送失败：${error.message}`);
-        setIsRunning(false);
-        setRunPhase(null);
-        activeRunSessionIdRef.current = null;
+        // 真实失败：清理活跃 run 记录，避免之后被误恢复；仅当仍是当前活跃 run 时才重置
+        // 运行状态，避免用户已切换会话后覆盖新会话恢复出的状态。
+        clearActiveRun(currentSessionId);
+        if (activeRunSessionIdRef.current === currentSessionId) {
+          setIsRunning(false);
+          setRunPhase(null);
+          activeRunSessionIdRef.current = null;
+        }
       } finally {
         console.log('[useAgUiChat] <<< FINALLY', { runId, msgCount: messages.length, elapsedMs: Date.now() - sendTime });
         if (noEventTimer) clearInterval(noEventTimer);
         abortControllerRef.current = null;
       }
     },
-    [agentPluginKey, createSession]
+    [agentPluginKey, createSession, processAgUiEvent]
   );
 
   // 使用自定义 ExternalStoreAdapter，直接由本地 state 驱动 assistant-ui runtime。
