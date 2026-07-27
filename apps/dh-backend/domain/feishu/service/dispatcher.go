@@ -109,7 +109,7 @@ func (s *DBFeishuService) dispatchOneShot(ev object.InboundEvent, workspacePath 
 	ctx, cancel := s.dispatchContext()
 	defer cancel()
 
-	reply, err := s.aguiClient.QuickComplete(ctx, ev.Content)
+	reply, err := s.aguiClient.QuickComplete(ctx, ev.Content, workspacePath)
 	if err != nil {
 		return "", fmt.Errorf("一次性问答失败: %w", err)
 	}
@@ -192,17 +192,35 @@ func buildRunInput(threadID, content, workspacePath string) agui.RunAgentInput {
 // consumeEvents 消费 AG-UI 事件流，累积文本增量并返回完整回复。
 // 遇到 RUN_FINISHED 正常结束，遇到 RUN_ERROR 返回错误。
 // 返回回复文本与事件总数（用于日志观察 agent 活跃度）。
+// 流式日志：首个文本增量（TTFT）、工具调用、每 500 字符进度，便于本地观察 agent 流式输出。
 func consumeEvents(events <-chan agui.Event) (string, int) {
 	var sb strings.Builder
 	count := 0
+	firstTokenLogged := false
+	lastProgressLen := 0
+	const progressInterval = 500
 	for ev := range events {
 		count++
 		switch ev.Type {
 		case agui.EventTextMessageContent:
 			sb.WriteString(ev.Delta)
+			if !firstTokenLogged {
+				firstTokenLogged = true
+				log.Printf("[Feishu-Stream] TTFT event#%d delta=%.80s", count, ev.Delta)
+			}
+			if sb.Len()-lastProgressLen >= progressInterval {
+				lastProgressLen = sb.Len()
+				log.Printf("[Feishu-Stream] progress event#%d totalLen=%d", count, sb.Len())
+			}
+		case agui.EventToolCallStart:
+			log.Printf("[Feishu-Stream] tool_call_start event#%d tool=%s id=%s", count, ev.ToolCallName, ev.ToolCallID)
+		case agui.EventToolCallResult:
+			log.Printf("[Feishu-Stream] tool_call_result event#%d tool=%s id=%s", count, ev.ToolCallName, ev.ToolCallID)
 		case agui.EventRunError:
+			log.Printf("[Feishu-Stream] RUN_ERROR event#%d msg=%s", count, ev.Message)
 			return sb.String(), count
 		case agui.EventRunFinished:
+			log.Printf("[Feishu-Stream] RUN_FINISHED event#%d totalLen=%d", count, sb.Len())
 			return sb.String(), count
 		}
 	}
