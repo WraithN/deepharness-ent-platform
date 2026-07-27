@@ -117,6 +117,14 @@ interface CaseItem {
   steps: string[];
 }
 
+/** 根据需求标题在工作项列表中查找对应的需求 ID（大小写不敏感、忽略首尾空格）。 */
+function resolveWorkitemIdByTitle(title: string | undefined, requirements: ReqItem[]): string | undefined {
+  if (!title) return undefined;
+  const normalized = title.trim().toLowerCase();
+  if (!normalized) return undefined;
+  return requirements.find(r => r.title.trim().toLowerCase() === normalized)?.id;
+}
+
 
 // 用户输入排队上限。
 const MAX_INPUT_QUEUE = 3;
@@ -730,17 +738,25 @@ export const Chat: React.FC = () => {
   }, [showPreview, closePreview]);
 
   // 做原型：将当前预览的文档作为卡片放入输入框，并自动选择 /proto-make 指令。
+  // 若文档标题能匹配到已有需求，则引用该需求卡片，便于后续采纳时生成设计版本。未匹配时不应使用假 ID，
+  // 避免后端为不存在的需求创建关联失败。
   const handleProtoMake = useCallback((filePath: string, title: string) => {
     const fileName = filePath.split('/').pop() || filePath;
-    setQuotedCard({
-      type: 'req',
-      id: `doc-${Date.now()}`,
-      title,
-      reporter: '当前用户',
-    });
+    const matchedReqId = resolveWorkitemIdByTitle(title, requirements);
+    if (matchedReqId) {
+      const matchedReq = requirements.find(r => r.id === matchedReqId);
+      setQuotedCard({
+        type: 'req',
+        id: matchedReqId,
+        title: matchedReq?.title ?? title,
+        reporter: matchedReq?.reporter ?? '当前用户',
+      });
+    } else {
+      setQuotedCard(null);
+    }
     setProtoMakeRequirementTitle(title);
     setInput(prev => prev.trimEnd() ? `${prev.trimEnd()}\n/proto-make ` : '/proto-make ');
-  }, []);
+  }, [requirements]);
 
   // 监听 FileView 跨标签页发来的做原型请求。
   useEffect(() => {
@@ -873,6 +889,13 @@ export const Chat: React.FC = () => {
 
   // Quoted card above input
   const [quotedCard, setQuotedCard] = useState<{ type: 'req' | 'defect' | 'case'; id: string; title: string; reporter: string } | null>(null);
+
+  // 原型采纳关联的需求 ID：优先使用显式引用的需求卡片；若用户通过“做原型”或 AI 回复里的
+  // [[REQ_NAME:...]] 提供了需求标题，则尝试按标题匹配已有需求。确保采纳原型时能生成设计版本。
+  const effectivePrototypeWorkitemId = useMemo(() => {
+    if (quotedCard?.type === 'req') return quotedCard.id;
+    return resolveWorkitemIdByTitle(protoMakeRequirementTitle, requirements);
+  }, [quotedCard, protoMakeRequirementTitle, requirements]);
 
   // Input queue: when AI is running, user inputs are queued and sent automatically.
   const [inputQueue, setInputQueue] = useState<InputQueueItem[]>([]);
@@ -2237,7 +2260,7 @@ export const Chat: React.FC = () => {
                       key={prototypePreviewPath}
                       productPath={prototypePreviewPath}
                       requirementTitle={prototypePreviewRequirementTitle}
-                      workitemId={quotedCard?.type === 'req' ? quotedCard.id : undefined}
+                      workitemId={effectivePrototypeWorkitemId}
                       onClose={closePreview}
                     />
                   )}
@@ -2514,7 +2537,8 @@ export const Chat: React.FC = () => {
                   activeReqBreakdownData={reqBreakdownPreview}
                   onPrototypePreview={handlePrototypePreview}
                   requirementTitle={protoMakeRequirementTitle || quotedCard?.title}
-                  workitemId={quotedCard?.type === 'req' ? quotedCard.id : undefined}
+                  workitemId={effectivePrototypeWorkitemId}
+                  requirements={requirements}
                   onEditMessage={(text, context) => {
                     setInput(text);
                     setQuotedCard(context?.quotedCard ?? null);

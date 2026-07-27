@@ -74,9 +74,11 @@ interface AssistantMessageProps {
   onPrototypePreview?: (path: string) => void;
   requirementTitle?: string;
   workitemId?: string;
+  /** 需求列表，用于原型卡片按消息内的需求标题匹配真实需求 ID。 */
+  requirements?: Array<{ id: string; title: string }>;
 }
 
-export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, runPhase, agentPluginKey, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview, onUserStoryPreview, activeUserStoryData, onReqBreakdownPreview, activeReqBreakdownData, onPrototypePreview, requirementTitle, workitemId }) => {
+export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, runPhase, agentPluginKey, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview, onUserStoryPreview, activeUserStoryData, onReqBreakdownPreview, activeReqBreakdownData, onPrototypePreview, requirementTitle, workitemId, requirements }) => {
   const thread = useThread();
   const content = Array.isArray(message.content) ? message.content : [];
   const [textExpanded, setTextExpanded] = useState(false);
@@ -276,6 +278,16 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
   const reqNameMatch = allTextContent.match(REQ_NAME_MARKER_REGEX);
   const parsedRequirementTitle = reqNameMatch?.[1]?.trim();
   const prototypeRequirementTitle = requirementTitle || parsedRequirementTitle;
+
+  // 按消息内的需求标题匹配真实需求 ID；父组件已传入的 workitemId 仍作为最高优先级。
+  // 这样即使聊天中没有显式引用需求卡片，只要 AI 回复或原型卡片标题命中已有需求，
+  // 点击采纳时也能关联到该需求并生成设计版本。
+  const resolvedWorkitemId = React.useMemo(() => {
+    if (workitemId) return workitemId;
+    if (!requirements || !prototypeRequirementTitle) return undefined;
+    const normalized = prototypeRequirementTitle.trim().toLowerCase();
+    return requirements.find(r => r.title.trim().toLowerCase() === normalized)?.id;
+  }, [workitemId, requirements, prototypeRequirementTitle]);
 
   const textLineCount = textContent.split('\n').length;
   const shouldCollapseText = textLineCount > TEXT_COLLAPSE_LINE_THRESHOLD || textContent.length > TEXT_COLLAPSE_CHAR_THRESHOLD;
@@ -500,7 +512,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
                   key={rootPath}
                   path={rootPath}
                   requirementTitle={prototypeRequirementTitle}
-                  workitemId={workitemId}
+                  workitemId={resolvedWorkitemId}
                   onPreview={onPrototypePreview}
                 />
               ))}

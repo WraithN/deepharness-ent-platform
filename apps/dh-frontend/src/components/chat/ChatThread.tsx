@@ -23,6 +23,8 @@ interface ChatThreadProps {
   onPrototypePreview?: (path: string) => void;
   requirementTitle?: string;
   workitemId?: string;
+  /** 需求列表，用于原型卡片按标题自动匹配需求 ID。 */
+  requirements?: Array<{ id: string; title: string }>;
   runPhase?: 'connecting' | 'thinking' | null;
   agentPluginKey?: string;
 }
@@ -75,6 +77,7 @@ const ChatMessageItem: React.FC<{
           onPrototypePreview={props.onPrototypePreview}
           requirementTitle={props.requirementTitle}
           workitemId={props.workitemId}
+          requirements={props.requirements}
         />
       )}
     </>
