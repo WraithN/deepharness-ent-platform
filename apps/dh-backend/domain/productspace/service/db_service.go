@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -1201,6 +1202,76 @@ func (s *DBProductSpaceService) GetItem(ctx context.Context, workspaceID, userID
 	return item, data, nil
 }
 
+// updatePrototypeContentTx 在已开启的事务中更新原型条目的当前文件内容，并创建历史版本快照。
+// 调用方必须已获取 item 的写锁，并负责提交或回滚事务；本函数返回 currentAbsPath、versionAbsPath
+// 与 oldBytes，供调用方在事务提交失败时恢复文件系统变更。
+func (s *DBProductSpaceService) updatePrototypeContentTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	workspaceID, userID string,
+	item *object.ProductSpaceItem,
+	newContent []byte,
+	changeSummary string,
+) (currentAbsPath string, versionAbsPath string, oldBytes []byte, err error) {
+	if item.Type != object.ItemTypePrototype {
+		return "", "", nil, invalidInput(errors.New(errMsgInvalidItemType))
+	}
+	if int64(len(newContent)) > object.MaxPrototypeSizeBytes {
+		return "", "", nil, invalidInput(errors.New(errMsgPrototypeTooLarge))
+	}
+
+	category, folder, name, ext, err := parseRelativePath(item.RelativePath)
+	if err != nil {
+		return "", "", nil, invalidInput(err)
+	}
+
+	baseAbs, currentAbsPath, err := resolveProductSpacePathWithBase(s.workspaceRoot, workspaceID, userID, item.RelativePath)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if err := rejectSymlink(currentAbsPath); err != nil {
+		return "", "", nil, fmt.Errorf("current file symlink check failed: %w", err)
+	}
+
+	oldBytes, err = os.ReadFile(currentAbsPath)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("read current file failed: %w", err)
+	}
+
+	if len([]rune(changeSummary)) > maxChangeSummaryLength {
+		return "", "", nil, invalidInput(errors.New(errMsgChangeSummaryTooLong))
+	}
+
+	versionRelPath := buildVersionRelativePath(category, folder, name, ext, item.CurrentVersion)
+	versionAbsPath, err = resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, versionRelPath)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if err := rejectSymlink(versionAbsPath); err != nil {
+		return "", "", nil, fmt.Errorf("version file symlink check failed: %w", err)
+	}
+	if err := safeMkdirAll(baseAbs, filepath.Dir(versionAbsPath)); err != nil {
+		return "", "", nil, err
+	}
+	if err := copyFile(currentAbsPath, versionAbsPath); err != nil {
+		return "", "", nil, fmt.Errorf("backup current version failed: %w", err)
+	}
+
+	if err := stubWriteFile(currentAbsPath, newContent); err != nil {
+		_ = stubDeleteFile(versionAbsPath)
+		return "", "", nil, fmt.Errorf("write new content failed: %w", err)
+	}
+
+	contentBase64 := base64.StdEncoding.EncodeToString(newContent)
+	if err := s.saveVersionAndUpdateTx(ctx, tx, item, versionRelPath, contentBase64, changeSummary, userID, oldBytes, newContent); err != nil {
+		_ = stubWriteFile(currentAbsPath, oldBytes)
+		_ = stubDeleteFile(versionAbsPath)
+		return "", "", nil, err
+	}
+
+	return currentAbsPath, versionAbsPath, oldBytes, nil
+}
+
 // UpdateContent 更新文档内容，原内容快照为历史版本。
 func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, userID, itemID string, req object.UpdateContentRequest) (*object.ProductSpaceItem, error) {
 	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
@@ -1238,9 +1309,24 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 			return nil, invalidInput(errors.New(errMsgPrototypeTooLarge))
 		}
 		newData = decoded
-	} else {
-		newData = []byte(req.Content)
+
+		currentAbsPath, versionAbsPath, oldBytes, err := s.updatePrototypeContentTx(ctx, tx, workspaceID, userID, item, newData, req.ChangeSummary)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			_ = stubWriteFile(currentAbsPath, oldBytes)
+			_ = stubDeleteFile(versionAbsPath)
+			return nil, fmt.Errorf("commit transaction failed: %w", err)
+		}
+		return s.fetchItem(ctx, workspaceID, userID, itemID)
 	}
+
+	// 文档类型：直接保存文本内容
+	if int64(len(req.Content)) > object.MaxDocSizeBytes {
+		return nil, invalidInput(errors.New(errMsgDocTooLarge))
+	}
+	newData = []byte(req.Content)
 
 	category, folder, name, ext, err := parseRelativePath(item.RelativePath)
 	if err != nil {
@@ -1297,6 +1383,47 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 	}
 
 	return s.fetchItem(ctx, workspaceID, userID, itemID)
+}
+
+// updatePrototypeContentByID 按条目 ID 更新原型内容并创建新版本。
+// 调用方已负责权限校验，本函数不再重复检查。
+// 返回 true 表示内容已变化并创建了版本；false 表示新内容与现有内容一致，未创建版本。
+func (s *DBProductSpaceService) updatePrototypeContentByID(
+	ctx context.Context,
+	workspaceID, userID, itemID string,
+	newContent []byte,
+	changeSummary string,
+) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	item, err := s.fetchItemForUpdate(ctx, tx, workspaceID, userID, itemID)
+	if err != nil {
+		return false, err
+	}
+
+	currentAbsPath, versionAbsPath, oldBytes, err := s.updatePrototypeContentTx(ctx, tx, workspaceID, userID, item, newContent, changeSummary)
+	if err != nil {
+		return false, err
+	}
+	if oldBytes == nil {
+		// 内容未变化：updatePrototypeContentTx 不会走到这里，但防御性返回。
+		return false, nil
+	}
+	if bytes.Equal(oldBytes, newContent) {
+		return false, nil
+	}
+
+	if err := tx.Commit(); err != nil {
+		_ = stubWriteFile(currentAbsPath, oldBytes)
+		_ = stubDeleteFile(versionAbsPath)
+		return false, fmt.Errorf("commit transaction failed: %w", err)
+	}
+
+	return true, nil
 }
 
 // saveVersionAndUpdateTx 在事务中插入版本快照并递增当前版本号。
@@ -1747,9 +1874,9 @@ func (s *DBProductSpaceService) ImportPrototype(ctx context.Context, workspaceID
 		return nil, invalidInput(errors.New("prototype path is not a directory"))
 	}
 
-	// 查询该目录下已存在的产品空间条目，避免重复导入。
+	// 查询该目录下已存在的产品空间条目，按路径建立 id 映射，用于已存在时的更新。
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT relative_path FROM product_docs
+		SELECT id, relative_path FROM product_docs
 		WHERE workspace_id = $1 AND user_id = $2 AND relative_path LIKE $3 ESCAPE '\'
 	`, workspaceID, userID, escapeLikePattern(protoRelPrefix+"/")+"%")
 	if err != nil {
@@ -1757,20 +1884,21 @@ func (s *DBProductSpaceService) ImportPrototype(ctx context.Context, workspaceID
 	}
 	defer rows.Close()
 
-	existing := make(map[string]struct{})
+	existing := make(map[string]string)
 	for rows.Next() {
-		var rp string
-		if err := rows.Scan(&rp); err != nil {
-			return nil, fmt.Errorf("scan existing path failed: %w", err)
+		var id, rp string
+		if err := rows.Scan(&id, &rp); err != nil {
+			return nil, fmt.Errorf("scan existing item failed: %w", err)
 		}
-		existing[rp] = struct{}{}
+		existing[rp] = id
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate existing paths failed: %w", err)
+		return nil, fmt.Errorf("iterate existing items failed: %w", err)
 	}
 
 	imported := 0
-	var importedIDs []string
+	updated := 0
+	var affectedIDs []string
 	walkErr := filepath.WalkDir(protoPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -1800,9 +1928,6 @@ func (s *DBProductSpaceService) ImportPrototype(ctx context.Context, workspaceID
 		}
 		rel = filepath.ToSlash(rel)
 		relPath := filepath.Join(protoRelPrefix, rel)
-		if _, ok := existing[relPath]; ok {
-			return nil
-		}
 
 		// Vite 工程：根目录存在 dist/index.html 时跳过根 index.html。
 		if strings.EqualFold(filepath.Base(path), "index.html") {
@@ -1821,6 +1946,20 @@ func (s *DBProductSpaceService) ImportPrototype(ctx context.Context, workspaceID
 			return nil
 		}
 
+		if itemID, ok := existing[relPath]; ok {
+			// 已存在：更新内容为新生成的文件，并创建新版本。
+			changed, updateErr := s.updatePrototypeContentByID(ctx, workspaceID, userID, itemID, data, "采纳原型")
+			if updateErr != nil {
+				log.Printf("update prototype file %s failed: %v", relPath, updateErr)
+				return nil
+			}
+			if changed {
+				affectedIDs = append(affectedIDs, itemID)
+				updated++
+			}
+			return nil
+		}
+
 		title := filepath.Base(path)
 		size := int64(len(data))
 		content := base64.StdEncoding.EncodeToString(data)
@@ -1830,18 +1969,18 @@ func (s *DBProductSpaceService) ImportPrototype(ctx context.Context, workspaceID
 			log.Printf("import prototype file %s failed: %v", relPath, err)
 			return nil
 		}
-		importedIDs = append(importedIDs, item.ID)
+		affectedIDs = append(affectedIDs, item.ID)
 		imported++
 		return nil
 	})
 	if walkErr != nil {
 		return nil, fmt.Errorf("walk prototype folder failed: %w", walkErr)
 	}
-	if imported == 0 && len(existing) == 0 {
+	if imported == 0 && updated == 0 && len(existing) == 0 {
 		return nil, invalidInput(errors.New("未找到可导入的 .html 原型页面"))
 	}
-	// imported == 0 但已有条目存在时，视为已采纳，幂等成功，返回空列表。
-	return importedIDs, nil
+	// 没有新增也未更新时返回空列表，避免创建无意义的设计版本。
+	return affectedIDs, nil
 }
 
 // DownloadVersion 下载指定版本文件，返回文件名与内容。
