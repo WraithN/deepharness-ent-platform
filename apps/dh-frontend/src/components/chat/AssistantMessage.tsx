@@ -31,6 +31,23 @@ const REQ_BREAKDOWN_JSON_REGEX = /\[\[REQ_BREAKDOWN_START\]\][\s\S]*?\[\[REQ_BRE
 const REQ_BREAKDOWN_FILE_REGEX = /req-breakdown.*\.(md|json)$/i;
 const REQ_BREAKDOWN_JSON_FILE_REGEX = /req-breakdown.*\.json$/i;
 
+// 工具调用名称到展示文案的映射，用于折叠卡片和状态栏统一显示。
+const TOOL_DISPLAY_NAME_MAP: Record<string, string> = {
+  write: '写入文件',
+  file_write: '写入文件',
+  read: '读取文件',
+  file_read: '读取文件',
+  bash: '执行命令',
+  terminal: '执行命令',
+  execute: '执行命令',
+  search: '搜索',
+  web_search: '搜索',
+};
+
+function getToolDisplayName(toolName: string): string {
+  return TOOL_DISPLAY_NAME_MAP[toolName.toLowerCase()] ?? toolName;
+}
+
 function extractCardTypes(text: string): string[] {
   const types: string[] = [];
   for (const match of text.matchAll(CARD_MARKER_REGEX)) {
@@ -203,11 +220,20 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
   const toolStats = thinkingItems.reduce<Record<string, number>>((acc, item) => {
     if (item.type !== 'tool-call') return acc;
     const name = item.part.toolName || '工具调用';
-    const displayName =
-      { write: '写入文件', file_write: '写入文件', read: '读取文件', file_read: '读取文件', bash: '执行命令', terminal: '执行命令', execute: '执行命令', search: '搜索', web_search: '搜索' }[name.toLowerCase()] || name;
+    const displayName = getToolDisplayName(name);
     acc[displayName] = (acc[displayName] || 0) + 1;
     return acc;
   }, {});
+
+  // 当前仍在执行中（未返回 result）的工具调用，用于底部状态栏实时展示。
+  const pendingToolCalls = thinkingItems.filter(
+    (item): item is { type: 'tool-call'; part: ToolCallMessagePart } =>
+      item.type === 'tool-call' && item.part.result === undefined
+  );
+  const pendingToolCount = pendingToolCalls.length;
+  const displayPendingToolName = pendingToolCalls[0]?.part.toolName
+    ? getToolDisplayName(pendingToolCalls[0].part.toolName)
+    : '工具';
 
   // 检测 reasoning 部件是否全部标记为 done（已收到 THINKING_END 事件）。
   const reasoningParts = content.filter((p): p is ReasoningMessagePart & { done?: boolean } => p.type === 'reasoning');
@@ -319,6 +345,21 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
   const showCollapsed = shouldCollapseText && !textExpanded && !isStreaming;
 
   const toolCallCount = thinkingItems.filter((i) => i.type === 'tool-call').length;
+
+  // 底部运行状态栏文案：优先展示正在执行的工具调用，其次是思考中，最后是生成用户内容。
+  const runningStatusText = (() => {
+    const totalText = `总共调用 ${toolCallCount} 次`;
+    if (pendingToolCount > 0) {
+      if (pendingToolCount === 1) {
+        return `正在调用 ${displayPendingToolName} 工具 · ${totalText}`;
+      }
+      return `正在调用 ${displayPendingToolName} 工具等 ${pendingToolCount} 个工具 · ${totalText}`;
+    }
+    if (isThinkingRunning) {
+      return `正在思考中 · ${totalText}`;
+    }
+    return `正在生成内容 · ${totalText}`;
+  })();
 
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
@@ -598,7 +639,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
         {isRunning && hasVisibleContent && (
           <div className="flex items-center gap-2 mt-1.5">
             <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/60" />
-            <span className="text-[10px] text-muted-foreground/50">生成中 {elapsed} 秒 · 工具调用 {toolCallCount} 次</span>
+            <span className="text-[10px] text-muted-foreground/50">{elapsed} 秒 · {runningStatusText}</span>
           </div>
         )}
       </div>
