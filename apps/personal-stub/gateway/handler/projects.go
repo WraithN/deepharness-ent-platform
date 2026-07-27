@@ -22,7 +22,7 @@ const (
 	// gitInitCommitMessage 是新工程初始化 git 仓库时的提交消息。
 	gitInitCommitMessage = "Initial commit by DeepHarness AI " + aicodingMarker
 	// gitSyncCommitMessage 是同步工程到仓库时的默认提交消息。
-	gitSyncCommitMessage = "Sync project by DeepHarness AI " + aicodingMarker
+	gitSyncCommitMessage = "Sync project by DeepHarness AI"
 	// defaultRemoteName 是推送到远程仓库时使用的默认 remote 名称。
 	defaultRemoteName = "origin"
 	// sshStrictOptions 是 git ssh 命令的安全选项，禁用主机密钥检查（开发环境）。
