@@ -208,13 +208,14 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 
 	// 挂载 agent；使用独立超时，避免整体 run 上下文被拉长。
 	// 若 gatewayd 因重启等原因丢失 session，自动创建新 session 并重试。
-	// 每个 session 使用独立 instance，避免复用导致的"思考中"卡死问题。
+	// 优先复用已有 instance（force=false），保持子进程 stdin 长连接和 session_id 不中断；
+	// 复用失败时回退 force=true 强制重建（覆盖 instance 卡死场景）。
 	attachCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	attachStart := time.Now()
 	log.Printf("[AGUIClient] run=%s >>> AttachAgent START threadId=%s pluginKey=%s workspace=%q",
 		input.RunID, input.ThreadID, pluginKey, workspace)
-	if err := c.attachAgentWithKey(attachCtx, input.ThreadID, true, pluginKey, workspace); err != nil {
+	if err := c.attachWithReuse(attachCtx, input.ThreadID, pluginKey, workspace); err != nil {
 		if isSessionNotFound(err) {
 			log.Printf("[AGUIClient] run=%s session %s not found, creating new thread", input.RunID, input.ThreadID)
 			newThreadID, createErr := c.CreateThread(ctx, input.ThreadID)
@@ -226,7 +227,7 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 			// 重试时使用全新的 attach 超时上下文，避免第一次调用已消耗大部分超时预算。
 			retryAttachCtx, retryCancel := context.WithTimeout(ctx, 2*time.Minute)
 			defer retryCancel()
-			if attachErr := c.attachAgentWithKey(retryAttachCtx, input.ThreadID, true, pluginKey, workspace); attachErr != nil {
+			if attachErr := c.attachWithReuse(retryAttachCtx, input.ThreadID, pluginKey, workspace); attachErr != nil {
 				log.Printf("[AGUIClient] run=%s <<< AttachAgent (retry) FAILED after %v: %v", input.RunID, time.Since(attachStart), attachErr)
 				return "", nil, fmt.Errorf("attach agent after recreate: %w", attachErr)
 			}
@@ -236,7 +237,7 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 			return "", nil, fmt.Errorf("attach agent: %w", err)
 		}
 	} else {
-		log.Printf("[AGUIClient] run=%s AttachAgent OK (force=true) after %v", input.RunID, time.Since(attachStart))
+		log.Printf("[AGUIClient] run=%s AttachAgent OK (reuse-first) after %v", input.RunID, time.Since(attachStart))
 	}
 
 	if input.State == nil {
@@ -332,6 +333,32 @@ func isInstanceAlreadyExists(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "already has") && strings.Contains(msg, "agent instance")
+}
+
+// attachWithReuse 优先以 force=false 复用已有 agent instance，保持 claude/opencode 子进程
+// 的 stdin 长连接和进程内 session_id 不被中断。
+//
+// 复用失败时按错误类型分别处理：
+//   - isInstanceAlreadyExists：gatewayd 某些版本对 force=false 返回"已有 instance"错误，
+//     视为复用成功，不重建。
+//   - isSessionNotFound：向上传播，由调用方重建 thread 后重试。
+//   - 其他错误（如 instance 卡死）：回退 force=true 强制重建，作为自愈手段。
+func (c *AGUIClient) attachWithReuse(ctx context.Context, threadID, pluginKey, workspace string) error {
+	err := c.attachAgentWithKey(ctx, threadID, false, pluginKey, workspace)
+	if err == nil {
+		return nil
+	}
+	if isInstanceAlreadyExists(err) {
+		log.Printf("[AGUIClient] reuse existing instance for threadId=%s", threadID)
+		return nil
+	}
+	if isSessionNotFound(err) {
+		return err
+	}
+	log.Printf("[AGUIClient] reuse attach failed, fallback to force=true: %v", err)
+	fallbackCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	return c.attachAgentWithKey(fallbackCtx, threadID, true, pluginKey, workspace)
 }
 
 // readSSE 从 gatewayd SSE 响应中解析 AG-UI 事件。

@@ -31,6 +31,10 @@ const (
 	// maxRunDuration 是单次 run 的总时长上限。PRD/原型生成等长任务可能超过 10 分钟，
 	// 过短会在 agent 仍在正常工作时强制终止，导致回复丢失。
 	maxRunDuration = 30 * time.Minute
+	// sseHeartbeatInterval 是 SSE 心跳发送间隔。
+	// agent 执行 bash/write 等工具时可能数分钟不产生事件，中间层 LB（如 APISIX 默认 60s）
+	// 会因空闲超时切断连接。定期发送 SSE 注释（: heartbeat）保持连接活跃。
+	sseHeartbeatInterval = 15 * time.Second
 )
 
 // USER_PROMPT_MARKER 与前端 useAgUiChat 保持一致，用于从包装后的提示词中提取原始用户输入。
@@ -763,6 +767,8 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	firstContentSeen := false
 	feedbackEmitted := false
 	frontendDone := false
+	heartbeatTicker := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeatTicker.Stop()
 	for {
 		select {
 		case ev, ok := <-events:
@@ -923,6 +929,17 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 			persistRunAssistant()
 			h.finalizeSession(bgCtx, sessionID, input.Messages)
 			return
+		case <-heartbeatTicker.C:
+			// 前端断连后不再发送心跳（仅缓冲事件，无需保活）。
+			if frontendDone {
+				continue
+			}
+			// SSE 注释（: heartbeat）会被 EventSource 解析器忽略，不影响 AG-UI 事件流。
+			if _, err := fmt.Fprintf(w, ": heartbeat\n\n"); err != nil {
+				log.Printf("[AGUIHandler] run=%s write heartbeat failed: %v", input.RunID, err)
+			} else {
+				flusher.Flush()
+			}
 		}
 	}
 }
