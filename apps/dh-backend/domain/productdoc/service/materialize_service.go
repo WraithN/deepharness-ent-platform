@@ -75,10 +75,10 @@ func (s *DBProductDocService) resolveMaterializeRelativePath(docID string) (stri
 }
 
 // resolveMaterializeTarget 计算落盘绝对路径并校验路径逃逸：
-// filepath.Clean 后的目标必须仍以 {workspaceRoot}/{wsID}/{userID}/products/ 为前缀，
+// filepath.Clean 后的目标必须仍以 {workspaceRoot}/{userID}/{workspaceID}/products/ 为前缀，
 // 防止恶意 relative_path（如 ../../etc/passwd）写穿工作区。
 func (s *DBProductDocService) resolveMaterializeTarget(workspaceID, userID, relativePath string) (string, error) {
-	base := filepath.Join(s.workspaceRoot, workspaceID, userID, materializeDirName)
+	base := filepath.Join(s.workspaceRoot, userID, workspaceID, materializeDirName)
 	target := filepath.Clean(filepath.Join(base, relativePath))
 	if !strings.HasPrefix(target, base+string(filepath.Separator)) {
 		return "", errors.New("文档落盘路径非法")

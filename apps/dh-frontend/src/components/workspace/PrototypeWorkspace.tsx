@@ -1,10 +1,8 @@
-import JSZip from 'jszip';
 import {
   AlertCircle,
   Box,
   ChevronDown,
   ChevronRight,
-  Download,
   Eye,
   FileCode2,
   Folder,
@@ -13,15 +11,16 @@ import {
   Grid3x3,
   History,
   Loader2,
-  Lock,
   MessageSquare,
+  MousePointerClick,
   Minus,
   MonitorPlay,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   RefreshCw,
   Search,
   Send,
-  Share2,
   Trash2,
 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -45,14 +44,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
@@ -65,7 +59,6 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
-import { downloadBlob } from '@/lib/file-download';
 import {
   decodeBase64Utf8,
   type ProductSpaceItem,
@@ -118,6 +111,18 @@ const ZOOM_MAX = 200;
 const ZOOM_STEP = 10;
 
 const COMMENT_MAX_LENGTH = 2000;
+
+/** 右侧栏各折叠面板展开时内容区的固定高度（px），保证内部独立滚动且不挤压文件列表 */
+const VERSIONS_PANEL_CONTENT_HEIGHT = 200;
+const COMMENTS_PANEL_CONTENT_HEIGHT = 220;
+/** 页面树最小可视高度，防止版本/批注同时展开时被压缩到无法操作 */
+const PAGETREE_MIN_HEIGHT = 260;
+
+/** 标注定位消息类型：点击批注列表时通知 iframe 滚动并高亮对应标记 */
+const FOCUS_MARKER_MESSAGE_TYPE = 'dh-focus-marker';
+
+/** 视口下拉框内容区固定最大高度（px），避免 16 项 + 4 分组时 Radix 碰撞检测导致下拉框抖动 */
+const VIEWPORT_DROPDOWN_MAX_HEIGHT = 280;
 
 /** 分享深链参数：?tab=prototype&prototype=<itemId> */
 const SHARE_QUERY_KEY = 'prototype';
@@ -285,22 +290,7 @@ const PageTreePanel: React.FC<PageTreePanelProps> = ({
   return (
     <div className="flex flex-col min-h-0 flex-1">
       <div className="p-3 space-y-2 border-b border-border/50 shrink-0">
-        <div className="flex items-center gap-2">
-          <Select value={product?.name ?? ''} onValueChange={onSelectProduct}>
-            <SelectTrigger className="h-8 text-xs flex-1">
-              <SelectValue placeholder="选择产品" />
-            </SelectTrigger>
-            <SelectContent>
-              {products.map(p => (
-                <SelectItem key={p.name} value={p.name}>
-                  {p.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" title="新建产品" onClick={onCreateProduct}>
-            <FolderPlus className="h-4 w-4" />
-          </Button>
+        <div className="flex items-center justify-end gap-1">
           <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" title="刷新" onClick={onRefresh} disabled={loading}>
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
           </Button>
@@ -415,9 +405,11 @@ interface CommentsPanelProps {
   sending: boolean;
   onDraftChange: (v: string) => void;
   onSubmit: () => void;
+  /** 点击批注项时定位到画布上的对应标注 */
+  onLocateComment: (c: PrototypeComment) => void;
 }
 
-/** 批注评论：最新在上，底部输入发布。 */
+/** 批注评论：可折叠面板，最新在上，按添加顺序编号，点击可定位到画布标注。 */
 const CommentsPanel: React.FC<CommentsPanelProps> = ({
   comments,
   loading,
@@ -426,57 +418,89 @@ const CommentsPanel: React.FC<CommentsPanelProps> = ({
   sending,
   onDraftChange,
   onSubmit,
-}) => (
-  <div className="h-[30%] min-h-[200px] border-t border-border/50 flex flex-col shrink-0">
-    <div className="px-3 py-2 text-xs font-semibold text-foreground/80 shrink-0 flex items-center gap-1.5">
-      批注评论
-      <span className="text-muted-foreground font-normal">({comments.length})</span>
-    </div>
-    <ScrollArea className="flex-1 min-h-0 px-3">
-      {loading ? (
-        <div className="flex justify-center py-4">
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-        </div>
-      ) : comments.length === 0 ? (
-        <p className="text-xs text-muted-foreground text-center py-4">
-          {disabled ? '选择页面后可查看批注' : '暂无批注，来发表第一条吧'}
-        </p>
-      ) : (
-        <div className="space-y-3 pb-3">
-          {comments.map(c => (
-            <div key={c.id} className="flex gap-2">
-              <div className="h-7 w-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-medium shrink-0">
-                {(c.userName || c.userId || '?').slice(0, 1).toUpperCase()}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium truncate">{c.userName || c.userId}</span>
-                  <span className="text-[10px] text-muted-foreground whitespace-nowrap">{formatTime(c.createdAt)}</span>
-                </div>
-                <p className="text-xs text-foreground/80 mt-0.5 break-words whitespace-pre-wrap">{c.content}</p>
-              </div>
+  onLocateComment,
+}) => {
+  const [open, setOpen] = useState(true);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="border-t border-border/50 flex flex-col shrink-0 bg-background/60">
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-foreground/80 shrink-0 w-full hover:bg-muted/50 transition-colors"
+        >
+          {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          <MessageSquare className="h-3.5 w-3.5" />
+          批注评论
+          <span className="ml-1 text-[10px] min-w-[18px] text-center px-1 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+            {comments.length}
+          </span>
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="flex flex-col min-h-0">
+        <ScrollArea className="min-h-0 px-3" style={{ height: COMMENTS_PANEL_CONTENT_HEIGHT }}>
+          {loading ? (
+            <div className="flex justify-center py-4">
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
             </div>
-          ))}
+          ) : comments.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-4">
+              {disabled ? '选择页面后可查看批注' : '暂无批注，来发表第一条吧'}
+            </p>
+          ) : (
+            <div className="space-y-3 py-2 pb-3">
+              {comments.map((c, idx) => {
+                // 数组按最新在前排列，添加顺序正序编号：最早添加的为 1
+                const seq = comments.length - idx;
+                return (
+                  <div
+                    key={c.id}
+                    className="flex gap-2 cursor-pointer rounded-md hover:bg-muted/50 px-1.5 py-1 -mx-1.5 transition-colors"
+                    onClick={() => onLocateComment(c)}
+                    title="点击定位到画布标注"
+                  >
+                    <div className="relative shrink-0">
+                      <div className="h-7 w-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-medium">
+                        {(c.userName || c.userId || '?').slice(0, 1).toUpperCase()}
+                      </div>
+                      <span className="absolute -top-1 -right-1 h-4 min-w-[16px] px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold flex items-center justify-center">
+                        {seq}
+                      </span>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium truncate">{c.userName || c.userId}</span>
+                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">{formatTime(c.createdAt)}</span>
+                      </div>
+                      <p className="text-xs text-foreground/80 mt-0.5 break-words whitespace-pre-wrap">{c.content}</p>
+                      {c.targetText && (
+                        <p className="text-[10px] text-muted-foreground/70 mt-1 truncate">📍 {c.targetText}</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </ScrollArea>
+        <div className="p-2 border-t border-border/50 shrink-0 space-y-1.5">
+          <Textarea
+            value={draft}
+            onChange={e => onDraftChange(e.target.value.slice(0, COMMENT_MAX_LENGTH))}
+            placeholder={disabled ? '请先选择原型页面' : '输入批注…'}
+            disabled={disabled || sending}
+            className="min-h-[52px] max-h-[90px] text-xs resize-none"
+          />
+          <div className="flex justify-end">
+            <Button size="sm" className="h-7 text-xs gap-1" disabled={disabled || sending || !draft.trim()} onClick={onSubmit}>
+              {sending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+              发布
+            </Button>
+          </div>
         </div>
-      )}
-    </ScrollArea>
-    <div className="p-2 border-t border-border/50 shrink-0 space-y-1.5">
-      <Textarea
-        value={draft}
-        onChange={e => onDraftChange(e.target.value.slice(0, COMMENT_MAX_LENGTH))}
-        placeholder={disabled ? '请先选择原型页面' : '输入批注…'}
-        disabled={disabled || sending}
-        className="min-h-[52px] max-h-[90px] text-xs resize-none"
-      />
-      <div className="flex justify-end">
-        <Button size="sm" className="h-7 text-xs gap-1" disabled={disabled || sending || !draft.trim()} onClick={onSubmit}>
-          {sending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-          发布
-        </Button>
-      </div>
-    </div>
-  </div>
-);
+      </CollapsibleContent>
+    </Collapsible>
+  );
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 子组件：原型画布（工具栏 + iframe + 状态栏）
@@ -538,7 +562,7 @@ const CanvasToolbar: React.FC<
           <MonitorPlay className="h-3.5 w-3.5 mr-1.5 opacity-60" />
           <SelectValue />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent style={{ maxHeight: VIEWPORT_DROPDOWN_MAX_HEIGHT }}>
           {VIEWPORT_GROUPS.map(group => {
             const items = VIEWPORT_OPTIONS.filter(v => v.group === group);
             if (items.length === 0) return null;
@@ -603,11 +627,11 @@ const CanvasToolbar: React.FC<
         variant={annotateMode ? 'secondary' : 'ghost'}
         size="sm"
         className="h-8 text-xs gap-1.5"
-        title={annotateMode ? '标注模式已开启：点击页面元素添加批注' : '标注模式已关闭'}
+        title={annotateMode ? '批注模式已开启：点击页面元素添加批注' : '批注模式已关闭'}
         onClick={() => onAnnotateModeChange(!annotateMode)}
       >
-        <MessageSquare className="h-3.5 w-3.5" />
-        标注
+        <MousePointerClick className="h-3.5 w-3.5" />
+        批注
       </Button>
     </div>
   );
@@ -618,17 +642,19 @@ const CanvasEmptyGuide: React.FC<{
   icon: React.ReactNode;
   title: string;
   description: string;
-  actionLabel: string;
-  onAction: () => void;
+  actionLabel?: string;
+  onAction?: () => void;
 }> = ({ icon, title, description, actionLabel, onAction }) => (
   <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-3">
     {icon}
     <p className="text-sm font-medium text-foreground/70">{title}</p>
     <p className="text-xs">{description}</p>
-    <Button size="sm" className="mt-1 gap-1.5" onClick={onAction}>
-      <Plus className="h-3.5 w-3.5" />
-      {actionLabel}
-    </Button>
+    {actionLabel && onAction && (
+      <Button size="sm" className="mt-1 gap-1.5" onClick={onAction}>
+        <Plus className="h-3.5 w-3.5" />
+        {actionLabel}
+      </Button>
+    )}
   </div>
 );
 
@@ -713,10 +739,8 @@ const PrototypeCanvas: React.FC<PrototypeCanvasProps> = ({
         {!loading && !page && !hasProducts && (
           <CanvasEmptyGuide
             icon={<Box className="h-10 w-10 text-primary/40" />}
-            title="还没有产品"
-            description="产品对应原型目录下的一级文件夹，用于组织一组原型页面"
-            actionLabel="新建产品"
-            onAction={onCreateProduct}
+            title="还没有原型"
+            description="通过 AI 原型设计生成原型页面后，将在此处展示"
           />
         )}
 
@@ -945,34 +969,6 @@ const CreatePageDialog: React.FC<{
   );
 };
 
-/** 权限说明对话框：原型管理仅 PM 可用（后端 requirePM 校验）。 */
-const PermissionDialog: React.FC<{ open: boolean; onOpenChange: (open: boolean) => void }> = ({ open, onOpenChange }) => (
-  <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="sm:max-w-md">
-      <DialogHeader>
-        <DialogTitle className="flex items-center gap-2">
-          <Lock className="h-4 w-4" />
-          权限设置
-        </DialogTitle>
-        <DialogDescription asChild>
-          <div className="space-y-2 text-sm pt-1">
-            <p>原型空间当前采用固定权限策略：</p>
-            <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-              <li>仅产品经理（PM）角色可创建、删除原型页面与文件夹</li>
-              <li>仅 PM 可发表与查看批注评论</li>
-              <li>分享链接面向空间内成员，访问需登录且具备空间权限</li>
-            </ul>
-            <p className="text-xs text-muted-foreground">细粒度成员级权限配置将在后续版本支持。</p>
-          </div>
-        </DialogDescription>
-      </DialogHeader>
-      <DialogFooter>
-        <Button onClick={() => onOpenChange(false)}>知道了</Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
-);
-
 // ─────────────────────────────────────────────────────────────────────────────
 // 子组件：标注与版本历史面板
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1010,7 +1006,7 @@ const AnnotationDialog: React.FC<AnnotationDialogProps> = ({ open, onOpenChange,
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <MessageSquare className="h-4 w-4" />
@@ -1020,7 +1016,7 @@ const AnnotationDialog: React.FC<AnnotationDialogProps> = ({ open, onOpenChange,
         </DialogHeader>
         <div className="space-y-3 py-2">
           {targetText && (
-            <div className="text-xs text-muted-foreground bg-muted rounded px-2 py-1.5 truncate">
+            <div className="text-xs text-muted-foreground bg-muted rounded px-2 py-1.5 break-words">
               选中：{targetText}
             </div>
           )}
@@ -1028,7 +1024,7 @@ const AnnotationDialog: React.FC<AnnotationDialogProps> = ({ open, onOpenChange,
             value={content}
             onChange={e => setContent(e.target.value.slice(0, COMMENT_MAX_LENGTH))}
             placeholder="输入产品描述或批注…"
-            className="min-h-[80px] max-h-[160px] text-xs resize-none"
+            className="min-h-[140px] max-h-[280px] text-sm resize-none"
             disabled={sending}
           />
         </div>
@@ -1054,47 +1050,60 @@ interface VersionsPanelProps {
   onRestore: (version: number) => void;
 }
 
-/** 版本历史面板：列出历史版本并提供恢复入口。 */
-const VersionsPanel: React.FC<VersionsPanelProps> = ({ versions, loading, disabled, currentVersion, onRestore }) => (
-  <div className="h-[30%] min-h-[180px] border-t border-border/50 flex flex-col shrink-0">
-    <div className="px-3 py-2 text-xs font-semibold text-foreground/80 flex items-center gap-1.5 shrink-0">
-      <History className="h-3.5 w-3.5" />
-      版本历史
-      <span className="text-muted-foreground font-normal">({versions.length})</span>
-    </div>
-    <ScrollArea className="flex-1 min-h-0 px-3">
-      {loading ? (
-        <div className="flex justify-center py-4">
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-        </div>
-      ) : disabled ? (
-        <p className="text-xs text-muted-foreground text-center py-4">选择页面后可查看版本历史</p>
-      ) : versions.length === 0 ? (
-        <p className="text-xs text-muted-foreground text-center py-4">暂无历史版本</p>
-      ) : (
-        <div className="space-y-2 pb-2">
-          {versions.map(v => (
-            <div key={v.id} className="flex items-center justify-between gap-2 text-xs">
-              <div className="min-w-0">
-                <div className="font-medium">
-                  v{v.version}
-                  {v.version === currentVersion && <span className="ml-1 text-muted-foreground">(当前)</span>}
-                </div>
-                <div className="text-muted-foreground truncate">{v.change_summary || '无描述'}</div>
-                <div className="text-[10px] text-muted-foreground">{formatTime(v.created_at)}</div>
-              </div>
-              {v.version !== currentVersion && (
-                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onRestore(v.version)}>
-                  恢复
-                </Button>
-              )}
+/** 版本历史面板：可折叠，列出历史版本并提供恢复入口。 */
+const VersionsPanel: React.FC<VersionsPanelProps> = ({ versions, loading, disabled, currentVersion, onRestore }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="border-t border-border/50 flex flex-col shrink-0 bg-background/60">
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-foreground/80 shrink-0 w-full hover:bg-muted/50 transition-colors"
+        >
+          {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          <History className="h-3.5 w-3.5" />
+          版本历史
+          <span className="ml-1 text-[10px] min-w-[18px] text-center px-1 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+            {versions.length}
+          </span>
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="flex flex-col min-h-0">
+        <ScrollArea className="min-h-0 px-3" style={{ height: VERSIONS_PANEL_CONTENT_HEIGHT }}>
+          {loading ? (
+            <div className="flex justify-center py-4">
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
             </div>
-          ))}
-        </div>
-      )}
-    </ScrollArea>
-  </div>
-);
+          ) : disabled ? (
+            <p className="text-xs text-muted-foreground text-center py-4">选择页面后可查看版本历史</p>
+          ) : versions.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-4">暂无历史版本</p>
+          ) : (
+            <div className="space-y-2 py-2 pb-2">
+              {versions.map(v => (
+                <div key={v.id} className="flex items-center justify-between gap-2 text-xs">
+                  <div className="min-w-0">
+                    <div className="font-medium">
+                      v{v.version}
+                      {v.version === currentVersion && <span className="ml-1 text-muted-foreground">(当前)</span>}
+                    </div>
+                    <div className="text-muted-foreground truncate">{v.change_summary || '无描述'}</div>
+                    <div className="text-[10px] text-muted-foreground">{formatTime(v.created_at)}</div>
+                  </div>
+                  {v.version !== currentVersion && (
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onRestore(v.version)}>
+                      恢复
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </ScrollArea>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 主组件
@@ -1106,7 +1115,7 @@ const VersionsPanel: React.FC<VersionsPanelProps> = ({ versions, loading, disabl
  * 数据模型：产品 = prototypes 下一级目录；分组 = 二级目录；页面 = .html 文件。
  * 画布通过 iframe srcDoc 渲染 HTML，右侧栏提供页面树与批注评论。
  */
-export const PrototypeWorkspace: React.FC = () => {
+export const PrototypeWorkspace: React.FC<{ focusItemId?: string | null }> = ({ focusItemId }) => {
   const { membership } = useAuth();
   const workspaceId = membership?.workspaceId ?? '';
 
@@ -1142,10 +1151,9 @@ export const PrototypeWorkspace: React.FC = () => {
 
   const [createProductOpen, setCreateProductOpen] = useState(false);
   const [createPageOpen, setCreatePageOpen] = useState(false);
-  const [permissionOpen, setPermissionOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProductSpaceTreeNode | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [exporting, setExporting] = useState(false);
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -1228,12 +1236,13 @@ export const PrototypeWorkspace: React.FC = () => {
     loadTree();
   }, [loadTree]);
 
-  // 树加载完成后的初始选择：优先应用分享深链，否则默认选中第一个产品
+  // 树加载完成后的初始选择：优先应用分享深链，其次应用 ?product= 产品深链，否则默认选中第一个产品
   useEffect(() => {
     if (loadingTree || products.length === 0) return;
     if (!deepLinkAppliedRef.current) {
       deepLinkAppliedRef.current = true;
-      const linkItemId = new URLSearchParams(window.location.search).get(SHARE_QUERY_KEY);
+      const params = new URLSearchParams(window.location.search);
+      const linkItemId = params.get(SHARE_QUERY_KEY);
       if (linkItemId) {
         const found = findNodeByItemId(products, linkItemId);
         if (found) {
@@ -1242,11 +1251,28 @@ export const PrototypeWorkspace: React.FC = () => {
           return;
         }
       }
+      const productName = params.get('product');
+      if (productName && products.some(p => p.name === productName)) {
+        setSelectedProduct(productName);
+        return;
+      }
     }
     if (!selectedProduct || !products.some(p => p.name === selectedProduct)) {
       setSelectedProduct(products[0].name);
     }
   }, [loadingTree, products, selectedProduct, loadPage]);
+
+  // 需求关联跳转：focusItemId 变化时在树中定位并加载对应原型页面
+  useEffect(() => {
+    if (!focusItemId || loadingTree || products.length === 0) return;
+    const found = findNodeByItemId(products, focusItemId);
+    if (found) {
+      setSelectedProduct(found.productName);
+      loadPage(focusItemId);
+    } else {
+      toast.error('关联的原型页面未找到');
+    }
+  }, [focusItemId, loadingTree, products, loadPage]);
 
   const handleSelectProduct = (name: string) => {
     setSelectedProduct(name);
@@ -1271,9 +1297,15 @@ export const PrototypeWorkspace: React.FC = () => {
   }, []);
 
   const toFrameMarkers = useCallback((list: PrototypeComment[]) => {
-    return list
-      .filter(c => typeof c.x === 'number' && typeof c.y === 'number')
-      .map(c => ({
+    const total = list.length;
+    // 序号按添加顺序（最早为 1，最新为 N），与批注列表序号一致；
+    // 仅渲染带有坐标的批注，但序号基于完整列表计算，保证与列表一一对应。
+    const markers: Array<Record<string, unknown>> = [];
+    list.forEach((c, idx) => {
+      if (typeof c.x !== 'number' || typeof c.y !== 'number') return;
+      markers.push({
+        id: c.id,
+        seq: total - idx,
         selector: c.selector,
         targetText: c.targetText,
         x: c.x,
@@ -1281,7 +1313,9 @@ export const PrototypeWorkspace: React.FC = () => {
         content: c.content,
         userName: c.userName,
         createdAt: c.createdAt,
-      }));
+      });
+    });
+    return markers;
   }, []);
 
   const handleFrameLoad = useCallback(() => {
@@ -1301,11 +1335,17 @@ export const PrototypeWorkspace: React.FC = () => {
   }, [comments, page, postToFrame, toFrameMarkers]);
 
   // 监听 iframe 发送的标注点击事件，弹出批注对话框。
+  // 同一元素（按 selector 判断）只允许添加一个批注，重复点击提示先删除原批注。
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
       if (e.source !== iframeRef.current?.contentWindow) return;
       const data = e.data || {};
       if (data.type === 'dh-annotate-click') {
+        const selector = data.selector as string | undefined;
+        if (selector && comments.some(c => c.selector === selector)) {
+          toast.error('该元素已存在批注，请先删除原有批注后再添加');
+          return;
+        }
         setPendingAnnotation({
           selector: data.selector,
           targetText: data.targetText,
@@ -1317,7 +1357,7 @@ export const PrototypeWorkspace: React.FC = () => {
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  }, [comments]);
 
   const handleInteractiveChange = useCallback((v: boolean) => {
     setInteractive(v);
@@ -1328,6 +1368,14 @@ export const PrototypeWorkspace: React.FC = () => {
     setAnnotateMode(v);
     if (v) setInteractive(true);
   }, []);
+
+  // 点击批注列表项时，通知 iframe 滚动并高亮画布上对应的标注标记
+  const handleLocateComment = useCallback(
+    (c: PrototypeComment) => {
+      postToFrame({ type: FOCUS_MARKER_MESSAGE_TYPE, id: c.id });
+    },
+    [postToFrame]
+  );
 
   const handleAnnotationSubmit = useCallback(
     async (content: string) => {
@@ -1423,60 +1471,6 @@ export const PrototypeWorkspace: React.FC = () => {
     }
   };
 
-  const handleShare = async () => {
-    if (!page) {
-      toast.error('请先选择要分享的原型页面');
-      return;
-    }
-    const url = `${window.location.origin}/personal-space?tab=prototype&${SHARE_QUERY_KEY}=${page.itemId}`;
-    try {
-      await navigator.clipboard.writeText(url);
-      toast.success('分享链接已复制', { description: url });
-    } catch {
-      toast.error('复制链接失败');
-    }
-  };
-
-  const handleExportCurrent = () => {
-    if (!page) return;
-    downloadBlob(new Blob([page.html], { type: 'text/html;charset=utf-8' }), page.item.title);
-    toast.success('已导出当前页面');
-  };
-
-  /** 批量导出：拉取当前产品下所有页面 HTML 并打包为 zip。 */
-  const handleExportAll = async () => {
-    if (!product) return;
-    const nodes: ProductSpaceTreeNode[] = [];
-    for (const child of product.children ?? []) {
-      if (child.type === 'prototype') nodes.push(child);
-      nodes.push(...(child.children ?? []).filter(n => n.type === 'prototype'));
-    }
-    if (nodes.length === 0) {
-      toast.error('当前产品暂无可导出的页面');
-      return;
-    }
-    setExporting(true);
-    try {
-      const zip = new JSZip();
-      await Promise.all(
-        nodes.map(async n => {
-          if (!n.id) return;
-          const detail = await productSpaceApi.getItem(workspaceId, n.id);
-          // zip 内路径去掉 prototypes/ 前缀，保留 产品/分组/页面 层级
-          const zipPath = n.path.replace(new RegExp(`^${PROTOTYPES_ROOT}/`), '');
-          zip.file(zipPath, decodeBase64Utf8(detail.content));
-        })
-      );
-      const blob = await zip.generateAsync({ type: 'blob' });
-      downloadBlob(blob, `${product.name}-原型.zip`);
-      toast.success(`已导出 ${nodes.length} 个页面`);
-    } catch {
-      toast.error('批量导出失败');
-    } finally {
-      setExporting(false);
-    }
-  };
-
   const handleFullscreen = () => {
     canvasRef.current?.requestFullscreen?.();
   };
@@ -1511,25 +1505,15 @@ export const PrototypeWorkspace: React.FC = () => {
           )}
         </div>
         <div className="flex items-center gap-1.5">
-          <Button variant="ghost" size="sm" className="h-8 text-xs gap-1.5" onClick={handleShare} disabled={!page}>
-            <Share2 className="h-3.5 w-3.5" />
-            分享
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 text-xs gap-1.5" disabled={!page || exporting}>
-                {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                导出
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={handleExportCurrent}>导出当前页面（HTML）</DropdownMenuItem>
-              <DropdownMenuItem onClick={handleExportAll}>导出全部页面（ZIP）</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button variant="ghost" size="sm" className="h-8 text-xs gap-1.5" onClick={() => setPermissionOpen(true)}>
-            <Lock className="h-3.5 w-3.5" />
-            权限设置
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs gap-1.5"
+            onClick={() => setRightSidebarCollapsed(v => !v)}
+            title={rightSidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+          >
+            {rightSidebarCollapsed ? <PanelRightOpen className="h-3.5 w-3.5" /> : <PanelRightClose className="h-3.5 w-3.5" />}
+            {rightSidebarCollapsed ? '展开' : '收起'}
           </Button>
           <Button variant="ghost" size="sm" className="h-8 text-xs gap-1.5" onClick={handleFullscreen} disabled={!page}>
             <Fullscreen className="h-3.5 w-3.5" />
@@ -1560,39 +1544,55 @@ export const PrototypeWorkspace: React.FC = () => {
           onCreatePage={() => setCreatePageOpen(true)}
         />
 
-        {/* 右侧栏：页面树 + 版本历史 + 批注评论 */}
-        <aside className="w-[340px] border-l border-border/50 flex flex-col min-h-0 shrink-0 bg-background/60">
-          <PageTreePanel
-            products={products}
-            product={product}
-            selectedItemId={page?.itemId ?? ''}
-            search={search}
-            loading={loadingTree}
-            onSearchChange={setSearch}
-            onSelectProduct={handleSelectProduct}
-            onSelectPage={handleSelectPage}
-            onDeletePage={setDeleteTarget}
-            onCreateProduct={() => setCreateProductOpen(true)}
-            onCreatePage={() => setCreatePageOpen(true)}
-            onRefresh={loadTree}
-          />
-          <VersionsPanel
-            versions={versions}
-            loading={loadingVersions}
-            disabled={!page}
-            currentVersion={page?.item.current_version ?? 0}
-            onRestore={handleRestoreVersion}
-          />
-          <CommentsPanel
-            comments={comments}
-            loading={loadingComments}
-            disabled={!page}
-            draft={commentDraft}
-            sending={sendingComment}
-            onDraftChange={setCommentDraft}
-            onSubmit={handleSubmitComment}
-          />
-        </aside>
+        {rightSidebarCollapsed ? (
+          <div className="shrink-0 border-l border-border/50 flex flex-col items-center py-2 px-1 bg-background/60">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              title="展开侧边栏"
+              onClick={() => setRightSidebarCollapsed(false)}
+            >
+              <PanelRightOpen className="h-4 w-4" />
+            </Button>
+          </div>
+        ) : (
+          <aside className="w-[340px] border-l border-border/50 flex flex-col min-h-0 shrink-0 bg-background/60 overflow-y-auto">
+            <div className="flex-1 flex flex-col" style={{ minHeight: PAGETREE_MIN_HEIGHT }}>
+              <PageTreePanel
+                products={products}
+                product={product}
+                selectedItemId={page?.itemId ?? ''}
+                search={search}
+                loading={loadingTree}
+                onSearchChange={setSearch}
+                onSelectProduct={handleSelectProduct}
+                onSelectPage={handleSelectPage}
+                onDeletePage={setDeleteTarget}
+                onCreateProduct={() => setCreateProductOpen(true)}
+                onCreatePage={() => setCreatePageOpen(true)}
+                onRefresh={loadTree}
+              />
+            </div>
+            <VersionsPanel
+              versions={versions}
+              loading={loadingVersions}
+              disabled={!page}
+              currentVersion={page?.item.current_version ?? 0}
+              onRestore={handleRestoreVersion}
+            />
+            <CommentsPanel
+              comments={comments}
+              loading={loadingComments}
+              disabled={!page}
+              draft={commentDraft}
+              sending={sendingComment}
+              onDraftChange={setCommentDraft}
+              onSubmit={handleSubmitComment}
+              onLocateComment={handleLocateComment}
+            />
+          </aside>
+        )}
       </div>
 
       <CreateProductDialog open={createProductOpen} onOpenChange={setCreateProductOpen} onSubmit={handleCreateProduct} />
@@ -1603,7 +1603,6 @@ export const PrototypeWorkspace: React.FC = () => {
         defaultProduct={selectedProduct}
         onSubmit={handleCreatePage}
       />
-      <PermissionDialog open={permissionOpen} onOpenChange={setPermissionOpen} />
       <AnnotationDialog
         open={annotationDialogOpen}
         onOpenChange={open => {

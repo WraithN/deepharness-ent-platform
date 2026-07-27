@@ -45,10 +45,11 @@ type ProjectFileNode struct {
 
 // ProjectCheckResponse 工程检查响应。
 type ProjectCheckResponse struct {
-	IsNew      bool   `json:"isNew"`
-	HasDiff    bool   `json:"hasDiff"`
-	FileCount  int    `json:"fileCount"`
-	DirSize    int64  `json:"dirSize"`
+	IsNew       bool   `json:"isNew"`
+	HasDiff     bool   `json:"hasDiff"`
+	FileCount   int    `json:"fileCount"`
+	HTMLCount   int    `json:"htmlCount"`
+	DirSize     int64  `json:"dirSize"`
 	ProjectName string `json:"projectName"`
 }
 
@@ -437,8 +438,9 @@ func sortProjectNodes(nodes *[]ProjectFileNode) {
 }
 
 // countProjectFiles 统计工程目录中的文件数量（排除 .git）。
-func countProjectFiles(rootDir string) (int, int64) {
+func countProjectFiles(rootDir string) (int, int, int64) {
 	count := 0
+	htmlCount := 0
 	var size int64
 	filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -457,10 +459,13 @@ func countProjectFiles(rootDir string) (int, int64) {
 		if !info.IsDir() {
 			count++
 			size += info.Size()
+			if strings.EqualFold(filepath.Ext(info.Name()), ".html") {
+				htmlCount++
+			}
 		}
 		return nil
 	})
-	return count, size
+	return count, htmlCount, size
 }
 
 // ──────────────── HTTP Handlers ────────────────
@@ -637,7 +642,7 @@ func ProjectCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectName := filepath.Base(absPath)
-	fileCount, dirSize := countProjectFiles(absPath)
+	fileCount, htmlCount, dirSize := countProjectFiles(absPath)
 
 	isNew := !hasGitRepo(absPath)
 	hasDiff := false
@@ -661,6 +666,7 @@ func ProjectCheck(w http.ResponseWriter, r *http.Request) {
 		IsNew:       isNew,
 		HasDiff:     hasDiff,
 		FileCount:   fileCount,
+		HTMLCount:   htmlCount,
 		DirSize:     dirSize,
 		ProjectName: projectName,
 	})

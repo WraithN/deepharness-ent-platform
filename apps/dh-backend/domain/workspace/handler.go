@@ -350,6 +350,7 @@ func Members(w http.ResponseWriter, r *http.Request) {
 		}
 		members, err := defaultService.ListMembers(workspaceID)
 		if err != nil {
+			log.Printf("[Workspace] ListMembers failed: workspaceID=%s err=%v", workspaceID, err)
 			handler.HandleServiceError(w, err, "workspace not found", "failed to list members")
 			return
 		}

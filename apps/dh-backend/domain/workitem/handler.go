@@ -82,6 +82,35 @@ func WorkItemByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// UpdateWorkItemAssignee 处理 PATCH /api/v1/workitems/{id}/assignee。
+func UpdateWorkItemAssignee(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if defaultWorkItemService == nil {
+		http.Error(w, `{"code":1,"message":"workitem service not initialized"}`, http.StatusInternalServerError)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"code":1,"message":"missing workitem id"}`, http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		AssigneeID string `json:"assigneeId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"code":1,"message":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	item, err := defaultWorkItemService.UpdateWorkItemAssignee(id, req.AssigneeID)
+	if err != nil {
+		http.Error(w, `{"code":1,"message":"workitem not found"}`, http.StatusNotFound)
+		return
+	}
+	json.NewEncoder(w).Encode(item)
+}
+
 // UpdateWorkItemStatus 处理 PATCH /api/v1/workitems/{id}/status。
 func UpdateWorkItemStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -120,4 +149,94 @@ func parseWorkItemFilter(r *http.Request) service.WorkItemFilter {
 		Status:     workitem.Status(q.Get("status")),
 		AssigneeID: q.Get("assigneeId"),
 	}
+}
+
+// DocLinks 处理 GET / POST /api/v1/workitems/{id}/doc-links。
+// GET 返回需求关联的全部文档/原型列表；POST 新建关联。
+func DocLinks(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if defaultWorkItemService == nil {
+		http.Error(w, `{"code":1,"message":"workitem service not initialized"}`, http.StatusInternalServerError)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"code":1,"message":"missing workitem id"}`, http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		links, err := defaultWorkItemService.ListDocLinks(id)
+		if err != nil {
+			log.Printf("[WorkItem] ListDocLinks failed: %v", err)
+			http.Error(w, `{"code":1,"message":"failed to list doc links"}`, http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(links)
+	case http.MethodPost:
+		var req object.CreateDocLinkRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"code":1,"message":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		link, err := defaultWorkItemService.CreateDocLink(id, req)
+		if err != nil {
+			log.Printf("[WorkItem] CreateDocLink failed: %v", err)
+			http.Error(w, `{"code":1,"message":"failed to create doc link"}`, http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(link)
+	default:
+		http.Error(w, `{"code":1,"message":"method not allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+// DocLinkByID 处理 DELETE /api/v1/workitems/{id}/doc-links/{itemId}。
+func DocLinkByID(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if defaultWorkItemService == nil {
+		http.Error(w, `{"code":1,"message":"workitem service not initialized"}`, http.StatusInternalServerError)
+		return
+	}
+	workitemID := r.PathValue("id")
+	itemID := r.PathValue("itemId")
+	if workitemID == "" || itemID == "" {
+		http.Error(w, `{"code":1,"message":"missing workitem id or item id"}`, http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodDelete:
+		if err := defaultWorkItemService.DeleteDocLink(workitemID, itemID); err != nil {
+			http.Error(w, `{"code":1,"message":"doc link not found"}`, http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, `{"code":1,"message":"method not allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+// ListDesignVersions 处理 GET /api/v1/workitems/{id}/design-versions。
+// 返回指定需求的产品设计版本列表（包含文档与原型快照）。
+func ListDesignVersions(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if defaultWorkItemService == nil {
+		http.Error(w, `{"code":1,"message":"workitem service not initialized"}`, http.StatusInternalServerError)
+		return
+	}
+	workitemID := r.PathValue("id")
+	if workitemID == "" {
+		http.Error(w, `{"code":1,"message":"missing workitem id"}`, http.StatusBadRequest)
+		return
+	}
+
+	versions, err := defaultWorkItemService.ListDesignVersions(workitemID)
+	if err != nil {
+		log.Printf("[WorkItem] ListDesignVersions failed: %v", err)
+		http.Error(w, `{"code":1,"message":"failed to list design versions"}`, http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(object.ListDesignVersionsResponse{Versions: versions})
 }

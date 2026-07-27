@@ -200,7 +200,7 @@ func (s *DBWorkItemService) CreateWorkItem(req object.CreateWorkItemRequest) (ob
 func (s *DBWorkItemService) UpdateWorkItemStatus(id string, status workitem.Status) (object.WorkItem, error) {
 	now := time.Now().UTC()
 	var it object.WorkItem
-	var desc, assigneeID, reporter, externalID sql.NullString
+	var desc, assigneeID, assigneeName, reporter, externalID sql.NullString
 	err := s.db.QueryRow(`
 		UPDATE workitems SET status = $1, updated_at = $2 WHERE id = $3
 		RETURNING id, tenant_id, project_id, "type", title, description, status, priority,
@@ -222,6 +222,52 @@ func (s *DBWorkItemService) UpdateWorkItemStatus(id string, status workitem.Stat
 	}
 	if assigneeID.Valid {
 		it.AssigneeID = assigneeID.String
+	}
+	if assigneeName.Valid {
+		it.AssigneeName = assigneeName.String
+	}
+	if reporter.Valid {
+		it.Reporter = reporter.String
+	}
+	if externalID.Valid {
+		it.ExternalID = externalID.String
+	}
+	return it, nil
+}
+
+// UpdateWorkItemAssignee 更新指定工作项的受理人，并自动关联用户姓名。
+// assigneeID 为空字符串时表示清空受理人。
+func (s *DBWorkItemService) UpdateWorkItemAssignee(id string, assigneeID string) (object.WorkItem, error) {
+	now := time.Now().UTC()
+	var it object.WorkItem
+	var desc, newAssigneeID, assigneeName, reporter, externalID sql.NullString
+	err := s.db.QueryRow(`
+		UPDATE workitems SET assignee_id = $1, updated_at = $2 WHERE id = $3
+		RETURNING id, tenant_id, project_id, "type", title, description, status, priority,
+			assignee_id, reporter, source, external_id, created_at, updated_at
+	`, sql.NullString{String: assigneeID, Valid: assigneeID != ""}, now, id).Scan(
+		&it.ID, &it.TenantID, &it.ProjectID,
+		&it.Type, &it.Title, &desc, &it.Status, &it.Priority,
+		&newAssigneeID, &reporter, &it.Source, &externalID,
+		&it.CreatedAt, &it.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return object.WorkItem{}, errors.New("workitem not found")
+	}
+	if err != nil {
+		return object.WorkItem{}, fmt.Errorf("update workitem assignee failed: %w", err)
+	}
+	if desc.Valid {
+		it.Description = desc.String
+	}
+	if newAssigneeID.Valid {
+		it.AssigneeID = newAssigneeID.String
+	}
+	if it.AssigneeID != "" {
+		_ = s.db.QueryRow(`SELECT COALESCE(name, '') FROM users WHERE id = $1`, it.AssigneeID).Scan(&assigneeName)
+		if assigneeName.Valid {
+			it.AssigneeName = assigneeName.String
+		}
 	}
 	if reporter.Valid {
 		it.Reporter = reporter.String

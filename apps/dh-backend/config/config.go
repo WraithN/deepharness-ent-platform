@@ -63,6 +63,20 @@ type Config struct {
 
 	// AgentRuntimeBearerToken 是外部 gatewayd / personal-stub 上报运行状态时必须携带的 Bearer Token。
 	AgentRuntimeBearerToken string
+
+	// Feishu 飞书机器人接入配置。
+	// MockMode=true 时跳过签名校验并将回复输出到日志，便于本地用 curl 验证全链路；
+	// MockMode=false 时按飞书事件 v2 协议校验签名并调用飞书 Open API 发送回复。
+	FeishuAppID           string
+	FeishuAppSecret       string
+	FeishuVerifyToken     string
+	FeishuEncryptKey      string
+	FeishuWebhookToken    string
+	FeishuAPIBaseURL      string
+	FeishuBotUserID       string
+	FeishuDefaultWorkspace string
+	FeishuMockMode        bool
+	FeishuDispatchTimeout time.Duration
 }
 
 // CodingAgentDefinition 表示全局配置中一个 coding agent 的定义。
@@ -148,6 +162,18 @@ type yamlConfig struct {
 	AgentRuntime struct {
 		BearerToken string `yaml:"bearer_token"`
 	} `yaml:"agent_runtime"`
+	Feishu struct {
+		AppID            string `yaml:"app_id"`
+		AppSecret        string `yaml:"app_secret"`
+		VerifyToken      string `yaml:"verify_token"`
+		EncryptKey       string `yaml:"encrypt_key"`
+		WebhookToken     string `yaml:"webhook_token"`
+		APIBaseURL       string `yaml:"api_base_url"`
+		BotUserID        string `yaml:"bot_user_id"`
+		DefaultWorkspace string `yaml:"default_workspace"`
+		MockMode         bool   `yaml:"mock_mode"`
+		DispatchTimeout  string `yaml:"dispatch_timeout"`
+	} `yaml:"feishu"`
 }
 
 // Load 从 config.yaml 加载配置，并以环境变量为最高优先级覆盖。
@@ -222,6 +248,18 @@ func Load() (Config, error) {
 	}
 	cfg.AgentRuntimeBearerToken = yc.AgentRuntime.BearerToken
 
+	// Feishu 机器人配置
+	cfg.FeishuAppID = yc.Feishu.AppID
+	cfg.FeishuAppSecret = yc.Feishu.AppSecret
+	cfg.FeishuVerifyToken = yc.Feishu.VerifyToken
+	cfg.FeishuEncryptKey = yc.Feishu.EncryptKey
+	cfg.FeishuWebhookToken = yc.Feishu.WebhookToken
+	cfg.FeishuAPIBaseURL = yc.Feishu.APIBaseURL
+	cfg.FeishuBotUserID = yc.Feishu.BotUserID
+	cfg.FeishuDefaultWorkspace = yc.Feishu.DefaultWorkspace
+	cfg.FeishuMockMode = yc.Feishu.MockMode
+	cfg.FeishuDispatchTimeout = parseDurationOrZero(yc.Feishu.DispatchTimeout)
+
 	// 环境变量覆盖
 	cfg.Port = getEnv("PORT", cfg.Port)
 	cfg.SessionStoreType = getEnv("SESSION_STORE", cfg.SessionStoreType)
@@ -254,6 +292,18 @@ func Load() (Config, error) {
 		cfg.RedisAddrs = strings.Split(redisAddrsEnv, ",")
 	}
 	cfg.AgentRuntimeBearerToken = getEnv("AGENT_RUNTIME_BEARER_TOKEN", cfg.AgentRuntimeBearerToken)
+
+	// Feishu 环境变量覆盖
+	cfg.FeishuAppID = getEnv("FEISHU_APP_ID", cfg.FeishuAppID)
+	cfg.FeishuAppSecret = getEnv("FEISHU_APP_SECRET", cfg.FeishuAppSecret)
+	cfg.FeishuVerifyToken = getEnv("FEISHU_VERIFY_TOKEN", cfg.FeishuVerifyToken)
+	cfg.FeishuEncryptKey = getEnv("FEISHU_ENCRYPT_KEY", cfg.FeishuEncryptKey)
+	cfg.FeishuWebhookToken = getEnv("FEISHU_WEBHOOK_TOKEN", cfg.FeishuWebhookToken)
+	cfg.FeishuAPIBaseURL = getEnv("FEISHU_API_BASE_URL", cfg.FeishuAPIBaseURL)
+	cfg.FeishuBotUserID = getEnv("FEISHU_BOT_USER_ID", cfg.FeishuBotUserID)
+	cfg.FeishuDefaultWorkspace = getEnv("FEISHU_DEFAULT_WORKSPACE", cfg.FeishuDefaultWorkspace)
+	cfg.FeishuMockMode = getBoolEnv("FEISHU_MOCK_MODE", cfg.FeishuMockMode)
+	cfg.FeishuDispatchTimeout = getDurationEnv("FEISHU_DISPATCH_TIMEOUT", cfg.FeishuDispatchTimeout)
 
 	if err := cfg.validate(); err != nil {
 		return cfg, err

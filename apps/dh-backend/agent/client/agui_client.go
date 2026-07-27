@@ -55,12 +55,16 @@ func NewAGUIClient(adminURL, pluginKey string) *AGUIClient {
 // 如果 preferredID 非空，gatewayd 会尝试使用该 ID 而非生成新 UUID，
 // 这样 gatewayd 重启后 session 可以复用之前的 ID。
 func (c *AGUIClient) CreateThread(ctx context.Context, preferredID string) (string, error) {
-	var bodyReader io.Reader
+	// preferredID 为空时发送空 JSON 对象 {}，而非 nil body。
+	// gatewayd 在 Content-Type: application/json 下会尝试解析请求体，
+	// 空 body 会导致 "EOF while parsing" 错误。
+	var bodyBytes []byte
 	if preferredID != "" {
-		b, _ := json.Marshal(map[string]string{"id": preferredID})
-		bodyReader = bytes.NewReader(b)
+		bodyBytes, _ = json.Marshal(map[string]string{"id": preferredID})
+	} else {
+		bodyBytes = []byte("{}")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.adminURL+"/sessions", bodyReader)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.adminURL+"/sessions", bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("create session request: %w", err)
 	}
@@ -125,6 +129,36 @@ func (c *AGUIClient) attachAgentWithKey(ctx context.Context, threadID string, fo
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("attach agent status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// Respond 向 gatewayd 指定 session/agent 发送用户响应，用于继续被 question 工具中断的 agent 运行。
+// 对应 gatewayd POST /sessions/{sessionId}/agents/{instanceId}/respond。
+func (c *AGUIClient) Respond(ctx context.Context, threadID, instanceID, message string) error {
+	if threadID == "" || instanceID == "" {
+		return fmt.Errorf("thread id and instance id are required")
+	}
+	body, _ := json.Marshal(map[string]any{
+		"message": message,
+	})
+	url := fmt.Sprintf("%s/sessions/%s/agents/%s/respond", c.adminURL, threadID, instanceID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create respond request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("respond to agent: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("respond to agent status %d: %s", resp.StatusCode, string(respBody))
 	}
 	return nil
 }

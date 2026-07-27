@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,54 @@ type contentPart struct {
 	// 否则历史恢复时 result 为 undefined，前端误判为"执行中"。
 	Result string `json:"result"`
 	Done   bool   `json:"done,omitempty"`
+}
+
+// protoProjectsDirName 与 /proto-make 指令模板约定的产物目录一致（{WORKSPACE_PATH}/products/prototypes）。
+const protoProjectsDirName = "prototypes"
+
+// scanRecentPrototypeProjects 扫描原型产物目录，返回修改时间不早于 since 的工程绝对路径（按时间倒序）。
+// 用于 /proto-make 完成后兜底补全 [[PROJECT:...]] 标记：仅追加本次 run 期间创建/修改的工程目录，
+// 避免把历史工程误判为本次产物。目录修改时间在新增/删除其内文件时会更新，足以识别新建工程。
+func scanRecentPrototypeProjects(workspacePath string, since time.Time) []string {
+	protoDir := filepath.Join(workspacePath, "products", protoProjectsDirName)
+	entries, err := os.ReadDir(protoDir)
+	if err != nil {
+		return nil
+	}
+	type dirInfo struct {
+		path    string
+		modTime time.Time
+	}
+	var dirs []dirInfo
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(since) {
+			continue
+		}
+		dirs = append(dirs, dirInfo{path: filepath.Join(protoDir, e.Name()), modTime: info.ModTime()})
+	}
+	sort.Slice(dirs, func(i, j int) bool { return dirs[i].modTime.After(dirs[j].modTime) })
+	result := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		result = append(result, d.path)
+	}
+	return result
+}
+
+// buildProtoProjectMarker 构造 [[PROJECT:...]] 标记文本，供前端渲染原型预览卡片。
+func buildProtoProjectMarker(projects []string) string {
+	var sb strings.Builder
+	sb.WriteString("\n\n原型工程已生成，可点击下方卡片预览：\n")
+	for _, p := range projects {
+		sb.WriteString(fmt.Sprintf("[[PROJECT:%s]]\n", p))
+	}
+	return sb.String()
 }
 
 // removeToolCallID 从列表中移除第一个匹配的工具调用 ID，返回是否找到并移除。
@@ -166,14 +215,12 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	sessionID := input.ThreadID
 	savedEarly := false
 	if sessionID != "" && sessionID != "main" {
-		if sess, err := h.sessions.Get(r.Context(), sessionID); err == nil {
+		if _, err := h.sessions.Get(r.Context(), sessionID); err == nil {
 			_ = h.sessions.UpdateActivity(r.Context(), sessionID)
 			log.Printf("[AGUIHandler] run=%s reuse session=%s", input.RunID, sessionID)
-			// 从持久化会话中恢复创建工作目录，保证 gatewayd 在该 session 生命周期内始终使用同一工作目录。
-			if sess.WorkspacePath != "" {
-				input.Workspace = sess.WorkspacePath
-			}
 			savedEarly = true
+			// 不直接使用 session 中保存的 WorkspacePath：目录结构可能已变更（如 user_id/workspace_id 调整），
+			// 统一由下方 resolveWorkspacePath 实时解析，确保路径始终与当前代码一致。
 		} else {
 			log.Printf("[AGUIHandler] run=%s session=%s not found, will create after run", input.RunID, sessionID)
 			sessionID = ""
@@ -182,13 +229,12 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		sessionID = ""
 	}
 
-	// 从请求上下文中获取当前用户 ID，用于在 session 未命中时兜底解析 workspace 路径。
+	// 从请求上下文中获取当前用户 ID，用于解析 workspace 路径。
 	userID, _ := middleware.UserIDFromContext(r.Context())
-	// 确定本次 run 使用的 workspace 路径：优先使用 session 中保存的路径，否则按
-	// workspace_root/{workspace_id}/{user_id} 实时解析。该路径会替换指令模板中的
-	// {WORKSPACE_PATH} 占位符，避免 AI 把相对路径 projects/ 解析到 agent 的 cwd。
-	workspacePath := input.Workspace
-	if workspacePath == "" && workspaceID != "" && userID != "" && h.workspaceRoot != "" {
+	// 始终按 workspace_root/{user_id}/{workspace_id} 实时解析工作目录，不依赖 session 中保存的旧路径。
+	// 该路径会替换指令模板中的 {WORKSPACE_PATH} 占位符，避免 AI 把相对路径 projects/ 解析到 agent 的 cwd。
+	workspacePath := ""
+	if workspaceID != "" && userID != "" && h.workspaceRoot != "" {
 		resolved, err := resolveWorkspacePath(workspaceID, userID, h.workspaceRoot)
 		if err != nil {
 			log.Printf("[AGUIHandler] run=%s resolve workspace path failed: %v", input.RunID, err)
@@ -247,7 +293,7 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	// 将用户消息替换为指令专属提示词模板。
 	// 同时处理引用的任务卡片，将卡片信息注入提示词。
 	// 在 saveUserMessages 之后执行，确保数据库保存的是用户原始输入。
-	commandApplied, err := interceptCommands(input.Messages, input.Context, workspacePath, h.workItemSvc)
+	commandApplied, err := interceptCommands(input.Messages, input.Context, workspacePath, workspaceID, h.workItemSvc)
 	if err != nil {
 		log.Printf("[AGUIHandler] run=%s intercept commands failed: %v", input.RunID, err)
 		h.writeEvent(w, flusher, agui.RunErrorEvent(fmt.Sprintf("intercept commands: %v", err), "COMMAND_FAILED"))
@@ -282,7 +328,7 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				// 任务意图：应用指令模板到用户消息。
-				if err := applyIntentCommand(input.Messages, intentResult.Command, userInput, workspacePath, input.Context, h.workItemSvc); err != nil {
+				if err := applyIntentCommand(input.Messages, intentResult.Command, userInput, workspacePath, workspaceID, input.Context, h.workItemSvc); err != nil {
 					log.Printf("[AGUIHandler] run=%s apply intent command failed: %v", input.RunID, err)
 					h.writeEvent(w, flusher, agui.RunErrorEvent(fmt.Sprintf("apply intent command: %v", err), "INTENT_FAILED"))
 					return
@@ -676,6 +722,43 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		return []agui.Event{ev}
 	}
 
+	// emitProtoFallbackMarker 在 /proto-make run 完成且 agent 未输出 [[PROJECT:...]] 标记时，
+	// 扫描本次 run 新建的原型产物目录，合成标记文本事件发给前端并计入持久化，
+	// 确保前端一定会渲染原型预览卡片。须定义在 processEvent 之后（引用该闭包）。
+	emitProtoFallbackMarker := func() {
+		if intentCommand != "/proto-make" {
+			return
+		}
+		runState.bufMu.Lock()
+		hasMarker := strings.Contains(runState.runTextBuilder.String(), "[[PROJECT:")
+		runState.bufMu.Unlock()
+		if hasMarker {
+			return
+		}
+		projects := scanRecentPrototypeProjects(workspacePath, reqStart)
+		if len(projects) == 0 {
+			log.Printf("[AGUIHandler] run=%s proto-make fallback: no recent project dir found under %s", input.RunID, workspacePath)
+			return
+		}
+		marker := buildProtoProjectMarker(projects)
+		msgID := runState.runMessageID
+		if msgID == "" {
+			msgID = uuid.New().String()
+		}
+		fallbackEv := agui.Event{
+			Type:      agui.EventTextMessageContent,
+			MessageID: msgID,
+			Delta:     marker,
+			Timestamp: float64(time.Now().UnixMilli()) / 1000,
+		}
+		for _, e := range processEvent(fallbackEv) {
+			if err := writeEvent(e); err != nil {
+				log.Printf("[AGUIHandler] run=%s write proto fallback marker failed: %v", input.RunID, err)
+			}
+		}
+		log.Printf("[AGUIHandler] run=%s proto-make fallback appended %d project markers", input.RunID, len(projects))
+	}
+
 	firstEventSeen := false
 	firstContentSeen := false
 	feedbackEmitted := false
@@ -724,10 +807,12 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[AGUIHandler] run=%s RUN_FINISHED threadId=%s after %v", input.RunID, ev.ThreadID, time.Since(reqStart))
 				finishTimer.Stop()
 				maxTimer.Stop()
-				flushPendingState(true)
-				if err := writeEvent(ev); err != nil {
-					log.Printf("[AGUIHandler] run=%s write RUN_FINISHED failed: %v", input.RunID, err)
-				}
+			flushPendingState(true)
+			// /proto-make 兜底：确保 agent 未输出工程标记时仍渲染原型预览卡片
+			emitProtoFallbackMarker()
+			if err := writeEvent(ev); err != nil {
+				log.Printf("[AGUIHandler] run=%s write RUN_FINISHED failed: %v", input.RunID, err)
+			}
 				persistRunAssistant()
 				h.finalizeSession(bgCtx, sessionID, input.Messages)
 				return
@@ -1181,4 +1266,36 @@ func emitLongTaskFeedback(command, runID, sessionID string, writeEvent func(agui
 		ThreadID:  sessionID,
 		RunID:     runID,
 	})
+}
+
+// respondToAgentRequest 是前端回复 gatewayd question 工具的请求体。
+type respondToAgentRequest struct {
+	ThreadID   string `json:"threadId"`
+	InstanceID string `json:"instanceId"`
+	Message    string `json:"message"`
+}
+
+// RespondToAgent 处理前端对 agent.question 的回复，转发给 gatewayd 继续执行。
+// 对应 POST /api/v1/agent/respond。
+func (h *AGUIHandler) RespondToAgent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+	var req respondToAgentRequest
+	if !DecodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.ThreadID == "" || req.InstanceID == "" {
+		WriteJSONError(w, http.StatusBadRequest, 2, "threadId and instanceId are required")
+		return
+	}
+	if err := h.aguiClient.Respond(r.Context(), req.ThreadID, req.InstanceID, req.Message); err != nil {
+		log.Printf("[AGUIHandler] respond to agent failed: thread=%s instance=%s: %v", req.ThreadID, req.InstanceID, err)
+		WriteJSONError(w, http.StatusBadGateway, 3, FormatGatewaydError(err))
+		return
+	}
+	SetJSONHeader(w)
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }

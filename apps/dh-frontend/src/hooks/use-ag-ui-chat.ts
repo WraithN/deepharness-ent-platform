@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 import { parseUserStoryFromText } from '@/components/chat/UserStoryCard';
+import { parseRequirementBreakdownFromText } from '@/components/chat/RequirementBreakdownCard';
 
 export interface SendContext {
   quotedCard?: { type: 'req' | 'defect' | 'case'; id: string; title: string; reporter: string };
@@ -34,6 +35,31 @@ interface UseAgUiChatReturn {
   createSession: (pluginKey?: string) => Promise<{ sessionId: string; instanceId: string } | null>;
   cancelRun: () => void;
   tryRestoreSession: () => Promise<string | null>;
+  /** 当前等待用户回复的 agent.question 事件；null 表示没有待处理问题。 */
+  pendingQuestion: AgentQuestionEvent | null;
+  /** 回复当前 agent.question 事件。 */
+  respondToQuestion: (message: string) => Promise<void>;
+}
+
+/** agent.question 工具中的单个选项。 */
+export interface AgentQuestionOption {
+  label: string;
+  value: string;
+}
+
+/** agent.question 工具中的单条问题。 */
+export interface AgentQuestionItem {
+  id: string;
+  header?: string;
+  text?: string;
+  options?: AgentQuestionOption[];
+}
+
+/** agent.question 自定义事件携带的完整负载。 */
+export interface AgentQuestionEvent {
+  threadId: string;
+  instanceId: string;
+  questions: AgentQuestionItem[];
 }
 
 const AGENT_URL = '/api/v1/agent';
@@ -205,6 +231,18 @@ function backendMessageToThreadMessageLike(msg: BackendMessage): ThreadMessageLi
         });
       }
     }
+    if (custom.cardType === 'req_breakdown' && msg.content) {
+      const fileMatch = msg.content.match(/\[\[FILE:([^\]]+)\]\]/);
+      const filePath = fileMatch?.[1] ?? '';
+      const rbData = parseRequirementBreakdownFromText(msg.content, filePath);
+      if (rbData && rbData.items.length > 0) {
+        (content as any[]).push({
+          type: 'data',
+          name: 'req_breakdown',
+          data: { content: JSON.stringify(rbData) },
+        });
+      }
+    }
     return {
       id: msg.id,
       role: 'assistant',
@@ -213,6 +251,23 @@ function backendMessageToThreadMessageLike(msg: BackendMessage): ThreadMessageLi
       createdAt,
       status: { type: 'complete' as const, reason: 'unknown' as const },
     };
+  }
+
+  if (custom.cardType === 'req_breakdown' && msg.content) {
+    const rbData = parseRequirementBreakdownFromText(msg.content, '');
+    if (rbData && rbData.items.length > 0) {
+      const contentWithCard: ThreadMessageLike['content'] = [
+        { type: 'text' as const, text: msg.content },
+        { type: 'data' as const, name: 'req_breakdown' as const, data: { content: JSON.stringify(rbData) } },
+      ];
+      return {
+        id: msg.id,
+        role: msg.role as 'user' | 'assistant',
+        content: contentWithCard,
+        metadata: { custom },
+        createdAt,
+      };
+    }
   }
 
   if (custom.cardType === 'user_story' && msg.content) {
@@ -350,6 +405,9 @@ interface AgUiEvent {
   content?: string;
   message?: string;
   code?: string;
+  // Custom 事件字段
+  name?: string;
+  value?: unknown;
 }
 
 function parseSSE(text: string): AgUiEvent[] {
@@ -442,11 +500,17 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
   const [messages, setMessages] = useState<ThreadMessageLike[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [runPhase, setRunPhase] = useState<RunPhase>(null);
+  const [pendingQuestion, setPendingQuestion] = useState<AgentQuestionEvent | null>(null);
 
   const sessionIdRef = useRef(sessionId);
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
+
+  const instanceIdRef = useRef(instanceId);
+  useEffect(() => {
+    instanceIdRef.current = instanceId;
+  }, [instanceId]);
 
   const messagesRef = useRef(messages);
   useEffect(() => {
@@ -728,10 +792,42 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       case 'TOOL_CALL_START': {
         if (!ev.toolCallId || !ev.toolCallName) break;
         setMessages((prev) => {
-          const lastAssistant = [...prev].reverse().find((m) => m.role === 'assistant');
-          if (!lastAssistant) return prev;
+          // 优先使用当前 run 已追踪的 assistant 消息
+          let target = ctx.assistantMessageId
+            ? prev.find((m) => m.id === ctx.assistantMessageId && m.role === 'assistant')
+            : undefined;
+          // 回退到最后一条 assistant 消息
+          if (!target) {
+            target = [...prev].reverse().find((m) => m.role === 'assistant');
+          }
+          // 还没有 assistant 消息则新建一条（模型可能在输出 text 前就先调用工具）
+          if (!target) {
+            const msgId = generateId();
+            ctx.assistantMessageId = msgId;
+            return [
+              ...prev,
+              {
+                id: msgId,
+                role: 'assistant',
+                content: [
+                  {
+                    type: 'tool-call' as const,
+                    toolCallId: ev.toolCallId,
+                    toolName: ev.toolCallName,
+                    args: undefined,
+                    argsText: '',
+                  },
+                ],
+                createdAt: new Date(),
+                status: { type: 'running' },
+              },
+            ];
+          }
+          if (!ctx.assistantMessageId && target?.id) {
+            ctx.assistantMessageId = target.id;
+          }
           return prev.map((m) => {
-            if (m.id !== lastAssistant.id) return m;
+            if (m.id !== target.id) return m;
             const content = Array.isArray(m.content) ? m.content : [];
             if (content.some((p) => p.type === 'tool-call' && (p as { toolCallId?: string }).toolCallId === ev.toolCallId)) {
               return m;
@@ -860,6 +956,23 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
           status: { type: 'incomplete', reason: 'error', error: errorMsg },
         };
         setMessages((prev) => [...prev, errorMessage]);
+        break;
+      }
+
+      case 'CUSTOM': {
+        if (ev.name !== 'agent.question') break;
+        const payload = parseQuestionValue(ev.value);
+        const questionEvent: AgentQuestionEvent = {
+          threadId: payload.threadId ?? ctx.sessionId,
+          instanceId: payload.instanceId ?? instanceIdRef.current ?? '',
+          questions: Array.isArray(payload.questions) ? payload.questions : [],
+        };
+        if (!questionEvent.instanceId) {
+          console.warn('[useAgUiChat] agent.question event without instanceId, cannot respond', ev);
+          break;
+        }
+        console.log('[useAgUiChat] agent.question received', questionEvent);
+        setPendingQuestion(questionEvent);
         break;
       }
 
@@ -1110,6 +1223,51 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       })
     );
   }, [stopRunReattach]);
+
+  /**
+   * 解析 agent.question 自定义事件的 value 负载。
+   * 兼容 value 为 JSON 字符串或直接对象的情况。
+   */
+  const parseQuestionValue = (raw: unknown): Partial<AgentQuestionEvent> => {
+    if (!raw) return {};
+    let payload: any = raw;
+    if (typeof raw === 'string') {
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        return {};
+      }
+    }
+    return payload ?? {};
+  };
+
+  /**
+   * 回复当前 agent.question 事件，继续 gatewayd 侧被中断的 agent 运行。
+   */
+  const respondToQuestion = useCallback(
+    async (message: string) => {
+      const question = pendingQuestion;
+      if (!question) {
+        console.warn('[useAgUiChat] respondToQuestion called without pending question');
+        return;
+      }
+      try {
+        const res = await api.post<{ code: number; message?: string }>('/v1/agent/respond', {
+          threadId: question.threadId,
+          instanceId: question.instanceId,
+          message,
+        });
+        if (res.code !== 0) {
+          throw new Error(res.message || '回复失败');
+        }
+        setPendingQuestion(null);
+      } catch (err) {
+        console.error('[useAgUiChat] respond to question failed:', err);
+        toast.error(err instanceof Error ? err.message : '回复 agent 失败');
+      }
+    },
+    [pendingQuestion]
+  );
 
   const handleSend = useCallback(
     async (text: string, context: SendContext = {}) => {
@@ -1389,5 +1547,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
     createSession,
     cancelRun,
     tryRestoreSession,
+    pendingQuestion,
+    respondToQuestion,
   };
 }

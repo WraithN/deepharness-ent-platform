@@ -50,6 +50,9 @@ import { LivePreview, type PreviewMode } from '@/components/chat/LivePreview';
 import { MarkdownView } from '@/components/chat/MarkdownView';
 import { UserStoryPreview } from '@/components/chat/UserStoryPreview';
 import type { UserStoryData } from '@/components/chat/UserStoryCard';
+import { RequirementBreakdownTree } from '@/components/chat/RequirementBreakdownCard';
+import type { RequirementBreakdownData } from '@/components/chat/RequirementBreakdownCard';
+import { PrototypePreviewPanel } from '@/components/chat/PrototypePreviewPanel';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -95,7 +98,9 @@ type CaseStatus = 'draft' | 'ready' | 'passed' | 'failed' | 'blocked';
 type PreviewHistoryEntry =
   | { type: 'file'; path: string }
   | { type: 'project'; path: string; mode: PreviewMode }
-  | { type: 'user_story'; data: UserStoryData };
+  | { type: 'user_story'; data: UserStoryData }
+  | { type: 'req_breakdown'; data: RequirementBreakdownData }
+  | { type: 'prototype_preview'; path: string; requirementTitle?: string };
 
 interface ReqItem {
   id: string; title: string; description: string;
@@ -138,7 +143,7 @@ const COMMAND_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   '/ui-kit': Box,
   '/design-review': Eye,
   '/design-token': Palette,
-  '/user-story': ListChecks,
+  '/req-breakdown': ListChecks,
   '/data-analysis': BarChart3,
 };
 
@@ -152,7 +157,7 @@ interface WelcomeCard {
 /** 默认快捷卡片（产品经理视角，兼容无子角色/管理员场景）。 */
 const WELCOME_CARDS_DEFAULT: WelcomeCard[] = [
   { cmd: '/prd-write', title: '撰写 PRD', desc: '根据需求生成产品需求文档' },
-  { cmd: '/user-story', title: '用户故事拆分', desc: '将需求拆分为用户故事与验收标准' },
+  { cmd: '/req-breakdown', title: '需求拆分', desc: '将需求拆分为结构化需求项与验收标准' },
   { cmd: '/prd-research', title: '需求调研', desc: '对需求主题进行深度调研分析' },
   { cmd: '/data-analysis', title: '数据分析', desc: '分析数据并生成业务洞察' },
 ];
@@ -179,7 +184,7 @@ const WELCOME_CARDS_BY_ROLE: Partial<Record<SubRole, WelcomeCard[]>> = {
   ],
   [SUB_ROLE.PM]: [
     { cmd: '/prd-write', title: '撰写 PRD', desc: '根据需求生成产品需求文档' },
-    { cmd: '/user-story', title: '用户故事拆分', desc: '将需求拆分为用户故事与验收标准' },
+    { cmd: '/req-breakdown', title: '需求拆分', desc: '将需求拆分为结构化需求项与验收标准' },
     { cmd: '/proto-make', title: '制作原型', desc: '根据文档生成可预览的原型工程' },
     { cmd: '/prd-research', title: '需求调研', desc: '对需求主题进行深度调研分析' },
   ],
@@ -501,7 +506,7 @@ export const Chat: React.FC = () => {
   const activePluginKey = activeTab?.pluginKey ?? defaultPluginKey ?? 'claude-code';
   const chatEnabled = enabledAgentOptions.length > 0;
 
-  const { runtime, sessionId, wsConnected, messages, isRunning, runPhase, sendMessage, switchSession, createSession, cancelRun, tryRestoreSession } = useAgUiChat({ agentPluginKey: activePluginKey });
+  const { runtime, sessionId, wsConnected, messages, isRunning, runPhase, sendMessage, switchSession, createSession, cancelRun, tryRestoreSession, pendingQuestion, respondToQuestion } = useAgUiChat({ agentPluginKey: activePluginKey });
 
   // Auto-scroll state
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -511,6 +516,14 @@ export const Chat: React.FC = () => {
 
   // Code jump dialog
   const [codeJumpOpen, setCodeJumpOpen] = useState(false);
+
+  // agent.question 技术文档确认弹窗：选择/新建工程目录。
+  const [questionOpen, setQuestionOpen] = useState(false);
+  const [questionProjectName, setQuestionProjectName] = useState('');
+  useEffect(() => {
+    setQuestionOpen(pendingQuestion !== null);
+    if (pendingQuestion === null) setQuestionProjectName('');
+  }, [pendingQuestion]);
 
   // 运行中切换/新建会话确认对话框。
   const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
@@ -523,7 +536,14 @@ export const Chat: React.FC = () => {
   const [projectPreview, setProjectPreview] = useState<{ path: string; mode: PreviewMode } | null>(null);
   // Inline user story preview
   const [userStoryPreview, setUserStoryPreview] = useState<UserStoryData | null>(null);
-  const showPreview = previewPath !== null || projectPreview !== null || userStoryPreview !== null;
+  // Inline requirement breakdown preview
+  const [reqBreakdownPreview, setReqBreakdownPreview] = useState<RequirementBreakdownData | null>(null);
+  // Inline prototype preview (from /proto-make results)
+  const [prototypePreviewPath, setPrototypePreviewPath] = useState<string | null>(null);
+  const [prototypePreviewRequirementTitle, setPrototypePreviewRequirementTitle] = useState<string | undefined>(undefined);
+  // 最近一次触发 /proto-make 时关联的需求标题，用于原型卡片展示。
+  const [protoMakeRequirementTitle, setProtoMakeRequirementTitle] = useState<string>('');
+  const showPreview = previewPath !== null || projectPreview !== null || userStoryPreview !== null || reqBreakdownPreview !== null || prototypePreviewPath !== null;
 
   // 预览历史栈：支持前/后退导航。
   const [previewHistory, setPreviewHistory] = useState<PreviewHistoryEntry[]>([]);
@@ -560,6 +580,8 @@ export const Chat: React.FC = () => {
     }
     setProjectPreview(null);
     setUserStoryPreview(null);
+    setReqBreakdownPreview(null);
+    setPrototypePreviewPath(null);
     setPreviewPath(path);
     pushPreviewHistory({ type: 'file', path });
   }, [previewPath, pushPreviewHistory]);
@@ -573,21 +595,62 @@ export const Chat: React.FC = () => {
       setPreviewPath(null);
       setProjectPreview(null);
       setUserStoryPreview(null);
+      setPrototypePreviewPath(null);
       setPreviewHistory([]);
       return;
     }
     setPreviewPath(null);
     setProjectPreview(null);
     setUserStoryPreview(data);
+    setPrototypePreviewPath(null);
     pushPreviewHistory({ type: 'user_story', data });
   }, [userStoryPreview, pushPreviewHistory]);
 
   const handleProjectPreview = useCallback((path: string, previewMode: PreviewMode) => {
     setPreviewPath(null);
     setUserStoryPreview(null);
+    setReqBreakdownPreview(null);
+    setPrototypePreviewPath(null);
     setProjectPreview({ path, mode: previewMode });
     pushPreviewHistory({ type: 'project', path, mode: previewMode });
   }, [pushPreviewHistory]);
+
+  const handleReqBreakdownPreview = useCallback((data: RequirementBreakdownData) => {
+    const isSame = reqBreakdownPreview != null &&
+      reqBreakdownPreview.title === data.title &&
+      reqBreakdownPreview.total === data.total &&
+      (reqBreakdownPreview.items[0]?.title === data.items[0]?.title);
+    if (isSame) {
+      setPreviewPath(null);
+      setProjectPreview(null);
+      setUserStoryPreview(null);
+      setReqBreakdownPreview(null);
+      setPrototypePreviewPath(null);
+      setPreviewHistory([]);
+      return;
+    }
+    setPreviewPath(null);
+    setProjectPreview(null);
+    setUserStoryPreview(null);
+    setReqBreakdownPreview(data);
+    setPrototypePreviewPath(null);
+    pushPreviewHistory({ type: 'req_breakdown', data });
+  }, [reqBreakdownPreview, pushPreviewHistory]);
+
+  const handlePrototypePreview = useCallback((path: string) => {
+    if (prototypePreviewPath === path) {
+      setPrototypePreviewPath(null);
+      setPrototypePreviewRequirementTitle(undefined);
+      return;
+    }
+    setPreviewPath(null);
+    setProjectPreview(null);
+    setUserStoryPreview(null);
+    setReqBreakdownPreview(null);
+    setPrototypePreviewPath(path);
+    setPrototypePreviewRequirementTitle(protoMakeRequirementTitle);
+    pushPreviewHistory({ type: 'prototype_preview', path, requirementTitle: protoMakeRequirementTitle });
+  }, [prototypePreviewPath, pushPreviewHistory, protoMakeRequirementTitle]);
 
   // navigatePreview 在历史栈中前进或后退，恢复对应的预览状态。
   const navigatePreview = useCallback((direction: 'back' | 'forward') => {
@@ -599,15 +662,34 @@ export const Chat: React.FC = () => {
     if (entry.type === 'file') {
       setProjectPreview(null);
       setUserStoryPreview(null);
+      setReqBreakdownPreview(null);
+      setPrototypePreviewPath(null);
       setPreviewPath(entry.path);
     } else if (entry.type === 'project') {
       setPreviewPath(null);
       setUserStoryPreview(null);
+      setReqBreakdownPreview(null);
+      setPrototypePreviewPath(null);
       setProjectPreview({ path: entry.path, mode: entry.mode });
+    } else if (entry.type === 'user_story') {
+      setPreviewPath(null);
+      setProjectPreview(null);
+      setReqBreakdownPreview(null);
+      setPrototypePreviewPath(null);
+      setUserStoryPreview(entry.data);
+    } else if (entry.type === 'prototype_preview') {
+      setPreviewPath(null);
+      setProjectPreview(null);
+      setUserStoryPreview(null);
+      setReqBreakdownPreview(null);
+      setPrototypePreviewPath(entry.path);
+      setPrototypePreviewRequirementTitle(entry.requirementTitle);
     } else {
       setPreviewPath(null);
       setProjectPreview(null);
-      setUserStoryPreview(entry.data);
+      setUserStoryPreview(null);
+      setPrototypePreviewPath(null);
+      setReqBreakdownPreview(entry.data);
     }
   }, [historyIndex, previewHistory]);
 
@@ -618,6 +700,9 @@ export const Chat: React.FC = () => {
     setPreviewPath(null);
     setProjectPreview(null);
     setUserStoryPreview(null);
+    setReqBreakdownPreview(null);
+    setPrototypePreviewPath(null);
+    setPrototypePreviewRequirementTitle(undefined);
     setPreviewHistory([]);
     setHistoryIndex(-1);
   }, []);
@@ -653,6 +738,7 @@ export const Chat: React.FC = () => {
       title,
       reporter: '当前用户',
     });
+    setProtoMakeRequirementTitle(title);
     setInput(prev => prev.trimEnd() ? `${prev.trimEnd()}\n/proto-make ` : '/proto-make ');
   }, []);
 
@@ -862,6 +948,7 @@ export const Chat: React.FC = () => {
 
   useEffect(() => {
     if (location.state?.initialInput) setInput(location.state.initialInput);
+    if (location.state?.quotedCard) setQuotedCard(location.state.quotedCard);
   }, [location.state]);
 
   // 从后端 API 加载工作项数据
@@ -2142,6 +2229,18 @@ export const Chat: React.FC = () => {
                   {userStoryPreview && (
                     <UserStoryPreview data={userStoryPreview} onClose={closePreview} />
                   )}
+                  {reqBreakdownPreview && (
+                    <RequirementBreakdownTree data={reqBreakdownPreview} />
+                  )}
+                  {prototypePreviewPath && (
+                    <PrototypePreviewPanel
+                      key={prototypePreviewPath}
+                      productPath={prototypePreviewPath}
+                      requirementTitle={prototypePreviewRequirementTitle}
+                      workitemId={quotedCard?.type === 'req' ? quotedCard.id : undefined}
+                      onClose={closePreview}
+                    />
+                  )}
                 </div>
               </div>
             )}
@@ -2404,12 +2503,18 @@ export const Chat: React.FC = () => {
               <>
                 <ChatThread
                   runPhase={runPhase}
+                  agentPluginKey={activePluginKey}
                   openDetail={openDetail}
                   onArtifactClick={() => setCodeJumpOpen(true)}
                   onFilePreview={handleFilePreview}
                   onProjectPreview={handleProjectPreview}
                   onUserStoryPreview={handleUserStoryPreview}
                   activeUserStoryData={userStoryPreview}
+                  onReqBreakdownPreview={handleReqBreakdownPreview}
+                  activeReqBreakdownData={reqBreakdownPreview}
+                  onPrototypePreview={handlePrototypePreview}
+                  requirementTitle={protoMakeRequirementTitle || quotedCard?.title}
+                  workitemId={quotedCard?.type === 'req' ? quotedCard.id : undefined}
                   onEditMessage={(text, context) => {
                     setInput(text);
                     setQuotedCard(context?.quotedCard ?? null);
@@ -3234,6 +3339,50 @@ export const Chat: React.FC = () => {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* agent.question 工程确认弹窗 */}
+        <Dialog open={questionOpen} onOpenChange={(open) => {
+          setQuestionOpen(open);
+          if (!open) {
+            // 关闭弹窗视为取消当前运行：中止 SSE 并清理状态。
+            cancelRun();
+          }
+        }}>
+          <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-md">
+            <DialogHeader>
+              <DialogTitle>技术文档已生成</DialogTitle>
+              <DialogDescription>
+                请指定一个工程目录名称。若目录不存在，将自动创建新工程。
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-2">
+              <Label htmlFor="question-project-name">工程名称</Label>
+              <Input
+                id="question-project-name"
+                value={questionProjectName}
+                onChange={(e) => setQuestionProjectName(e.target.value)}
+                placeholder="例如：campaign-manager"
+                className="mt-1"
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setQuestionOpen(false); cancelRun(); }}>
+                取消
+              </Button>
+              <Button
+                disabled={!questionProjectName.trim()}
+                onClick={() => {
+                  const name = questionProjectName.trim();
+                  if (!name) return;
+                  respondToQuestion(name);
+                  setQuestionOpen(false);
+                }}
+              >
+                确认
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* 运行中切换/新建会话确认对话框 */}
         <AlertDialog open={switchConfirmOpen} onOpenChange={setSwitchConfirmOpen}>

@@ -2,18 +2,21 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	productdocobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
 	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
@@ -74,7 +77,14 @@ const (
 	errMsgWorkspaceOrMemberNotFound = "workspace or member not found"
 	errMsgCommentEmpty              = "批注内容不能为空"
 	errMsgCommentTooLong            = "批注内容超出最大长度限制"
+	errMsgCommentsNotAllowed        = "该分享未开放批注权限"
+	errMsgNoPrototypeInShare        = "该分享未关联原型"
+	errMsgNoDocInShare              = "该分享未关联文档"
 )
+
+// anonymousVisitorUserID 是需求分享页中匿名访客添加批注时使用的占位 user_id。
+// 由于 product_prototype_comments.user_id 非空，且分享页免登录，统一使用此常量标识。
+const anonymousVisitorUserID = "anonymous"
 
 // invalidInput 将业务校验错误包装为 ErrInvalidInput，便于 handler 映射为 400。
 func invalidInput(err error) error {
@@ -150,6 +160,19 @@ func (s *DBProductSpaceService) requirePM(ctx context.Context, workspaceID, user
 	}
 	if subRole != pmSubRole {
 		return fmt.Errorf("%w: only pm can access product space", ErrForbidden)
+	}
+	return nil
+}
+
+// requireMember 校验当前用户是否为工作空间成员（任意职能子角色均可）。
+// 用于 /proto-make 生成内容的“自我采纳”等仅需确认成员身份的场景。
+func (s *DBProductSpaceService) requireMember(ctx context.Context, workspaceID, userID string) error {
+	_, err := s.workspaceService.GetMemberSubRole(ctx, workspaceID, userID)
+	if err != nil {
+		if errors.Is(err, workspaceservice.ErrMemberNotFound) {
+			return fmt.Errorf("%w: %s", ErrNotFound, errMsgWorkspaceOrMemberNotFound)
+		}
+		return fmt.Errorf("%w: %v", ErrForbidden, err)
 	}
 	return nil
 }
@@ -233,7 +256,7 @@ func resolveProductSpacePathWithBase(workspaceRoot, workspaceID, userID, relativ
 		return "", "", fmt.Errorf("invalid userID: %w", err)
 	}
 
-	base := filepath.Join(workspaceRoot, workspaceID, userID, object.ProductSpaceRoot)
+	base := filepath.Join(workspaceRoot, userID, workspaceID, object.ProductSpaceRoot)
 	if err := rejectSymlink(base); err != nil {
 		return "", "", fmt.Errorf("base directory symlink check failed: %w", err)
 	}
@@ -305,7 +328,7 @@ func (s *DBProductSpaceService) resolveVersionFilePath(workspaceID, userID, stor
 	if filepath.IsAbs(storedPath) {
 		// 校验已存储的绝对路径位于用户的产品空间根目录下，防止路径逃逸。
 		// 先对 storedPath 做 Clean，避免 /base/.../etc/passwd 这类路径绕过前缀检查。
-		base := filepath.Join(s.workspaceRoot, workspaceID, userID, object.ProductSpaceRoot)
+		base := filepath.Join(s.workspaceRoot, userID, workspaceID, object.ProductSpaceRoot)
 		absBase, err := filepath.Abs(base)
 		if err != nil {
 			return "", err
@@ -322,7 +345,7 @@ func (s *DBProductSpaceService) resolveVersionFilePath(workspaceID, userID, stor
 // toRelativeFilePath 将版本表中存储的绝对或相对文件路径转换为产品空间根目录下的相对路径。
 // 若路径位于产品空间根目录之外，则返回错误，防止 API 泄露服务器目录结构或路径逃逸。
 func (s *DBProductSpaceService) toRelativeFilePath(storedPath, workspaceID, userID string) (string, error) {
-	base := filepath.Join(s.workspaceRoot, workspaceID, userID, object.ProductSpaceRoot)
+	base := filepath.Join(s.workspaceRoot, userID, workspaceID, object.ProductSpaceRoot)
 	absBase, err := filepath.Abs(base)
 	if err != nil {
 		return "", err
@@ -823,7 +846,14 @@ func (s *DBProductSpaceService) syncPrototypeFilesFromDisk(ctx context.Context, 
 		if err != nil {
 			return err
 		}
-		if path == protoPath || d.IsDir() {
+		if path == protoPath {
+			return nil
+		}
+		// 隐藏目录（.git / .vite 等）跳过，避免将工程元数据注册为原型页面
+		if d.IsDir() && strings.HasPrefix(d.Name(), ".") {
+			return filepath.SkipDir
+		}
+		if d.IsDir() {
 			return nil
 		}
 		if strings.ToLower(filepath.Ext(path)) != ".html" {
@@ -952,12 +982,6 @@ func (s *DBProductSpaceService) GetTree(ctx context.Context, workspaceID, userID
 		return nil, fmt.Errorf("iterate items failed: %w", err)
 	}
 
-	// 自动扫描并注册磁盘上未入库的 .html 原型文件（如 /proto-make 等 AI 指令生成的工程）。
-	// 注册失败仅记录日志，不影响已有目录树返回。
-	if err := s.syncPrototypeFilesFromDisk(ctx, workspaceID, userID, root); err != nil {
-		log.Printf("sync prototype files from disk failed: %v", err)
-	}
-
 	roots := []object.ProductSpaceTreeNode{*root[object.ProductSpaceDocsDir], *root[object.ProductSpacePrototypesDir]}
 
 	// 在补充空文件夹前，校验分类目录本身不是符号链接，防止目录树读取被软链接重定向到工作区之外。
@@ -998,6 +1022,10 @@ func (s *DBProductSpaceService) appendEmptyFolders(ctx context.Context, workspac
 			}
 			if path == catPath || !d.IsDir() {
 				return nil
+			}
+			// 隐藏目录（.git / .vite / node_modules 等）不展示在树中
+			if strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
 			}
 			if err := rejectSymlink(path); err != nil {
 				return fmt.Errorf("folder symlink check failed: %w", err)
@@ -1682,6 +1710,140 @@ func (s *DBProductSpaceService) DeleteFolder(ctx context.Context, workspaceID, u
 	return nil
 }
 
+// ImportPrototype 将 /proto-make 等指令生成的原型工程目录正式采纳到产品空间。
+// 仅导入指定一级产品目录（folder）下的 .html 文件，已入库的页面会自动去重。
+// Vite 工程优先保留 dist/index.html，与产品空间自动同步规则保持一致。
+// 返回本次新导入的 product_docs 条目 ID 列表，便于上层关联需求与生成设计版本。
+func (s *DBProductSpaceService) ImportPrototype(ctx context.Context, workspaceID, userID, folder string) ([]string, error) {
+	// 采纳自己生成的原型到产品空间，只需是当前工作空间成员即可，不限 PM。
+	if err := s.requireMember(ctx, workspaceID, userID); err != nil {
+		return nil, err
+	}
+
+	sanitized, err := sanitizeFolderPath(folder)
+	if err != nil {
+		return nil, invalidInput(fmt.Errorf("invalid folder: %w", err))
+	}
+	if strings.Contains(sanitized, "/") {
+		return nil, invalidInput(errors.New("folder must be a top-level product"))
+	}
+
+	protoRelPrefix := filepath.Join(object.ProductSpacePrototypesDir, sanitized)
+	protoPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, protoRelPrefix)
+	if err != nil {
+		return nil, invalidInput(err)
+	}
+	if err := rejectSymlink(protoPath); err != nil {
+		return nil, fmt.Errorf("symlink check failed: %w", err)
+	}
+	info, err := os.Stat(protoPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, errMsgFolderNotFound)
+		}
+		return nil, fmt.Errorf("stat prototype folder failed: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, invalidInput(errors.New("prototype path is not a directory"))
+	}
+
+	// 查询该目录下已存在的产品空间条目，避免重复导入。
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT relative_path FROM product_docs
+		WHERE workspace_id = $1 AND user_id = $2 AND relative_path LIKE $3 ESCAPE '\'
+	`, workspaceID, userID, escapeLikePattern(protoRelPrefix+"/")+"%")
+	if err != nil {
+		return nil, fmt.Errorf("list existing items failed: %w", err)
+	}
+	defer rows.Close()
+
+	existing := make(map[string]struct{})
+	for rows.Next() {
+		var rp string
+		if err := rows.Scan(&rp); err != nil {
+			return nil, fmt.Errorf("scan existing path failed: %w", err)
+		}
+		existing[rp] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate existing paths failed: %w", err)
+	}
+
+	imported := 0
+	var importedIDs []string
+	walkErr := filepath.WalkDir(protoPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == protoPath {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if strings.HasPrefix(name, ".") || name == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.ToLower(filepath.Ext(path)) != ".html" {
+			return nil
+		}
+		if err := rejectSymlink(path); err != nil {
+			log.Printf("reject symlink for prototype file %s failed: %v", path, err)
+			return nil
+		}
+
+		rel, err := filepath.Rel(protoPath, path)
+		if err != nil {
+			log.Printf("compute relative path for prototype file %s failed: %v", path, err)
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		relPath := filepath.Join(protoRelPrefix, rel)
+		if _, ok := existing[relPath]; ok {
+			return nil
+		}
+
+		// Vite 工程：根目录存在 dist/index.html 时跳过根 index.html。
+		if strings.EqualFold(filepath.Base(path), "index.html") {
+			dirParts := strings.Split(rel, "/")
+			if len(dirParts) == 1 {
+				distIndex := filepath.Join(filepath.Dir(path), "dist", "index.html")
+				if info, err := os.Stat(distIndex); err == nil && !info.IsDir() {
+					return nil
+				}
+			}
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("read prototype file %s failed: %v", path, err)
+			return nil
+		}
+
+		title := filepath.Base(path)
+		size := int64(len(data))
+		content := base64.StdEncoding.EncodeToString(data)
+		id := uuid.NewString()
+		item, err := s.insertProductDoc(ctx, s.db, id, workspaceID, userID, object.ItemTypePrototype, title, id, relPath, content, ItemStatusDraft, 1, "html", mimeTypeForExt("html"), size, userID)
+		if err != nil {
+			log.Printf("import prototype file %s failed: %v", relPath, err)
+			return nil
+		}
+		importedIDs = append(importedIDs, item.ID)
+		imported++
+		return nil
+	})
+	if walkErr != nil {
+		return nil, fmt.Errorf("walk prototype folder failed: %w", walkErr)
+	}
+	if imported == 0 && len(existing) == 0 {
+		return nil, invalidInput(errors.New("未找到可导入的 .html 原型页面"))
+	}
+	// imported == 0 但已有条目存在时，视为已采纳，幂等成功，返回空列表。
+	return importedIDs, nil
+}
+
 // DownloadVersion 下载指定版本文件，返回文件名与内容。
 func (s *DBProductSpaceService) DownloadVersion(ctx context.Context, workspaceID, userID, itemID string, version int) (string, []byte, error) {
 	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
@@ -1850,4 +2012,681 @@ func (s *DBProductSpaceService) AddComment(ctx context.Context, workspaceID, use
 		return nil, fmt.Errorf("insert prototype comment failed: %w", err)
 	}
 	return &c, nil
+}
+
+// shareTokenLength 原型分享短链 token 长度（base62 字符集）。
+const shareTokenLength = 10
+
+// shareTokenAlphabet 短链 token 字符集。
+const shareTokenAlphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+// generatePrototypeShareToken 生成指定长度的 base62 随机 token。
+func generatePrototypeShareToken(length int) (string, error) {
+	max := big.NewInt(int64(len(shareTokenAlphabet)))
+	buf := make([]byte, length)
+	for i := range buf {
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return "", fmt.Errorf("generate prototype share token failed: %w", err)
+		}
+		buf[i] = shareTokenAlphabet[n.Int64()]
+	}
+	return string(buf), nil
+}
+
+// resolveShareByToken 按 token 查询分享记录，返回 workspaceID、userID、productFolder。
+// token 不存在时返回 ErrNotFound。
+func (s *DBProductSpaceService) resolveShareByToken(token string) (workspaceID, userID, productFolder string, err error) {
+	err = s.db.QueryRow(
+		`SELECT workspace_id, user_id, product_folder FROM product_prototype_shares WHERE token = $1`, token,
+	).Scan(&workspaceID, &userID, &productFolder)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", "", fmt.Errorf("%w: 分享链接不存在或已失效", ErrNotFound)
+	}
+	if err != nil {
+		return "", "", "", fmt.Errorf("query prototype share failed: %w", err)
+	}
+	return workspaceID, userID, productFolder, nil
+}
+
+// CreatePrototypeShare 为指定产品创建免登录分享链接。
+// productFolder 会被清洗为单段目录名（产品名），分享该产品下全部原型页面。
+// 同一产品重复调用返回已有链接（幂等），保证链接稳定。
+func (s *DBProductSpaceService) CreatePrototypeShare(ctx context.Context, workspaceID, userID, productFolder string) (object.PrototypeShare, error) {
+	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
+		return object.PrototypeShare{}, err
+	}
+
+	folder, err := sanitizeName(productFolder)
+	if err != nil {
+		return object.PrototypeShare{}, invalidInput(fmt.Errorf("invalid product folder: %w", err))
+	}
+
+	// 幂等：同一产品已存在分享记录时直接返回
+	var existing object.PrototypeShare
+	queryErr := s.db.QueryRow(
+		`SELECT token, workspace_id, user_id, product_folder, created_at
+		 FROM product_prototype_shares WHERE workspace_id = $1 AND user_id = $2 AND product_folder = $3`,
+		workspaceID, userID, folder,
+	).Scan(&existing.Token, &existing.WorkspaceID, &existing.UserID, &existing.ProductFolder, &existing.CreatedAt)
+	if queryErr == nil {
+		return existing, nil
+	}
+	if !errors.Is(queryErr, sql.ErrNoRows) {
+		return object.PrototypeShare{}, fmt.Errorf("query existing prototype share failed: %w", queryErr)
+	}
+
+	token, err := generatePrototypeShareToken(shareTokenLength)
+	if err != nil {
+		return object.PrototypeShare{}, err
+	}
+	now := time.Now().UTC()
+	share := object.PrototypeShare{
+		Token:         token,
+		WorkspaceID:   workspaceID,
+		UserID:        userID,
+		ProductFolder: folder,
+		CreatedAt:     now,
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO product_prototype_shares (id, token, workspace_id, user_id, product_folder, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		uuid.NewString(), token, workspaceID, userID, folder, now,
+	)
+	if err != nil {
+		return object.PrototypeShare{}, fmt.Errorf("create prototype share failed: %w", err)
+	}
+	return share, nil
+}
+
+// GetSharedPrototype 免登录：按 token 解析分享产品信息与页面列表。
+// 页面列表查询 product_docs 中该产品目录下全部原型条目，按标题排序。
+func (s *DBProductSpaceService) GetSharedPrototype(token string) (object.SharedPrototypeView, error) {
+	workspaceID, userID, productFolder, err := s.resolveShareByToken(token)
+	if err != nil {
+		return object.SharedPrototypeView{}, err
+	}
+
+	// 匹配 prototypes/{productFolder}/ 下所有层级的原型页面
+	prefix := filepath.Join(object.ProductSpacePrototypesDir, productFolder) + "/"
+	rows, err := s.db.Query(
+		`SELECT id, title, relative_path FROM product_docs
+		 WHERE workspace_id = $1 AND user_id = $2 AND type = $3 AND relative_path LIKE $4 ESCAPE '\'
+		 ORDER BY title`,
+		workspaceID, userID, object.ItemTypePrototype, escapeLikePattern(prefix)+"%",
+	)
+	if err != nil {
+		return object.SharedPrototypeView{}, fmt.Errorf("list shared prototype pages failed: %w", err)
+	}
+	defer rows.Close()
+
+	pages := make([]object.SharedPrototypePage, 0)
+	for rows.Next() {
+		var p object.SharedPrototypePage
+		if err := rows.Scan(&p.ItemID, &p.Title, &p.RelativePath); err != nil {
+			return object.SharedPrototypeView{}, fmt.Errorf("scan shared prototype page failed: %w", err)
+		}
+		pages = append(pages, p)
+	}
+	if err := rows.Err(); err != nil {
+		return object.SharedPrototypeView{}, fmt.Errorf("iterate shared prototype pages failed: %w", err)
+	}
+
+	return object.SharedPrototypeView{ProductFolder: productFolder, Pages: pages}, nil
+}
+
+// ServeSharedFile 免登录：按 token 校验后 serve 产品目录下的文件。
+// relativePath 必须位于 prototypes/{productFolder}/ 下，防止越权访问其他产品或 docs 目录。
+func (s *DBProductSpaceService) ServeSharedFile(token, relativePath string) ([]byte, string, error) {
+	workspaceID, userID, productFolder, err := s.resolveShareByToken(token)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := validateRelativePath(relativePath); err != nil {
+		return nil, "", invalidInput(err)
+	}
+
+	// 仅允许访问被分享产品目录下的文件，防止通过 token 越权访问其他产品
+	allowedPrefix := filepath.ToSlash(filepath.Join(object.ProductSpacePrototypesDir, productFolder)) + "/"
+	if !strings.HasPrefix(filepath.ToSlash(relativePath), allowedPrefix) {
+		return nil, "", invalidInput(errors.New("serve path is outside the shared product"))
+	}
+
+	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, relativePath)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := rejectSymlink(absPath); err != nil {
+		return nil, "", fmt.Errorf("symlink check failed: %w", err)
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, "", fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
+		}
+		return nil, "", fmt.Errorf("read file failed: %w", err)
+	}
+	return data, mimeTypeForExt(parseExtFromName(absPath)), nil
+}
+
+// ListSharedComments 免登录：按 token 校验后列出指定页面的批注。
+// 先校验 itemID 属于被分享的产品目录，再查询批注，避免通过 token 访问其他页面的批注。
+func (s *DBProductSpaceService) ListSharedComments(token, itemID string) ([]object.PrototypeComment, error) {
+	workspaceID, userID, productFolder, err := s.resolveShareByToken(token)
+	if err != nil {
+		return nil, err
+	}
+
+	// 校验 itemID 属于被分享的产品目录，防止越权
+	allowedPrefix := filepath.ToSlash(filepath.Join(object.ProductSpacePrototypesDir, productFolder)) + "/"
+	var relativePath string
+	verifyErr := s.db.QueryRow(
+		`SELECT relative_path FROM product_docs
+		 WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND type = $4`,
+		itemID, workspaceID, userID, object.ItemTypePrototype,
+	).Scan(&relativePath)
+	if errors.Is(verifyErr, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
+	}
+	if verifyErr != nil {
+		return nil, fmt.Errorf("verify shared item failed: %w", verifyErr)
+	}
+	if !strings.HasPrefix(filepath.ToSlash(relativePath), allowedPrefix) {
+		return nil, fmt.Errorf("%w: 页面不在分享范围内", ErrForbidden)
+	}
+
+	rows, err := s.db.Query(
+		`SELECT c.id, c.item_id, c.workspace_id, c.user_id, COALESCE(u.name, ''), c.content,
+		        c.selector, c.target_text, c.x, c.y, c.created_at
+		 FROM product_prototype_comments c
+		 LEFT JOIN users u ON u.id = c.user_id
+		 WHERE c.item_id = $1 AND c.workspace_id = $2
+		 ORDER BY c.created_at DESC`,
+		itemID, workspaceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list shared prototype comments failed: %w", err)
+	}
+	defer rows.Close()
+
+	comments := make([]object.PrototypeComment, 0)
+	for rows.Next() {
+		var c object.PrototypeComment
+		if err := scanPrototypeComment(rows, &c); err != nil {
+			return nil, fmt.Errorf("scan prototype comment failed: %w", err)
+		}
+		comments = append(comments, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate prototype comments failed: %w", err)
+	}
+	return comments, nil
+}
+
+// ListRequirementShareComments 免登录：按需求分享 token 校验后列出指定原型页面的批注。
+// 先校验 itemID 属于该分享关联的产品目录，再查询批注。
+func (s *DBProductSpaceService) ListRequirementShareComments(token, itemID string) ([]object.PrototypeComment, error) {
+	workspaceID, userID, _, _, productFolder, _, err := s.resolveRequirementShareByToken(token)
+	if err != nil {
+		return nil, err
+	}
+	if productFolder == "" {
+		return nil, fmt.Errorf("%w: 该分享未关联原型", ErrInvalidInput)
+	}
+
+	allowedPrefix := filepath.ToSlash(filepath.Join(object.ProductSpacePrototypesDir, productFolder)) + "/"
+	var relativePath string
+	verifyErr := s.db.QueryRow(
+		`SELECT relative_path FROM product_docs
+		 WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND type = $4`,
+		itemID, workspaceID, userID, object.ItemTypePrototype,
+	).Scan(&relativePath)
+	if errors.Is(verifyErr, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
+	}
+	if verifyErr != nil {
+		return nil, fmt.Errorf("verify shared item failed: %w", verifyErr)
+	}
+	if !strings.HasPrefix(filepath.ToSlash(relativePath), allowedPrefix) {
+		return nil, fmt.Errorf("%w: 页面不在分享范围内", ErrForbidden)
+	}
+
+	rows, err := s.db.Query(
+		`SELECT c.id, c.item_id, c.workspace_id, c.user_id, COALESCE(u.name, ''), c.content,
+		        c.selector, c.target_text, c.x, c.y, c.created_at
+		 FROM product_prototype_comments c
+		 LEFT JOIN users u ON u.id = c.user_id
+		 WHERE c.item_id = $1 AND c.workspace_id = $2
+		 ORDER BY c.created_at DESC`,
+		itemID, workspaceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list requirement share comments failed: %w", err)
+	}
+	defer rows.Close()
+
+	comments := make([]object.PrototypeComment, 0)
+	for rows.Next() {
+		var c object.PrototypeComment
+		if err := scanPrototypeComment(rows, &c); err != nil {
+			return nil, fmt.Errorf("scan prototype comment failed: %w", err)
+		}
+		comments = append(comments, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate prototype comments failed: %w", err)
+	}
+	return comments, nil
+}
+
+// generateRequirementShareToken 生成需求级统一分享短链 token，复用 base62 字符集。
+func generateRequirementShareToken(length int) (string, error) {
+	max := big.NewInt(int64(len(shareTokenAlphabet)))
+	buf := make([]byte, length)
+	for i := range buf {
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return "", fmt.Errorf("generate requirement share token failed: %w", err)
+		}
+		buf[i] = shareTokenAlphabet[n.Int64()]
+	}
+	return string(buf), nil
+}
+
+// resolveRequirementShareByToken 按 token 查询需求分享记录，返回 workspaceID、userID、title、docID、productFolder、allowComments。
+func (s *DBProductSpaceService) resolveRequirementShareByToken(token string) (workspaceID, userID, title, docID, productFolder string, allowComments bool, err error) {
+	var titleNull sql.NullString
+	err = s.db.QueryRow(
+		`SELECT workspace_id, user_id, COALESCE(title, ''), COALESCE(doc_id, ''), COALESCE(product_folder, ''), allow_comments FROM requirement_shares WHERE token = $1`, token,
+	).Scan(&workspaceID, &userID, &titleNull, &docID, &productFolder, &allowComments)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", "", "", "", false, fmt.Errorf("%w: 分享链接不存在或已失效", ErrNotFound)
+	}
+	if err != nil {
+		return "", "", "", "", "", false, fmt.Errorf("query requirement share failed: %w", err)
+	}
+	return workspaceID, userID, titleNull.String, docID, productFolder, allowComments, nil
+}
+
+// CreateRequirementShare 为需求创建统一的文档+原型分享链接。
+// doc_id 与 product_folder 至少提供一个；两者都为空时返回参数错误。
+// 同一需求（workspace+user+doc+product）重复调用返回已有链接（幂等）。
+// allowComments 在重复创建时也会同步更新。
+func (s *DBProductSpaceService) CreateRequirementShare(ctx context.Context, workspaceID, userID string, req object.CreateRequirementShareRequest) (object.RequirementShare, error) {
+	if err := s.requirePM(ctx, workspaceID, userID); err != nil {
+		return object.RequirementShare{}, err
+	}
+	if req.DocID == "" && req.ProductFolder == "" {
+		return object.RequirementShare{}, fmt.Errorf("%w: doc_id 或 product_folder 至少提供一个", ErrInvalidInput)
+	}
+
+	folder := req.ProductFolder
+	if folder != "" {
+		var err error
+		folder, err = sanitizeName(folder)
+		if err != nil {
+			return object.RequirementShare{}, invalidInput(fmt.Errorf("invalid product folder: %w", err))
+		}
+	}
+
+	// 幂等：同一需求返回已有记录；若标题或批注权限变化则同步更新。
+	var existing object.RequirementShare
+	var existingTitle sql.NullString
+	var existingAllowComments bool
+	queryErr := s.db.QueryRow(
+		`SELECT token, workspace_id, user_id, COALESCE(title, ''), COALESCE(doc_id, ''), COALESCE(product_folder, ''), allow_comments, created_at
+		 FROM requirement_shares
+		 WHERE workspace_id = $1 AND user_id = $2 AND COALESCE(doc_id, '') = $3 AND COALESCE(product_folder, '') = $4`,
+		workspaceID, userID, req.DocID, folder,
+	).Scan(&existing.Token, &existing.WorkspaceID, &existing.UserID, &existingTitle, &existing.DocID, &existing.ProductFolder, &existingAllowComments, &existing.CreatedAt)
+	if queryErr == nil {
+		existing.Title = existingTitle.String
+		existing.AllowComments = existingAllowComments
+		needsUpdate := false
+		if existing.Title != req.Title {
+			needsUpdate = true
+		}
+		if existing.AllowComments != req.AllowComments {
+			needsUpdate = true
+		}
+		if needsUpdate {
+			if _, upErr := s.db.Exec(
+				`UPDATE requirement_shares SET title = $1, allow_comments = $2 WHERE token = $3`,
+				nullIfEmpty(req.Title), req.AllowComments, existing.Token,
+			); upErr == nil {
+				existing.Title = req.Title
+				existing.AllowComments = req.AllowComments
+			}
+		}
+		return existing, nil
+	}
+	if !errors.Is(queryErr, sql.ErrNoRows) {
+		return object.RequirementShare{}, fmt.Errorf("query existing requirement share failed: %w", queryErr)
+	}
+
+	token, err := generateRequirementShareToken(shareTokenLength)
+	if err != nil {
+		return object.RequirementShare{}, err
+	}
+	now := time.Now().UTC()
+	share := object.RequirementShare{
+		Token:         token,
+		WorkspaceID:   workspaceID,
+		UserID:        userID,
+		Title:         req.Title,
+		DocID:         req.DocID,
+		ProductFolder: folder,
+		AllowComments: req.AllowComments,
+		CreatedAt:     now,
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO requirement_shares (id, token, workspace_id, user_id, title, doc_id, product_folder, allow_comments, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		uuid.NewString(), token, workspaceID, userID, nullIfEmpty(req.Title), nullIfEmpty(req.DocID), nullIfEmpty(folder), req.AllowComments, now,
+	)
+	if err != nil {
+		return object.RequirementShare{}, fmt.Errorf("create requirement share failed: %w", err)
+	}
+	return share, nil
+}
+
+// nullIfEmpty 在字符串为空时返回 sql.NullString{Valid:false}，非空时返回对应值。
+func nullIfEmpty(v string) sql.NullString {
+	if v == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: v, Valid: true}
+}
+
+// GetSharedRequirement 按 token 解析需求级统一分享视图：文档（最新已发布版本）+ 原型页面列表。
+func (s *DBProductSpaceService) GetSharedRequirement(token string) (object.SharedRequirementView, error) {
+	workspaceID, userID, title, docID, productFolder, allowComments, err := s.resolveRequirementShareByToken(token)
+	if err != nil {
+		return object.SharedRequirementView{}, err
+	}
+
+	var view object.SharedRequirementView
+	view.Title = title
+	view.AllowComments = allowComments
+
+	// 文档：仅取已发布状态的最新版本
+	if docID != "" {
+		var doc object.SharedDocInfo
+		var createdByName sql.NullString
+		err := s.db.QueryRow(`
+			SELECT v.title, v.content, v.version, v.created_at, COALESCE(u.name, '')
+			FROM product_docs d
+			JOIN product_doc_versions v ON v.doc_id = d.id
+			LEFT JOIN users u ON u.id = COALESCE(NULLIF(d.created_by, ''), v.created_by)
+			WHERE d.id = $1 AND d.status = 'published'
+			ORDER BY v.version DESC
+			LIMIT 1
+		`, docID).Scan(&doc.Title, &doc.Content, &doc.Version, &doc.PublishedAt, &createdByName)
+		if err == nil {
+			doc.CreatedByName = createdByName.String
+			view.Doc = &doc
+		}
+		// 文档不存在或不是已发布状态时，不返回错误，仅不展示文档
+	}
+
+	// 原型：复用 GetSharedPrototype 的页面列表逻辑
+	if productFolder != "" {
+		prefix := filepath.Join(object.ProductSpacePrototypesDir, productFolder) + "/"
+		rows, err := s.db.Query(
+			`SELECT id, title, relative_path FROM product_docs
+			 WHERE workspace_id = $1 AND user_id = $2 AND type = $3 AND relative_path LIKE $4 ESCAPE '\'
+			 ORDER BY title`,
+			workspaceID, userID, object.ItemTypePrototype, escapeLikePattern(prefix)+"%",
+		)
+		if err == nil {
+			defer rows.Close()
+			pages := make([]object.SharedPrototypePage, 0)
+			for rows.Next() {
+				var p object.SharedPrototypePage
+				if err := rows.Scan(&p.ItemID, &p.Title, &p.RelativePath); err != nil {
+					continue
+				}
+				pages = append(pages, p)
+			}
+			if len(pages) > 0 {
+				view.Prototype = &object.SharedPrototypeView{
+					ProductFolder: productFolder,
+					Pages:         pages,
+				}
+			}
+		}
+	}
+
+	if view.Doc == nil && view.Prototype == nil {
+		return object.SharedRequirementView{}, fmt.Errorf("%w: 分享内容不存在", ErrNotFound)
+	}
+	return view, nil
+}
+
+// ServeSharedRequirementFile 免登录 serve 需求分享中的原型文件。
+// 校验逻辑与 ServeSharedFile 一致，只是 token 来源为 requirement_shares 表。
+func (s *DBProductSpaceService) ServeSharedRequirementFile(token, relativePath string) ([]byte, string, error) {
+	_, _, _, _, productFolder, _, err := s.resolveRequirementShareByToken(token)
+	if err != nil {
+		return nil, "", err
+	}
+	if productFolder == "" {
+		return nil, "", invalidInput(errors.New(errMsgNoPrototypeInShare))
+	}
+
+	allowedPrefix := filepath.ToSlash(filepath.Join(object.ProductSpacePrototypesDir, productFolder)) + "/"
+	if !strings.HasPrefix(filepath.ToSlash(relativePath), allowedPrefix) {
+		return nil, "", invalidInput(errors.New("serve path is outside the shared product"))
+	}
+
+	// 需要 workspaceID/userID 解析绝对路径，再次查询分享记录获取完整信息
+	workspaceID, userID, _, _, _, _, err := s.resolveRequirementShareByToken(token)
+	if err != nil {
+		return nil, "", err
+	}
+
+	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, userID, relativePath)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := rejectSymlink(absPath); err != nil {
+		return nil, "", fmt.Errorf("symlink check failed: %w", err)
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, "", fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
+		}
+		return nil, "", fmt.Errorf("read file failed: %w", err)
+	}
+
+	contentType := "text/html; charset=utf-8"
+	if filepath.Ext(relativePath) == ".css" {
+		contentType = "text/css; charset=utf-8"
+	} else if filepath.Ext(relativePath) == ".js" {
+		contentType = "application/javascript; charset=utf-8"
+	}
+	return data, contentType, nil
+}
+
+
+// AddRequirementSharePrototypeComment 免登录：访客为需求分享中的原型页面添加批注。
+// 先校验分享 token 有效且允许批注、itemID 属于被分享的产品目录，再写入 product_prototype_comments。
+func (s *DBProductSpaceService) AddRequirementSharePrototypeComment(token, itemID string, req object.AddCommentRequest) (*object.PrototypeComment, error) {
+	workspaceID, userID, _, _, productFolder, allowComments, err := s.resolveRequirementShareByToken(token)
+	if err != nil {
+		return nil, err
+	}
+	if !allowComments {
+		return nil, fmt.Errorf("%w: %s", ErrForbidden, errMsgCommentsNotAllowed)
+	}
+	if productFolder == "" {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, errMsgNoPrototypeInShare)
+	}
+
+	allowedPrefix := filepath.ToSlash(filepath.Join(object.ProductSpacePrototypesDir, productFolder)) + "/"
+	var relativePath string
+	verifyErr := s.db.QueryRow(
+		`SELECT relative_path FROM product_docs
+		 WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND type = $4`,
+		itemID, workspaceID, userID, object.ItemTypePrototype,
+	).Scan(&relativePath)
+	if errors.Is(verifyErr, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
+	}
+	if verifyErr != nil {
+		return nil, fmt.Errorf("verify shared item failed: %w", verifyErr)
+	}
+	if !strings.HasPrefix(filepath.ToSlash(relativePath), allowedPrefix) {
+		return nil, fmt.Errorf("%w: 页面不在分享范围内", ErrForbidden)
+	}
+
+	content := strings.TrimSpace(req.Content)
+	if content == "" {
+		return nil, invalidInput(errors.New(errMsgCommentEmpty))
+	}
+	if len([]rune(content)) > maxCommentLength {
+		return nil, invalidInput(errors.New(errMsgCommentTooLong))
+	}
+
+	selector := strings.TrimSpace(req.Selector)
+	targetText := strings.TrimSpace(req.TargetText)
+	if len([]rune(selector)) > maxSelectorLength {
+		selector = string([]rune(selector)[:maxSelectorLength])
+	}
+	if len([]rune(targetText)) > maxTargetTextLength {
+		targetText = string([]rune(targetText)[:maxTargetTextLength])
+	}
+
+	var c object.PrototypeComment
+	err = scanPrototypeComment(s.db.QueryRow(`
+		WITH ins AS (
+			INSERT INTO product_prototype_comments (id, item_id, workspace_id, user_id, content, selector, target_text, x, y)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			RETURNING id, item_id, workspace_id, user_id, content, selector, target_text, x, y, created_at
+		)
+		SELECT ins.id, ins.item_id, ins.workspace_id, ins.user_id, COALESCE(u.name, ''),
+		       ins.content, ins.selector, ins.target_text, ins.x, ins.y, ins.created_at
+		FROM ins
+		LEFT JOIN users u ON u.id = ins.user_id
+	`, uuid.NewString(), itemID, workspaceID, anonymousVisitorUserID, content, selector, targetText, req.X, req.Y), &c)
+	if err != nil {
+		return nil, fmt.Errorf("insert requirement share prototype comment failed: %w", err)
+	}
+	return &c, nil
+}
+
+// AddRequirementShareDocComment 免登录：访客为需求分享中的文档添加文本批注。
+// 写入 product_doc_share_comments，share_token 记录需求分享 token，便于同一 token 下聚合查询。
+func (s *DBProductSpaceService) AddRequirementShareDocComment(token string, req object.AddRequirementShareDocCommentRequest) (*productdocobject.ShareComment, error) {
+	_, _, _, docID, _, allowComments, err := s.resolveRequirementShareByToken(token)
+	if err != nil {
+		return nil, err
+	}
+	if !allowComments {
+		return nil, fmt.Errorf("%w: %s", ErrForbidden, errMsgCommentsNotAllowed)
+	}
+	if docID == "" {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, errMsgNoDocInShare)
+	}
+
+	authorName := strings.TrimSpace(req.AuthorName)
+	quoteText := strings.TrimSpace(req.QuoteText)
+	content := strings.TrimSpace(req.Content)
+	if authorName == "" {
+		return nil, invalidInput(errors.New("昵称不能为空"))
+	}
+	if quoteText == "" {
+		return nil, invalidInput(errors.New("引用文本不能为空"))
+	}
+	if content == "" {
+		return nil, invalidInput(errors.New(errMsgCommentEmpty))
+	}
+	if len([]rune(authorName)) > 64 {
+		return nil, invalidInput(errors.New("昵称超出最大长度限制"))
+	}
+	if len([]rune(quoteText)) > 500 {
+		return nil, invalidInput(errors.New("引用文本超出最大长度限制"))
+	}
+	if len([]rune(content)) > 2000 {
+		return nil, invalidInput(errors.New(errMsgCommentTooLong))
+	}
+
+	var workspaceID string
+	if err := s.db.QueryRow(`SELECT workspace_id FROM product_docs WHERE id = $1`, docID).Scan(&workspaceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
+		}
+		return nil, fmt.Errorf("fetch doc workspace failed: %w", err)
+	}
+
+	now := time.Now().UTC()
+	c := productdocobject.ShareComment{
+		ID:         uuid.NewString(),
+		ShareToken: token,
+		DocID:      docID,
+		WorkspaceID: workspaceID,
+		AuthorName: authorName,
+		QuoteText:  quoteText,
+		Content:    content,
+		Status:     "open",
+		CreatedAt:  now,
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO product_doc_share_comments (id, share_token, doc_id, workspace_id, author_name, quote_text, content, status, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		c.ID, c.ShareToken, c.DocID, c.WorkspaceID, c.AuthorName, c.QuoteText, c.Content, c.Status, c.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert requirement share doc comment failed: %w", err)
+	}
+	return &c, nil
+}
+
+// ListRequirementShareDocComments 免登录：按需求分享 token 列出关联文档的文本批注。
+func (s *DBProductSpaceService) ListRequirementShareDocComments(token string) ([]productdocobject.ShareComment, error) {
+	_, _, _, docID, _, _, err := s.resolveRequirementShareByToken(token)
+	if err != nil {
+		return nil, err
+	}
+	if docID == "" {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, errMsgNoDocInShare)
+	}
+
+	rows, err := s.db.Query(
+		`SELECT id, share_token, doc_id, workspace_id, author_name, quote_text, content, status, created_at, resolved_at, resolved_by
+		 FROM product_doc_share_comments
+		 WHERE share_token = $1
+		 ORDER BY created_at ASC`,
+		token,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list requirement share doc comments failed: %w", err)
+	}
+	defer rows.Close()
+
+	comments := make([]productdocobject.ShareComment, 0)
+	for rows.Next() {
+		var c productdocobject.ShareComment
+		var resolvedAt sql.NullTime
+		var resolvedBy sql.NullString
+		if err := rows.Scan(
+			&c.ID, &c.ShareToken, &c.DocID, &c.WorkspaceID,
+			&c.AuthorName, &c.QuoteText, &c.Content, &c.Status,
+			&c.CreatedAt, &resolvedAt, &resolvedBy,
+		); err != nil {
+			return nil, fmt.Errorf("scan requirement share doc comment failed: %w", err)
+		}
+		if resolvedAt.Valid {
+			c.ResolvedAt = &resolvedAt.Time
+		}
+		if resolvedBy.Valid {
+			c.ResolvedBy = resolvedBy.String
+		}
+		comments = append(comments, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate requirement share doc comments failed: %w", err)
+	}
+	return comments, nil
 }

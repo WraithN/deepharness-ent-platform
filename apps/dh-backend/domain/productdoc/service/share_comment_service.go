@@ -155,6 +155,38 @@ func (s *DBProductDocService) ListDocShareComments(workspaceID, docID string) ([
 	return s.listShareComments(`WHERE doc_id = $1 AND workspace_id = $2`, docID, workspaceID)
 }
 
+// AddDocShareComment 登录场景：当前用户在文档内新增批注。
+// 登录态无需分享 token，share_token 置为空字符串；作者名优先取请求体中的 authorName，
+// 未填写时回退为当前用户 ID，便于产品空间内部协作者识别。
+func (s *DBProductDocService) AddDocShareComment(workspaceID, docID, userID string, req object.AddShareCommentRequest) (*object.ShareComment, error) {
+	doc, err := s.GetDoc(docID)
+	if err != nil {
+		return nil, errors.New("文档不存在")
+	}
+	if doc.WorkspaceID != workspaceID {
+		return nil, errors.New("文档不属于当前工作空间")
+	}
+	if req.AuthorName == "" {
+		req.AuthorName = userID
+	}
+	authorName, quoteText, content, err := validateShareCommentInput(req)
+	if err != nil {
+		return nil, err
+	}
+
+	comment, err := scanShareComment(s.db.QueryRow(`
+		INSERT INTO product_doc_share_comments
+			(id, share_token, doc_id, workspace_id, author_name, quote_text, content, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING `+shareCommentColumns,
+		uuid.New().String(), "", docID, workspaceID, authorName, quoteText, content, shareCommentStatusOpen,
+	))
+	if err != nil {
+		return nil, fmt.Errorf("新增文档批注失败: %w", err)
+	}
+	return &comment, nil
+}
+
 // ResolveShareComment 登录场景：将批注标记为已解决。
 // 幂等设计：UPDATE 仅匹配 status='open' 的记录，若影响 0 行则回查——
 // 记录存在说明已被解决（重复调用），直接返回当前记录；不存在则返回“批注不存在”。

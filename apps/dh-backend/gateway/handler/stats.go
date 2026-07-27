@@ -242,40 +242,42 @@ func computeDeltaPercent(thisWeek, lastWeek int) int {
 
 // getCodeCommitTrend 扫描指定工作空间目录下的 git 仓库，返回最近 days 天每天的提交数量。
 // 通过 git log --all --no-merges --since 统计每个仓库的提交日期，汇总后按天聚合。
+// 目录结构：WORKSPACE_ROOT/{userID}/{workspaceID}/...，需遍历所有用户目录下的 workspaceID 子目录。
 func (h *StatsHandler) getCodeCommitTrend(ctx context.Context, workspaceID string, days int) ([]chat.DateCount, error) {
 	counts := make(map[string]int)
 
-	workspaceDir := ""
 	if h.workspaceRoot != "" {
-		workspaceDir = filepath.Join(h.workspaceRoot, workspaceID)
-	}
-	if workspaceDir != "" {
 		since := fmt.Sprintf("%d days ago", days)
-		err := filepath.WalkDir(workspaceDir, func(path string, d fs.DirEntry, err error) error {
-			if err != nil || !d.IsDir() {
-				return nil
-			}
-			gitDir := filepath.Join(path, ".git")
-			if _, statErr := os.Stat(gitDir); statErr != nil {
-				return nil
-			}
-
-			out, execErr := execGitLogDates(ctx, path, since)
-			if execErr != nil {
-				log.Printf("[Stats] git log failed for %s: %v", path, execErr)
-				return filepath.SkipDir
-			}
-			for _, line := range strings.Split(out, "\n") {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
+		// 新目录结构下 workspaceID 在各用户目录下，通过 glob 匹配所有 {workspaceRoot}/{userID}/{workspaceID}
+		wsPattern := filepath.Join(h.workspaceRoot, "*", workspaceID)
+		wsDirs, _ := filepath.Glob(wsPattern)
+		for _, workspaceDir := range wsDirs {
+			err := filepath.WalkDir(workspaceDir, func(path string, d fs.DirEntry, err error) error {
+				if err != nil || !d.IsDir() {
+					return nil
 				}
-				counts[line]++
+				gitDir := filepath.Join(path, ".git")
+				if _, statErr := os.Stat(gitDir); statErr != nil {
+					return nil
+				}
+
+				out, execErr := execGitLogDates(ctx, path, since)
+				if execErr != nil {
+					log.Printf("[Stats] git log failed for %s: %v", path, execErr)
+					return filepath.SkipDir
+				}
+				for _, line := range strings.Split(out, "\n") {
+					line = strings.TrimSpace(line)
+					if line == "" {
+						continue
+					}
+					counts[line]++
+				}
+				return filepath.SkipDir
+			})
+			if err != nil {
+				return nil, err
 			}
-			return filepath.SkipDir
-		})
-		if err != nil {
-			return nil, err
 		}
 	}
 

@@ -121,6 +121,24 @@ func buildRepoBlock(repoNames []string) string {
 	return sb.String()
 }
 
+// buildExistingRequirementsBlock 构建已有需求列表文本块，供 /req-breakdown 使用。
+// agent 据此判断拆分项是否与已有需求重复，并在 JSON 中携带 workitemId。
+func buildExistingRequirementsBlock(items []workitem.WorkItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n\n【已有需求列表】\n")
+	sb.WriteString("以下是工作空间中已有的需求，请逐一比对拆分结果：\n")
+	for i, it := range items {
+		sb.WriteString(fmt.Sprintf("%d. ID: %s | 标题: %s\n", i+1, it.ID, it.Title))
+	}
+	sb.WriteString("如果拆分的某个需求项与上述已有需求匹配（标题相同或语义高度相似），")
+	sb.WriteString("请在该需求项的 JSON 中添加 \"workitemId\" 字段，值为对应已有需求的 ID。\n")
+	sb.WriteString("没有匹配的项不要添加 workitemId 字段。")
+	return sb.String()
+}
+
 // fetchWorkItem 通过 WorkItemService 从数据库查询工作项完整信息。
 func fetchWorkItem(svc workitemservice.WorkItemService, cardID string) (workitem.WorkItem, error) {
 	if svc == nil {
@@ -159,7 +177,7 @@ func SetProtoTemplatesProvider(fn func() string) {
 
 // renderTemplate 将用户参数填入指令模板。
 // 模板中的 {ARGS} 占位符会被替换为用户原始输入；
-// {WORKSPACE_PATH} 会被替换为当前会话的 workspace 目录（workspace_root/{workspace_id}/{user_id}），
+// {WORKSPACE_PATH} 会被替换为当前会话的 workspace 目录（workspace_root/{user_id}/{workspace_id}），
 // 保证 AI 生成的文件写入正确的用户隔离目录，而非 agent 当前工作目录下的 projects/。
 // {PROTO_TEMPLATES} 仅 /proto-make 使用，替换为就绪模版清单（无则空串，触发单页 HTML 回退）。
 // {HTML_SCAFFOLD_CSS} / {HTML_SCAFFOLD_JS} 替换为内置脚手架文件内容，供 agent 写入原型目录。
@@ -188,7 +206,7 @@ func renderTemplate(tmpl, args, workspacePath string) (string, error) {
 
 // applyCommandConfig 将单个指令配置应用到指定用户消息索引上。
 // 统一处理模板渲染、任务卡片注入与代码库注入，供 interceptCommands 与意图识别路径复用。
-func applyCommandConfig(messages []agui.Message, idx int, cfg CommandConfig, args, workspacePath string, ctxItems []agui.ContextItem, workItemSvc workitemservice.WorkItemService) (bool, error) {
+func applyCommandConfig(messages []agui.Message, idx int, cfg CommandConfig, args, workspacePath, workspaceID string, ctxItems []agui.ContextItem, workItemSvc workitemservice.WorkItemService) (bool, error) {
 	rendered, err := renderTemplate(cfg.Template, args, workspacePath)
 	if err != nil {
 		return false, err
@@ -215,6 +233,18 @@ func applyCommandConfig(messages []agui.Message, idx int, cfg CommandConfig, arg
 
 	if cfg.AllowTask && workItemFetched {
 		rendered += buildTaskCardBlock(workItem)
+		// /req-breakdown 注入已有需求列表，供 agent 标记已存在的需求项
+		if cfg.Cmd == "/req-breakdown" && workItem.ProjectID != "" {
+			existingReqs, err := workItemSvc.ListWorkItems(workitemservice.WorkItemFilter{
+				ProjectID: workItem.ProjectID,
+				Type:      workitem.TypeRequirement,
+			})
+			if err != nil {
+				log.Printf("[AGUIHandler] list existing requirements failed: %v", err)
+			} else {
+				rendered += buildExistingRequirementsBlock(existingReqs)
+			}
+		}
 	}
 	if cfg.AllowRepos && hasRepos {
 		rendered += buildRepoBlock(repoNames)
@@ -233,8 +263,8 @@ func applyCommandConfig(messages []agui.Message, idx int, cfg CommandConfig, arg
 		return false, fmt.Errorf("marshal rendered content: %w", err)
 	}
 	messages[idx].Content = json.RawMessage(data)
-	log.Printf("[AGUIHandler] command applied: %s args=%q hasCard=%v hasRepos=%v allowTask=%v allowRepos=%v",
-		cfg.Cmd, args, workItemFetched, hasRepos, cfg.AllowTask, cfg.AllowRepos)
+	log.Printf("[AGUIHandler] command applied: %s args=%q hasCard=%v hasRepos=%v allowTask=%v allowRepos=%v workspaceID=%s",
+		cfg.Cmd, args, workItemFetched, hasRepos, cfg.AllowTask, cfg.AllowRepos, workspaceID)
 	return true, nil
 }
 
@@ -270,7 +300,7 @@ func tryInjectTaskCard(messages []agui.Message, idx int, rawText string, ctxItem
 // workspacePath 用于替换模板中的 {WORKSPACE_PATH}，确保 AI 输出到正确的用户隔离目录。
 // 返回 (true, nil) 表示匹配到了已知斜杠指令；(false, nil) 表示未匹配；
 // 返回 error 表示上下文解析或模板渲染失败，调用方应终止本次 run 并返回错误。
-func interceptCommands(messages []agui.Message, ctxItems []agui.ContextItem, workspacePath string, workItemSvc workitemservice.WorkItemService) (bool, error) {
+func interceptCommands(messages []agui.Message, ctxItems []agui.ContextItem, workspacePath, workspaceID string, workItemSvc workitemservice.WorkItemService) (bool, error) {
 	// 只处理最后一条用户消息。
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role != agui.RoleUser {
@@ -295,7 +325,7 @@ func interceptCommands(messages []agui.Message, ctxItems []agui.ContextItem, wor
 			return tryInjectTaskCard(messages, i, rawText, ctxItems, workItemSvc)
 		}
 
-		return applyCommandConfig(messages, i, cfg, args, workspacePath, ctxItems, workItemSvc)
+		return applyCommandConfig(messages, i, cfg, args, workspacePath, workspaceID, ctxItems, workItemSvc)
 	}
 
 	return false, nil

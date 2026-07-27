@@ -12,7 +12,7 @@ import (
 )
 
 // DBProductDocService 是基于 PostgreSQL 的 ProductDocService 实现。
-// workspaceRoot 为 agent 会话工作目录根路径（{root}/{wsID}/{userID}），用于文档按需落盘。
+// workspaceRoot 为 agent 会话工作目录根路径（{root}/{userID}/{wsID}），用于文档按需落盘。
 type DBProductDocService struct {
 	db            *sql.DB
 	workspaceRoot string

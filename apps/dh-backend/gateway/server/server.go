@@ -9,6 +9,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui/buffer"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui/buffer/memory"
 	redisbuffer "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui/buffer/redis"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	session "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat/session"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/orchestrator"
@@ -20,6 +21,8 @@ import (
 	agentconfigservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit"
 	auditservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/feishu"
+	feishuservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/feishu/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity"
 	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant"
@@ -84,6 +87,7 @@ func New(cfg config.Config) http.Handler {
 	initPrototypeTemplateService(db, cfg.WorkspaceRoot)
 	agentRuntimeSvc := initAgentRuntimeService(db, cfg.WorkspaceRoot)
 	initTeamService(db, userService)
+	initFeishuService(db, cfg, sessions, messages)
 
 	// Handlers
 	// 根据 buffer_store_type 配置选择 SSE buffer 后端：memory（默认）或 redis。
@@ -122,7 +126,9 @@ func New(cfg config.Config) http.Handler {
 
 	// Routes
 	mux.HandleFunc("/health", handler.HealthCheck)
-	mux.HandleFunc("/api/v1/agent", aguiHandler.AgentRun)
+	// agent run 需要登录态以注入 userID，进而解析 gatewayd 工作目录。
+	mux.Handle("/api/v1/agent", middleware.Auth(http.HandlerFunc(aguiHandler.AgentRun)))
+	mux.Handle("/api/v1/agent/respond", middleware.Auth(http.HandlerFunc(aguiHandler.RespondToAgent)))
 	// 会话创建、删除、消息查询均需登录态：handler 内 UserIDFromContext 依赖 auth 中间件注入的 userID
 	mux.Handle("/api/v1/sessions", middleware.Auth(http.HandlerFunc(sessionHandler.Sessions)))
 	mux.Handle("/api/v1/sessions/{id}", middleware.Auth(http.HandlerFunc(sessionHandler.DeleteSession)))
@@ -181,6 +187,10 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/workitem-platforms", workitem.Platforms)
 	mux.HandleFunc("/api/v1/workitems/{id}", workitem.WorkItemByID)
 	mux.HandleFunc("/api/v1/workitems/{id}/status", workitem.UpdateWorkItemStatus)
+	mux.HandleFunc("/api/v1/workitems/{id}/assignee", workitem.UpdateWorkItemAssignee)
+	mux.HandleFunc("/api/v1/workitems/{id}/doc-links", workitem.DocLinks)
+	mux.HandleFunc("/api/v1/workitems/{id}/doc-links/{itemId}", workitem.DocLinkByID)
+	mux.HandleFunc("/api/v1/workitems/{id}/design-versions", workitem.ListDesignVersions)
 	mux.HandleFunc("/api/v1/review/review", pragent.Reviews)
 	mux.HandleFunc("/api/v1/audit/events", audit.Events)
 	mux.HandleFunc("/api/v1/orchestrator/sessions", orchestrator.Sessions)
@@ -267,7 +277,7 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/shares/{token}/comments", productdoc.ShareDocComments)
 
 	// Product space module
-	psH := psHandler.NewHandler(productSpaceService)
+	psH := psHandler.NewHandler(productSpaceService, workItemSvc)
 	mux.Handle("/api/v1/workspaces/{id}/product-space/tree", middleware.Auth(http.HandlerFunc(psH.GetTree)))
 	mux.Handle("/api/v1/workspaces/{id}/product-space/items", middleware.Auth(http.HandlerFunc(psH.CreateItem)))
 	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}", middleware.Auth(http.HandlerFunc(psH.ItemByID)))
@@ -277,7 +287,21 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}/download", middleware.Auth(http.HandlerFunc(psH.DownloadVersion)))
 	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}/comments", middleware.Auth(http.HandlerFunc(psH.Comments)))
 	mux.Handle("/api/v1/workspaces/{id}/product-space/folders", middleware.Auth(http.HandlerFunc(psH.Folders)))
+	mux.Handle("/api/v1/workspaces/{id}/product-space/import-prototype", middleware.Auth(http.HandlerFunc(psH.ImportPrototype)))
 	mux.Handle("/api/v1/workspaces/{id}/product-space/serve/{path...}", middleware.Auth(http.HandlerFunc(psH.ServePrototype)))
+	// 原型产品分享：需 PM 权限创建，公开接口免登录访问
+	mux.Handle("/api/v1/workspaces/{id}/product-space/share", middleware.Auth(http.HandlerFunc(psH.CreateShare)))
+	// 分享落地页公开接口：无需登录（使用独立前缀避免与 /api/v1/shares/{token} 路由冲突）
+	mux.HandleFunc("/api/v1/prototype-shares/{token}", psH.SharedPrototype)
+	mux.HandleFunc("/api/v1/prototype-shares/{token}/files/{path...}", psH.ServeSharedPrototype)
+	mux.HandleFunc("/api/v1/prototype-shares/{token}/pages/{itemId}/comments", psH.SharedPrototypeComments)
+
+	// 需求级统一分享（文档+原型）：需 PM 权限创建，公开接口免登录访问
+	mux.Handle("/api/v1/workspaces/{id}/requirement-shares", middleware.Auth(http.HandlerFunc(psH.CreateRequirementShare)))
+	mux.HandleFunc("/api/v1/requirement-shares/{token}", psH.SharedRequirement)
+	mux.HandleFunc("/api/v1/requirement-shares/{token}/files/{path...}", psH.ServeSharedRequirementFile)
+	mux.HandleFunc("/api/v1/requirement-shares/{token}/pages/{itemId}/comments", psH.RequirementShareComments)
+	mux.HandleFunc("/api/v1/requirement-shares/{token}/doc-comments", psH.RequirementShareDocComments)
 
 	// Team skills / prompts
 	mux.HandleFunc("/api/v1/team/skills", team.Skills)
@@ -296,6 +320,22 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/team/prompt-categories/{id}", middleware.Auth(http.HandlerFunc(team.PromptCategoryByID)))
 	mux.Handle("/api/v1/team/skills/stats", middleware.Auth(http.HandlerFunc(team.SkillStats)))
 	mux.Handle("/api/v1/team/prompts/stats", middleware.Auth(http.HandlerFunc(team.PromptStats)))
+
+	// Feishu 机器人模块
+	// webhook 接口使用 BearerAuth 保护（本平台侧鉴权），飞书侧签名校验在 mock 模式下跳过。
+	// 绑定/会话映射管理接口需登录态。
+	mux.Handle("/api/v1/feishu/webhook", middleware.BearerAuth(cfg.FeishuWebhookToken)(http.HandlerFunc(feishu.Webhook)))
+	mux.Handle("/api/v1/feishu/bindings", middleware.Auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			feishu.BindUser(w, r)
+		case http.MethodGet:
+			feishu.ListBindings(w, r)
+		default:
+			handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		}
+	})))
+	mux.Handle("/api/v1/feishu/chat-sessions", middleware.Auth(http.HandlerFunc(feishu.ListChatSessions)))
 
 	// Apply middleware
 	return middleware.Logger(middleware.CORS(mux))
@@ -405,6 +445,24 @@ func initTeamService(db *sql.DB, userService identityservice.UserService) {
 	svc := teamservice.NewDBTeamService(db)
 	team.Init(svc)
 	team.InitUserService(userService)
+}
+
+// initFeishuService 初始化飞书机器人服务。
+// 构造独立的 AGUIClient 向 gatewayd 分发 agent 命令，
+// 复用平台 session/message 存储持久化持久化会话，
+// replier 按 mock/real 模式选择回复发送器。
+func initFeishuService(db *sql.DB, cfg config.Config, sessions chat.SessionStore, messages chat.MessageStore) {
+	log.Printf("[Feishu] init mockMode=%v botUser=%s defaultWorkspace=%s",
+		cfg.FeishuMockMode, cfg.FeishuBotUserID, cfg.FeishuDefaultWorkspace)
+	aguiClient := client.NewAGUIClient(cfg.GatewaydAdminURL, cfg.GatewaydAgentID)
+	replier := feishuservice.NewReplier(cfg.FeishuMockMode, cfg.FeishuAppID, cfg.FeishuAppSecret, cfg.FeishuAPIBaseURL)
+	svc := feishuservice.NewDBFeishuService(db, aguiClient, sessions, messages, cfg.WorkspaceRoot, feishuservice.Config{
+		BotUserID:        cfg.FeishuBotUserID,
+		DefaultWorkspace: cfg.FeishuDefaultWorkspace,
+		MockMode:         cfg.FeishuMockMode,
+		DispatchTimeout:  cfg.FeishuDispatchTimeout,
+	}, replier)
+	feishu.Init(svc)
 }
 
 func initWorkspacePromptService(db *sql.DB) {

@@ -1,8 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { CalendarDays, FileText, Github, Loader2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import {
+  CalendarDays,
+  FileText,
+  Github,
+  GitBranch,
+  LayoutTemplate,
+  ListTree,
+  Loader2,
+  PenLine,
+  Split,
+  Layers,
+} from 'lucide-react';
 import { MarkdownView } from '@/components/chat/MarkdownView';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -12,6 +24,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { useAuth } from '@/contexts/AuthContext';
+import { workItemDocApi } from '@/lib/workitem-doc-api';
+import { productSpaceApi, requirementShareApi, findPrototypeProductName } from '@/lib/productspace-api';
 import type { WorkItemDTO } from '@/lib/api-types';
 
 const API_STATUS_TO_UI: Record<string, string> = {
@@ -98,6 +113,13 @@ const STATUS_DOT_COLORS: Record<string, string> = {
 // 完成态列：卡片降低不透明度且标题划线
 const DONE_STATUSES = ['已完成', '已取消'];
 
+/** AI 指令对应的斜杠命令名 */
+const AI_COMMANDS = {
+  split: 'req-breakdown',
+  prototype: 'proto-make',
+  document: 'prd-write',
+} as const;
+
 interface KanbanCard {
   id: string;
   title: string;
@@ -105,6 +127,10 @@ interface KanbanCard {
   owner: string;
   priority: string;
   createdAt: string;
+  type: string;
+  description: string;
+  reporter: string;
+  parentId?: string;
 }
 
 /**
@@ -112,8 +138,17 @@ interface KanbanCard {
  *
  * 数据来自 /v1/workitems?type=requirement，支持拖拽更新状态。
  * 点击卡片弹出居中详情弹窗。
+ * 卡片底部提供6个快捷操作按钮：查看详情、查看设计、查看子需求、AI拆分子需求、AI原型设计、AI写文档。
  */
-export const KanbanWorkspace: React.FC = () => {
+interface KanbanWorkspaceProps {
+  /** 点击"需求文档"等关联资源时回调，跳转到需求设计视图 */
+  onNavigateToDesign?: (workitemId: string) => void;
+}
+
+export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDesign }) => {
+  const navigate = useNavigate();
+  const { membership } = useAuth();
+  const workspaceId = membership?.workspaceId ?? '';
   const [items, setItems] = useState<WorkItemDTO[]>([]);
   const [cards, setCards] = useState<KanbanCard[]>([]);
   const [loading, setLoading] = useState(false);
@@ -121,6 +156,7 @@ export const KanbanWorkspace: React.FC = () => {
 
   const [detailItem, setDetailItem] = useState<WorkItemDTO | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [productDesignLoading, setProductDesignLoading] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -136,6 +172,9 @@ export const KanbanWorkspace: React.FC = () => {
             owner: item.assigneeName ?? item.reporter ?? '',
             priority: API_PRIORITY_TO_UI[item.priority] ?? '中',
             createdAt: item.createdAt.slice(0, 10),
+            type: item.type ?? 'requirement',
+            description: item.description ?? '',
+            reporter: item.reporter ?? '',
           }))
         );
       })
@@ -148,6 +187,49 @@ export const KanbanWorkspace: React.FC = () => {
     if (!item) return;
     setDetailItem(item);
     setDetailOpen(true);
+  };
+
+  /** 打开需求的产品设计独立分享页（文档+原型）。 */
+  const openProductDesignShare = async (item: WorkItemDTO) => {
+    if (!workspaceId) return;
+    setProductDesignLoading(true);
+    try {
+      const links = await workItemDocApi.list(item.id);
+      const docLink = links.find(l => l.itemType === 'doc');
+      const protoLink = links.find(l => l.itemType === 'prototype');
+      const docId = docLink?.productSpaceItemId ?? '';
+      let productFolder = '';
+      if (protoLink?.productSpaceItemId) {
+        const tree = await productSpaceApi.tree(workspaceId);
+        productFolder = findPrototypeProductName(tree, protoLink.productSpaceItemId) ?? '';
+      }
+      if (!docId && !productFolder) {
+        toast.error('该需求暂无产品设计（文档或原型）');
+        return;
+      }
+      const share = await requirementShareApi.create(workspaceId, {
+        title: item.title,
+        docId: docId || undefined,
+        productFolder: productFolder || undefined,
+        allowComments: true,
+      });
+      window.open(`/share/requirement/${share.token}`, '_blank');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : '打开产品设计失败');
+    } finally {
+      setProductDesignLoading(false);
+    }
+  };
+
+  /** 跳转到智能会话页面，使用斜杠指令并附带需求卡片作为上下文 */
+  const goToChat = (card: KanbanCard, command: string) => {
+    const cardType = card.type === 'defect' ? 'defect' : card.type === 'case' ? 'case' : 'req';
+    navigate('/chat', {
+      state: {
+        initialInput: `/${command} ${card.title}`,
+        quotedCard: { type: cardType, id: card.id, title: card.title, reporter: card.reporter },
+      },
+    });
   };
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
@@ -230,24 +312,44 @@ export const KanbanWorkspace: React.FC = () => {
                     draggable
                     onDragStart={e => handleDragStart(e, card.id)}
                     onClick={() => openDetail(card.id)}
-                    className={`relative bg-card border border-border/50 rounded-xl pl-5 pr-4 py-4 cursor-pointer transition-all duration-200 active:cursor-grabbing hover:-translate-y-1 hover:shadow-lg dark:hover:shadow-black/30 ${
+                    className={`relative bg-card border border-border/50 rounded-xl pl-5 pr-3 py-3 cursor-pointer transition-all duration-200 active:cursor-grabbing hover:-translate-y-1 hover:shadow-lg dark:hover:shadow-black/30 ${
                       draggedCardId === card.id ? 'opacity-50 border-primary' : ''
                     } ${isDoneCol ? 'opacity-75' : ''}`}
                   >
                     <span className={`absolute left-0 top-0 h-full w-1 rounded-l-xl ${PRIORITY_BAR_COLORS[card.priority] ?? DEFAULT_PRIORITY_BAR}`} />
-                    <div className="flex items-start justify-between gap-2 mb-3">
-                      <h4 className={`text-base font-medium leading-snug line-clamp-2 ${isDoneCol ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
-                        {card.title}
-                      </h4>
-                      <span className={`shrink-0 px-2 py-0.5 rounded-full text-xs font-semibold ${PRIORITY_TAG_COLORS[card.priority] ?? DEFAULT_PRIORITY_TAG}`}>
+                    {/* 标题行：类型图标 + 标题 + 优先级标签 */}
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-start gap-1.5 min-w-0 flex-1">
+                        <TypeIcon type={card.type} parentId={card.parentId} />
+                        <h4 className={`text-sm font-medium leading-snug line-clamp-2 ${isDoneCol ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
+                          {card.title}
+                        </h4>
+                      </div>
+                      <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${PRIORITY_TAG_COLORS[card.priority] ?? DEFAULT_PRIORITY_TAG}`}>
                         {card.priority}
                       </span>
                     </div>
-                    <p className="text-sm text-muted-foreground mb-1.5">{card.owner || '未分配'}</p>
-                    <p className="text-xs text-muted-foreground/80 flex items-center gap-1">
-                      <CalendarDays className="h-3 w-3" />
-                      {card.createdAt}
-                    </p>
+                    {/* 信息行：负责人 + 创建日期 */}
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs text-muted-foreground truncate">{card.owner || '未分配'}</p>
+                      <p className="text-xs text-muted-foreground/80 flex items-center gap-1 shrink-0">
+                        <CalendarDays className="h-3 w-3" />
+                        {card.createdAt}
+                      </p>
+                    </div>
+                    {/* 快捷操作按钮：阻止冒泡以免触发卡片点击 */}
+                    <div
+                      className="flex items-center gap-0.5 pt-2 border-t border-border/30"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <CardActionBtn icon={<FileText className="h-3.5 w-3.5" />} title="查看详情" onClick={() => openDetail(card.id)} />
+                      <CardActionBtn icon={<Layers className="h-3.5 w-3.5" />} title="查看设计" onClick={() => onNavigateToDesign?.(card.id)} />
+                      <CardActionBtn icon={<ListTree className="h-3.5 w-3.5" />} title="查看子需求" onClick={() => toast.info('该需求暂无子需求')} />
+                      <div className="w-px h-4 bg-border/40 mx-0.5 shrink-0" />
+                      <CardActionBtn icon={<Split className="h-3.5 w-3.5" />} title="AI拆分子需求" ai onClick={() => goToChat(card, AI_COMMANDS.split)} />
+                      <CardActionBtn icon={<LayoutTemplate className="h-3.5 w-3.5" />} title="AI原型设计" ai onClick={() => goToChat(card, AI_COMMANDS.prototype)} />
+                      <CardActionBtn icon={<PenLine className="h-3.5 w-3.5" />} title="AI写文档" ai onClick={() => goToChat(card, AI_COMMANDS.document)} />
+                    </div>
                   </div>
                 ))}
                 {columnCards.length === 0 && (
@@ -315,7 +417,12 @@ export const KanbanWorkspace: React.FC = () => {
                 <section>
                   <h4 className="text-sm font-medium text-foreground mb-3">相关资源</h4>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <ResourceCard icon={<FileText className="h-4 w-4 text-primary" />} label="需求文档" />
+                    <ResourceCard
+                      icon={<FileText className="h-4 w-4 text-primary" />}
+                      label="产品设计"
+                      loading={productDesignLoading}
+                      onClick={detailItem ? () => openProductDesignShare(detailItem) : undefined}
+                    />
                     <ResourceCard icon={<Github className="h-4 w-4 text-orange-500" />} label="代码仓库" />
                     <ResourceCard icon={<FileText className="h-4 w-4 text-primary" />} label="测试用例" />
                   </div>
@@ -338,6 +445,56 @@ export const KanbanWorkspace: React.FC = () => {
   );
 };
 
+/** 类型图标：需求用 FileText，子需求用 GitBranch，其他类型用对应图标 */
+function TypeIcon({ type, parentId }: { type: string; parentId?: string }) {
+  if (parentId) {
+    return (
+      <span title="子需求">
+        <GitBranch className="h-3.5 w-3.5 shrink-0 mt-0.5 text-purple-500" />
+      </span>
+    );
+  }
+  if (type === 'defect') {
+    return (
+      <span title="缺陷">
+        <FileText className="h-3.5 w-3.5 shrink-0 mt-0.5 text-red-500" />
+      </span>
+    );
+  }
+  return (
+    <span title="需求">
+      <FileText className="h-3.5 w-3.5 shrink-0 mt-0.5 text-blue-500" />
+    </span>
+  );
+}
+
+/** 卡片快捷操作按钮 */
+function CardActionBtn({
+  icon,
+  title,
+  onClick,
+  ai,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  onClick: () => void;
+  ai?: boolean;
+}) {
+  return (
+    <button
+      className={`h-7 w-7 flex items-center justify-center rounded-md transition-colors shrink-0 ${
+        ai
+          ? 'text-primary hover:bg-primary/10 hover:text-primary/80'
+          : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+      }`}
+      onClick={onClick}
+      title={title}
+    >
+      {icon}
+    </button>
+  );
+}
+
 function DetailField({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
@@ -347,14 +504,23 @@ function DetailField({ label, value }: { label: string; value: React.ReactNode }
   );
 }
 
-function ResourceCard({ icon, label }: { icon: React.ReactNode; label: string }) {
+function ResourceCard({ icon, label, onClick, loading }: { icon: React.ReactNode; label: string; onClick?: () => void; loading?: boolean }) {
   return (
-    <div className="border border-border/50 rounded-lg px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-muted/40 transition-colors">
+    <div
+      className={`border border-border/50 rounded-lg px-4 py-3 flex items-center justify-between transition-colors ${
+        onClick ? 'cursor-pointer hover:bg-muted/40' : 'opacity-60'
+      }`}
+      onClick={!loading ? onClick : undefined}
+    >
       <div className="flex items-center gap-2">
         {icon}
         <span className="text-sm text-foreground">{label}</span>
       </div>
-      <span className="text-muted-foreground">›</span>
+      {loading ? (
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+      ) : onClick ? (
+        <span className="text-muted-foreground">›</span>
+      ) : null}
     </div>
   );
 }

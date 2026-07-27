@@ -10,17 +10,26 @@ import type { PreviewMode } from './LivePreview';
 import { TaskListView, type TaskItemData } from './TaskListView';
 import { ToolCallView } from './ToolCallView';
 import { ThinkingCard } from './ThinkingCard';
-import { UserStoryCard } from './UserStoryCard';
-import { parseUserStoryFromText } from './UserStoryCard';
+import { PrototypeCard } from './PrototypeCard';
+import { UserStoryCard, parseUserStoryFromText } from './UserStoryCard';
 import type { UserStoryData } from './UserStoryCard';
+import { RequirementBreakdownCard, useRequirementBreakdownData } from './RequirementBreakdownCard';
+import type { RequirementBreakdownData } from './RequirementBreakdownCard';
 import type { ChatPart } from './types';
 import { toast } from 'sonner';
 import { cn, formatTime } from '@/lib/utils';
 
-  const CARD_MARKER_REGEX = /\[\[CARD:([^\]]+)\]\]/g;
+const CARD_MARKER_REGEX = /\[\[CARD:([^\]]+)\]\]/g;
+const REQ_NAME_MARKER_REGEX = /\[\[REQ_NAME:([^\]]+)\]\]/g;
 
 const TEXT_COLLAPSE_LINE_THRESHOLD = 12;
 const TEXT_COLLAPSE_CHAR_THRESHOLD = 800;
+const PROTOTYPE_DIR_SEGMENT = '/products/prototypes/';
+const REQ_BREAKDOWN_JSON_REGEX = /\[\[REQ_BREAKDOWN_START\]\][\s\S]*?\[\[REQ_BREAKDOWN_END\]\]/g;
+// 匹配需求拆分相关文件：路径中包含 req-breakdown 且以 .md/.json 结尾。
+// 支持 xxx/req-breakdown/foo-req-breakdown.md、xxx-req-breakdown.json 等命名。
+const REQ_BREAKDOWN_FILE_REGEX = /req-breakdown.*\.(md|json)$/i;
+const REQ_BREAKDOWN_JSON_FILE_REGEX = /req-breakdown.*\.json$/i;
 
 function extractCardTypes(text: string): string[] {
   const types: string[] = [];
@@ -36,15 +45,21 @@ function extractCardTypes(text: string): string[] {
 interface AssistantMessageProps {
   message: MessageState;
   runPhase?: 'connecting' | 'thinking' | null;
+  agentPluginKey?: string;
   onArtifactClick?: () => void;
   onRegenerate?: () => void;
   onFilePreview?: (path: string) => void;
   onProjectPreview?: (path: string, mode: PreviewMode) => void;
   onUserStoryPreview?: (data: UserStoryData) => void;
   activeUserStoryData?: UserStoryData | null;
+  onReqBreakdownPreview?: (data: RequirementBreakdownData) => void;
+  activeReqBreakdownData?: RequirementBreakdownData | null;
+  onPrototypePreview?: (path: string) => void;
+  requirementTitle?: string;
+  workitemId?: string;
 }
 
-export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, runPhase, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview, onUserStoryPreview, activeUserStoryData }) => {
+export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, runPhase, agentPluginKey, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview, onUserStoryPreview, activeUserStoryData, onReqBreakdownPreview, activeReqBreakdownData, onPrototypePreview, requirementTitle, workitemId }) => {
   const thread = useThread();
   const content = Array.isArray(message.content) ? message.content : [];
   const [textExpanded, setTextExpanded] = useState(false);
@@ -54,6 +69,13 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     activeUserStoryData.title === data.title &&
     activeUserStoryData.total === data.total &&
     (activeUserStoryData.stories[0]?.story === data.stories[0]?.story);
+
+  const isReqBreakdownActive = (data: RequirementBreakdownData | null) =>
+    activeReqBreakdownData != null &&
+    data != null &&
+    activeReqBreakdownData.title === data.title &&
+    activeReqBreakdownData.total === data.total &&
+    (activeReqBreakdownData.items[0]?.title === data.items[0]?.title);
 
   let artifact: { type: string; title: string } | undefined;
   const legacyDataParts: { name: string; data: ChatPart }[] = [];
@@ -82,8 +104,9 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
   }
 
   // 把消息内容拆分为：给用户的最终输出、思考/工具过程。
-  // 所有 text 部件都作为最终输出展示，不再根据 reasoning 位置隐藏。
   // reasoning 和 tool-call 归入思考过程，可折叠查看。
+  // 对于部分模型把内部英文推理流作为 text 部件下发的情况，使用启发式规则将其识别为 reasoning，
+  // 避免思考过程与用户输出混排。
   const outputParts: TextMessagePart[] = [];
   const thinkingItems: (
     | { type: 'reasoning'; text: string }
@@ -91,11 +114,76 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     | { type: 'tool-call'; part: ToolCallMessagePart }
   )[] = [];
 
+  // 判断文本片段是否更像模型内部推理而非给用户的最终输出：
+  // 1. 不能是明显的中文回复（中文字符占比 > 30% 视为用户输出）；
+  // 2. 需要当前消息存在工具调用，说明是 agent 运行中的中间过程；
+  // 3. 包含常见的英文推理短语（进度、自说自话、验证等）。
+  //
+  // 该启发式只作为兜底：当 agent 已经正确输出独立的 reasoning 部件时（如 Claude 和修复后的
+  // OpenCode/Codex），直接信任事件类型，不再靠内容猜；仅在 Codex 模式或整条消息都没有
+  // reasoning 部件时才启用，避免把正常英文输出误判为思考过程。
+  const hasRealReasoningParts = content.some((p) => p.type === 'reasoning');
+  const hasToolCallParts = content.some((p) => p.type === 'tool-call');
+  const enableReasoningHeuristic = agentPluginKey === 'codex' || !hasRealReasoningParts;
+  const REASONING_PHRASES = [
+    /\b(part \d+ done|good progress|now r-\d|now let me|let me|i need to|i will|i should|i think|ok|okay|first|then|next|finally|wait|actually|hmm|i see|i got it)\b/i,
+    /\b(verify|check|written successfully|output the final|required markers|the file has been|i need to output)\b/i,
+  ];
+  const isLikelyReasoningText = (text: string): boolean => {
+    if (!enableReasoningHeuristic) return false;
+    const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    if (chineseChars > 0 && chineseChars / text.length > 0.3) return false;
+    if (!hasToolCallParts) return false;
+    return REASONING_PHRASES.some((regex) => regex.test(text));
+  };
+
+  // 从所有 text 部件中提取 [[FILE:...]] / [[PROJECT:...]] 标记，避免内部推理文本被折叠后丢失附件路径。
+  const FILE_MARKER_REGEX = /\[\[FILE:([^\]]+)\]\]/g;
+  const PROJECT_MARKER_REGEX = /\[\[PROJECT:([^\]]+)\]\]/g;
+
+  const UNRESOLVED_PLACEHOLDER_PATTERNS = [
+    '绝对路径',
+    '需求名称',
+    '调研主题',
+    '工程名',
+    '功能名称',
+    '功能名',
+    '分析主题',
+    '用户故事',
+  ] as const;
+
+  function hasUnresolvedPlaceholders(filePath: string): boolean {
+    return UNRESOLVED_PLACEHOLDER_PATTERNS.some((pattern) => filePath.includes(pattern));
+  }
+
+  const fileAttachments: string[] = [];
+  const projectPaths: string[] = [];
+  for (const part of content) {
+    if (part.type !== 'text') continue;
+    const textPart = part as TextMessagePart;
+    if (!textPart.text) continue;
+    for (const match of textPart.text.matchAll(FILE_MARKER_REGEX)) {
+      const path = match[1]?.trim();
+      if (path && !fileAttachments.includes(path) && !hasUnresolvedPlaceholders(path)) {
+        fileAttachments.push(path);
+      }
+    }
+    for (const match of textPart.text.matchAll(PROJECT_MARKER_REGEX)) {
+      const path = match[1]?.trim();
+      if (path && !projectPaths.includes(path) && !hasUnresolvedPlaceholders(path)) {
+        projectPaths.push(path);
+      }
+    }
+  }
+
   for (let i = 0; i < content.length; i++) {
     const part = content[i];
     if (part.type === 'text') {
       const textPart = part as TextMessagePart;
-      if (textPart.text) {
+      if (!textPart.text) continue;
+      if (isLikelyReasoningText(textPart.text)) {
+        thinkingItems.push({ type: 'text', text: textPart.text });
+      } else {
         outputParts.push(textPart);
       }
     } else if (part.type === 'reasoning') {
@@ -110,7 +198,8 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
   const hasOutputText = outputParts.some((p) => Boolean(p.text));
 
   // 计算思考次数和工具调用统计，用于折叠卡片标题展示。
-  const thinkingCount = thinkingItems.filter((item) => item.type === 'reasoning').length;
+  // 将 reasoning 部件和识别为推理的 text 部件都计入思考次数。
+  const thinkingCount = thinkingItems.filter((item) => item.type === 'reasoning' || item.type === 'text').length;
   const toolStats = thinkingItems.reduce<Record<string, number>>((acc, item) => {
     if (item.type !== 'tool-call') return acc;
     const name = item.part.toolName || '工具调用';
@@ -148,48 +237,60 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     .filter(Boolean)
     .join('\n');
 
+  // 用于检测 [[CARD:...]] 标记的完整文本，包含识别为推理的 text 部件，
+  // 避免模型把标记放在内部推理流中时卡片无法被触发。
+  const allTextContent = content
+    .filter((p) => p.type === 'text')
+    .map((p) => (p as TextMessagePart).text)
+    .filter(Boolean)
+    .join('\n');
+
+  // 解析 [[REQ_NAME:需求名]] 标记，优先作为原型卡片的需求名展示；
+  // 若消息内无该标记则回退到父组件传入的 requirementTitle（如引用需求卡片的标题）。
+  const reqNameMatch = allTextContent.match(REQ_NAME_MARKER_REGEX);
+  const parsedRequirementTitle = reqNameMatch?.[1]?.trim();
+  const prototypeRequirementTitle = requirementTitle || parsedRequirementTitle;
+
   const textLineCount = textContent.split('\n').length;
   const shouldCollapseText = textLineCount > TEXT_COLLAPSE_LINE_THRESHOLD || textContent.length > TEXT_COLLAPSE_CHAR_THRESHOLD;
   const isStreaming = isRunning || isThinkingRunning;
 
-  const UNRESOLVED_PLACEHOLDER_PATTERNS = [
-    '绝对路径',
-    '需求名称',
-    '调研主题',
-    '工程名',
-    '功能名称',
-    '功能名',
-    '分析主题',
-    '用户故事',
-  ] as const;
-
-  function hasUnresolvedPlaceholders(filePath: string): boolean {
-    return UNRESOLVED_PLACEHOLDER_PATTERNS.some((pattern) => filePath.includes(pattern));
+  // 将 /proto-make 等指令生成的原型工程路径按一级产品目录去重，
+  // 并过滤掉属于该原型工程下的普通 PROJECT/FILE 标记，避免一次生成出现多个卡片。
+  function getPrototypeRootPath(path: string): string | null {
+    const parts = path.split('/');
+    const productsIdx = parts.indexOf('products');
+    if (productsIdx < 0 || parts[productsIdx + 1] !== 'prototypes' || !parts[productsIdx + 2]) {
+      return null;
+    }
+    return parts.slice(0, productsIdx + 3).join('/');
   }
 
-  // 从最终输出中提取模型标记的文件路径，统一在消息底部展示为附件卡片。
-  // 过滤掉包含未解析中文占位符的路径（如「绝对路径」「需求名称」等）。
-  const FILE_MARKER_REGEX = /\[\[FILE:([^\]]+)\]\]/g;
-  const PROJECT_MARKER_REGEX = /\[\[PROJECT:([^\]]+)\]\]/g;
-  const fileAttachments: string[] = [];
-  const projectPaths: string[] = [];
-  for (const part of outputParts) {
-    if (!part.text) continue;
-    for (const match of part.text.matchAll(FILE_MARKER_REGEX)) {
-      const path = match[1]?.trim();
-      if (path && !fileAttachments.includes(path) && !hasUnresolvedPlaceholders(path)) {
-        fileAttachments.push(path);
-      }
-    }
-    for (const match of part.text.matchAll(PROJECT_MARKER_REGEX)) {
-      const path = match[1]?.trim();
-      if (path && !projectPaths.includes(path) && !hasUnresolvedPlaceholders(path)) {
-        projectPaths.push(path);
-      }
+  const prototypePaths = projectPaths.filter(p => p.includes(PROTOTYPE_DIR_SEGMENT));
+  const prototypeRootMap = new Map<string, string>();
+  for (const p of prototypePaths) {
+    const root = getPrototypeRootPath(p);
+    if (root && !prototypeRootMap.has(root)) {
+      prototypeRootMap.set(root, p);
     }
   }
+  const prototypeRootPaths = Array.from(prototypeRootMap.keys());
+  // /proto-make 等指令的结果应只展示原型卡片；若当前消息已识别出原型工程，
+  // 强制屏蔽同消息内的普通工程卡片和文件附件，避免一个指令产出多个卡片。
+  const hasPrototypeCards = prototypeRootPaths.length > 0;
+  const normalProjectPaths = hasPrototypeCards
+    ? []
+    : projectPaths.filter(p => {
+        const root = getPrototypeRootPath(p);
+        return !root || !prototypeRootMap.has(root);
+      });
+  const nonPrototypeFileAttachments = hasPrototypeCards
+    ? []
+    : fileAttachments.filter(path =>
+        !prototypeRootPaths.some(root => path === root || path.startsWith(`${root}/`))
+      );
 
-  const cardTypes = extractCardTypes(textContent);
+  const cardTypes = extractCardTypes(allTextContent);
   const hasUserStoryFromMarker = cardTypes.includes('user_story');
   const userStoryData = hasUserStoryFromMarker
     ? parseUserStoryFromText(textContent, fileAttachments[0] ?? '')
@@ -198,12 +299,22 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
   const hasUserStoryFromLegacy = legacyDataParts.some((item) => item.name === 'user_story');
   const hasUserStory = hasUserStoryFromLegacy || hasUserStoryFromMarker;
 
-  // 用户故事卡片出现时，默认展开完整文本，避免"内容没有输出完整"的观感。
+  const hasReqBreakdownFromMarker = cardTypes.includes('req_breakdown');
+  const { data: reqBreakdownData, loading: reqBreakdownLoading, error: reqBreakdownError } = useRequirementBreakdownData(allTextContent, fileAttachments);
+
+  const hasReqBreakdownFromLegacy = legacyDataParts.some((item) => item.name === 'req_breakdown');
+  const hasReqBreakdown = hasReqBreakdownFromLegacy || hasReqBreakdownFromMarker;
+
+  const nonReqBreakdownFileAttachments = hasReqBreakdownFromMarker
+    ? nonPrototypeFileAttachments.filter(path => !REQ_BREAKDOWN_FILE_REGEX.test(path))
+    : nonPrototypeFileAttachments;
+
+  // 用户故事/需求拆分卡片出现时，默认展开完整文本，避免"内容没有输出完整"的观感。
   useEffect(() => {
-    if (hasUserStoryFromMarker || hasUserStoryFromLegacy) {
+    if (hasUserStoryFromMarker || hasUserStoryFromLegacy || hasReqBreakdownFromMarker || hasReqBreakdownFromLegacy) {
       setTextExpanded(true);
     }
-  }, [hasUserStoryFromMarker, hasUserStoryFromLegacy]);
+  }, [hasUserStoryFromMarker, hasUserStoryFromLegacy, hasReqBreakdownFromMarker, hasReqBreakdownFromLegacy]);
 
   const showCollapsed = shouldCollapseText && !textExpanded && !isStreaming;
 
@@ -302,7 +413,13 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
                 <div className={showCollapsed ? 'chat-bubble-text chat-bubble-text-closed' : 'chat-bubble-text chat-bubble-text-open'}>
                   {outputParts.map((part, idx) => {
                     if (!part.text) return null;
-                    const cleanText = part.text.replace(FILE_MARKER_REGEX, '').replace(PROJECT_MARKER_REGEX, '').trim();
+                    const cleanText = part.text
+                      .replace(FILE_MARKER_REGEX, '')
+                      .replace(PROJECT_MARKER_REGEX, '')
+                      .replace(REQ_NAME_MARKER_REGEX, '')
+                      .replace(CARD_MARKER_REGEX, '')
+                      .replace(REQ_BREAKDOWN_JSON_REGEX, '')
+                      .trim();
                     if (!cleanText) return null;
                     return (
                       <div key={idx} className="px-5 py-1.5 text-sm break-words">
@@ -333,26 +450,49 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
             </div>
           )}
 
-          {/* 工程卡片：新建工程显示预览+同步，已有工程显示 diff（有 user_story 数据时不展示） */}
-          {!hasUserStory && projectPaths.length > 0 && (
+          {/* 原型工程卡片：按产品目录合并为单个卡片，点击在聊天预览面板打开。
+              生成未完成时不展示，避免在输出过程中提前出现卡片。 */}
+          {prototypeRootPaths.length > 0 && !isRunning && (
             <div className="px-3 pb-2 flex flex-col gap-2">
-              {projectPaths.map((path) => (
+              {prototypeRootPaths.map((rootPath) => (
+                <PrototypeCard
+                  key={rootPath}
+                  path={rootPath}
+                  requirementTitle={prototypeRequirementTitle}
+                  workitemId={workitemId}
+                  onPreview={onPrototypePreview}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* 普通工程卡片：新建工程显示预览+同步，已有工程显示 diff（有 user_story 数据时不展示）。
+              同样等生成完成后再展示。 */}
+          {!hasUserStory && normalProjectPaths.length > 0 && !isRunning && (
+            <div className="px-3 pb-2 flex flex-col gap-2">
+              {normalProjectPaths.map((path) => (
                 <ProjectCard key={path} path={path} onPreview={onProjectPreview} />
               ))}
             </div>
           )}
 
-          {/* 文件附件卡片统一放在消息底部（有 user_story 数据时不展示） */}
-          {!hasUserStory && fileAttachments.length > 0 && (
+          {/* 非原型文件附件卡片统一放在消息底部（有 user_story 或 req_breakdown 数据时隐藏，避免重复展示）。
+              生成完成后再展示。 */}
+          {!hasUserStory && nonReqBreakdownFileAttachments.length > 0 && !isRunning && (
             <div className="px-3 pb-2 flex flex-wrap gap-2">
-              {fileAttachments.map((path) => (
+              {nonReqBreakdownFileAttachments.map((path) => (
                 <FileAttachmentCard key={path} path={path} onPreview={onFilePreview} />
               ))}
             </div>
           )}
 
-          {/* 从 [[CARD:user_story]] 标记自动检测到的用户故事卡片 */}
-          {!hasUserStoryFromLegacy && hasUserStoryFromMarker && userStoryData && (
+          {/* 从 [[CARD:req_breakdown]] 标记自动检测到的需求拆分卡片，生成完成后再展示。 */}
+          {!hasReqBreakdownFromLegacy && hasReqBreakdownFromMarker && !isRunning && (
+            <div className="px-3 py-2"><RequirementBreakdownCard data={reqBreakdownData} loading={reqBreakdownLoading} error={reqBreakdownError} isPreviewActive={isReqBreakdownActive(reqBreakdownData)} onPreview={onReqBreakdownPreview} /></div>
+          )}
+
+          {/* 从 [[CARD:user_story]] 标记自动检测到的用户故事卡片，生成完成后再展示。 */}
+          {!hasUserStoryFromLegacy && hasUserStoryFromMarker && userStoryData && !isRunning && (
             <div className="px-3 py-2"><UserStoryCard data={userStoryData} isPreviewActive={isUserStoryActive(userStoryData)} onPreview={onUserStoryPreview} /></div>
           )}
 
@@ -381,8 +521,15 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
             }
             if (name === 'user_story') {
               const storyData = (data.content ? JSON.parse(data.content) : data.metadata) as UserStoryData;
-              if (storyData && storyData.stories) {
+              if (storyData && storyData.stories && !isRunning) {
                 return <div key={idx} className="px-3 py-2"><UserStoryCard data={storyData} isPreviewActive={isUserStoryActive(storyData)} onPreview={onUserStoryPreview} /></div>;
+              }
+              return null;
+            }
+            if (name === 'req_breakdown') {
+              const rbData = (data.content ? JSON.parse(data.content) : data.metadata) as RequirementBreakdownData;
+              if (rbData && rbData.items && !isRunning) {
+                return <div key={idx} className="px-3 py-2"><RequirementBreakdownCard data={rbData} isPreviewActive={isReqBreakdownActive(rbData)} onPreview={onReqBreakdownPreview} /></div>;
               }
               return null;
             }
@@ -406,7 +553,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
           })}
         </div>
 
-        {artifact && (
+        {artifact && !isRunning && (
           <div className="mt-2 p-3 rounded-xl border border-border/50 bg-card cursor-pointer hover:border-primary transition-colors flex items-center gap-3 w-full max-w-sm soft-shadow" onClick={onArtifactClick}>
             <div className="h-10 w-10 rounded bg-secondary flex items-center justify-center shrink-0">
               {artifact.type === 'ui' && <Box className="h-5 w-5 text-blue-500" />}

@@ -385,26 +385,48 @@ func ShareDocComments(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ProductDocShareComments 处理 GET /api/v1/workspaces/{id}/product-docs/{docId}/share-comments：
-// 登录用户在文档内查看全部分享批注。
+// ProductDocShareComments 处理 /api/v1/workspaces/{id}/product-docs/{docId}/share-comments：
+// GET 登录用户查看全部分享批注；POST 登录用户新增批注。
 func ProductDocShareComments(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if defaultProductDocService == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
-	if r.Method != http.MethodGet {
-		http.Error(w, `{"code":1,"message":"method not allowed"}`, http.StatusMethodNotAllowed)
-		return
-	}
 
-	comments, err := defaultProductDocService.ListDocShareComments(r.PathValue("id"), r.PathValue("docId"))
-	if err != nil {
-		log.Printf("[ProductDoc] ListDocShareComments failed: %v", err)
-		http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)
-		return
+	switch r.Method {
+	case http.MethodGet:
+		comments, err := defaultProductDocService.ListDocShareComments(r.PathValue("id"), r.PathValue("docId"))
+		if err != nil {
+			log.Printf("[ProductDoc] ListDocShareComments failed: %v", err)
+			http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)
+			return
+		}
+		json.NewEncoder(w).Encode(comments)
+	case http.MethodPost:
+		userID, ok := middleware.UserIDFromContext(r.Context())
+		if !ok {
+			http.Error(w, `{"code":2,"message":"未登录或登录已过期"}`, http.StatusUnauthorized)
+			return
+		}
+		var req object.AddShareCommentRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"code":1,"message":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		comment, err := defaultProductDocService.AddDocShareComment(
+			r.PathValue("id"), r.PathValue("docId"), userID, req,
+		)
+		if err != nil {
+			log.Printf("[ProductDoc] AddDocShareComment failed: %v", err)
+			http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(comment)
+	default:
+		http.Error(w, `{"code":1,"message":"method not allowed"}`, http.StatusMethodNotAllowed)
 	}
-	json.NewEncoder(w).Encode(comments)
 }
 
 // ProductDocShareCommentResolve 处理 POST /api/v1/workspaces/{id}/product-docs/{docId}/share-comments/{commentId}/resolve：

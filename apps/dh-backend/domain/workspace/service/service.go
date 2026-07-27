@@ -42,7 +42,7 @@ type WorkspaceService interface {
 	// ListMine 返回指定用户加入的工作空间及其成员关系（用于登录后确定当前空间与权限）。
 	ListMine(userID string) ([]MineWorkspace, error)
 	// EnsureUserWorkspaceDirs 确保用户在工作空间下的 projects、files 与 products 目录存在。
-	// 目录结构：WORKSPACE_ROOT/{workspaceID}/{userID}/{projects,files,products/{docs,prototypes}}
+	// 目录结构：WORKSPACE_ROOT/{userID}/{workspaceID}/{projects,files,products/{docs,prototypes}}
 	// os.MkdirAll 是幂等的，并发安全。
 	EnsureUserWorkspaceDirs(ctx context.Context, workspaceID, userID string) error
 

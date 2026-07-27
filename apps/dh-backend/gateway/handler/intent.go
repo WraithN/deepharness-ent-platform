@@ -221,7 +221,7 @@ func fuzzyMatchCommand(input string) *CommandConfig {
 // applyIntentCommand 将意图识别匹配到的指令模板应用到用户消息上。
 // 用原始用户输入作为 {ARGS}，复用 applyCommandConfig 统一处理模板渲染、
 // 任务卡片与代码库注入，与 interceptCommands 行为保持一致。
-func applyIntentCommand(messages []agui.Message, cmd, userInput, workspacePath string, ctxItems []agui.ContextItem, workItemSvc workitemservice.WorkItemService) error {
+func applyIntentCommand(messages []agui.Message, cmd, userInput, workspacePath, workspaceID string, ctxItems []agui.ContextItem, workItemSvc workitemservice.WorkItemService) error {
 	cfg, found := findCommandConfig(cmd)
 	if !found {
 		return fmt.Errorf("intent command %s not found", cmd)
@@ -230,7 +230,7 @@ func applyIntentCommand(messages []agui.Message, cmd, userInput, workspacePath s
 	// 仅替换最后一条用户消息的内容。
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == agui.RoleUser {
-			_, err := applyCommandConfig(messages, i, cfg, userInput, workspacePath, ctxItems, workItemSvc)
+			_, err := applyCommandConfig(messages, i, cfg, userInput, workspacePath, workspaceID, ctxItems, workItemSvc)
 			return err
 		}
 	}

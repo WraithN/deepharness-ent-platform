@@ -1,11 +1,15 @@
+import JSZip from 'jszip';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
-import { FileText, LayoutGrid, Eye, History, Plus, Search, Trash2, Save, Loader2, Send, Clock, ChevronLeft, ChevronRight, ChevronDown, Folder, FolderPlus, Pin, MoreVertical, FolderInput, Pencil, Share2, MessageSquare } from 'lucide-react';
+import {
+  FileText, LayoutGrid, Eye, History, Trash2, Save, Loader2, Send, Clock, ChevronLeft, ChevronRight,
+  ChevronDown, Folder, FolderPlus, Pin, MoreVertical, FolderInput, Pencil, Share2, MessageSquare,
+  Layers, Download, Copy, Gavel, CheckCircle2, XCircle, UserCheck,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { MarkdownEditor } from '@/components/MarkdownEditor';
@@ -15,6 +19,10 @@ import { PrototypeWorkspace } from './PrototypeWorkspace';
 import { VersionHistoryMode } from './VersionHistoryMode';
 import { STATUS_LABEL, STATUS_VARIANT } from './doc-status';
 import { productDocApi, type ProductDoc, type ProductDocFolder, type ProductDocVersion, type ShareComment } from '@/lib/productdoc-api';
+import { downloadBlob } from '@/lib/file-download';
+import { decodeBase64Utf8, findPrototypeProductName, productSpaceApi, requirementShareApi, type ProductSpaceTreeNode, type RequirementShare } from '@/lib/productspace-api';
+import { workspaceApi } from '@/lib/workspace-api';
+import { workItemApi } from '@/lib/workitem-api';
 import { ShareCommentsPanel } from './ShareCommentsPanel';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -37,30 +45,55 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { ApiError } from '@/lib/api';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { ApiError, api } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { workItemDocApi, type WorkItemDocLink } from '@/lib/workitem-doc-api';
+import type { WorkItemDTO } from '@/lib/api-types';
+import type { WorkspaceMember } from '@/types';
 
-const DEFAULT_DOC_CONTENT = `# 新文档
+/** 需求状态映射为中文标签（与 KanbanWorkspace 保持一致） */
+const API_STATUS_TO_UI: Record<string, string> = {
+  backlog: '待处理',
+  todo: '待处理',
+  in_progress: '进行中',
+  done: '已完成',
+  cancelled: '已取消',
+  on_hold: '已挂起',
+  passed: '已通过',
+  failed: '评审不通过',
+};
 
-请在此处编写产品文档内容。
+/** 侧边栏需求状态圆点配色（与看板状态色系一致：蓝/琥珀/绿/锌灰/橙/紫/红） */
+const SIDEBAR_STATUS_DOT: Record<string, string> = {
+  '待处理': 'bg-blue-500',
+  '进行中': 'bg-amber-500',
+  '已完成': 'bg-green-500',
+  '已取消': 'bg-zinc-500',
+  '已挂起': 'bg-orange-500',
+  '已通过': 'bg-purple-500',
+  '评审不通过': 'bg-red-500',
+};
 
-## 概述
-
-## 目标
-
-## 详细说明
-`;
 
 
-type ProductTab = 'doc' | 'kanban' | 'prototype' | 'history';
+type ProductTopTab = 'kanban' | 'design';
+type ProductSubTab = 'doc' | 'prototype' | 'history';
 
 /** 目录最多支持的层级数（与后端 MaxFolderDepth 保持一致） */
 const MAX_FOLDER_DEPTH = 6;
 
 /** 目录行的事件回调集合 */
 interface FolderRowHandlers {
-  onCreateDoc: (folderId: string) => void;
   onCreateSub: (parentId: string) => void;
   onRename: (folder: ProductDocFolder) => void;
   onTogglePin: (folder: ProductDocFolder) => void;
@@ -91,7 +124,7 @@ const FolderRow: React.FC<FolderRowProps> = ({
   folder, level, isDropTarget, hasChildren, isCollapsed, onToggleCollapse,
   isRenaming, renameValue,
   onRenameValueChange, onRenameSubmit, onRenameCancel,
-  onCreateDoc, onCreateSub, onRename, onTogglePin, onDelete,
+  onCreateSub, onRename, onTogglePin, onDelete,
   onFolderDragOver, onFolderDragLeave, onDocDrop,
 }) => (
   <div
@@ -135,14 +168,7 @@ const FolderRow: React.FC<FolderRowProps> = ({
     )}
     {(folder.pinned || folder.isDefault) && <Pin className="h-3 w-3 text-primary shrink-0" />}
     <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-      <button
-        className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:bg-muted"
-        onClick={() => onCreateDoc(folder.isDefault ? '' : folder.id)}
-        title="在此新建文档"
-      >
-        <Plus className="h-3.5 w-3.5" />
-      </button>
-      {/* 默认“未分类”目录不可创建子目录；超过最大层级也不可再建 */}
+      {/* 默认"未分类"目录不可创建子目录；超过最大层级也不可再建 */}
       {!folder.isDefault && level + 1 < MAX_FOLDER_DEPTH && (
         <button
           className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:bg-muted"
@@ -263,12 +289,11 @@ interface DocMoveMenuProps {
   onMove: (folderId: string) => void;
   onShowHistory: () => void;
   onPublish: () => void;
-  onShare: () => void;
   onDelete: () => void;
 }
 
-/** 文档行 hover 菜单：版本历史、移动目录、发布（仅草稿）、分享（仅已发布）、删除。 */
-const DocMoveMenu: React.FC<DocMoveMenuProps> = ({ doc, folders, onMove, onShowHistory, onPublish, onShare, onDelete }) => (
+/** 文档行 hover 菜单：版本历史、移动目录、发布（仅草稿）、删除。 */
+const DocMoveMenu: React.FC<DocMoveMenuProps> = ({ doc, folders, onMove, onShowHistory, onPublish, onDelete }) => (
   <DropdownMenu>
     <DropdownMenuTrigger asChild>
       <button
@@ -296,15 +321,10 @@ const DocMoveMenu: React.FC<DocMoveMenuProps> = ({ doc, folders, onMove, onShowH
         </DropdownMenuSubContent>
       </DropdownMenuSub>
       <DropdownMenuSeparator />
-      {/* 发布仅草稿可见；分享仅已发布可见 */}
+      {/* 发布仅草稿可见 */}
       {doc.status === 'draft' && (
         <DropdownMenuItem onClick={onPublish}>
           <Send className="h-4 w-4 mr-2" />发布
-        </DropdownMenuItem>
-      )}
-      {doc.status === 'published' && (
-        <DropdownMenuItem onClick={onShare}>
-          <Share2 className="h-4 w-4 mr-2" />分享
         </DropdownMenuItem>
       )}
       <DropdownMenuItem className="text-destructive" onClick={onDelete}>
@@ -401,29 +421,372 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({ open, onOpe
 /**
  * 产品空间工作台（PM 专属）。
  *
- * 顶部 Tab 切换：文档 / 看板 / 原型 / 版本历史。
+ * 顶部 Tab：需求看板 / 需求设计。
+ * 需求设计下二级 Tab：文档 / 原型 / 版本历史。
  * 所有文案与图标均采用产品化语义，隐藏 Git/研发术语。
  */
 export const ProductWorkspace: React.FC = () => {
-  // 支持深链直达指定 Tab（如分享原型链接 ?tab=prototype&prototype=<itemId>）
-  const [activeTab, setActiveTab] = useState<ProductTab>(() => {
-    const param = new URLSearchParams(window.location.search).get('tab');
-    const validTabs: ProductTab[] = ['doc', 'kanban', 'prototype', 'history'];
-    return validTabs.includes(param as ProductTab) ? (param as ProductTab) : 'doc';
+  // 支持深链直达指定 Tab（如分享原型链接 ?tab=prototype&prototype=<itemId>）。
+  const [{ topTab, subTab }, setTabs] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab') ?? '';
+    const validSubTabs: ProductSubTab[] = ['doc', 'prototype', 'history'];
+    const validTopTabs: ProductTopTab[] = ['kanban', 'design'];
+    if (validSubTabs.includes(tab as ProductSubTab)) {
+      return { topTab: 'design' as ProductTopTab, subTab: tab as ProductSubTab };
+    }
+    if (validTopTabs.includes(tab as ProductTopTab)) {
+      return { topTab: tab as ProductTopTab, subTab: (params.get('subtab') as ProductSubTab) ?? 'doc' };
+    }
+    return { topTab: 'kanban' as ProductTopTab, subTab: 'doc' as ProductSubTab };
   });
 
-  const tabs = [
-    { key: 'doc' as const, label: '文档', icon: FileText },
-    { key: 'kanban' as const, label: '看板', icon: LayoutGrid },
-    { key: 'prototype' as const, label: '原型', icon: Eye },
-    { key: 'history' as const, label: '版本历史', icon: History },
+  const { membership } = useAuth();
+  const workspaceId = membership?.workspaceId ?? '';
+
+  // 需求关联：选中需求后加载其关联的文档/原型，在看板和设计视图间共享
+  const [selectedWorkitemId, setSelectedWorkitemId] = useState<string>('');
+  const [requirements, setRequirements] = useState<WorkItemDTO[]>([]);
+  const [docLinks, setDocLinks] = useState<WorkItemDocLink[]>([]);
+  const [requirementLinksMap, setRequirementLinksMap] = useState<Record<string, WorkItemDocLink[]>>({});
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  /** 关联链接是否已加载完成（用于区分"加载中"和"确实无设计"） */
+  const [linksLoaded, setLinksLoaded] = useState(false);
+  /** 当前正在执行分享/导出的需求 ID，用于菜单 loading 态 */
+  const [sharingRequirementId, setSharingRequirementId] = useState<string>('');
+  const [exportingRequirementId, setExportingRequirementId] = useState<string>('');
+  /** 分享成功后弹出的权限配置对话框 */
+  const [shareDialog, setShareDialog] = useState<{ open: boolean; share: RequirementShare | null; allowComments: boolean }>({
+    open: false,
+    share: null,
+    allowComments: true,
+  });
+
+  /** 工作空间成员列表（用于评审通过/分配时选择受理人） */
+  const [members, setMembers] = useState<WorkspaceMember[]>([]);
+
+  /** 评审对话框：review 阶段展示分享链接与通过/不通过；assign 阶段选择受理人 */
+  const [reviewDialog, setReviewDialog] = useState<{
+    open: boolean;
+    step: 'review' | 'assign';
+    req: WorkItemDTO | null;
+    share: RequirementShare | null;
+    selectedAssigneeId: string;
+    processing: boolean;
+  }>({
+    open: false,
+    step: 'review',
+    req: null,
+    share: null,
+    selectedAssigneeId: '',
+    processing: false,
+  });
+
+  /** 分配对话框：直接选择受理人 */
+  const [assignDialog, setAssignDialog] = useState<{
+    open: boolean;
+    req: WorkItemDTO | null;
+    selectedAssigneeId: string;
+    processing: boolean;
+  }>({
+    open: false,
+    req: null,
+    selectedAssigneeId: '',
+    processing: false,
+  });
+
+  const topTabs = [
+    { key: 'kanban' as const, label: '需求看板', icon: LayoutGrid },
+    { key: 'design' as const, label: '需求设计', icon: Layers },
   ];
 
+  const subTabs = [
+    { key: 'doc' as const, label: '文档', icon: FileText },
+    { key: 'prototype' as const, label: '原型', icon: Eye },
+    { key: 'history' as const, label: '版本', icon: History },
+  ];
+
+  const handleTopChange = (value: ProductTopTab) => {
+    setTabs(prev => ({ topTab: value, subTab: prev.subTab }));
+  };
+
+  // 为需求创建统一的文档+原型分享链接，成功后弹出权限配置对话框。
+  const handleShareRequirement = async (req: WorkItemDTO) => {
+    if (!workspaceId) return;
+    setSharingRequirementId(req.id);
+    try {
+      const links = await workItemDocApi.list(req.id);
+      const docLink = links.find(l => l.itemType === 'doc');
+      const protoLink = links.find(l => l.itemType === 'prototype');
+      const docId = docLink?.productSpaceItemId ?? '';
+      let productFolder = '';
+      if (protoLink?.productSpaceItemId) {
+        const tree = await productSpaceApi.tree(workspaceId);
+        productFolder = findPrototypeProductName(tree, protoLink.productSpaceItemId) ?? '';
+      }
+      if (!docId && !productFolder) {
+        toast.error('该需求没有可分享的文档或原型');
+        return;
+      }
+      const share = await requirementShareApi.create(workspaceId, {
+        title: req.title,
+        docId: docId || undefined,
+        productFolder: productFolder || undefined,
+        allowComments: true,
+      });
+      setShareDialog({ open: true, share, allowComments: share.allowComments ?? true });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : '分享失败');
+    } finally {
+      setSharingRequirementId('');
+    }
+  };
+
+  // 切换需求分享的批注权限，通过幂等创建接口同步 allowComments。
+  const handleAllowCommentsChange = async (checked: boolean) => {
+    const { share } = shareDialog;
+    if (!share || !workspaceId) return;
+    setShareDialog(prev => ({ ...prev, allowComments: checked }));
+    try {
+      const updated = await requirementShareApi.create(workspaceId, {
+        title: share.title,
+        docId: share.docId || undefined,
+        productFolder: share.productFolder || undefined,
+        allowComments: checked,
+      });
+      setShareDialog(prev => ({ ...prev, share: updated, allowComments: updated.allowComments ?? checked }));
+    } catch {
+      setShareDialog(prev => ({ ...prev, allowComments: !checked }));
+      toast.error('更新批注权限失败');
+    }
+  };
+
+  const handleCopyShareLink = async () => {
+    if (!shareDialog.share) return;
+    const url = `${window.location.origin}/share/requirement/${shareDialog.share.token}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success('分享链接已复制', { description: url });
+    } catch {
+      toast.error('复制失败');
+    }
+  };
+
+  // 导出需求关联的文档（Markdown）与原型页面（HTML）为 zip 包。
+  const handleExportRequirement = async (req: WorkItemDTO) => {
+    if (!workspaceId) return;
+    setExportingRequirementId(req.id);
+    try {
+      const links = await workItemDocApi.list(req.id);
+      const docLink = links.find(l => l.itemType === 'doc');
+      const protoLink = links.find(l => l.itemType === 'prototype');
+      const zip = new JSZip();
+      let hasContent = false;
+      if (docLink?.productSpaceItemId) {
+        const doc = await productDocApi.get(workspaceId, docLink.productSpaceItemId);
+        zip.file(`文档/${doc.title}.md`, doc.content);
+        hasContent = true;
+      }
+      if (protoLink?.productSpaceItemId) {
+        const detail = await productSpaceApi.getItem(workspaceId, protoLink.productSpaceItemId);
+        const fileName = detail.title.toLowerCase().endsWith('.html') ? detail.title : `${detail.title}.html`;
+        zip.file(`原型/${fileName}`, decodeBase64Utf8(detail.content));
+        hasContent = true;
+      }
+      if (!hasContent) {
+        toast.error('该需求没有可导出的文档或原型');
+        return;
+      }
+      const blob = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(blob, `${req.title}-文档与原型.zip`);
+      toast.success('已导出文档与原型');
+    } catch {
+      toast.error('导出失败');
+    } finally {
+      setExportingRequirementId('');
+    }
+  };
+
+  // 打开评审对话框：先创建/获取需求统一分享链接，再展示通过/不通过操作。
+  const handleReviewRequirement = async (req: WorkItemDTO) => {
+    if (!workspaceId) return;
+    setReviewDialog(prev => ({ ...prev, open: true, processing: true, req }));
+    try {
+      const links = await workItemDocApi.list(req.id);
+      const docLink = links.find(l => l.itemType === 'doc');
+      const protoLink = links.find(l => l.itemType === 'prototype');
+      const docId = docLink?.productSpaceItemId ?? '';
+      let productFolder = '';
+      if (protoLink?.productSpaceItemId) {
+        const tree = await productSpaceApi.tree(workspaceId);
+        productFolder = findPrototypeProductName(tree, protoLink.productSpaceItemId) ?? '';
+      }
+      if (!docId && !productFolder) {
+        toast.error('该需求没有可评审的文档或原型');
+        setReviewDialog(prev => ({ ...prev, open: false, processing: false, req: null }));
+        return;
+      }
+      const share = await requirementShareApi.create(workspaceId, {
+        title: req.title,
+        docId: docId || undefined,
+        productFolder: productFolder || undefined,
+        allowComments: true,
+      });
+      setReviewDialog({
+        open: true,
+        step: 'review',
+        req,
+        share,
+        selectedAssigneeId: req.assigneeId || '',
+        processing: false,
+      });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : '打开评审失败');
+      setReviewDialog(prev => ({ ...prev, open: false, processing: false, req: null }));
+    }
+  };
+
+  // 评审不通过：需求状态更新为 failed。
+  const handleReviewReject = async () => {
+    const { req } = reviewDialog;
+    if (!req) return;
+    setReviewDialog(prev => ({ ...prev, processing: true }));
+    try {
+      await workItemApi.updateStatus(req.id, 'failed');
+      toast.success('已标记评审不通过');
+      setReviewDialog(prev => ({ ...prev, open: false, processing: false }));
+      await loadRequirements();
+    } catch {
+      toast.error('评审操作失败');
+      setReviewDialog(prev => ({ ...prev, processing: false }));
+    }
+  };
+
+  // 评审通过并指定受理人：先标记 passed，设置受理人，再流转到 in_progress。
+  const handleReviewPass = async () => {
+    const { req, selectedAssigneeId } = reviewDialog;
+    if (!req) return;
+    if (!selectedAssigneeId) {
+      toast.error('请选择受理人');
+      return;
+    }
+    setReviewDialog(prev => ({ ...prev, processing: true }));
+    try {
+      await workItemApi.updateStatus(req.id, 'passed');
+      await workItemApi.updateAssignee(req.id, selectedAssigneeId);
+      await workItemApi.updateStatus(req.id, 'in_progress');
+      toast.success('评审通过并已受理');
+      setReviewDialog({ open: false, step: 'review', req: null, share: null, selectedAssigneeId: '', processing: false });
+      await loadRequirements();
+    } catch {
+      toast.error('受理操作失败');
+      setReviewDialog(prev => ({ ...prev, processing: false }));
+    }
+  };
+
+  // 打开分配对话框。
+  const openAssignDialog = (req: WorkItemDTO) => {
+    setAssignDialog({
+      open: true,
+      req,
+      selectedAssigneeId: req.assigneeId || '',
+      processing: false,
+    });
+  };
+
+  // 确认分配受理人。
+  const handleAssignConfirm = async () => {
+    const { req, selectedAssigneeId } = assignDialog;
+    if (!req) return;
+    if (!selectedAssigneeId) {
+      toast.error('请选择受理人');
+      return;
+    }
+    setAssignDialog(prev => ({ ...prev, processing: true }));
+    try {
+      await workItemApi.updateAssignee(req.id, selectedAssigneeId);
+      toast.success('已指定受理人');
+      setAssignDialog({ open: false, req: null, selectedAssigneeId: '', processing: false });
+      await loadRequirements();
+    } catch {
+      toast.error('分配失败');
+      setAssignDialog(prev => ({ ...prev, processing: false }));
+    }
+  };
+
+  /** 加载需求列表及每个需求关联的文档/原型链接 */
+  const loadRequirements = async () => {
+    try {
+      const reqs = await api.get<WorkItemDTO[]>('/v1/workitems?type=requirement');
+      setRequirements(reqs);
+      const linkResults = await Promise.all(
+        reqs.map(req => workItemDocApi.list(req.id).catch(() => [] as WorkItemDocLink[]))
+      );
+      const map: Record<string, WorkItemDocLink[]> = {};
+      reqs.forEach((req, i) => { map[req.id] = linkResults[i]; });
+      setRequirementLinksMap(map);
+    } catch {
+      toast.error('加载需求列表失败');
+    }
+  };
+
+  // 进入需求设计视图时加载需求列表
+  useEffect(() => {
+    if (topTab !== 'design') return;
+    loadRequirements();
+  }, [topTab]);
+
+  // 加载当前工作空间成员（用于评审通过/分配选择受理人）
+  useEffect(() => {
+    if (!workspaceId) return;
+    workspaceApi.members(workspaceId)
+      .then(list => setMembers(list))
+      .catch(() => toast.error('加载工作空间成员失败'));
+  }, [workspaceId]);
+
+  // 选中需求变更时加载关联的文档/原型链接
+  useEffect(() => {
+    if (!selectedWorkitemId) {
+      setDocLinks([]);
+      setLinksLoaded(false);
+      return;
+    }
+    setLinksLoaded(false);
+    workItemDocApi.list(selectedWorkitemId)
+      .then(links => {
+        setDocLinks(links);
+        setLinksLoaded(true);
+      })
+      .catch(() => {
+        setDocLinks([]);
+        setLinksLoaded(true);
+      });
+  }, [selectedWorkitemId]);
+
+  // 根据关联类型自动切换子 Tab：有文档关联跳文档，否则有原型关联跳原型
+  const docLink = docLinks.find(l => l.itemType === 'doc');
+  const prototypeLink = docLinks.find(l => l.itemType === 'prototype');
+  const focusDocId = docLink?.productSpaceItemId ?? null;
+  const focusItemId = prototypeLink?.productSpaceItemId ?? null;
+  /** 当前选中需求是否无任何设计关联（文档和原型都没有） */
+  const hasNoDesign = !!selectedWorkitemId && linksLoaded && docLinks.length === 0;
+  /** 当前选中的需求对象（用于空设计提示页展示标题） */
+  const selectedRequirement = requirements.find(r => r.id === selectedWorkitemId);
+
+  useEffect(() => {
+    if (!selectedWorkitemId) return;
+    if (docLink) {
+      setTabs(prev => ({ ...prev, subTab: 'doc' }));
+    } else if (prototypeLink) {
+      setTabs(prev => ({ ...prev, subTab: 'prototype' }));
+    }
+  }, [selectedWorkitemId, docLink, prototypeLink]);
+
   return (
-    <div className="flex flex-col h-[calc(100vh-6rem)] md:h-[calc(100vh-8rem)] min-h-[500px] gap-4 w-full pb-8">
-      <Tabs value={activeTab} onValueChange={value => setActiveTab(value as ProductTab)} className="w-full">
+    <div className="flex flex-col h-[calc((100vh-6rem)*2)] md:h-[calc((100vh-8rem)*2)] min-h-[1000px] gap-4 w-full pb-8">
+      <Tabs value={topTab} onValueChange={value => handleTopChange(value as ProductTopTab)} className="w-full">
         <TabsList className="aurora-tab-bar level-1 mb-0">
-          {tabs.map(tab => {
+          {topTabs.map(tab => {
             const Icon = tab.icon;
             return (
               <TabsTrigger key={tab.key} value={tab.key} className="aurora-tab-item level-1">
@@ -435,12 +798,397 @@ export const ProductWorkspace: React.FC = () => {
         </TabsList>
       </Tabs>
 
-      <Card className="flex-1 overflow-hidden border-none claude-card flex flex-col relative">
-        {activeTab === 'doc' && <DocMode />}
-        {activeTab === 'kanban' && <KanbanWorkspace />}
-        {activeTab === 'prototype' && <PrototypeWorkspace />}
-        {activeTab === 'history' && <VersionHistoryMode />}
-      </Card>
+      <div className="flex flex-1 gap-2 min-h-0">
+        {/* 需求侧边栏：仅设计视图可见，可收缩 */}
+        {topTab === 'design' && (
+          <>
+            {sidebarCollapsed ? (
+              <Button
+                variant="outline"
+                size="icon"
+                className="shrink-0 h-full w-9 rounded-xl border-border/50 glass-panel"
+                onClick={() => setSidebarCollapsed(false)}
+                title="展开需求列表"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            ) : (
+              <aside className="w-[260px] shrink-0 flex flex-col rounded-xl glass-panel overflow-hidden">
+                {/* 头部：标题 + 收起按钮 */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border/30 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <Layers className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-semibold text-foreground">需求列表</span>
+                  </div>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 hover:bg-muted/60" onClick={() => setSidebarCollapsed(true)} title="收起">
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                </div>
+                <ScrollArea className="flex-1 p-2">
+                  {/* 全部需求按钮 */}
+                  <button
+                    className={cn(
+                      'w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg mb-1.5 transition-all',
+                      !selectedWorkitemId
+                        ? 'bg-primary/10 text-primary font-medium'
+                        : 'hover:bg-muted/50 text-muted-foreground'
+                    )}
+                    onClick={() => setSelectedWorkitemId('')}
+                  >
+                    <LayoutGrid className="h-3.5 w-3.5 shrink-0" />
+                    <span className="text-sm">全部需求</span>
+                  </button>
+                  {/* 需求列表 */}
+                  {requirements.map(req => {
+                    const links = requirementLinksMap[req.id] ?? [];
+                    const hasDoc = links.some(l => l.itemType === 'doc');
+                    const hasProto = links.some(l => l.itemType === 'prototype');
+                    const statusKey = API_STATUS_TO_UI[req.status] ?? '待处理';
+                    const isActive = selectedWorkitemId === req.id;
+                    const sharing = sharingRequirementId === req.id;
+                    const exporting = exportingRequirementId === req.id;
+                    return (
+                      <div
+                        key={req.id}
+                        className={cn(
+                          'relative group text-left px-3 py-2.5 rounded-lg mb-1 transition-all cursor-pointer',
+                          isActive
+                            ? 'bg-primary/10 text-primary'
+                            : 'hover:bg-muted/50 text-foreground'
+                        )}
+                        onClick={() => setSelectedWorkitemId(req.id)}
+                      >
+                        {/* 标题行：状态圆点 + 标题 */}
+                        <div className="flex items-center gap-2">
+                          <span className={cn('w-2 h-2 rounded-full shrink-0', SIDEBAR_STATUS_DOT[statusKey] ?? 'bg-blue-500')} />
+                          <span className={cn('text-sm truncate flex-1 pr-6', isActive ? 'font-medium' : 'font-normal')}>{req.title}</span>
+                        </div>
+                        {/* 元信息行：文档/原型关联指示 + 状态标签 */}
+                        <div className="flex items-center gap-2 mt-1.5 ml-4">
+                          <span className={cn(
+                            'flex items-center gap-0.5 text-[11px]',
+                            hasDoc ? 'text-blue-500' : 'text-muted-foreground/30'
+                          )}>
+                            <FileText className="h-3 w-3" />
+                          </span>
+                          <span className={cn(
+                            'flex items-center gap-0.5 text-[11px]',
+                            hasProto ? 'text-green-500' : 'text-muted-foreground/30'
+                          )}>
+                            <Eye className="h-3 w-3" />
+                          </span>
+                          <span className="text-[11px] text-muted-foreground/70 ml-auto">{statusKey}</span>
+                        </div>
+                        {/* 需求操作：分享 / 导出 / 评审 / 分配 */}
+                        <div className="absolute right-1 top-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                disabled={sharing || exporting || reviewDialog.processing || assignDialog.processing}
+                              >
+                                {sharing || exporting || reviewDialog.processing || assignDialog.processing ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <MoreVertical className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleShareRequirement(req)} disabled={sharing}>
+                                <Share2 className="h-4 w-4 mr-2" />分享
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleExportRequirement(req)} disabled={exporting}>
+                                <Download className="h-4 w-4 mr-2" />导出
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => handleReviewRequirement(req)} disabled={reviewDialog.processing}>
+                                <Gavel className="h-4 w-4 mr-2" />评审
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openAssignDialog(req)} disabled={assignDialog.processing}>
+                                <UserCheck className="h-4 w-4 mr-2" />分配
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </ScrollArea>
+              </aside>
+            )}
+          </>
+        )}
+
+        {/* 主区域：上方子 Tab + 下方内容 */}
+        <div className="flex-1 flex flex-col gap-4 min-h-0">
+          {topTab === 'design' && !hasNoDesign && !!selectedWorkitemId && (
+            <Tabs value={subTab} onValueChange={value => setTabs(prev => ({ ...prev, subTab: value as ProductSubTab }))} className="w-full">
+              <TabsList className="aurora-tab-bar level-2 mb-0">
+                {subTabs.map(tab => {
+                  const Icon = tab.icon;
+                  return (
+                    <TabsTrigger key={tab.key} value={tab.key} className="aurora-tab-item level-2">
+                      <Icon className="h-4 w-4" />
+                      {tab.label}
+                    </TabsTrigger>
+                  );
+                })}
+              </TabsList>
+            </Tabs>
+          )}
+
+          <Card className="flex-1 overflow-hidden border-none claude-card flex flex-col relative">
+            {topTab === 'kanban' && (
+              <KanbanWorkspace onNavigateToDesign={(id) => {
+                setTabs(prev => ({ ...prev, topTab: 'design' }));
+                setSelectedWorkitemId(id);
+              }} />
+            )}
+            {/* 设计视图 - 无选中需求：引导选择 */}
+            {topTab === 'design' && !selectedWorkitemId && (
+              <div className="h-full flex flex-col items-center justify-center gap-4 text-muted-foreground">
+                <div className="w-16 h-16 rounded-2xl bg-primary/10 grid place-items-center">
+                  <Layers className="h-8 w-8 text-primary/60" />
+                </div>
+                <div className="text-center">
+                  <p className="text-base font-medium text-foreground">请从左侧选择需求</p>
+                  <p className="text-sm mt-1">选择需求后可查看关联的设计文档与原型</p>
+                </div>
+              </div>
+            )}
+            {/* 设计视图 - 需求无设计关联：空设计提示页 */}
+            {topTab === 'design' && hasNoDesign && (
+              <div className="h-full flex flex-col items-center justify-center gap-4 text-muted-foreground">
+                <div className="w-16 h-16 rounded-2xl bg-muted/30 grid place-items-center">
+                  <FileText className="h-8 w-8 text-muted-foreground/40" />
+                </div>
+                <div className="text-center max-w-sm">
+                  <p className="text-base font-medium text-foreground">该需求暂无设计</p>
+                  <p className="text-sm mt-1">需求「{selectedRequirement?.title}」尚未关联设计文档或原型</p>
+                </div>
+              </div>
+            )}
+            {/* 设计视图 - 有关联设计：正常展示 */}
+            {topTab === 'design' && !hasNoDesign && !!selectedWorkitemId && subTab === 'doc' && <DocMode focusDocId={focusDocId} />}
+            {topTab === 'design' && !hasNoDesign && !!selectedWorkitemId && subTab === 'prototype' && <PrototypeWorkspace focusItemId={focusItemId} />}
+            {topTab === 'design' && !hasNoDesign && !!selectedWorkitemId && subTab === 'history' && <VersionHistoryMode workitemId={selectedWorkitemId} />}
+          </Card>
+        </div>
+      </div>
+
+      {/* 分享成功后的权限配置对话框 */}
+      <Dialog open={shareDialog.open} onOpenChange={open => setShareDialog(prev => ({ ...prev, open }))}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Share2 className="h-4 w-4 text-primary" />
+              需求分享
+            </DialogTitle>
+            <DialogDescription>配置访客是否可以添加批注</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-border/50 p-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="allow-comments" className="text-sm">允许访客添加批注</Label>
+                <p className="text-xs text-muted-foreground">关闭后访客仅可查看已有批注</p>
+              </div>
+              <Switch
+                id="allow-comments"
+                checked={shareDialog.allowComments}
+                onCheckedChange={handleAllowCommentsChange}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                value={shareDialog.share ? `${window.location.origin}/share/requirement/${shareDialog.share.token}` : ''}
+                readOnly
+                className="flex-1 text-xs"
+              />
+              <Button size="sm" className="h-9 gap-1 shrink-0" onClick={handleCopyShareLink}>
+                <Copy className="h-3.5 w-3.5" />
+                复制
+              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShareDialog({ open: false, share: null, allowComments: true })}>
+              关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 需求评审对话框 */}
+      <Dialog
+        open={reviewDialog.open}
+        onOpenChange={open => {
+          if (!open) {
+            setReviewDialog({ open: false, step: 'review', req: null, share: null, selectedAssigneeId: '', processing: false });
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Gavel className="h-4 w-4 text-primary" />
+              需求评审
+            </DialogTitle>
+            <DialogDescription>
+              {reviewDialog.step === 'review'
+                ? '确认需求文档与原型后进行评审'
+                : '评审通过，请指定受理人'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {reviewDialog.processing && (
+              <div className="flex items-center justify-center py-6">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            )}
+            {!reviewDialog.processing && reviewDialog.step === 'review' && (
+              <>
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={reviewDialog.share ? `${window.location.origin}/share/requirement/${reviewDialog.share.token}` : ''}
+                    readOnly
+                    className="flex-1 text-xs"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-9 gap-1 shrink-0"
+                    onClick={() => {
+                      if (!reviewDialog.share) return;
+                      const url = `${window.location.origin}/share/requirement/${reviewDialog.share.token}`;
+                      navigator.clipboard.writeText(url).then(() => toast.success('链接已复制'));
+                    }}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    复制
+                  </Button>
+                </div>
+                <Button
+                  variant="outline"
+                  className="w-full gap-2"
+                  onClick={() => {
+                    if (!reviewDialog.share) return;
+                    window.open(`/share/requirement/${reviewDialog.share.token}`, '_blank');
+                  }}
+                >
+                  <Eye className="h-4 w-4" />
+                  打开分享页
+                </Button>
+              </>
+            )}
+            {!reviewDialog.processing && reviewDialog.step === 'assign' && (
+              <div className="space-y-2">
+                <Label htmlFor="review-assignee">选择受理人</Label>
+                <Select
+                  value={reviewDialog.selectedAssigneeId}
+                  onValueChange={value => setReviewDialog(prev => ({ ...prev, selectedAssigneeId: value }))}
+                >
+                  <SelectTrigger id="review-assignee">
+                    <SelectValue placeholder="请选择工作空间成员" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {members.map(m => (
+                      <SelectItem key={m.userId} value={m.userId}>{m.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            {reviewDialog.step === 'review' ? (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => setReviewDialog({ open: false, step: 'review', req: null, share: null, selectedAssigneeId: '', processing: false })}
+                >
+                  取消
+                </Button>
+                <Button variant="destructive" className="gap-1" onClick={handleReviewReject} disabled={reviewDialog.processing}>
+                  <XCircle className="h-4 w-4" />
+                  评审不通过
+                </Button>
+                <Button className="gap-1" onClick={() => setReviewDialog(prev => ({ ...prev, step: 'assign' }))} disabled={reviewDialog.processing}>
+                  <CheckCircle2 className="h-4 w-4" />
+                  通过
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => setReviewDialog(prev => ({ ...prev, step: 'review' }))}
+                  disabled={reviewDialog.processing}
+                >
+                  返回
+                </Button>
+                <Button onClick={handleReviewPass} disabled={reviewDialog.processing || !reviewDialog.selectedAssigneeId}>
+                  {reviewDialog.processing && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  确认受理
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 需求分配对话框 */}
+      <Dialog
+        open={assignDialog.open}
+        onOpenChange={open => {
+          if (!open) {
+            setAssignDialog({ open: false, req: null, selectedAssigneeId: '', processing: false });
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserCheck className="h-4 w-4 text-primary" />
+              分配受理人
+            </DialogTitle>
+            <DialogDescription>为需求「{assignDialog.req?.title}」指定受理人</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="assign-assignee">选择受理人</Label>
+              <Select
+                value={assignDialog.selectedAssigneeId}
+                onValueChange={value => setAssignDialog(prev => ({ ...prev, selectedAssigneeId: value }))}
+              >
+                <SelectTrigger id="assign-assignee">
+                  <SelectValue placeholder="请选择工作空间成员" />
+                </SelectTrigger>
+                <SelectContent>
+                  {members.map(m => (
+                    <SelectItem key={m.userId} value={m.userId}>{m.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setAssignDialog({ open: false, req: null, selectedAssigneeId: '', processing: false })}
+              disabled={assignDialog.processing}
+            >
+              取消
+            </Button>
+            <Button onClick={handleAssignConfirm} disabled={assignDialog.processing || !assignDialog.selectedAssigneeId}>
+              {assignDialog.processing && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              确认分配
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
@@ -449,7 +1197,7 @@ export const ProductWorkspace: React.FC = () => {
 // 文档模式
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DocMode: React.FC = () => {
+const DocMode: React.FC<{ focusDocId?: string | null }> = ({ focusDocId }) => {
   const { membership } = useAuth();
   const workspaceId = membership?.workspaceId ?? '';
 
@@ -464,7 +1212,7 @@ const DocMode: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  // 分享批注：仅已发布文档加载，面板可展开/收起
+  // 分享批注：仅已定稿文档加载，面板可展开/收起
   const [shareComments, setShareComments] = useState<ShareComment[]>([]);
   const [commentsOpen, setCommentsOpen] = useState(false);
   // 新建文档时预选的目标目录（空字符串表示未分类）
@@ -538,6 +1286,25 @@ const DocMode: React.FC = () => {
     loadFolders();
   }, [workspaceId]);
 
+  // 需求关联跳转：focusDocId 变化时加载对应文档并选中
+  useEffect(() => {
+    if (!focusDocId || !workspaceId) return;
+    const existing = docs.find(d => d.id === focusDocId);
+    if (existing) {
+      setSelectedDocId(focusDocId);
+      setIsCreating(false);
+      return;
+    }
+    // 文档不在列表中时单独拉取后插入列表并选中
+    productDocApi.get(workspaceId, focusDocId)
+      .then(doc => {
+        setDocs(prev => prev.some(d => d.id === doc.id) ? prev : [doc, ...prev]);
+        setSelectedDocId(doc.id);
+        setIsCreating(false);
+      })
+      .catch(() => toast.error('加载关联文档失败'));
+  }, [focusDocId, workspaceId]);
+
   const selectedDoc = useMemo(
     () => docs.find(d => d.id === selectedDocId) ?? null,
     [docs, selectedDocId]
@@ -555,7 +1322,7 @@ const DocMode: React.FC = () => {
     }
   }, [selectedDoc, isCreating]);
 
-  // 加载分享批注：仅已发布文档有分享入口，切换文档时重置面板
+  // 加载分享批注：仅已定稿文档有分享入口，切换文档时重置面板
   useEffect(() => {
     if (!workspaceId || !selectedDocId || selectedDoc?.status !== 'published') {
       setShareComments([]);
@@ -605,14 +1372,6 @@ const DocMode: React.FC = () => {
     const q = searchQuery.toLowerCase();
     return folders.filter(f => f.name.toLowerCase().includes(q));
   }, [folders, searchQuery]);
-
-  const handleCreate = (folderId = '') => {
-    setIsCreating(true);
-    setSelectedDocId(null);
-    setCreateInFolderId(folderId);
-    setTitle('未命名文档');
-    setContent(DEFAULT_DOC_CONTENT);
-  };
 
   // 移动文档到指定目录；folderId 为空字符串表示移回根目录
   const handleMoveDoc = async (docId: string, folderId: string) => {
@@ -746,7 +1505,7 @@ const DocMode: React.FC = () => {
       });
       await loadDocs();
       setLastSavedAt(new Date());
-      toast.success('版本已发布');
+      toast.success('版本已定稿');
     } catch {
       toast.error('发布失败');
     } finally {
@@ -762,22 +1521,9 @@ const DocMode: React.FC = () => {
         changeSummary: `发布于 ${new Date().toLocaleString()}`,
       });
       await loadDocs();
-      toast.success('版本已发布');
+      toast.success('版本已定稿');
     } catch {
       toast.error('发布失败');
-    }
-  };
-
-  // 生成分享短链并复制到剪贴板（仅已发布文档可用，后端幂等返回同一链接）
-  const handleShareDoc = async (docId: string) => {
-    if (!workspaceId) return;
-    try {
-      const share = await productDocApi.createShare(workspaceId, docId);
-      const url = `${window.location.origin}/s/${share.token}`;
-      await navigator.clipboard.writeText(url);
-      toast.success('分享链接已复制', { description: url });
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : '生成分享链接失败');
     }
   };
 
@@ -868,7 +1614,6 @@ const DocMode: React.FC = () => {
           onMove={folderId => handleMoveDoc(doc.id, folderId)}
           onShowHistory={() => setHistoryDoc(doc)}
           onPublish={() => handlePublishDoc(doc.id)}
-          onShare={() => handleShareDoc(doc.id)}
           onDelete={() => setDocToDelete(doc)}
         />
       </div>
@@ -876,7 +1621,6 @@ const DocMode: React.FC = () => {
   );
 
   const folderRowHandlers: FolderRowHandlers = {
-    onCreateDoc: handleCreate,
     onCreateSub: openCreateFolderDialog,
     onRename: startInlineRename,
     onTogglePin: handleTogglePin,
@@ -911,69 +1655,7 @@ const DocMode: React.FC = () => {
   );
 
   return (
-    <ResizablePanelGroup direction="horizontal" className="h-full rounded-xl border border-border/50">
-      <ResizablePanel defaultSize={22} minSize={18} maxSize={35} className="bg-muted/10 border-r border-border/50">
-        <div className="h-full flex flex-col">
-          <div className="p-3 border-b border-border/50 bg-muted/20 shrink-0 flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">文档目录</span>
-              <div className="flex items-center gap-0.5">
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openCreateFolderDialog()} title="新建目录">
-                  <FolderPlus className="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleCreate()} title="新建文档">
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="搜索文档..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="h-7 pl-7 text-xs"
-              />
-            </div>
-          </div>
-          <ScrollArea className="flex-1 p-2">
-            {loadingDocs ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : searchQuery ? (
-              filteredDocs.length === 0 && filteredFolders.length === 0 ? (
-                <div className="text-center text-xs text-muted-foreground py-8">未找到匹配的文档或目录</div>
-              ) : (
-                <div className="flex flex-col gap-1">
-                  {/* 命中的目录：点击后清空搜索回到目录树 */}
-                  {filteredFolders.map(folder => (
-                    <button
-                      key={folder.id}
-                      onClick={() => setSearchQuery('')}
-                      className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-muted/50 text-left transition-colors"
-                    >
-                      <Folder className="h-4 w-4 shrink-0 text-amber-500" />
-                      <span className="text-sm font-medium truncate">{folder.name}</span>
-                    </button>
-                  ))}
-                  {filteredDocs.map(doc => renderDocRow(doc, 0))}
-                </div>
-              )
-            ) : docs.length === 0 && folders.length === 0 ? (
-              <div className="text-center text-xs text-muted-foreground py-8">
-                暂无文档，点击右上角新建
-              </div>
-            ) : (
-              renderFolderTree()
-            )}
-          </ScrollArea>
-        </div>
-      </ResizablePanel>
-
-      <ResizableHandle withHandle />
-
-      <ResizablePanel defaultSize={78}>
+    <div className="h-full flex flex-col rounded-xl border border-border/50 overflow-hidden">
         {selectedDoc || isCreating ? (
           <div className="h-full flex flex-col">
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/50 shrink-0 bg-background/90 gap-3">
@@ -1004,19 +1686,7 @@ const DocMode: React.FC = () => {
                     {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   </Button>
                 )}
-                {/* 分享按钮仅已发布（正式）文档可见 */}
-                {!isCreating && selectedDoc?.status === 'published' && (
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => handleShareDoc(selectedDoc.id)}
-                    title="分享文档"
-                  >
-                    <Share2 className="h-4 w-4" />
-                  </Button>
-                )}
-                {/* 分享批注面板开关：仅已发布文档可见，角标显示未解决数 */}
+                {/* 分享批注面板开关：仅已定稿文档可见，角标显示未解决数 */}
                 {!isCreating && selectedDoc?.status === 'published' && (
                   <Button
                     variant={commentsOpen ? 'secondary' : 'outline'}
@@ -1045,7 +1715,23 @@ const DocMode: React.FC = () => {
             </div>
             <div className="flex-1 overflow-hidden flex min-h-0">
               <div className="flex-1 min-w-0 overflow-hidden">
-                <MarkdownEditor value={content} onChange={setContent} lastSavedAt={lastSavedAt} />
+                <MarkdownEditor
+                  value={content}
+                  onChange={setContent}
+                  lastSavedAt={lastSavedAt}
+                  allowComments={!isCreating && selectedDoc?.status === 'published'}
+                  onAddComment={async ({ quote, content: commentContent }) => {
+                    if (!workspaceId || !selectedDocId) return;
+                    await productDocApi.addDocShareComment(workspaceId, selectedDocId, {
+                      authorName: '',
+                      quoteText: quote,
+                      content: commentContent,
+                    });
+                    toast.success('批注已添加');
+                    const list = await productDocApi.listDocShareComments(workspaceId, selectedDocId);
+                    setShareComments(list ?? []);
+                  }}
+                />
               </div>
               {commentsOpen && !isCreating && selectedDocId && (
                 <ShareCommentsPanel
@@ -1059,14 +1745,9 @@ const DocMode: React.FC = () => {
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-3">
             <FileText className="h-12 w-12 opacity-20" />
-            <p>在左侧选择一个文档，或新建文档开始编辑</p>
-            <Button variant="outline" size="sm" onClick={() => handleCreate()}>
-              <Plus className="h-4 w-4 mr-1.5" />
-              新建文档
-            </Button>
+            <p>请在左侧选择需求查看关联文档</p>
           </div>
         )}
-      </ResizablePanel>
 
       <AlertDialog open={!!docToDelete} onOpenChange={open => !open && setDocToDelete(null)}>
         <AlertDialogContent>
@@ -1139,6 +1820,6 @@ const DocMode: React.FC = () => {
         workspaceId={workspaceId}
         doc={historyDoc}
       />
-    </ResizablePanelGroup>
+    </div>
   );
 };

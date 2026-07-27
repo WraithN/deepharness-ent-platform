@@ -38,5 +38,6 @@ type ProductDocService interface {
 	ListShareCommentsByToken(token string) ([]object.ShareComment, error)
 	AddShareComment(token string, req object.AddShareCommentRequest) (*object.ShareComment, error)
 	ListDocShareComments(workspaceID, docID string) ([]object.ShareComment, error)
+	AddDocShareComment(workspaceID, docID, userID string, req object.AddShareCommentRequest) (*object.ShareComment, error)
 	ResolveShareComment(workspaceID, docID, commentID, userID string) (*object.ShareComment, error)
 }

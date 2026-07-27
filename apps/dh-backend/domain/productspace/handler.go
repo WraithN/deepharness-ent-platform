@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/service"
+	workitemobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/object"
+	workitemservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 
 	gatewayhandler "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
@@ -34,44 +37,91 @@ const (
 // 注入到原型页面中的标注脚本与样式，用于在 iframe 预览中实现点击标注和标记回显。
 const (
 	prototypeAnnotationStyle = `.dh-annotate-mode, .dh-annotate-mode * { cursor: crosshair !important; }
-.dh-annotate-mode [data-dh-id]:hover { outline: 2px dashed #ef4444 !important; }`
+.dh-annotate-mode [data-dh-id]:hover { outline: 2px dashed #ef4444 !important; }
+.dh-marker-focus { background: #f59e0b !important; transform: translate(-50%, -50%) scale(1.8) !important; z-index: 10000 !important; animation: dh-marker-pulse 0.5s ease-in-out 4; }
+@keyframes dh-marker-pulse { 0%, 100% { transform: translate(-50%, -50%) scale(1.8); } 50% { transform: translate(-50%, -50%) scale(2.6); } }`
 
 	prototypeAnnotationScript = `(function() {
   var MARKER_CLASS = 'dh-prototype-marker';
   var annotateMode = false;
+  // 分享页只读模式下标记可点击，点击后向父窗口回传批注 id 供展示详情。
+  var markerClickable = false;
 
   function removeMarkers() {
     var nodes = document.querySelectorAll('.' + MARKER_CLASS);
     for (var i = 0; i < nodes.length; i++) nodes[i].remove();
   }
 
+  // 创建单个标记节点，并绑定点击、悬停/离开事件。
+  // 使用独立闭包，避免 var 循环导致所有回调引用同一 marker 对象。
+  function createMarker(m) {
+    var el = document.createElement('div');
+    el.className = MARKER_CLASS;
+    el.setAttribute('data-comment-id', m.id || '');
+    el.style.position = 'absolute';
+    el.style.left = (m.x || 0) + 'px';
+    el.style.top = (m.y || 0) + 'px';
+    el.style.minWidth = '22px';
+    el.style.height = '22px';
+    el.style.padding = '0 5px';
+    el.style.background = '#ef4444';
+    el.style.border = '2px solid #ffffff';
+    el.style.borderRadius = '50%';
+    el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
+    el.style.zIndex = '9999';
+    el.style.transform = 'translate(-50%, -50%)';
+    el.style.display = 'flex';
+    el.style.alignItems = 'center';
+    el.style.justifyContent = 'center';
+    el.style.color = '#ffffff';
+    el.style.fontSize = '12px';
+    el.style.fontWeight = 'bold';
+    el.style.lineHeight = '1';
+    el.style.boxSizing = 'border-box';
+    el.textContent = m.seq != null ? String(m.seq) : '';
+
+    // 可点击模式下允许指针事件并绑定点击、悬停/离开回传，便于分享页查看批注详情
+    if (markerClickable) {
+      el.style.pointerEvents = 'auto';
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', function(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        window.parent.postMessage({ type: 'dh-marker-click', id: m.id || '' }, '*');
+      });
+      el.addEventListener('mouseenter', function(e) {
+        window.parent.postMessage({ type: 'dh-marker-hover', id: m.id || '', clientX: e.clientX, clientY: e.clientY }, '*');
+      });
+      el.addEventListener('mouseleave', function() {
+        window.parent.postMessage({ type: 'dh-marker-leave' }, '*');
+      });
+    } else {
+      el.style.pointerEvents = 'none';
+    }
+    document.body.appendChild(el);
+  }
+
   function renderMarkers(markers) {
     removeMarkers();
     if (!markers) return;
     for (var i = 0; i < markers.length; i++) {
-      var m = markers[i];
-      var el = document.createElement('div');
-      el.className = MARKER_CLASS;
-      el.style.position = 'absolute';
-      el.style.left = (m.x || 0) + 'px';
-      el.style.top = (m.y || 0) + 'px';
-      el.style.width = '12px';
-      el.style.height = '12px';
-      el.style.background = '#ef4444';
-      el.style.border = '2px solid #ffffff';
-      el.style.borderRadius = '50%';
-      el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
-      el.style.zIndex = '9999';
-      el.style.transform = 'translate(-50%, -50%)';
-      el.style.pointerEvents = 'none';
-      el.title = (m.userName || '') + ': ' + (m.content || '');
-      document.body.appendChild(el);
+      createMarker(markers[i]);
     }
   }
 
   function setAnnotateMode(active) {
     annotateMode = active;
     document.body.classList.toggle('dh-annotate-mode', active);
+  }
+
+  // 定位并高亮指定批注标记：滚动到标记位置并触发闪烁动画
+  function focusMarker(id) {
+    if (!id) return;
+    var el = document.querySelector('.' + MARKER_CLASS + '[data-comment-id="' + id + '"]');
+    if (!el) return;
+    if (el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    el.classList.add('dh-marker-focus');
+    setTimeout(function() { el.classList.remove('dh-marker-focus'); }, 2200);
   }
 
   function getSelector(el) {
@@ -98,6 +148,10 @@ const (
       renderMarkers(data.markers);
     } else if (data.type === 'dh-set-annotate-mode') {
       setAnnotateMode(!!data.active);
+    } else if (data.type === 'dh-set-marker-clickable') {
+      markerClickable = !!data.active;
+    } else if (data.type === 'dh-focus-marker') {
+      focusMarker(data.id);
     }
   });
 
@@ -141,12 +195,13 @@ func injectPrototypeAnnotationScript(html []byte) []byte {
 
 // Handler 是 product-space 模块的 HTTP 处理器。
 type Handler struct {
-	svc service.ProductSpaceService
+	svc         service.ProductSpaceService
+	workItemSvc workitemservice.WorkItemService
 }
 
 // NewHandler 创建 product-space HTTP 处理器。
-func NewHandler(svc service.ProductSpaceService) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc service.ProductSpaceService, workItemSvc workitemservice.WorkItemService) *Handler {
+	return &Handler{svc: svc, workItemSvc: workItemSvc}
 }
 
 // decodeJSONBody 解析请求 JSON 体，遇到请求体过大时返回 413，其他解析错误返回 400。
@@ -475,6 +530,61 @@ func (h *Handler) Folders(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ImportPrototype 处理 POST /api/v1/workspaces/{id}/product-space/import-prototype。
+// 将磁盘上 /proto-make 生成的原型工程目录正式采纳到产品空间；
+// 若请求携带 workitemId，还会将导入的原型页面关联到该需求，并生成一次产品设计版本。
+func (h *Handler) ImportPrototype(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	userID, err := h.userID(r)
+	if err != nil {
+		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+
+	var req object.ImportPrototypeRequest
+	if !h.decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.Folder == "" {
+		h.writeError(w, http.StatusBadRequest, "folder is required")
+		return
+	}
+
+	workspaceID := h.workspaceID(r)
+	importedIDs, err := h.svc.ImportPrototype(r.Context(), workspaceID, userID, req.Folder)
+	if err != nil {
+		h.handleServiceError(w, err, "failed to import prototype")
+		return
+	}
+
+	// 关联需求并生成设计版本：在 handler 层编排，避免 productspace service 与 workitem service 循环依赖。
+	// 只要提供了 workitemId，每次采纳都会生成一次产品设计版本快照。
+	if req.WorkitemID != "" && h.workItemSvc != nil {
+		for _, itemID := range importedIDs {
+			_, linkErr := h.workItemSvc.CreateDocLink(req.WorkitemID, workitemobject.CreateDocLinkRequest{
+				ProductSpaceItemID: itemID,
+				WorkspaceID:        workspaceID,
+				ItemType:           workitemservice.DocLinkTypePrototype,
+			})
+			if linkErr != nil {
+				log.Printf("[ProductSpace] create doc link failed for workitem %s item %s: %v", req.WorkitemID, itemID, linkErr)
+			}
+		}
+
+		_, dvErr := h.workItemSvc.CreateDesignVersion(req.WorkitemID, workspaceID, userID, "采纳原型")
+		if dvErr != nil {
+			log.Printf("[ProductSpace] create design version failed for workitem %s: %v", req.WorkitemID, dvErr)
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Comments 处理 GET / POST /api/v1/workspaces/{id}/product-space/items/{itemId}/comments。
 // GET 返回批注列表，POST 新增批注并返回包含用户名的完整对象。
 func (h *Handler) Comments(w http.ResponseWriter, r *http.Request) {
@@ -547,6 +657,262 @@ func (h *Handler) ServePrototype(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+// CreateShare 处理 POST /api/v1/workspaces/{id}/product-space/share：
+// 为指定产品（prototypes 一级目录）创建免登录分享链接，需 PM 权限，幂等。
+func (h *Handler) CreateShare(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	userID, err := h.userID(r)
+	if err != nil {
+		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+	var req object.CreatePrototypeShareRequest
+	if !h.decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.ProductFolder == "" {
+		h.writeError(w, http.StatusBadRequest, "product_folder is required")
+		return
+	}
+
+	share, err := h.svc.CreatePrototypeShare(r.Context(), h.workspaceID(r), userID, req.ProductFolder)
+	if err != nil {
+		h.handleServiceError(w, err, "failed to create prototype share")
+		return
+	}
+	h.writeJSON(w, http.StatusCreated, share)
+}
+
+// SharedPrototype 处理 GET /api/v1/shares/proto/{token}：免登录获取分享产品信息与页面列表。
+func (h *Handler) SharedPrototype(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	token := r.PathValue("token")
+	if token == "" {
+		h.writeError(w, http.StatusBadRequest, "missing share token")
+		return
+	}
+
+	view, err := h.svc.GetSharedPrototype(token)
+	if err != nil {
+		h.handleServiceError(w, err, "failed to get shared prototype")
+		return
+	}
+	h.writeJSON(w, http.StatusOK, view)
+}
+
+// ServeSharedPrototype 处理 GET /api/v1/shares/proto/{token}/files/{path...}：
+// 免登录 serve 产品目录下文件，HTML 自动注入标注脚本与样式。
+func (h *Handler) ServeSharedPrototype(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	token := r.PathValue("token")
+	path := r.PathValue("path")
+	if token == "" || path == "" {
+		h.writeError(w, http.StatusBadRequest, "token and path are required")
+		return
+	}
+
+	data, contentType, err := h.svc.ServeSharedFile(token, path)
+	if err != nil {
+		h.handleServiceError(w, err, "failed to serve shared prototype file")
+		return
+	}
+
+	if strings.Contains(contentType, "text/html") {
+		data = injectPrototypeAnnotationScript(data)
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// SharedPrototypeComments 处理 GET /api/v1/shares/proto/{token}/pages/{itemId}/comments：
+// 免登录查看指定页面的批注列表。
+func (h *Handler) SharedPrototypeComments(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	token := r.PathValue("token")
+	itemID := r.PathValue("itemId")
+	if token == "" || itemID == "" {
+		h.writeError(w, http.StatusBadRequest, "token and itemId are required")
+		return
+	}
+
+	comments, err := h.svc.ListSharedComments(token, itemID)
+	if err != nil {
+		h.handleServiceError(w, err, "failed to list shared prototype comments")
+		return
+	}
+	h.writeJSON(w, http.StatusOK, comments)
+}
+
+// CreateRequirementShare 处理 POST /api/v1/workspaces/{id}/requirement-shares：
+// 创建需求级统一分享链接（文档+原型），需 PM 权限，幂等。
+func (h *Handler) CreateRequirementShare(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	userID, err := h.userID(r)
+	if err != nil {
+		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+	var req object.CreateRequirementShareRequest
+	if !h.decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.DocID == "" && req.ProductFolder == "" {
+		h.writeError(w, http.StatusBadRequest, "doc_id 或 product_folder 至少提供一个")
+		return
+	}
+
+	share, err := h.svc.CreateRequirementShare(r.Context(), h.workspaceID(r), userID, req)
+	if err != nil {
+		h.handleServiceError(w, err, "failed to create requirement share")
+		return
+	}
+	h.writeJSON(w, http.StatusCreated, share)
+}
+
+// SharedRequirement 处理 GET /api/v1/requirement-shares/{token}：
+// 免登录获取需求级统一分享视图（文档+原型）。
+func (h *Handler) SharedRequirement(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	token := r.PathValue("token")
+	if token == "" {
+		h.writeError(w, http.StatusBadRequest, "missing share token")
+		return
+	}
+
+	view, err := h.svc.GetSharedRequirement(token)
+	if err != nil {
+		h.handleServiceError(w, err, "failed to get shared requirement")
+		return
+	}
+	h.writeJSON(w, http.StatusOK, view)
+}
+
+// ServeSharedRequirementFile 处理 GET /api/v1/requirement-shares/{token}/files/{path...}：
+// 免登录 serve 需求分享中的原型文件，HTML 自动注入标注脚本与样式。
+func (h *Handler) ServeSharedRequirementFile(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	token := r.PathValue("token")
+	path := r.PathValue("path")
+	if token == "" || path == "" {
+		h.writeError(w, http.StatusBadRequest, "token and path are required")
+		return
+	}
+
+	data, contentType, err := h.svc.ServeSharedRequirementFile(token, path)
+	if err != nil {
+		h.handleServiceError(w, err, "failed to serve shared requirement file")
+		return
+	}
+
+	if strings.Contains(contentType, "text/html") {
+		data = injectPrototypeAnnotationScript(data)
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// RequirementShareComments 处理 GET / POST /api/v1/requirement-shares/{token}/pages/{itemId}/comments：
+// 免登录查看/新增需求分享中指定原型页面的批注。
+func (h *Handler) RequirementShareComments(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodGet, http.MethodPost) {
+		return
+	}
+
+	token := r.PathValue("token")
+	itemID := r.PathValue("itemId")
+	if token == "" || itemID == "" {
+		h.writeError(w, http.StatusBadRequest, "token and itemId are required")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		comments, err := h.svc.ListRequirementShareComments(token, itemID)
+		if err != nil {
+			h.handleServiceError(w, err, "failed to list requirement share comments")
+			return
+		}
+		h.writeJSON(w, http.StatusOK, comments)
+	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+		var req object.AddCommentRequest
+		if !h.decodeJSONBody(w, r, &req) {
+			return
+		}
+		comment, err := h.svc.AddRequirementSharePrototypeComment(token, itemID, req)
+		if err != nil {
+			h.handleServiceError(w, err, "failed to add requirement share prototype comment")
+			return
+		}
+		h.writeJSON(w, http.StatusCreated, comment)
+	}
+}
+
+// RequirementShareDocComments 处理 GET / POST /api/v1/requirement-shares/{token}/doc-comments：
+// 免登录查看/新增需求分享中文档的文本批注。
+func (h *Handler) RequirementShareDocComments(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodGet, http.MethodPost) {
+		return
+	}
+
+	token := r.PathValue("token")
+	if token == "" {
+		h.writeError(w, http.StatusBadRequest, "token is required")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		comments, err := h.svc.ListRequirementShareDocComments(token)
+		if err != nil {
+			h.handleServiceError(w, err, "failed to list requirement share doc comments")
+			return
+		}
+		h.writeJSON(w, http.StatusOK, comments)
+	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+		var req object.AddRequirementShareDocCommentRequest
+		if !h.decodeJSONBody(w, r, &req) {
+			return
+		}
+		comment, err := h.svc.AddRequirementShareDocComment(token, req)
+		if err != nil {
+			h.handleServiceError(w, err, "failed to add requirement share doc comment")
+			return
+		}
+		h.writeJSON(w, http.StatusCreated, comment)
+	}
 }
 
 // handleServiceError 统一处理服务层错误，按错误类型映射为对应的 HTTP 状态码。

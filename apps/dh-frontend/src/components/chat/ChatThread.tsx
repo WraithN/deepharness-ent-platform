@@ -7,6 +7,7 @@ import { formatDateLabel, isSameDay } from '@/lib/utils';
 import type { PreviewMode } from './LivePreview';
 import type { SendContext } from '@/hooks/use-ag-ui-chat';
 import type { UserStoryData } from './UserStoryCard';
+import type { RequirementBreakdownData } from './RequirementBreakdownCard';
 
 interface ChatThreadProps {
   openDetail: (type: 'req' | 'defect' | 'case', id: string) => void;
@@ -17,7 +18,13 @@ interface ChatThreadProps {
   onProjectPreview?: (path: string, mode: PreviewMode) => void;
   onUserStoryPreview?: (data: UserStoryData) => void;
   activeUserStoryData?: UserStoryData | null;
+  onReqBreakdownPreview?: (data: RequirementBreakdownData) => void;
+  activeReqBreakdownData?: RequirementBreakdownData | null;
+  onPrototypePreview?: (path: string) => void;
+  requirementTitle?: string;
+  workitemId?: string;
   runPhase?: 'connecting' | 'thinking' | null;
+  agentPluginKey?: string;
 }
 
 /**
@@ -56,12 +63,18 @@ const ChatMessageItem: React.FC<{
         <AssistantMessage
           message={message}
           runPhase={props.runPhase}
+          agentPluginKey={props.agentPluginKey}
           onArtifactClick={props.onArtifactClick}
           onRegenerate={props.onRegenerate}
           onFilePreview={props.onFilePreview}
           onProjectPreview={props.onProjectPreview}
           onUserStoryPreview={props.onUserStoryPreview}
           activeUserStoryData={props.activeUserStoryData}
+          onReqBreakdownPreview={props.onReqBreakdownPreview}
+          activeReqBreakdownData={props.activeReqBreakdownData}
+          onPrototypePreview={props.onPrototypePreview}
+          requirementTitle={props.requirementTitle}
+          workitemId={props.workitemId}
         />
       )}
     </>

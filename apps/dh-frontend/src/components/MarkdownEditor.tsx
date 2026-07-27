@@ -3,8 +3,8 @@ import '@wangeditor/editor/dist/css/style.css';
 import { type IDomEditor, type IEditorConfig, type IToolbarConfig, SlateTransforms } from '@wangeditor/editor';
 import { Editor, Toolbar } from '@wangeditor/editor-for-react';
 import {
-  Bold, 
-  Code, CodeSquare, Heading1, Heading2, Image, Italic, Link2, List, ListOrdered, Minus, Quote,ScrollText,Table, 
+  Bold,
+  Code, CodeSquare, Heading1, Heading2, Image, Italic, Link2, List, ListOrdered, Loader2, MessageSquarePlus, Minus, Quote,ScrollText, Send, Table,
 } from 'lucide-react';
 import { MarkdownView } from '@/components/chat/MarkdownView';
 import {
@@ -14,6 +14,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useTemplates } from '@/hooks/use-templates';
 import type { DocTemplate, TemplateCategory } from '@/types';
@@ -34,6 +36,10 @@ export interface MarkdownEditorProps {
   templates?: DocTemplate[];
   /** 是否显示右上角「常用模板」快捷填充按钮，默认 true */
   showTemplatePicker?: boolean;
+  /** 是否开启文档批注入口：选中文本后显示浮动批注按钮 */
+  allowComments?: boolean;
+  /** 提交批注：quote 为选中文本，content 为批注内容 */
+  onAddComment?: (comment: { quote: string; content: string }) => Promise<void>;
 }
 
 /** MarkdownEditor 默认使用的模板分类。 */
@@ -98,6 +104,13 @@ const countWords = (markdown: string): number =>
 /** HTML 转 Markdown 的防抖间隔（毫秒） */
 const SYNC_DEBOUNCE_MS = 300;
 
+/** 批注引用文本与内容长度限制（与后端一致）。 */
+const MAX_COMMENT_QUOTE_LENGTH = 500;
+const MAX_COMMENT_CONTENT_LENGTH = 2000;
+
+/** 浮动批注输入框半宽，用于贴边选区时的位置钳制。 */
+const COMPOSER_HALF_WIDTH = 150;
+
 /**
  * 编辑器错误边界：WangEditor/Slate 内部崩溃（如节点路径错误）时，
  * 捕获渲染异常并展示恢复入口，避免整个页面白屏。
@@ -149,6 +162,8 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   lastSavedAt = null,
   templates: templatesProp,
   showTemplatePicker = true,
+  allowComments = false,
+  onAddComment,
 }) => {
   const { templates: defaultTemplates } = useTemplates(DEFAULT_TEMPLATE_CATEGORY, true);
   const templates = templatesProp ?? defaultTemplates;
@@ -166,6 +181,16 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   // 避免切换文档/模板时触发旧的 onChange 闭包导致父级状态被旧数据覆盖。
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+
+  // 文档批注：选区信息、浮动按钮/输入框状态
+  const [selection, setSelection] = useState<{ quote: string; x: number; y: number } | null>(null);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [commentDraft, setCommentDraft] = useState('');
+  const [sendingComment, setSendingComment] = useState(false);
+  const composerRef = useRef<HTMLDivElement>(null);
+
+  /** 将 x 坐标钳制在视口内，避免贴边选区时弹出框溢出。 */
+  const clampX = (x: number) => Math.min(Math.max(x, COMPOSER_HALF_WIDTH), window.innerWidth - COMPOSER_HALF_WIDTH);
 
   /**
    * 安全写入 HTML。setHtml 会在编辑器内部结算节点操作，若此时存在选区或
@@ -353,8 +378,66 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     });
   };
 
+  // 文档批注：监听鼠标松开，捕获选中文本与位置。
+  const handleMouseUp = (e: React.MouseEvent) => {
+    if (composerOpen || !allowComments || !onAddComment) return;
+    const sel = window.getSelection();
+    const quote = sel?.toString().trim() ?? '';
+    if (!sel || !quote || sel.rangeCount === 0) {
+      setSelection(null);
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    // 仅当事件目标或选区锚定节点位于编辑器容器内时才处理，避免工具栏/面板触发
+    const container = e.currentTarget as HTMLElement;
+    if (!container.contains(range.commonAncestorContainer)) {
+      setSelection(null);
+      return;
+    }
+    if (quote.length > MAX_COMMENT_QUOTE_LENGTH) {
+      setSelection(null);
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    setSelection({ quote, x: rect.left + rect.width / 2, y: rect.top });
+  };
+
+  const handleSubmitComment = async () => {
+    if (!selection || !onAddComment) return;
+    const content = commentDraft.trim();
+    if (!content) return;
+    setSendingComment(true);
+    try {
+      await onAddComment({ quote: selection.quote, content });
+      setCommentDraft('');
+      setComposerOpen(false);
+      setSelection(null);
+      window.getSelection()?.removeAllRanges();
+    } catch {
+      // 父组件已通过 toast 提示错误
+    } finally {
+      setSendingComment(false);
+    }
+  };
+
+  // 点击批注输入框外部时关闭
+  useEffect(() => {
+    if (!composerOpen) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      if (composerRef.current && !composerRef.current.contains(e.target as Node)) {
+        setComposerOpen(false);
+        setSelection(null);
+      }
+    };
+    const timer = setTimeout(() => document.addEventListener('mousedown', handleMouseDown), 0);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('mousedown', handleMouseDown);
+    };
+  }, [composerOpen]);
+
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden">
+    <div className="flex flex-col h-full w-full overflow-hidden" onMouseUp={handleMouseUp}>
       {/* 模式切换栏：左侧三模式标签，右侧模板菜单（Markdown 模式附加快捷工具栏） */}
       <div className="flex items-center justify-between h-11 px-4 border-b border-border/50 shrink-0 bg-background/90 gap-2">
         <div className="aurora-tab-bar level-3 shrink-0">
@@ -455,6 +538,66 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           </div>
         )}
       </div>
+
+      {/* 选中文本后的浮动批注入口：提高 z-index 避免被 WangEditor 浮动工具栏遮挡 */}
+      {selection && !composerOpen && (
+        <div
+          className="fixed z-[9999] -translate-x-1/2 -translate-y-full"
+          style={{ left: clampX(selection.x), top: selection.y - 8 }}
+        >
+          <Button
+            size="sm"
+            className="h-7 text-xs gap-1 shadow-lg"
+            onMouseDown={e => e.preventDefault()}
+            onClick={() => setComposerOpen(true)}
+          >
+            <MessageSquarePlus className="h-3 w-3" />
+            批注
+          </Button>
+        </div>
+      )}
+
+      {/* 批注输入框：提高 z-index 避免被 WangEditor 浮动工具栏遮挡 */}
+      {selection && composerOpen && (
+        <div
+          ref={composerRef}
+          className="fixed z-[9999] -translate-x-1/2 w-72 rounded-lg border border-border bg-background shadow-xl p-3 space-y-2"
+          style={{ left: clampX(selection.x), top: selection.y + 24 }}
+        >
+          <blockquote className="text-[11px] text-muted-foreground border-l-2 border-primary/40 pl-2 line-clamp-2 break-words">
+            {selection.quote}
+          </blockquote>
+          <Textarea
+            value={commentDraft}
+            onChange={e => setCommentDraft(e.target.value.slice(0, MAX_COMMENT_CONTENT_LENGTH))}
+            placeholder="输入批注内容…"
+            className="min-h-[60px] max-h-[120px] text-xs resize-none"
+            autoFocus
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => {
+                setComposerOpen(false);
+                setSelection(null);
+              }}
+            >
+              取消
+            </Button>
+            <Button
+              size="sm"
+              className="h-7 text-xs gap-1"
+              disabled={sendingComment || !commentDraft.trim()}
+              onClick={handleSubmitComment}
+            >
+              {sendingComment ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+              发表
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* 底部状态栏：字数统计 + 最近保存时间 */}
       <div className="flex items-center justify-between px-4 py-1.5 border-t border-border/50 shrink-0 text-xs text-muted-foreground bg-background/90">

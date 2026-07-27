@@ -17,6 +17,8 @@ import { PersonalAssistantChat } from "@/pages/PersonalAssistantChat";
 import { FileView } from "@/pages/FileView";
 import { PrdView } from "@/pages/PrdView";
 import { ShareDoc } from "@/pages/ShareDoc";
+import { SharePrototype } from "@/pages/SharePrototype";
+import { ShareRequirement } from "@/pages/ShareRequirement";
 import { AdminPage } from "@/pages/AdminPage";
 
 import { Profile } from "@/pages/Profile";
@@ -31,6 +33,10 @@ export const routes: RouteObject[] = [
   { path: "/login", element: <Login /> },
   // 分享文档落地页：免登录访问
   { path: "/s/:token", element: <ShareDoc /> },
+  // 原型产品分享落地页：免登录访问
+  { path: "/share/prototype/:token", element: <SharePrototype /> },
+  // 需求级统一分享落地页：免登录访问
+  { path: "/share/requirement/:token", element: <ShareRequirement /> },
   {
     path: "/profile",
     element: <RequireAuth><Profile /></RequireAuth>,

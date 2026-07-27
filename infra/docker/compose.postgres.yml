@@ -34,6 +34,9 @@ services:
       - ../database/prototypetemplate/schema.sql:/docker-entrypoint-initdb.d/09b_prototypetemplate.sql:ro
       - ../database/productdoc/prototype-comments.sql:/docker-entrypoint-initdb.d/10_prototype_comments.sql:ro
       - ../database/productdoc/share-comments.sql:/docker-entrypoint-initdb.d/10_share_comments.sql:ro
+      - ../database/productdoc/migration-20260725-requirement-shares.sql:/docker-entrypoint-initdb.d/11_requirement_shares.sql:ro
+      - ../database/productdoc/migration-20260726-requirement-share-title.sql:/docker-entrypoint-initdb.d/12_requirement_share_title.sql:ro
+      - ../database/productdoc/migration-20260726-requirement-share-comments.sql:/docker-entrypoint-initdb.d/13_requirement_share_comments.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U deepharness -d deepharness"]
       interval: 10s

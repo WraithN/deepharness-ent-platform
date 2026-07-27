@@ -13,6 +13,7 @@ export interface ProjectCheckResponse {
   isNew: boolean;
   hasDiff: boolean;
   fileCount: number;
+  htmlCount: number;
   dirSize: number;
   projectName: string;
 }

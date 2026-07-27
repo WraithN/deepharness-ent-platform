@@ -4,6 +4,7 @@
  * 注意：条目与版本字段为后端 snake_case 原始 JSON；评论为 camelCase。
  */
 import { api } from './api';
+import type { ShareComment } from './productdoc-api';
 
 /** 条目类型：文档 | 原型 */
 export type ProductSpaceItemType = 'doc' | 'prototype';
@@ -168,4 +169,133 @@ export const productSpaceApi = {
   /** 新增批注评论。 */
   addComment: (workspaceId: string, itemId: string, req: AddCommentRequest) =>
     api.post<PrototypeComment>(`${ITEMS_PATH(workspaceId)}/${itemId}/comments`, req),
+
+  /** 为指定产品创建免登录分享链接（PM 权限，幂等）。 */
+  createPrototypeShare: (workspaceId: string, productFolder: string) =>
+    api.post<PrototypeShare>(`/v1/workspaces/${workspaceId}/product-space/share`, {
+      product_folder: productFolder,
+    }),
+
+  /** 将 /proto-make 生成的原型工程目录采纳到产品空间。
+   * 若提供 workitemId，导入后会自动将原型关联到该需求并生成一次产品设计版本。 */
+  importPrototype: (workspaceId: string, folder: string, workitemId?: string) =>
+    api.post<void>(`/v1/workspaces/${workspaceId}/product-space/import-prototype`, { folder, workitemId }),
+};
+
+/** 原型产品分享记录。 */
+export interface PrototypeShare {
+  token: string;
+  workspaceId: string;
+  userId: string;
+  productFolder: string;
+  createdAt: string;
+}
+
+/** 分享页面对外暴露的单个原型页面信息。 */
+export interface SharedPrototypePage {
+  itemId: string;
+  title: string;
+  relativePath: string;
+}
+
+/** 免登录分享落地页视图：产品名 + 该产品下全部原型页面列表。 */
+export interface SharedPrototypeView {
+  productFolder: string;
+  pages: SharedPrototypePage[];
+}
+
+/** 原型分享公开 API（免登录）。 */
+export const prototypeShareApi = {
+  /** 获取分享产品信息与页面列表。 */
+  getView: (token: string) =>
+    api.get<SharedPrototypeView>(`/v1/prototype-shares/${token}`),
+
+  /** 获取指定页面的批注列表。 */
+  listComments: (token: string, itemId: string) =>
+    api.get<PrototypeComment[]>(`/v1/prototype-shares/${token}/pages/${itemId}/comments`),
+
+  /** 构造分享页文件的 serve URL（iframe src 直接使用，免登录）。 */
+  serveUrl: (token: string, relativePath: string) =>
+    `/api/v1/prototype-shares/${token}/files/${encodeURI(relativePath)}`,
+};
+
+/** 在产品空间目录树中按原型条目 ID 查找所属产品名称。 */
+export function findPrototypeProductName(tree: ProductSpaceTreeNode[], itemId: string): string | null {
+  const prototypesRoot = tree.find(n => n.name === 'prototypes');
+  if (!prototypesRoot?.children) return null;
+  for (const product of prototypesRoot.children) {
+    for (const child of product.children ?? []) {
+      if (child.id === itemId) return product.name;
+      const found = (child.children ?? []).find(p => p.id === itemId);
+      if (found) return product.name;
+    }
+  }
+  return null;
+}
+
+/** 需求级统一分享记录。 */
+export interface RequirementShare {
+  token: string;
+  workspaceId: string;
+  userId: string;
+  title: string;
+  docId: string;
+  productFolder: string;
+  allowComments: boolean;
+  createdAt: string;
+}
+
+/** 需求分享落地页中的文档信息。 */
+export interface SharedDocInfo {
+  title: string;
+  content: string;
+  version: number;
+  publishedAt: string;
+  createdByName?: string;
+}
+
+/** 需求分享文档批注新增请求。 */
+export interface AddRequirementShareDocCommentRequest {
+  authorName: string;
+  quoteText: string;
+  content: string;
+}
+
+/** 需求级统一分享落地页视图：文档 + 原型。 */
+export interface SharedRequirementView {
+  title: string;
+  allowComments: boolean;
+  doc?: SharedDocInfo;
+  prototype?: SharedPrototypeView;
+}
+
+/** 需求级统一分享 API。 */
+export const requirementShareApi = {
+  /** 创建需求级统一分享链接（文档+原型）。 */
+  create: (workspaceId: string, req: { title: string; docId?: string; productFolder?: string; allowComments?: boolean }) =>
+    api.post<RequirementShare>(`/v1/workspaces/${workspaceId}/requirement-shares`, req),
+
+  /** 免登录获取需求级统一分享视图。 */
+  getView: (token: string) =>
+    api.get<SharedRequirementView>(`/v1/requirement-shares/${token}`),
+
+  /** 构造需求分享中原型文件的 serve URL。 */
+  serveUrl: (token: string, relativePath: string) =>
+    `/api/v1/requirement-shares/${token}/files/${encodeURI(relativePath)}`,
+
+  /** 获取需求分享中指定原型页面的批注列表（免登录）。 */
+  listComments: (token: string, itemId: string) =>
+    api.get<PrototypeComment[]>(`/v1/requirement-shares/${token}/pages/${itemId}/comments`),
+
+  /** 为需求分享中的原型页面添加批注（免登录）。 */
+  addPrototypeComment: (token: string, itemId: string, req: AddCommentRequest) =>
+    api.post<PrototypeComment>(`/v1/requirement-shares/${token}/pages/${itemId}/comments`, req),
+
+  /** 获取需求分享中文档的批注列表（免登录）。 */
+  listDocComments: (token: string) =>
+    api.get<ShareComment[]>(`/v1/requirement-shares/${token}/doc-comments`),
+
+  /** 为需求分享中的文档添加文本批注（免登录）。 */
+  addDocComment: (token: string, req: AddRequirementShareDocCommentRequest) =>
+    api.post<ShareComment>(`/v1/requirement-shares/${token}/doc-comments`, req),
 };

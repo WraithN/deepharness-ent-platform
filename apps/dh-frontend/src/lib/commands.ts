@@ -49,7 +49,7 @@ export const COMMAND_CATEGORIES: Record<string, CommandCategory> = {
   '/design-token': 'design',
   '/prd-write': 'product',
   '/prd-research': 'product',
-  '/user-story': 'product',
+  '/req-breakdown': 'product',
   '/data-analysis': 'product',
 };
 

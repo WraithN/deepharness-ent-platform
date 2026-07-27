@@ -30,7 +30,7 @@ type DBAgentRuntimeService struct {
 }
 
 // NewDBAgentRuntimeService 创建基于 PostgreSQL 的 Agent 运行时服务。
-// workspaceRoot 用于在 gatewayd 未上报 work_directory 时，按 ${workspace_root}/${workspace_id}/${user_id} 计算默认工作目录。
+// workspaceRoot 用于在 gatewayd 未上报 work_directory 时，按 ${workspace_root}/${user_id}/${workspace_id} 计算默认工作目录。
 func NewDBAgentRuntimeService(db *sql.DB, workspaceRoot string) *DBAgentRuntimeService {
 	svc := &DBAgentRuntimeService{db: db, workspaceRoot: workspaceRoot}
 	// 服务初始化时自动建表，避免开发/测试环境因未执行迁移脚本而缺少表。
@@ -134,10 +134,10 @@ func (s *DBAgentRuntimeService) ReportStatus(runtimeID string, req object.Report
 		req.WorkspaceID, req.UserID,
 	)
 
-	// 若 gatewayd 未上报工作目录，则按 ${workspace_root}/${workspace_id}/${user_id} 计算默认路径。
+	// 若 gatewayd 未上报工作目录，则按 ${workspace_root}/${user_id}/${workspace_id} 计算默认路径。
 	workspacePath := req.WorkspacePath
 	if workspacePath == "" && s.workspaceRoot != "" && req.WorkspaceID != "" && req.UserID != "" {
-		workspacePath = filepath.Join(s.workspaceRoot, req.WorkspaceID, req.UserID)
+		workspacePath = filepath.Join(s.workspaceRoot, req.UserID, req.WorkspaceID)
 	}
 
 	var rt object.AgentRuntime

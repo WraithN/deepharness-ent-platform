@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -114,16 +113,8 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 		return workspace.Workspace{}, fmt.Errorf("commit failed: %w", err)
 	}
 
-	// 创建工作空间根目录 WORKSPACE_ROOT/{workspace_id}
-	// 架构合规：通过 stubclient 在共享目录创建目录，不直接操作文件系统
-	if s.workspaceRoot != "" {
-		wsDir := filepath.Join(s.workspaceRoot, ws.ID)
-		if sc := stubclient.Default(); sc != nil {
-			if err := sc.MkdirAll(context.Background(), wsDir); err != nil {
-				log.Printf("[Workspace] create workspace dir %s failed: %v", wsDir, err)
-			}
-		}
-	}
+	// 工作空间目录在用户加入时由 EnsureUserWorkspaceDirs 创建（{workspaceRoot}/{userID}/{workspaceID}），
+	// 此处无需提前创建 workspace 级目录。
 
 	return ws, nil
 }
@@ -183,7 +174,7 @@ func (s *DBWorkspaceService) copyWorkspaceAgentConfigsTx(tx *sql.Tx, targetWorks
 }
 
 // EnsureUserWorkspaceDirs 确保用户在工作空间下的 projects、files 与 products 目录存在。
-// 目录结构：WORKSPACE_ROOT/{workspaceID}/{userID}/{projects,files,products/{docs,prototypes}}
+// 目录结构：WORKSPACE_ROOT/{userID}/{workspaceID}/{projects,files,products/{docs,prototypes}}
 // os.MkdirAll 是幂等操作，天然并发安全。
 func (s *DBWorkspaceService) EnsureUserWorkspaceDirs(ctx context.Context, workspaceID, userID string) error {
 	if s.workspaceRoot == "" {
@@ -195,7 +186,7 @@ func (s *DBWorkspaceService) EnsureUserWorkspaceDirs(ctx context.Context, worksp
 	if userID == "" {
 		return errors.New("userID is required")
 	}
-	base := filepath.Join(s.workspaceRoot, workspaceID, userID)
+	base := filepath.Join(s.workspaceRoot, userID, workspaceID)
 	dirs := []string{
 		filepath.Join(base, "projects"),
 		filepath.Join(base, "files"),
@@ -521,10 +512,11 @@ func (s *DBWorkspaceService) ListMembers(workspaceID string) ([]workspace.Member
 	result := make([]workspace.Member, 0)
 	for rows.Next() {
 		var m workspace.Member
-		var name, email, subRole, platformRole sql.NullString
-		if err := rows.Scan(&m.WorkspaceID, &m.UserID, &m.DisplayID, &name, &email, &m.Role, &subRole, &platformRole, &m.JoinedAt); err != nil {
+		var name, email, subRole, platformRole, displayID sql.NullString
+		if err := rows.Scan(&m.WorkspaceID, &m.UserID, &displayID, &name, &email, &m.Role, &subRole, &platformRole, &m.JoinedAt); err != nil {
 			return nil, fmt.Errorf("scan member failed: %w", err)
 		}
+		m.DisplayID = sqlutil.ScanNullString(displayID)
 		m.Name = sqlutil.ScanNullString(name)
 		m.Email = sqlutil.ScanNullString(email)
 		m.SubRole = sqlutil.ScanNullString(subRole)

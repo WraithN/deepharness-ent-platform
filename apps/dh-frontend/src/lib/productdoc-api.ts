@@ -209,6 +209,10 @@ export const productDocApi = {
   listDocShareComments: (workspaceId: string, docId: string) =>
     api.get<ShareComment[]>(`/v1/workspaces/${workspaceId}/product-docs/${docId}/share-comments`),
 
+  /** 登录态：为文档新增分享批注（产品空间内直接批注）。 */
+  addDocShareComment: (workspaceId: string, docId: string, req: AddShareCommentRequest) =>
+    api.post<ShareComment>(`/v1/workspaces/${workspaceId}/product-docs/${docId}/share-comments`, req),
+
   /** 登录态：关闭（标记已解决）指定批注 */
   resolveShareComment: (workspaceId: string, docId: string, commentId: string) =>
     api.post<ShareComment>(

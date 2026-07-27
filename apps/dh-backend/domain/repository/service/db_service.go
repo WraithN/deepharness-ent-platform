@@ -293,23 +293,23 @@ func (s *DBRepositoryService) resolveSSHKey(userID string) (string, error) {
 // ── 用户级仓库操作 ──
 
 // userProjectPath 构建用户 projects 目录下某个仓库的本地路径。
-// 路径格式：WORKSPACE_ROOT/{workspaceID}/{userID}/projects/{repoName}
+// 路径格式：WORKSPACE_ROOT/{userID}/{workspaceID}/projects/{repoName}
 func (s *DBRepositoryService) userProjectPath(workspaceID, userID, repoName string) string {
 	if s.workspaceRoot == "" {
 		return ""
 	}
 	safeName := gitrepo.SanitizePathSegment(repoName)
-	return filepath.Join(s.workspaceRoot, workspaceID, userID, "projects", safeName)
+	return filepath.Join(s.workspaceRoot, userID, workspaceID, "projects", safeName)
 }
 
 // userSyncLockPath 构建用户仓库同步锁文件的路径。
-// 路径格式：WORKSPACE_ROOT/{workspaceID}/{userID}/projects/{repoName}.clone.lock
+// 路径格式：WORKSPACE_ROOT/{userID}/{workspaceID}/projects/{repoName}.clone.lock
 func (s *DBRepositoryService) userSyncLockPath(workspaceID, userID, repoName string) string {
 	if s.workspaceRoot == "" {
 		return ""
 	}
 	safeName := gitrepo.SanitizePathSegment(repoName)
-	return filepath.Join(s.workspaceRoot, workspaceID, userID, "projects", safeName+".clone.lock")
+	return filepath.Join(s.workspaceRoot, userID, workspaceID, "projects", safeName+".clone.lock")
 }
 
 // hasSyncLock 检查是否存在同步锁文件（表示正在同步中）。
@@ -377,7 +377,7 @@ func (s *DBRepositoryService) userSyncErrorPath(workspaceID, userID, repoName st
 		return ""
 	}
 	safeName := gitrepo.SanitizePathSegment(repoName)
-	return filepath.Join(s.workspaceRoot, workspaceID, userID, "projects", safeName+".clone.error")
+	return filepath.Join(s.workspaceRoot, userID, workspaceID, "projects", safeName+".clone.error")
 }
 
 // writeSyncError 通过 personal-stub 写入同步错误信息到 .clone.error 文件。
@@ -607,18 +607,11 @@ func scanRepository(row scannable) (repository.Repository, error) {
 }
 
 // Scan 扫描工作空间目录下的本地 Git 仓库并自动导入到数据库。
+// 目录结构：WORKSPACE_ROOT/{userID}/{workspaceID}/...，需遍历所有用户目录下的 workspaceID 子目录。
 func (s *DBRepositoryService) Scan(workspaceID string) ([]ScannedRepository, error) {
-	workspaceRoot := filepath.Join(s.gitClient.Root(), workspaceID)
-	if _, err := os.Stat(workspaceRoot); os.IsNotExist(err) {
-		// 架构合规：通过 stubclient 在共享目录创建工作空间目录
-		sc := stubclient.Default()
-		if sc == nil {
-			return nil, fmt.Errorf("personal-stub client not initialized")
-		}
-		if err := sc.MkdirAll(context.Background(), workspaceRoot); err != nil {
-			return nil, fmt.Errorf("create workspace directory failed: %w", err)
-		}
-	}
+	// 新目录结构下 workspaceID 在各用户目录下，通过 glob 匹配所有 {workspaceRoot}/{userID}/{workspaceID}
+	wsPattern := filepath.Join(s.workspaceRoot, "*", workspaceID)
+	wsDirs, _ := filepath.Glob(wsPattern)
 
 	existingRepos, err := s.List(workspaceID)
 	if err != nil {
@@ -633,78 +626,82 @@ func (s *DBRepositoryService) Scan(workspaceID string) ([]ScannedRepository, err
 
 	result := []ScannedRepository{}
 
-	err = filepath.Walk(workspaceRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if !info.IsDir() || info.Name() != ".git" {
-			return nil
-		}
-
-		repoDir := filepath.Dir(path)
-		repoName := filepath.Base(repoDir)
-
-		scanned := ScannedRepository{
-			Name:     repoName,
-			Path:     repoDir,
-			IsCloned: true,
-		}
-
-		if url, err := gitExec(repoDir, "config", "--get", "remote.origin.url"); err == nil {
-			scanned.URL = strings.TrimSpace(url)
-		}
-
-		if branch, err := gitExec(repoDir, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
-			scanned.CurrentBranch = strings.TrimSpace(branch)
-		}
-
-		if commit, err := gitExec(repoDir, "rev-parse", "HEAD"); err == nil {
-			scanned.LastCommit = strings.TrimSpace(commit)
-		}
-
-		if msg, err := gitExec(repoDir, "log", "-1", "--pretty=%B"); err == nil {
-			scanned.LastCommitMessage = strings.TrimSpace(msg)
-			if len(scanned.LastCommitMessage) > 200 {
-				scanned.LastCommitMessage = scanned.LastCommitMessage[:197] + "..."
-			}
-		}
-
-		if t, err := gitExec(repoDir, "log", "-1", "--pretty=%ci"); err == nil {
-			if pt, err := time.Parse("2006-01-02 15:04:05 -0700", strings.TrimSpace(t)); err == nil {
-				scanned.LastCommitTime = &pt
-			}
-		}
-
-		// Auto-import to DB if not exists
-		if existingRepo, exists := existingPaths[repoDir]; !exists {
-			now := time.Now().UTC()
-			id := uuid.New().String()
-			_, err := s.db.Exec(`
-				INSERT INTO repositories (id, workspace_id, name, url, type, default_branch, local_path, clone_status, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-			`, id, workspaceID, repoName, scanned.URL, "dev", scanned.CurrentBranch, repoDir, "cloned", now, now)
+	scanOneDir := func(workspaceRoot string) error {
+		return filepath.Walk(workspaceRoot, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
-				log.Printf("[Repository] failed to auto-import %s: %v", repoName, err)
+				return err
 			}
-		} else if existingRepo.LocalPath != repoDir || existingRepo.DefaultBranch != scanned.CurrentBranch {
-			// Update existing repo if path or branch changed
-			_, err := s.db.Exec(`
-				UPDATE repositories 
-				SET local_path = $1, default_branch = $2, updated_at = $3
-				WHERE id = $4
-			`, repoDir, scanned.CurrentBranch, time.Now().UTC(), existingRepo.ID)
-			if err != nil {
-				log.Printf("[Repository] failed to update %s: %v", repoName, err)
+
+			if !info.IsDir() || info.Name() != ".git" {
+				return nil
 			}
+
+			repoDir := filepath.Dir(path)
+			repoName := filepath.Base(repoDir)
+
+			scanned := ScannedRepository{
+				Name:     repoName,
+				Path:     repoDir,
+				IsCloned: true,
+			}
+
+			if url, err := gitExec(repoDir, "config", "--get", "remote.origin.url"); err == nil {
+				scanned.URL = strings.TrimSpace(url)
+			}
+
+			if branch, err := gitExec(repoDir, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+				scanned.CurrentBranch = strings.TrimSpace(branch)
+			}
+
+			if commit, err := gitExec(repoDir, "rev-parse", "HEAD"); err == nil {
+				scanned.LastCommit = strings.TrimSpace(commit)
+			}
+
+			if msg, err := gitExec(repoDir, "log", "-1", "--pretty=%B"); err == nil {
+				scanned.LastCommitMessage = strings.TrimSpace(msg)
+				if len(scanned.LastCommitMessage) > 200 {
+					scanned.LastCommitMessage = scanned.LastCommitMessage[:197] + "..."
+				}
+			}
+
+			if t, err := gitExec(repoDir, "log", "-1", "--pretty=%ci"); err == nil {
+				if pt, err := time.Parse("2006-01-02 15:04:05 -0700", strings.TrimSpace(t)); err == nil {
+					scanned.LastCommitTime = &pt
+				}
+			}
+
+			// Auto-import to DB if not exists
+			if existingRepo, exists := existingPaths[repoDir]; !exists {
+				now := time.Now().UTC()
+				id := uuid.New().String()
+				_, err := s.db.Exec(`
+					INSERT INTO repositories (id, workspace_id, name, url, type, default_branch, local_path, clone_status, created_at, updated_at)
+					VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+				`, id, workspaceID, repoName, scanned.URL, "dev", scanned.CurrentBranch, repoDir, "cloned", now, now)
+				if err != nil {
+					log.Printf("[Repository] failed to auto-import %s: %v", repoName, err)
+				}
+			} else if existingRepo.LocalPath != repoDir || existingRepo.DefaultBranch != scanned.CurrentBranch {
+				// Update existing repo if path or branch changed
+				_, err := s.db.Exec(`
+					UPDATE repositories 
+					SET local_path = $1, default_branch = $2, updated_at = $3
+					WHERE id = $4
+				`, repoDir, scanned.CurrentBranch, time.Now().UTC(), existingRepo.ID)
+				if err != nil {
+					log.Printf("[Repository] failed to update %s: %v", repoName, err)
+				}
+			}
+
+			result = append(result, scanned)
+			return filepath.SkipDir
+		})
+	}
+
+	for _, wsDir := range wsDirs {
+		if err := scanOneDir(wsDir); err != nil {
+			return nil, fmt.Errorf("scan repositories failed: %w", err)
 		}
-
-		result = append(result, scanned)
-		return filepath.SkipDir
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("scan repositories failed: %w", err)
 	}
 
 	return result, nil

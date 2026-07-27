@@ -115,6 +115,25 @@ coding_agents:
 agent_runtime:
   bearer_token: "96be41dbe1875010dafbe237c7082df1379a503c33412cd5f19d256a5c566c92"
 
+# 飞书机器人接入配置
+# webhook_token: 调用本平台 webhook 接口时必须携带的 Bearer Token（本平台侧鉴权，区别于飞书侧的 verify_token）。
+# mock_mode: true 时跳过飞书签名校验并将回复输出到日志，便于本地用 curl 验证 @机器人 -> agent -> 回复 全链路。
+#   生产环境必须设为 false 并填入真实 app_id/app_secret/verify_token。
+# bot_user_id: 飞书用户未绑定平台账号时兜底使用的平台用户 ID（决定 agent 工作目录归属）。
+# default_workspace: 兜底工作空间 ID（未绑定用户在该空间下操作）。
+# dispatch_timeout: agent 单次分发超时，覆盖长任务（原型生成等）。
+feishu:
+  app_id: ""
+  app_secret: ""
+  verify_token: ""
+  encrypt_key: ""
+  webhook_token: "feishu-local-dev-token"
+  api_base_url: "https://open.feishu.cn/open-apis"
+  bot_user_id: ""
+  default_workspace: ""
+  mock_mode: true
+  dispatch_timeout: "30m"
+
 workitem:
   platforms:
     - meego

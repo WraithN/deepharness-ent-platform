@@ -3,7 +3,7 @@
  */
 export const STATUS_LABEL: Record<string, string> = {
   draft: '草稿',
-  published: '已发布',
+  published: '已定稿',
   archived: '已归档',
 };
 
