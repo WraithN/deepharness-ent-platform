@@ -738,25 +738,13 @@ export const Chat: React.FC = () => {
   }, [showPreview, closePreview]);
 
   // 做原型：将当前预览的文档作为卡片放入输入框，并自动选择 /proto-make 指令。
-  // 若文档标题能匹配到已有需求，则引用该需求卡片，便于后续采纳时生成设计版本。未匹配时不应使用假 ID，
-  // 避免后端为不存在的需求创建关联失败。
+  // 需求 ID 的匹配由 protoMakeRequirementTitle + requirements 的 useEffect 负责，
+  // 避免本回调依赖后文才声明的 requirements 状态造成 TDZ。
   const handleProtoMake = useCallback((filePath: string, title: string) => {
-    const fileName = filePath.split('/').pop() || filePath;
-    const matchedReqId = resolveWorkitemIdByTitle(title, requirements);
-    if (matchedReqId) {
-      const matchedReq = requirements.find(r => r.id === matchedReqId);
-      setQuotedCard({
-        type: 'req',
-        id: matchedReqId,
-        title: matchedReq?.title ?? title,
-        reporter: matchedReq?.reporter ?? '当前用户',
-      });
-    } else {
-      setQuotedCard(null);
-    }
+    setQuotedCard(null);
     setProtoMakeRequirementTitle(title);
     setInput(prev => prev.trimEnd() ? `${prev.trimEnd()}\n/proto-make ` : '/proto-make ');
-  }, [requirements]);
+  }, []);
 
   // 监听 FileView 跨标签页发来的做原型请求。
   useEffect(() => {
@@ -896,6 +884,22 @@ export const Chat: React.FC = () => {
     if (quotedCard?.type === 'req') return quotedCard.id;
     return resolveWorkitemIdByTitle(protoMakeRequirementTitle, requirements);
   }, [quotedCard, protoMakeRequirementTitle, requirements]);
+
+  // 当“做原型”标题变化时，自动匹配并引用对应需求卡片，让 AI 和后续采纳都获得正确的需求上下文。
+  // 如果用户已显式引用其他需求/缺陷/用例卡片，则保留原引用不做覆盖。
+  useEffect(() => {
+    if (!protoMakeRequirementTitle) return;
+    if (quotedCard && quotedCard.type === 'req') return;
+    const matchedId = resolveWorkitemIdByTitle(protoMakeRequirementTitle, requirements);
+    if (!matchedId) return;
+    const matchedReq = requirements.find(r => r.id === matchedId);
+    setQuotedCard({
+      type: 'req',
+      id: matchedId,
+      title: matchedReq?.title ?? protoMakeRequirementTitle,
+      reporter: matchedReq?.reporter ?? '当前用户',
+    });
+  }, [protoMakeRequirementTitle, requirements, quotedCard]);
 
   // Input queue: when AI is running, user inputs are queued and sent automatically.
   const [inputQueue, setInputQueue] = useState<InputQueueItem[]>([]);
