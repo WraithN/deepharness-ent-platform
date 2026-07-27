@@ -2245,6 +2245,7 @@ export const Chat: React.FC = () => {
                       key={projectPreview.path}
                       projectPath={projectPreview.path}
                       mode={projectPreview.mode}
+                      previewOnly
                       onModeChange={(nextMode) => setProjectPreview({ path: projectPreview.path, mode: nextMode })}
                       onClose={closePreview}
                     />
