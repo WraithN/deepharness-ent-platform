@@ -2176,7 +2176,7 @@ export const Chat: React.FC = () => {
 
   const renderPromptMenu = (onSelect: (prompt: WorkspacePrompt) => void) => (
     <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
-      <div className="p-2 border-b space-y-2">
+      <div className="p-2 border-b space-y-2 shrink-0">
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
@@ -2200,7 +2200,7 @@ export const Chat: React.FC = () => {
           ))}
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto p-1">
+      <div className="flex-1 min-h-0 overflow-y-auto p-1">
         {filteredAvailablePrompts.length === 0 && (
           <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配提示词</div>
         )}
@@ -2216,8 +2216,8 @@ export const Chat: React.FC = () => {
 
   const renderSkillMenu = (onSelect: (skill: Skill) => void) => (
     <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
-      <Tabs value={activeSkillTab} onValueChange={setActiveSkillTab} className="w-full flex flex-col">
-        <div className="px-2 pt-2 bg-muted/30 border-b space-y-2">
+      <Tabs value={activeSkillTab} onValueChange={setActiveSkillTab} className="w-full h-full flex flex-col">
+        <div className="px-2 pt-2 bg-muted/30 border-b space-y-2 shrink-0">
           <div className="relative">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
@@ -2233,7 +2233,7 @@ export const Chat: React.FC = () => {
             ))}
           </TabsList>
         </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+        <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
           {filteredAvailableSkills.length === 0 && (
             <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配技能</div>
           )}
@@ -2256,8 +2256,8 @@ export const Chat: React.FC = () => {
 
   const renderCmdMenu = (onSelect: (cmd: string) => void) => (
     <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
-      <Tabs value={activeCommandTab} onValueChange={v => setActiveCommandTab(v as CommandCategory)} className="w-full flex flex-col">
-        <div className="px-2 pt-2 bg-muted/30 border-b">
+      <Tabs value={activeCommandTab} onValueChange={v => setActiveCommandTab(v as CommandCategory)} className="w-full h-full flex flex-col">
+        <div className="px-2 pt-2 bg-muted/30 border-b shrink-0">
           <TabsList className="aurora-tab-bar level-2 w-full">
             {COMMAND_CATEGORY_ORDER.map(cat => (
               <TabsTrigger key={cat} value={cat} className="aurora-tab-item level-2">
@@ -2266,7 +2266,7 @@ export const Chat: React.FC = () => {
             ))}
           </TabsList>
         </div>
-        <div className="flex-1 overflow-y-auto p-1">
+        <div className="flex-1 min-h-0 overflow-y-auto p-1">
           {commandConfigs
             .filter(item => COMMAND_CATEGORIES[item.cmd] === activeCommandTab)
             .map(item => {
