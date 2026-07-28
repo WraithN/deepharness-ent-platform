@@ -183,8 +183,11 @@ interface RequirementBreakdownCardProps {
   error?: string | null;
   isPreviewActive?: boolean;
   onPreview?: (data: RequirementBreakdownData) => void;
-  /** 提交选中的需求项，由父组件完成实际创建工作项并返回创建结果。 */
-  onSubmit?: (items: RequirementItem[]) => Promise<RequirementBreakdownSubmitResult>;
+  /** 当前消息关联的文件附件路径列表，用于定位需求拆分 JSON 源文件。 */
+  fileAttachments?: string[];
+  /** 提交选中的需求项，由父组件完成实际创建工作项并返回创建结果。
+   *  第二个参数为源 JSON 文件路径，提交成功后父组件可将 workitemId 回写该文件做幂等。 */
+  onSubmit?: (items: RequirementItem[], options?: { jsonFilePath?: string }) => Promise<RequirementBreakdownSubmitResult>;
 }
 
 export const RequirementBreakdownCard: React.FC<RequirementBreakdownCardProps> = ({
@@ -193,6 +196,7 @@ export const RequirementBreakdownCard: React.FC<RequirementBreakdownCardProps> =
   error,
   isPreviewActive,
   onPreview,
+  fileAttachments = [],
   onSubmit,
 }) => {
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
@@ -268,9 +272,11 @@ export const RequirementBreakdownCard: React.FC<RequirementBreakdownCardProps> =
       return;
     }
     const itemsToSubmit = submittableItems.filter((i) => selectedIds.has(i.id));
+    // 提交幂等：将创建的 workitemId 回写到拆分 JSON 源文件，防止刷新后重复提交。
+    const jsonFilePath = fileAttachments.find((p) => REQ_BREAKDOWN_JSON_FILE_REGEX.test(p));
     setSubmitting(true);
     try {
-      const result = await onSubmit(itemsToSubmit);
+      const result = await onSubmit(itemsToSubmit, { jsonFilePath });
       setSubmittedMap((prev) => {
         const next = { ...prev };
         for (const c of result.created) {

@@ -1740,7 +1740,8 @@ export const Chat: React.FC = () => {
 
   // 将需求拆分中选中的子需求提交到工作项库，并刷新需求列表。
   // 若拆分项存在多级 parentId，则按层级建立父子关系；最顶层的需求挂到当前引用的父需求下。
-  const handleReqBreakdownSubmit = async (items: RequirementItem[]) => {
+  // 提交成功后，将创建的 workitemId 回写到需求拆分 JSON 源文件，做幂等处理。
+  const handleReqBreakdownSubmit = async (items: RequirementItem[], options?: { jsonFilePath?: string }) => {
     const workspaceId = getCurrentWorkspaceId();
     let projectId = 'p1';
     try {
@@ -1785,6 +1786,30 @@ export const Chat: React.FC = () => {
       });
       created.push({ id: item.id, workitemId: res.id });
       idToWorkitemId.set(item.id, res.id);
+    }
+
+    // 幂等：将创建的 workitemId 回写到需求拆分 JSON 源文件，避免刷新页面后重复提交。
+    if (options?.jsonFilePath && created.length > 0) {
+      try {
+        const file = await fileApi.content(options.jsonFilePath);
+        const parsed = JSON.parse(file.content) as RequirementBreakdownData;
+        if (parsed.items && Array.isArray(parsed.items)) {
+          const workitemIdByItemId = new Map(created.map(c => [c.id, c.workitemId]));
+          let changed = false;
+          const updatedItems = parsed.items.map(it => {
+            if (workitemIdByItemId.has(it.id) && !it.workitemId) {
+              changed = true;
+              return { ...it, workitemId: workitemIdByItemId.get(it.id) };
+            }
+            return it;
+          });
+          if (changed) {
+            await fileApi.save(options.jsonFilePath, JSON.stringify({ ...parsed, items: updatedItems }, null, 2));
+          }
+        }
+      } catch (err) {
+        console.error('Failed to write workitemIds back to req-breakdown file:', err);
+      }
     }
 
     // 刷新需求列表，使新创建的需求立即出现在任务/看板中

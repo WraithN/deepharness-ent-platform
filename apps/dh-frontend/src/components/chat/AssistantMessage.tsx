@@ -71,7 +71,7 @@ interface AssistantMessageProps {
   activeUserStoryData?: UserStoryData | null;
   onReqBreakdownPreview?: (data: RequirementBreakdownData) => void;
   activeReqBreakdownData?: RequirementBreakdownData | null;
-  onReqBreakdownSubmit?: (items: RequirementItem[]) => Promise<RequirementBreakdownSubmitResult>;
+  onReqBreakdownSubmit?: (items: RequirementItem[], options?: { jsonFilePath?: string }) => Promise<RequirementBreakdownSubmitResult>;
   onPrototypePreview?: (path: string) => void;
   requirementTitle?: string;
   workitemId?: string;
@@ -542,7 +542,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
 
           {/* 从 [[CARD:req_breakdown]] 标记自动检测到的需求拆分卡片，生成完成后再展示。 */}
           {!hasReqBreakdownFromLegacy && hasReqBreakdownFromMarker && !isRunning && (
-            <div className="px-3 py-2"><RequirementBreakdownCard data={reqBreakdownData} loading={reqBreakdownLoading} error={reqBreakdownError} isPreviewActive={isReqBreakdownActive(reqBreakdownData)} onPreview={onReqBreakdownPreview} onSubmit={onReqBreakdownSubmit} /></div>
+            <div className="px-3 py-2"><RequirementBreakdownCard data={reqBreakdownData} loading={reqBreakdownLoading} error={reqBreakdownError} isPreviewActive={isReqBreakdownActive(reqBreakdownData)} onPreview={onReqBreakdownPreview} onSubmit={onReqBreakdownSubmit} fileAttachments={fileAttachments} /></div>
           )}
 
           {/* 从 [[CARD:user_story]] 标记自动检测到的用户故事卡片，生成完成后再展示。 */}
@@ -583,7 +583,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
             if (name === 'req_breakdown') {
               const rbData = (data.content ? JSON.parse(data.content) : data.metadata) as RequirementBreakdownData;
               if (rbData && rbData.items && !isRunning) {
-                return <div key={idx} className="px-3 py-2"><RequirementBreakdownCard data={rbData} isPreviewActive={isReqBreakdownActive(rbData)} onPreview={onReqBreakdownPreview} onSubmit={onReqBreakdownSubmit} /></div>;
+                return <div key={idx} className="px-3 py-2"><RequirementBreakdownCard data={rbData} isPreviewActive={isReqBreakdownActive(rbData)} onPreview={onReqBreakdownPreview} onSubmit={onReqBreakdownSubmit} fileAttachments={fileAttachments} /></div>;
               }
               return null;
             }
