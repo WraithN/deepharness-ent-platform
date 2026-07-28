@@ -14,7 +14,7 @@ import { PrototypeCard } from './PrototypeCard';
 import { UserStoryCard, parseUserStoryFromText } from './UserStoryCard';
 import type { UserStoryData } from './UserStoryCard';
 import { RequirementBreakdownCard, useRequirementBreakdownData } from './RequirementBreakdownCard';
-import type { RequirementBreakdownData } from './RequirementBreakdownCard';
+import type { RequirementBreakdownData, RequirementBreakdownSubmitResult, RequirementItem } from './RequirementBreakdownCard';
 import type { ChatPart } from './types';
 import { toast } from 'sonner';
 import { cn, formatTime } from '@/lib/utils';
@@ -71,6 +71,7 @@ interface AssistantMessageProps {
   activeUserStoryData?: UserStoryData | null;
   onReqBreakdownPreview?: (data: RequirementBreakdownData) => void;
   activeReqBreakdownData?: RequirementBreakdownData | null;
+  onReqBreakdownSubmit?: (items: RequirementItem[]) => Promise<RequirementBreakdownSubmitResult>;
   onPrototypePreview?: (path: string) => void;
   requirementTitle?: string;
   workitemId?: string;
@@ -78,7 +79,7 @@ interface AssistantMessageProps {
   requirements?: Array<{ id: string; title: string }>;
 }
 
-export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, runPhase, agentPluginKey, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview, onUserStoryPreview, activeUserStoryData, onReqBreakdownPreview, activeReqBreakdownData, onPrototypePreview, requirementTitle, workitemId, requirements }) => {
+export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, runPhase, agentPluginKey, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview, onUserStoryPreview, activeUserStoryData, onReqBreakdownPreview, activeReqBreakdownData, onReqBreakdownSubmit, onPrototypePreview, requirementTitle, workitemId, requirements }) => {
   const thread = useThread();
   const content = Array.isArray(message.content) ? message.content : [];
   const [textExpanded, setTextExpanded] = useState(false);
@@ -541,7 +542,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
 
           {/* 从 [[CARD:req_breakdown]] 标记自动检测到的需求拆分卡片，生成完成后再展示。 */}
           {!hasReqBreakdownFromLegacy && hasReqBreakdownFromMarker && !isRunning && (
-            <div className="px-3 py-2"><RequirementBreakdownCard data={reqBreakdownData} loading={reqBreakdownLoading} error={reqBreakdownError} isPreviewActive={isReqBreakdownActive(reqBreakdownData)} onPreview={onReqBreakdownPreview} /></div>
+            <div className="px-3 py-2"><RequirementBreakdownCard data={reqBreakdownData} loading={reqBreakdownLoading} error={reqBreakdownError} isPreviewActive={isReqBreakdownActive(reqBreakdownData)} onPreview={onReqBreakdownPreview} onSubmit={onReqBreakdownSubmit} /></div>
           )}
 
           {/* 从 [[CARD:user_story]] 标记自动检测到的用户故事卡片，生成完成后再展示。 */}
@@ -582,7 +583,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
             if (name === 'req_breakdown') {
               const rbData = (data.content ? JSON.parse(data.content) : data.metadata) as RequirementBreakdownData;
               if (rbData && rbData.items && !isRunning) {
-                return <div key={idx} className="px-3 py-2"><RequirementBreakdownCard data={rbData} isPreviewActive={isReqBreakdownActive(rbData)} onPreview={onReqBreakdownPreview} /></div>;
+                return <div key={idx} className="px-3 py-2"><RequirementBreakdownCard data={rbData} isPreviewActive={isReqBreakdownActive(rbData)} onPreview={onReqBreakdownPreview} onSubmit={onReqBreakdownSubmit} /></div>;
               }
               return null;
             }

@@ -173,12 +173,18 @@ export function useRequirementBreakdownData(
   return { data, loading, error };
 }
 
+export interface RequirementBreakdownSubmitResult {
+  created: { id: string; workitemId: string }[];
+}
+
 interface RequirementBreakdownCardProps {
   data?: RequirementBreakdownData | null;
   loading?: boolean;
   error?: string | null;
   isPreviewActive?: boolean;
   onPreview?: (data: RequirementBreakdownData) => void;
+  /** 提交选中的需求项，由父组件完成实际创建工作项并返回创建结果。 */
+  onSubmit?: (items: RequirementItem[]) => Promise<RequirementBreakdownSubmitResult>;
 }
 
 export const RequirementBreakdownCard: React.FC<RequirementBreakdownCardProps> = ({
@@ -187,18 +193,21 @@ export const RequirementBreakdownCard: React.FC<RequirementBreakdownCardProps> =
   error,
   isPreviewActive,
   onPreview,
+  onSubmit,
 }) => {
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
-  // 仅未标记 workitemId 的需求项可提交；有 workitemId 表示已存在于需求库中
-  const submittableItems = data?.items.filter((i) => !i.workitemId) ?? [];
+  // 记录已提交成功的需求项 id -> workitemId，避免重复提交。
+  const [submittedMap, setSubmittedMap] = useState<Record<string, string>>({});
+  // 仅未标记 workitemId 且未在本地提交过的需求项可提交
+  const submittableItems = data?.items.filter((i) => !i.workitemId && !submittedMap[i.id]) ?? [];
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(submittableItems.map((i) => i.id)));
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (data) {
-      setSelectedIds(new Set(data.items.filter((i) => !i.workitemId).map((i) => i.id)));
+      setSelectedIds(new Set(data.items.filter((i) => !i.workitemId && !submittedMap[i.id]).map((i) => i.id)));
     }
-  }, [data]);
+  }, [data, submittedMap]);
 
   if (!data) {
     return (
@@ -254,10 +263,22 @@ export const RequirementBreakdownCard: React.FC<RequirementBreakdownCardProps> =
       toast.error('请至少选择一条需求');
       return;
     }
+    if (!onSubmit) {
+      toast.error('提交功能未配置');
+      return;
+    }
+    const itemsToSubmit = submittableItems.filter((i) => selectedIds.has(i.id));
     setSubmitting(true);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      toast.success(`已提交 ${selectedIds.size} 条需求`);
+      const result = await onSubmit(itemsToSubmit);
+      setSubmittedMap((prev) => {
+        const next = { ...prev };
+        for (const c of result.created) {
+          next[c.id] = c.workitemId;
+        }
+        return next;
+      });
+      toast.success(`已提交 ${result.created.length} 条需求`);
       setSubmitDialogOpen(false);
     } catch {
       toast.error('提交失败，请重试');

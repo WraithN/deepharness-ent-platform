@@ -52,7 +52,7 @@ import { MarkdownView } from '@/components/chat/MarkdownView';
 import { UserStoryPreview } from '@/components/chat/UserStoryPreview';
 import type { UserStoryData } from '@/components/chat/UserStoryCard';
 import { RequirementBreakdownTree } from '@/components/chat/RequirementBreakdownCard';
-import type { RequirementBreakdownData } from '@/components/chat/RequirementBreakdownCard';
+import type { RequirementBreakdownData, RequirementItem } from '@/components/chat/RequirementBreakdownCard';
 import { PrototypePreviewPanel } from '@/components/chat/PrototypePreviewPanel';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
@@ -235,11 +235,23 @@ interface ReferencedDoc {
   path: string;
 }
 
+/** 聊天中引用的原型工程路径。 */
+interface ReferencedPrototype {
+  path: string;
+  title?: string;
+}
+
 // 发送消息时附加的引用文档说明头，引导 agent 先读文档再按用户要求处理。
 const DOC_REF_HEADER = '[引用的产品文档（相对工作目录路径，请先读取文档内容，再按用户要求修改或处理）]';
 
+// 发送消息时附加的引用原型说明头，引导 agent 在已有原型基础上微调。
+const PROTO_REF_HEADER = '[引用的原型工程路径（相对工作目录路径，请先读取现有原型，再按用户要求进行调整或优化）]';
+
 // @提及 在输入框中的完整文本形式（@标题+尾随空格），作为一个原子块整体插入/删除。
 const docMentionToken = (title: string) => `@${title} `;
+
+// 原型路径 @提及 在输入框中的完整文本形式，作为一个原子块整体插入/删除。
+const protoMentionToken = (path: string) => `@${path} `;
 
 // 提示词模板参数原子块正则：{{参数名}}，作为整体删除/高亮。
 const PARAM_BLOCK_REGEX = /\{\{[^}]+\}\}/g;
@@ -510,7 +522,7 @@ const SEVERITY_BAR_COLORS: Record<string, string> = {
 export const Chat: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { membership } = useAuth();
+  const { membership, user } = useAuth();
   // 按职能子角色选择欢迎页快捷卡片（无子角色时使用默认）
   const welcomeCards =
     (membership?.subRole && WELCOME_CARDS_BY_ROLE[membership.subRole]) || WELCOME_CARDS_DEFAULT;
@@ -820,6 +832,8 @@ export const Chat: React.FC = () => {
   // 产品空间文档菜单数据与已引用文档（发送时附带路径）
   const [availableDocs, setAvailableDocs] = useState<ProductDoc[]>([]);
   const [referencedDocs, setReferencedDocs] = useState<ReferencedDoc[]>([]);
+  // 已引用的原型工程路径，点击「设计」菜单中的原型时自动插入到输入框。
+  const [referencedPrototypes, setReferencedPrototypes] = useState<ReferencedPrototype[]>([]);
   const [materializingDocId, setMaterializingDocId] = useState<string | null>(null);
   // 「设计」按钮菜单：按需求名分组展示关联的文档与原型
   const [designMenuOpen, setDesignMenuOpen] = useState(false);
@@ -1229,20 +1243,25 @@ export const Chat: React.FC = () => {
   // 当前输入中的模板参数 token（{{参数名}}）。
   const paramTokens = useMemo(() => extractParamTokens(input), [input]);
 
-  // 所有原子块 token：@文档提及 + 指令 + 模板参数；用于整体删除判定。
+  // 所有原子块 token：@文档提及 + @原型路径 + 指令 + 模板参数；用于整体删除判定。
   const atomicTokens = useMemo(
-    () => [...referencedDocs.map(d => docMentionToken(d.title)), ...commandTokens, ...paramTokens],
-    [referencedDocs, commandTokens, paramTokens],
+    () => [
+      ...referencedDocs.map(d => docMentionToken(d.title)),
+      ...referencedPrototypes.map(p => protoMentionToken(p.path)),
+      ...commandTokens,
+      ...paramTokens,
+    ],
+    [referencedDocs, referencedPrototypes, commandTokens, paramTokens],
   );
 
-  // 输入框高亮渲染：仍存在的 @提及（主色）、指令块（紫色）与模板参数块（琥珀色）
+  // 输入框高亮渲染：仍存在的 @提及（主色）、@原型路径（青色）、指令块（紫色）与模板参数块（琥珀色）
   // 包成高亮+阴影片段，其余为普通文本。
   // 叠放在透明文字的 textarea 下方，二者字体/内边距保持一致以对齐字形。
   // 注意：高亮 span 用 px-0.5 + -mx-0.5 组合，获得视觉留白的同时不改变文本步进宽度，
   // 否则提及块后的文字会与 textarea 光标位置错位（光标看起来落在字中间）。
   const highlightedInput = useMemo((): React.ReactNode => {
-    const ranges: { start: number; end: number; kind: 'mention' | 'command' | 'param' }[] = [];
-    const collectRanges = (token: string, kind: 'mention' | 'command' | 'param') => {
+    const ranges: { start: number; end: number; kind: 'mention' | 'prototype' | 'command' | 'param' }[] = [];
+    const collectRanges = (token: string, kind: 'mention' | 'prototype' | 'command' | 'param') => {
       let idx = input.indexOf(token);
       while (idx !== -1) {
         ranges.push({ start: idx, end: idx + token.length, kind });
@@ -1250,6 +1269,7 @@ export const Chat: React.FC = () => {
       }
     };
     for (const d of referencedDocs) collectRanges(docMentionToken(d.title), 'mention');
+    for (const p of referencedPrototypes) collectRanges(protoMentionToken(p.path), 'prototype');
     for (const token of commandTokens) collectRanges(token, 'command');
     for (const token of paramTokens) collectRanges(token, 'param');
     ranges.sort((a, b) => a.start - b.start || b.end - a.end);
@@ -1261,9 +1281,11 @@ export const Chat: React.FC = () => {
       const cls =
         r.kind === 'mention'
           ? 'bg-primary/10 text-primary shadow-[0_1px_3px_hsl(var(--primary)/0.35)]'
-          : r.kind === 'command'
-            ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400 shadow-[0_1px_3px_rgba(139,92,246,0.35)]'
-            : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 shadow-[0_1px_3px_rgba(245,158,11,0.35)]';
+          : r.kind === 'prototype'
+            ? 'bg-teal-500/10 text-teal-600 dark:text-teal-400 shadow-[0_1px_3px_rgba(20,184,166,0.35)]'
+            : r.kind === 'command'
+              ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400 shadow-[0_1px_3px_rgba(139,92,246,0.35)]'
+              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 shadow-[0_1px_3px_rgba(245,158,11,0.35)]';
       nodes.push(
         <span key={r.start} className={`rounded-md px-0.5 -mx-0.5 ${cls}`}>
           {input.slice(r.start, r.end)}
@@ -1273,7 +1295,7 @@ export const Chat: React.FC = () => {
     }
     if (pos < input.length) nodes.push(input.slice(pos));
     return nodes;
-  }, [input, referencedDocs, commandTokens, paramTokens]);
+  }, [input, referencedDocs, referencedPrototypes, commandTokens, paramTokens]);
 
   // 选中文档：先落盘拿到 agent 可读路径，再在输入框插入 @文档名 原子块。
   // 重复判定以输入框中是否仍存在该原子块为准（删除后可重新引用）。
@@ -1321,10 +1343,23 @@ export const Chat: React.FC = () => {
     handleSelectDoc({ id: doc.id, title: doc.title }, () => setDesignMenuOpen(false));
   };
 
-  // 「设计」菜单：点击原型按钮，基于该需求标题触发 /proto-make 重新设计原型。
+  // 「设计」菜单：点击原型按钮，基于该需求标题触发 /proto-make 重新设计原型，
+  // 并在输入框中 @引用对应的原型路径，方便 agent 在现有原型基础上微调。
   const handleDesignPrototype = (prototype: LinkedProductSpaceItem, requirementTitle: string) => {
-    handleProtoMake(prototype.relativePath, requirementTitle);
+    const token = protoMentionToken(prototype.relativePath);
+    setProtoMakeRequirementTitle(requirementTitle);
+    setReferencedPrototypes(prev => [...prev.filter(p => p.path !== prototype.relativePath), { path: prototype.relativePath, title: requirementTitle }]);
+    setInput(`/proto-make ${token}`);
     setDesignMenuOpen(false);
+    setCompactPlusSubmenu(null);
+    setCompactPlusOpen(false);
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.focus();
+      const pos = `/proto-make ${token}`.length;
+      ta.setSelectionRange(pos, pos);
+    });
   };
 
   // 插入指令到输入框开头（斜杠指令通常作为前缀），若已有内容则追加空格分隔。
@@ -1406,8 +1441,11 @@ export const Chat: React.FC = () => {
     const atIdx = beforeCursor.lastIndexOf('@');
     const atPrevOk = atIdx === 0 || /\s/.test(val[atIdx - 1] ?? '');
     const atQuery = atIdx >= 0 ? beforeCursor.slice(atIdx + 1) : '';
-    // 已完成的引用块（@标题 ）中的 @ 不再重复触发菜单
-    const isCompletedMention = atIdx >= 0 && referencedDocs.some(d => val.startsWith(docMentionToken(d.title), atIdx));
+    // 已完成的引用块（@标题 / @原型路径）中的 @ 不再重复触发菜单
+    const isCompletedMention = atIdx >= 0 && (
+      referencedDocs.some(d => val.startsWith(docMentionToken(d.title), atIdx)) ||
+      referencedPrototypes.some(p => val.startsWith(protoMentionToken(p.path), atIdx))
+    );
     if (canUseDocs && atIdx >= 0 && atPrevOk && !/\s/.test(atQuery) && !isCompletedMention) {
       setDocMention({ start: atIdx, end: cursor, query: atQuery });
       setDocMentionIndex(0);
@@ -1522,7 +1560,7 @@ export const Chat: React.FC = () => {
       }
     }
 
-    // 原子块整体删除（@文档提及 /code 指令 /{{参数}}）：光标在块内部或紧邻边界时，Backspace/Delete 整体移除该块
+    // 原子块整体删除（@文档提及 / @原型路径 /code 指令 /{{参数}}）：光标在块内部或紧邻边界时，Backspace/Delete 整体移除该块
     if ((e.key === 'Backspace' || e.key === 'Delete') && atomicTokens.length > 0) {
       const ta = e.currentTarget;
       const range = ta.selectionStart === ta.selectionEnd
@@ -1531,9 +1569,17 @@ export const Chat: React.FC = () => {
       if (range) {
         e.preventDefault();
         const nextInput = input.slice(0, range.start) + input.slice(range.end);
+        const removedToken = input.slice(range.start, range.end).trim();
         setInput(nextInput);
-        // 同步清理已不在输入框中的引用记录，使该文档可再次引用
+        // 同步清理已不在输入框中的引用记录，使该文档/原型可再次引用
         setReferencedDocs(prev => prev.filter(d => nextInput.includes(docMentionToken(d.title))));
+        setReferencedPrototypes(prev => prev.filter(p => nextInput.includes(protoMentionToken(p.path))));
+        // 删除 /proto-make 指令时同步清理由「做原型」自动带入的需求卡片和标题，
+        // 避免需求卡片残留导致后续无法清除。
+        if (removedToken === '/proto-make') {
+          setProtoMakeRequirementTitle('');
+          setQuotedCard(null);
+        }
         requestAnimationFrame(() => ta.setSelectionRange(range.start, range.start));
         return;
       }
@@ -1608,10 +1654,15 @@ export const Chat: React.FC = () => {
     // 引用文档：仅保留输入框中仍存在 @标签 的文档，将其落盘路径附在消息尾部，
     // agent 收到后按路径读取文档内容再执行用户指令。
     const activeRefDocs = referencedDocs.filter(d => input.includes(docMentionToken(d.title)));
+    const activeRefProtos = referencedPrototypes.filter(p => input.includes(protoMentionToken(p.path)));
     let finalInput = input;
     if (activeRefDocs.length > 0) {
       const docLines = activeRefDocs.map(d => `- ${d.title}: ${d.path}`).join('\n');
-      finalInput = `${input}\n\n${DOC_REF_HEADER}\n${docLines}`;
+      finalInput = `${finalInput}\n\n${DOC_REF_HEADER}\n${docLines}`;
+    }
+    if (activeRefProtos.length > 0) {
+      const protoLines = activeRefProtos.map(p => `- ${p.title || p.path}: ${p.path}`).join('\n');
+      finalInput = `${finalInput}\n\n${PROTO_REF_HEADER}\n${protoLines}`;
     }
 
     const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
@@ -1640,6 +1691,7 @@ export const Chat: React.FC = () => {
     setQuotedCard(null);
     setSelectedRepos([]);
     setReferencedDocs([]);
+    setReferencedPrototypes([]);
     setDocMention(null);
   };
 
@@ -1684,6 +1736,68 @@ export const Chat: React.FC = () => {
       .catch(err => {
         console.error('Failed to load workitem detail:', err);
       });
+  };
+
+  // 将需求拆分中选中的子需求提交到工作项库，并刷新需求列表。
+  const handleReqBreakdownSubmit = async (items: RequirementItem[]) => {
+    const workspaceId = getCurrentWorkspaceId();
+    let projectId = 'p1';
+    try {
+      const proj = await workspaceApi.getWorkitemProject(workspaceId);
+      if (proj?.externalKey) projectId = proj.externalKey;
+      else if (proj?.id) projectId = proj.id;
+    } catch {
+      // 未配置工作项项目时回退到默认项目
+    }
+
+    const priorityMap: Record<string, string> = { P0: 'high', P1: 'medium', P2: 'medium' };
+    const created: { id: string; workitemId: string }[] = [];
+
+    for (const item of items) {
+      const description = [
+        item.description?.role && `角色：${item.description.role}`,
+        item.description?.scenario && `场景：${item.description.scenario}`,
+        item.description?.action && `动作：${item.description.action}`,
+        item.description?.value && `价值：${item.description.value}`,
+        item.description?.constraints && `约束：${item.description.constraints}`,
+      ].filter(Boolean).join('\n');
+
+      const res = await api.post<WorkItemDTO>('/v1/workitems', {
+        tenantId: user?.tenantId || '',
+        projectId,
+        type: 'requirement',
+        title: item.title,
+        description,
+        status: 'backlog',
+        priority: priorityMap[item.priority || 'P2'] || 'medium',
+        source: 'internal',
+        reporter: user?.name || '当前用户',
+      });
+      created.push({ id: item.id, workitemId: res.id });
+    }
+
+    // 刷新需求列表，使新创建的需求立即出现在任务/看板中
+    api.get<WorkItemDTO[]>('/v1/workitems')
+      .then(items => {
+        const reqs: ReqItem[] = [];
+        items.forEach(item => {
+          if (item.type === 'requirement') {
+            reqs.push({
+              id: item.id,
+              title: item.title,
+              description: item.description,
+              assigneeId: item.assigneeId ?? '',
+              reporter: item.reporter ?? '',
+              createdAt: item.createdAt.slice(0, 10),
+              status: toUiStatus(item.status) as RequirementStatus,
+            });
+          }
+        });
+        setRequirements(reqs);
+      })
+      .catch(err => console.error('Failed to refresh requirements after submit:', err));
+
+    return { created };
   };
 
   const openDetail = (type: 'req' | 'defect' | 'case', id: string) => {
@@ -2170,7 +2284,7 @@ export const Chat: React.FC = () => {
                 key={item.workitemId}
                 className="flex items-center gap-2 w-full px-2.5 py-2 rounded-lg text-left text-sm"
               >
-                <Palette className="h-4 w-4 text-muted-foreground shrink-0" />
+                <Puzzle className="h-4 w-4 text-muted-foreground shrink-0" />
                 <span className="flex-1 truncate font-medium">{item.workitemTitle}</span>
                 <div className="flex items-center gap-1">
                   {doc && (
@@ -2730,6 +2844,7 @@ export const Chat: React.FC = () => {
                   activeUserStoryData={userStoryPreview}
                   onReqBreakdownPreview={handleReqBreakdownPreview}
                   activeReqBreakdownData={reqBreakdownPreview}
+                  onReqBreakdownSubmit={handleReqBreakdownSubmit}
                   onPrototypePreview={handlePrototypePreview}
                   requirementTitle={protoMakeRequirementTitle || quotedCard?.title}
                   workitemId={effectivePrototypeWorkitemId}
@@ -2988,7 +3103,7 @@ export const Chat: React.FC = () => {
                     return (
                       <div className="relative" key="design" ref={designMenuRef}>
                         <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setDesignMenuOpen(!designMenuOpen); setDocMention(null); setTaskMenuOpen(false); setCmdMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); }}>
-                          <Palette className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '设计'}
+                          <Puzzle className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '设计'}
                           {activeRefCount > 0 && (
                             <span className="ml-1.5 h-4 min-w-4 px-1 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center">
                               {activeRefCount}
@@ -3070,7 +3185,7 @@ export const Chat: React.FC = () => {
                                 title="设计"
                                 onClick={() => setCompactPlusSubmenu('design')}
                               >
-                                <Palette className="h-4 w-4 text-muted-foreground" />
+                                <Puzzle className="h-4 w-4 text-muted-foreground" />
                               </button>
                             );
                           }

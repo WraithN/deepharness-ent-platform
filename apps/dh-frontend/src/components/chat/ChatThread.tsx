@@ -7,7 +7,7 @@ import { formatDateLabel, isSameDay } from '@/lib/utils';
 import type { PreviewMode } from './LivePreview';
 import type { SendContext } from '@/hooks/use-ag-ui-chat';
 import type { UserStoryData } from './UserStoryCard';
-import type { RequirementBreakdownData } from './RequirementBreakdownCard';
+import type { RequirementBreakdownData, RequirementBreakdownSubmitResult, RequirementItem } from './RequirementBreakdownCard';
 
 interface ChatThreadProps {
   openDetail: (type: 'req' | 'defect' | 'case', id: string) => void;
@@ -20,6 +20,7 @@ interface ChatThreadProps {
   activeUserStoryData?: UserStoryData | null;
   onReqBreakdownPreview?: (data: RequirementBreakdownData) => void;
   activeReqBreakdownData?: RequirementBreakdownData | null;
+  onReqBreakdownSubmit?: (items: RequirementItem[]) => Promise<RequirementBreakdownSubmitResult>;
   onPrototypePreview?: (path: string) => void;
   requirementTitle?: string;
   workitemId?: string;
@@ -74,6 +75,7 @@ const ChatMessageItem: React.FC<{
           activeUserStoryData={props.activeUserStoryData}
           onReqBreakdownPreview={props.onReqBreakdownPreview}
           activeReqBreakdownData={props.activeReqBreakdownData}
+          onReqBreakdownSubmit={props.onReqBreakdownSubmit}
           onPrototypePreview={props.onPrototypePreview}
           requirementTitle={props.requirementTitle}
           workitemId={props.workitemId}
