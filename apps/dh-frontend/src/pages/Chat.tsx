@@ -54,6 +54,7 @@ import type { UserStoryData } from '@/components/chat/UserStoryCard';
 import { RequirementBreakdownTree } from '@/components/chat/RequirementBreakdownCard';
 import type { RequirementBreakdownData, RequirementItem } from '@/components/chat/RequirementBreakdownCard';
 import { PrototypePreviewPanel } from '@/components/chat/PrototypePreviewPanel';
+import { RequirementKanban } from '@/components/chat/RequirementKanban';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -107,6 +108,8 @@ type PreviewHistoryEntry =
 interface ReqItem {
   id: string; title: string; description: string;
   status: RequirementStatus; assigneeId: string; reporter: string; createdAt: string;
+  parentId?: string;
+  priority?: string;
 }
 interface DefectItem {
   id: string; title: string; description: string;
@@ -131,6 +134,21 @@ function resolveWorkitemIdByTitle(title: string | undefined, requirements: ReqIt
 // 用户输入排队上限。
 const MAX_INPUT_QUEUE = 3;
 const CHAT_SYNC_POLL_INTERVAL_MS = 2000;
+
+// 需求拆分优先级映射与约束：子需求优先级不得高于父需求。
+const SPLIT_PRIORITY_TO_API: Record<string, WorkItemDTO['priority']> = { P0: 'high', P1: 'medium', P2: 'low' };
+const API_PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
+const DEFAULT_SPLIT_PRIORITY: WorkItemDTO['priority'] = 'medium';
+
+/** 将拆分优先级转换为 API 优先级，并限制不得超过父需求优先级。 */
+function clampSplitPriority(itemPriority: string | undefined, parentPriority: string | undefined): WorkItemDTO['priority'] {
+  const child = SPLIT_PRIORITY_TO_API[itemPriority || 'P2'] ?? DEFAULT_SPLIT_PRIORITY;
+  if (!parentPriority || !(parentPriority in API_PRIORITY_RANK)) return child;
+  if (API_PRIORITY_RANK[child] < API_PRIORITY_RANK[parentPriority]) {
+    return parentPriority as WorkItemDTO['priority'];
+  }
+  return child;
+}
 
 /** 后端指令配置（从 /v1/commands 加载）。 */
 // CommandConfig / 指令分类映射已抽取至 @/lib/commands 共享。
@@ -448,13 +466,6 @@ const SEVERITY_COLORS: Record<DefectSeverity, string> = {
 };
 
 // Kanban columns
-const REQ_KANBAN_COLS: { key: RequirementStatus; label: string }[] = [
-  { key: 'todo', label: '待处理' },
-  { key: 'in-progress', label: '进行中' },
-  { key: 'done', label: '已完成' },
-  { key: 'cancelled', label: '已取消' },
-  { key: 'on-hold', label: '已挂起' },
-];
 const DEF_KANBAN_COLS: { key: DefectStatus; label: string }[] = [
   { key: 'open', label: '待修复' }, { key: 'in-progress', label: '修复中' },
   { key: 'fixed', label: '已修复' }, { key: 'closed', label: '已关闭' },
@@ -1056,6 +1067,8 @@ export const Chat: React.FC = () => {
             assigneeId: item.assigneeId ?? '',
             reporter: item.reporter ?? '',
             createdAt: item.createdAt.slice(0, 10),
+            parentId: item.parentId,
+            priority: item.priority,
           };
           if (item.type === 'requirement') {
             reqs.push({ ...base, status: toUiStatus(item.status) as RequirementStatus });
@@ -1721,6 +1734,8 @@ export const Chat: React.FC = () => {
           assigneeId: item.assigneeId ?? '',
           reporter: item.reporter ?? '',
           createdAt: item.createdAt.slice(0, 10),
+          parentId: item.parentId,
+          priority: item.priority,
         };
         if (item.type === 'requirement') {
           const updated: ReqItem = { ...base, status: toUiStatus(item.status) as RequirementStatus };
@@ -1739,7 +1754,7 @@ export const Chat: React.FC = () => {
   };
 
   // 将需求拆分中选中的子需求提交到工作项库，并刷新需求列表。
-  // 若拆分项存在多级 parentId，则按层级建立父子关系；最顶层的需求挂到当前引用的父需求下。
+  // 所有提交项统一作为被引用父需求的直接子需求，并限制子需求优先级不得高于父需求。
   // 提交成功后，将创建的 workitemId 回写到需求拆分 JSON 源文件，做幂等处理。
   const handleReqBreakdownSubmit = async (items: RequirementItem[], options?: { jsonFilePath?: string }) => {
     const workspaceId = getCurrentWorkspaceId();
@@ -1753,13 +1768,19 @@ export const Chat: React.FC = () => {
     }
 
     const rootParentId = quotedCard?.type === 'req' ? quotedCard.id : '';
-    const priorityMap: Record<string, string> = { P0: 'high', P1: 'medium', P2: 'medium' };
+    let parentPriority: string | undefined;
+    if (rootParentId) {
+      try {
+        parentPriority = (await api.get<WorkItemDTO>(`/v1/workitems/${rootParentId}`)).priority;
+      } catch {
+        // 获取父需求优先级失败时继续创建，仅跳过后续优先级限制
+      }
+    }
+
     const created: { id: string; workitemId: string }[] = [];
-    // 先创建父需求，再创建子需求，保证能正确建立 parentId 映射。
-    const sortedItems = [...items].sort((a, b) => (a.parentId ? 1 : 0) - (b.parentId ? 1 : 0));
     const idToWorkitemId = new Map<string, string>();
 
-    for (const item of sortedItems) {
+    for (const item of items) {
       const description = [
         item.description?.role && `角色：${item.description.role}`,
         item.description?.scenario && `场景：${item.description.scenario}`,
@@ -1768,10 +1789,6 @@ export const Chat: React.FC = () => {
         item.description?.constraints && `约束：${item.description.constraints}`,
       ].filter(Boolean).join('\n');
 
-      const parentId = item.parentId
-        ? idToWorkitemId.get(item.parentId) || rootParentId
-        : rootParentId;
-
       const res = await api.post<WorkItemDTO>('/v1/workitems', {
         tenantId: user?.tenantId || '',
         projectId,
@@ -1779,10 +1796,10 @@ export const Chat: React.FC = () => {
         title: item.title,
         description,
         status: 'backlog',
-        priority: priorityMap[item.priority || 'P2'] || 'medium',
+        priority: clampSplitPriority(item.priority, parentPriority),
         source: 'internal',
         reporter: user?.name || '当前用户',
-        parentId,
+        parentId: rootParentId,
       });
       created.push({ id: item.id, workitemId: res.id });
       idToWorkitemId.set(item.id, res.id);
@@ -1825,6 +1842,8 @@ export const Chat: React.FC = () => {
               assigneeId: item.assigneeId ?? '',
               reporter: item.reporter ?? '',
               createdAt: item.createdAt.slice(0, 10),
+              parentId: item.parentId,
+              priority: item.priority,
               status: toUiStatus(item.status) as RequirementStatus,
             });
           }
@@ -3663,58 +3682,66 @@ export const Chat: React.FC = () => {
                 </button>
               </div>
               <div className="flex-1 overflow-x-auto overflow-y-hidden">
-                <div className="flex h-full gap-3 p-4 min-w-max">
-                  {(kanbanType === 'req' ? REQ_KANBAN_COLS : kanbanType === 'defect' ? DEF_KANBAN_COLS : CASE_KANBAN_COLS).map(col => {
-                    let items: (ReqItem | DefectItem | CaseItem)[] = [];
-                    if (kanbanType === 'req') items = requirements.filter(r => r.status === col.key);
-                    else if (kanbanType === 'defect') items = defects.filter(d => d.status === col.key);
-                    else items = cases.filter(c => c.status === col.key);
-                    return (
-                      <div key={col.key} className="flex flex-col w-56 shrink-0">
-                        <div className={`flex items-center justify-between px-3 py-2.5 mb-3 rounded-xl shrink-0 ${getColColorStyle(col.key)}`}>
-                          <span className={`text-sm font-semibold ${getColTitleStyle(col.key)}`}>{col.label}</span>
-                          <span className={`h-6 w-6 rounded-full grid place-items-center text-xs font-bold text-white ${getColCountStyle(col.key)}`}>{items.length}</span>
-                        </div>
-                        <div className="flex flex-col gap-2.5 flex-1 overflow-y-auto pb-2">
-                          {items.map(item => {
-                            const isHighlight = item.id === kanbanHighlightId;
-                            const isDone = KANBAN_DONE_STATUSES.includes(item.status);
-                            return (
-                              <div
-                                key={item.id}
-                                ref={el => { kanbanItemRefs.current[item.id] = el; }}
-                                className={`relative p-3 pl-4 rounded-xl border bg-card cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:shadow-md ${isHighlight ? 'border-primary shadow-md ring-2 ring-primary/30' : 'border-border'} ${isDone ? 'opacity-75' : ''}`}
-                                onClick={() => {
-                                  setKanbanHighlightId(item.id);
-                                  openDetail(kanbanType, item.id);
-                                }}
-                              >
-                                {'severity' in item && (
-                                  <span className={`absolute left-0 top-0 h-full w-1 rounded-l-xl ${SEVERITY_BAR_COLORS[(item as DefectItem).severity] ?? 'bg-muted-foreground/40'}`} />
-                                )}
-                                <p className={`text-xs font-medium leading-snug mb-2 ${isDone ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{item.title}</p>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[10px] text-muted-foreground">{item.id}</span>
+                {kanbanType === 'req' ? (
+                  <RequirementKanban
+                    items={requirements}
+                    highlightId={kanbanHighlightId}
+                    onOpenDetail={id => openDetail('req', id)}
+                    setItemRef={(id, el) => { kanbanItemRefs.current[id] = el; }}
+                  />
+                ) : (
+                  <div className="flex h-full gap-3 p-4 min-w-max">
+                    {(kanbanType === 'defect' ? DEF_KANBAN_COLS : CASE_KANBAN_COLS).map(col => {
+                      const items = kanbanType === 'defect'
+                        ? defects.filter(d => d.status === col.key)
+                        : cases.filter(c => c.status === col.key);
+                      return (
+                        <div key={col.key} className="flex flex-col w-56 shrink-0">
+                          <div className={`flex items-center justify-between px-3 py-2.5 mb-3 rounded-xl shrink-0 ${getColColorStyle(col.key)}`}>
+                            <span className={`text-sm font-semibold ${getColTitleStyle(col.key)}`}>{col.label}</span>
+                            <span className={`h-6 w-6 rounded-full grid place-items-center text-xs font-bold text-white ${getColCountStyle(col.key)}`}>{items.length}</span>
+                          </div>
+                          <div className="flex flex-col gap-2.5 flex-1 overflow-y-auto pb-2">
+                            {items.map(item => {
+                              const isHighlight = item.id === kanbanHighlightId;
+                              const isDone = KANBAN_DONE_STATUSES.includes(item.status);
+                              return (
+                                <div
+                                  key={item.id}
+                                  ref={el => { kanbanItemRefs.current[item.id] = el; }}
+                                  className={`relative p-3 pl-4 rounded-xl border bg-card cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:shadow-md ${isHighlight ? 'border-primary shadow-md ring-2 ring-primary/30' : 'border-border'} ${isDone ? 'opacity-75' : ''}`}
+                                  onClick={() => {
+                                    setKanbanHighlightId(item.id);
+                                    openDetail(kanbanType, item.id);
+                                  }}
+                                >
                                   {'severity' in item && (
-                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${SEVERITY_COLORS[(item as DefectItem).severity]}`}>
-                                      {SEVERITY_LABELS[(item as DefectItem).severity]}
-                                    </span>
+                                    <span className={`absolute left-0 top-0 h-full w-1 rounded-l-xl ${SEVERITY_BAR_COLORS[(item as DefectItem).severity] ?? 'bg-muted-foreground/40'}`} />
+                                  )}
+                                  <p className={`text-xs font-medium leading-snug mb-2 ${isDone ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{item.title}</p>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[10px] text-muted-foreground">{item.id}</span>
+                                    {'severity' in item && (
+                                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${SEVERITY_COLORS[(item as DefectItem).severity]}`}>
+                                        {SEVERITY_LABELS[(item as DefectItem).severity]}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {'reporter' in item && (
+                                    <p className="text-[10px] text-muted-foreground mt-1">{(item as DefectItem | CaseItem).reporter} 提</p>
                                   )}
                                 </div>
-                                {'reporter' in item && (
-                                  <p className="text-[10px] text-muted-foreground mt-1">{(item as ReqItem | DefectItem | CaseItem).reporter} 提</p>
-                                )}
-                              </div>
-                            );
-                          })}
-                          {items.length === 0 && (
-                            <div className="flex-1 flex items-center justify-center py-8 text-xs text-muted-foreground opacity-60 border border-dashed border-border/40 rounded-xl">暂无</div>
-                          )}
+                              );
+                            })}
+                            {items.length === 0 && (
+                              <div className="flex-1 flex items-center justify-center py-8 text-xs text-muted-foreground opacity-60 border border-dashed border-border/40 rounded-xl">暂无</div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </>
           )}

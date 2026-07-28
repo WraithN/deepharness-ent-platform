@@ -30,6 +30,16 @@ import { useAuth } from '@/contexts/AuthContext';
 import { workItemDocApi } from '@/lib/workitem-doc-api';
 import { productSpaceApi, requirementShareApi, findPrototypeProductName } from '@/lib/productspace-api';
 import type { WorkItemDTO } from '@/lib/api-types';
+import {
+  type KanbanViewMode,
+  MAX_KANBAN_DEPTH,
+  buildDisplayTitle,
+  canSplitMore,
+  getChildren,
+  getDepth,
+  getDescendantIds,
+  hasChildren,
+} from '@/lib/kanban-utils';
 
 const API_STATUS_TO_UI: Record<string, string> = {
   backlog: '待处理',
@@ -115,6 +125,9 @@ const STATUS_DOT_COLORS: Record<string, string> = {
 // 完成态列：卡片降低不透明度且标题划线
 const DONE_STATUSES = ['已完成', '已取消'];
 
+// 看板视图模式本地持久化键
+const VIEW_MODE_STORAGE_KEY = 'kanban-workspace-view-mode';
+
 /** AI 指令对应的斜杠命令名 */
 const AI_COMMANDS = {
   split: 'req-breakdown',
@@ -159,16 +172,31 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
   const [detailItem, setDetailItem] = useState<WorkItemDTO | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [productDesignLoading, setProductDesignLoading] = useState(false);
-  // 当前在看板卡片中展开显示子需求的需求 ID 集合。
+  // 当前在看板卡片中展开显示子需求的需求 ID 集合（仅在收缩模式下生效）。
   const [expandedCardIds, setExpandedCardIds] = useState<Set<string>>(new Set());
+  // 被数字徽章选中的子需求 ID 集合（展开模式下蓝框圈选）。
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // 看板视图模式：展开（平铺）/ 收缩（层级树）。
+  const [viewMode, setViewMode] = useState<KanbanViewMode>(() => {
+    try {
+      return (localStorage.getItem(VIEW_MODE_STORAGE_KEY) as KanbanViewMode) || 'collapse';
+    } catch {
+      return 'collapse';
+    }
+  });
 
-  // 获取指定卡片的直接子需求卡片。
-  const getChildCards = (parentId: string) => cards.filter(c => c.parentId === parentId);
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+    } catch {
+      // 忽略无痕模式等写入失败场景
+    }
+  }, [viewMode]);
 
   // 切换父需求的子需求展开/折叠；无子需求时给出提示。
   const toggleChildren = (card: KanbanCard, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const children = getChildCards(card.id);
+    const children = getChildren(cards, card.id);
     if (children.length === 0) {
       toast.info('该需求暂无子需求');
       return;
@@ -177,6 +205,23 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
       const next = new Set(prev);
       if (next.has(card.id)) next.delete(card.id);
       else next.add(card.id);
+      return next;
+    });
+  };
+
+  // 点击子需求数量徽章：蓝框圈选/取消圈选所有后代需求。
+  const toggleSelectDescendants = (card: KanbanCard, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const descendants = getDescendantIds(cards, card.id);
+    if (descendants.size === 0) return;
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      const allSelected = Array.from(descendants).every(id => next.has(id));
+      if (allSelected) {
+        descendants.forEach(id => next.delete(id));
+      } else {
+        descendants.forEach(id => next.add(id));
+      }
       return next;
     });
   };
@@ -309,29 +354,35 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
     );
   }
 
-  // 递归渲染需求卡片。depth 用于控制缩进与子需求的样式。
+  // 递归渲染需求卡片。
+  // 展开模式：所有需求平铺，子需求标题显示父需求路径。
+  // 收缩模式：仅展示顶层父需求，点击后逐级展开子需求，最多支持 MAX_KANBAN_DEPTH 层。
   const renderCard = (card: KanbanCard, depth = 0) => {
-    const childCards = getChildCards(card.id);
-    const hasChildren = childCards.length > 0;
+    const childCards = getChildren(cards, card.id);
+    const childCount = childCards.length;
+    const hasChildren = childCount > 0;
     const isExpanded = expandedCardIds.has(card.id);
+    const isSelected = selectedIds.has(card.id);
     const isDoneCol = DONE_STATUSES.includes(card.status);
+    const isCollapseMode = viewMode === 'collapse';
+    const displayTitle = isCollapseMode ? card.title : buildDisplayTitle(cards, card.id);
 
     return (
-      <div key={card.id} className={`flex flex-col ${depth > 0 ? 'ml-3 pl-3 border-l border-border/40' : ''}`}>
+      <div key={card.id} className={`flex flex-col ${isCollapseMode && depth > 0 ? 'ml-3 pl-3 border-l border-border/40' : ''}`}>
         <div
-          draggable={depth === 0}
-          onDragStart={depth === 0 ? e => handleDragStart(e, card.id) : undefined}
+          draggable={!card.parentId}
+          onDragStart={!card.parentId ? e => handleDragStart(e, card.id) : undefined}
           onClick={() => openDetail(card.id)}
           className={`relative bg-card border border-border/50 rounded-xl pl-5 pr-3 py-3 cursor-pointer transition-all duration-200 active:cursor-grabbing hover:-translate-y-1 hover:shadow-lg dark:hover:shadow-black/30 ${
             draggedCardId === card.id ? 'opacity-50 border-primary' : ''
-          } ${isDoneCol ? 'opacity-75' : ''}`}
+          } ${isSelected ? 'ring-2 ring-blue-500 border-blue-500' : ''} ${isDoneCol ? 'opacity-75' : ''}`}
         >
           <span className={`absolute left-0 top-0 h-full w-1 rounded-l-xl ${PRIORITY_BAR_COLORS[card.priority] ?? DEFAULT_PRIORITY_BAR}`} />
-          {/* 标题行：类型图标 + 展开按钮 + 标题 + 优先级标签 */}
+          {/* 标题行：类型图标 + 展开按钮 + 标题 + 子需求数量 + 优先级标签 */}
           <div className="flex items-start justify-between gap-2 mb-2">
             <div className="flex items-start gap-1.5 min-w-0 flex-1">
               <TypeIcon type={card.type} parentId={card.parentId} />
-              {depth === 0 && (
+              {isCollapseMode && (
                 <button
                   type="button"
                   disabled={!hasChildren}
@@ -343,8 +394,22 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
                 </button>
               )}
               <h4 className={`text-sm font-medium leading-snug line-clamp-2 ${isDoneCol ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
-                {card.title}
+                {displayTitle}
               </h4>
+              {hasChildren && (
+                <button
+                  type="button"
+                  onClick={e => toggleSelectDescendants(card, e)}
+                  className={`shrink-0 h-4 min-w-[1rem] px-1 rounded-full text-[10px] font-medium flex items-center justify-center ${
+                    Array.from(getDescendantIds(cards, card.id)).every(id => selectedIds.has(id))
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                  }`}
+                  title="点击圈选/取消圈选所有子需求"
+                >
+                  {childCount}
+                </button>
+              )}
             </div>
             <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${PRIORITY_TAG_COLORS[card.priority] ?? DEFAULT_PRIORITY_TAG}`}>
               {card.priority}
@@ -359,7 +424,7 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
             </p>
           </div>
           {/* 快捷操作按钮：仅顶层父需求展示，阻止冒泡以免触发卡片点击 */}
-          {depth === 0 && (
+          {!card.parentId && (
             <div
               className="flex items-center gap-0.5 pt-2 border-t border-border/30"
               onClick={e => e.stopPropagation()}
@@ -372,14 +437,20 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
                 onClick={() => toggleChildren(card)}
               />
               <div className="w-px h-4 bg-border/40 mx-0.5 shrink-0" />
-              <CardActionBtn icon={<Split className="h-3.5 w-3.5" />} title="AI拆分子需求" ai onClick={() => goToChat(card, AI_COMMANDS.split)} />
+              <CardActionBtn
+                icon={<Split className="h-3.5 w-3.5" />}
+                title="AI拆分子需求"
+                ai
+                disabled={!canSplitMore(cards, card.id)}
+                onClick={() => goToChat(card, AI_COMMANDS.split)}
+              />
               <CardActionBtn icon={<LayoutTemplate className="h-3.5 w-3.5" />} title="AI原型设计" ai onClick={() => goToChat(card, AI_COMMANDS.prototype)} />
               <CardActionBtn icon={<PenLine className="h-3.5 w-3.5" />} title="AI写文档" ai onClick={() => goToChat(card, AI_COMMANDS.document)} />
             </div>
           )}
         </div>
-        {/* 子需求：递归渲染，所有层级默认展开 */}
-        {(depth > 0 || isExpanded) && hasChildren && (
+        {/* 子需求：仅在收缩模式下按展开状态递归渲染 */}
+        {isCollapseMode && isExpanded && hasChildren && (
           <div className="flex flex-col gap-2 mt-2">
             {childCards.map(child => renderCard(child, depth + 1))}
           </div>
@@ -390,35 +461,57 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
 
   return (
     <>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5 h-full overflow-y-auto p-5">
-        {STATUSES.map(status => {
-          // 列中只展示顶层需求，子需求折叠在父需求卡片内部。
-          const columnCards = cards.filter(c => !c.parentId && c.status === status);
-          const colStyle = COLUMN_STYLES[status] ?? DEFAULT_COLUMN_STYLE;
-          return (
-            <div
-              key={status}
-              className="flex flex-col min-w-0"
-              onDragOver={handleDragOver}
-              onDrop={e => handleDrop(e, status)}
+      <div className="flex flex-col h-full">
+        <div className="flex items-center justify-end px-5 pt-4 pb-2 shrink-0">
+          <div className="inline-flex items-center rounded-lg border border-border/50 bg-muted/40 p-0.5">
+            <button
+              type="button"
+              className={`px-2.5 py-1 text-xs rounded-md transition-colors ${viewMode === 'collapse' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => setViewMode('collapse')}
+              title="收缩：按父需求层级展示"
             >
-              <div className={`flex items-center justify-between px-4 py-3 mb-4 rounded-xl shrink-0 ${colStyle.header}`}>
-                <h3 className={`text-lg font-semibold ${colStyle.title}`}>{status}</h3>
-                <span className={`h-7 w-7 rounded-full grid place-items-center text-sm font-bold text-white ${colStyle.count}`}>
-                  {columnCards.length}
-                </span>
+              收缩
+            </button>
+            <button
+              type="button"
+              className={`px-2.5 py-1 text-xs rounded-md transition-colors ${viewMode === 'expand' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => setViewMode('expand')}
+              title="展开：平铺所有需求"
+            >
+              展开
+            </button>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5 flex-1 min-h-0 overflow-y-auto p-5 pt-2">
+          {STATUSES.map(status => {
+            // 展开模式下列中展示所有需求；收缩模式下列中只展示顶层需求，子需求折叠在父需求卡片内部。
+            const columnCards = cards.filter(c => c.status === status && (viewMode === 'expand' || !c.parentId));
+            const colStyle = COLUMN_STYLES[status] ?? DEFAULT_COLUMN_STYLE;
+            return (
+              <div
+                key={status}
+                className="flex flex-col min-w-0"
+                onDragOver={handleDragOver}
+                onDrop={e => handleDrop(e, status)}
+              >
+                <div className={`flex items-center justify-between px-4 py-3 mb-4 rounded-xl shrink-0 ${colStyle.header}`}>
+                  <h3 className={`text-lg font-semibold ${colStyle.title}`}>{status}</h3>
+                  <span className={`h-7 w-7 rounded-full grid place-items-center text-sm font-bold text-white ${colStyle.count}`}>
+                    {columnCards.length}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-3 flex-1 overflow-y-auto pr-1 min-h-[150px]">
+                  {columnCards.map(card => renderCard(card))}
+                  {columnCards.length === 0 && (
+                    <div className="flex items-center justify-center py-8 text-xs text-muted-foreground opacity-60 border border-dashed border-border/40 rounded-xl">
+                      拖拽需求到此处
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex flex-col gap-3 flex-1 overflow-y-auto pr-1 min-h-[150px]">
-                {columnCards.map(card => renderCard(card))}
-                {columnCards.length === 0 && (
-                  <div className="flex items-center justify-center py-8 text-xs text-muted-foreground opacity-60 border border-dashed border-border/40 rounded-xl">
-                    拖拽需求到此处
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
@@ -532,21 +625,26 @@ function CardActionBtn({
   title,
   onClick,
   ai,
+  disabled,
 }: {
   icon: React.ReactNode;
   title: string;
   onClick: () => void;
   ai?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
+      disabled={disabled}
       className={`h-7 w-7 flex items-center justify-center rounded-md transition-colors shrink-0 ${
-        ai
-          ? 'text-primary hover:bg-primary/10 hover:text-primary/80'
-          : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+        disabled
+          ? 'text-muted-foreground/30 cursor-default'
+          : ai
+            ? 'text-primary hover:bg-primary/10 hover:text-primary/80'
+            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
       }`}
-      onClick={onClick}
-      title={title}
+      onClick={disabled ? undefined : onClick}
+      title={disabled ? `${title}（已达最大层级）` : title}
     >
       {icon}
     </button>
