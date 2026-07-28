@@ -334,9 +334,10 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
               {depth === 0 && (
                 <button
                   type="button"
-                  className="mt-0.5 text-muted-foreground hover:text-foreground"
-                  onClick={e => toggleChildren(card, e)}
-                  title={isExpanded ? '收起子需求' : '展开子需求'}
+                  disabled={!hasChildren}
+                  className={`mt-0.5 ${hasChildren ? 'text-muted-foreground hover:text-foreground' : 'text-muted-foreground/30 cursor-default'}`}
+                  onClick={hasChildren ? e => toggleChildren(card, e) : undefined}
+                  title={hasChildren ? (isExpanded ? '收起子需求' : '展开子需求') : '暂无子需求'}
                 >
                   {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                 </button>
