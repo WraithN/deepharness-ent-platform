@@ -40,6 +40,7 @@ export interface WorkItemDTO {
   reporter: string;
   source: WorkItemSource;
   externalId: string;
+  parentId?: string;
   createdAt: string;
   updatedAt: string;
   type?: 'requirement' | 'defect' | 'case';

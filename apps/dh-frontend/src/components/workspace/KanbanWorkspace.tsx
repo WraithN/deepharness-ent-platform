@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CalendarDays,
+  ChevronDown,
+  ChevronRight,
   FileText,
   Github,
   GitBranch,
@@ -157,6 +159,27 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
   const [detailItem, setDetailItem] = useState<WorkItemDTO | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [productDesignLoading, setProductDesignLoading] = useState(false);
+  // 当前在看板卡片中展开显示子需求的需求 ID 集合。
+  const [expandedCardIds, setExpandedCardIds] = useState<Set<string>>(new Set());
+
+  // 获取指定卡片的直接子需求卡片。
+  const getChildCards = (parentId: string) => cards.filter(c => c.parentId === parentId);
+
+  // 切换父需求的子需求展开/折叠；无子需求时给出提示。
+  const toggleChildren = (card: KanbanCard, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const children = getChildCards(card.id);
+    if (children.length === 0) {
+      toast.info('该需求暂无子需求');
+      return;
+    }
+    setExpandedCardIds(prev => {
+      const next = new Set(prev);
+      if (next.has(card.id)) next.delete(card.id);
+      else next.add(card.id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -175,6 +198,7 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
             type: item.type ?? 'requirement',
             description: item.description ?? '',
             reporter: item.reporter ?? '',
+            parentId: item.parentId,
           }))
         );
       })
@@ -285,13 +309,91 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
     );
   }
 
+  // 递归渲染需求卡片。depth 用于控制缩进与子需求的样式。
+  const renderCard = (card: KanbanCard, depth = 0) => {
+    const childCards = getChildCards(card.id);
+    const hasChildren = childCards.length > 0;
+    const isExpanded = expandedCardIds.has(card.id);
+    const isDoneCol = DONE_STATUSES.includes(card.status);
+
+    return (
+      <div key={card.id} className={`flex flex-col ${depth > 0 ? 'ml-3 pl-3 border-l border-border/40' : ''}`}>
+        <div
+          draggable={depth === 0}
+          onDragStart={depth === 0 ? e => handleDragStart(e, card.id) : undefined}
+          onClick={() => openDetail(card.id)}
+          className={`relative bg-card border border-border/50 rounded-xl pl-5 pr-3 py-3 cursor-pointer transition-all duration-200 active:cursor-grabbing hover:-translate-y-1 hover:shadow-lg dark:hover:shadow-black/30 ${
+            draggedCardId === card.id ? 'opacity-50 border-primary' : ''
+          } ${isDoneCol ? 'opacity-75' : ''}`}
+        >
+          <span className={`absolute left-0 top-0 h-full w-1 rounded-l-xl ${PRIORITY_BAR_COLORS[card.priority] ?? DEFAULT_PRIORITY_BAR}`} />
+          {/* 标题行：类型图标 + 展开按钮 + 标题 + 优先级标签 */}
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <div className="flex items-start gap-1.5 min-w-0 flex-1">
+              <TypeIcon type={card.type} parentId={card.parentId} />
+              {depth === 0 && (
+                <button
+                  type="button"
+                  className="mt-0.5 text-muted-foreground hover:text-foreground"
+                  onClick={e => toggleChildren(card, e)}
+                  title={isExpanded ? '收起子需求' : '展开子需求'}
+                >
+                  {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                </button>
+              )}
+              <h4 className={`text-sm font-medium leading-snug line-clamp-2 ${isDoneCol ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
+                {card.title}
+              </h4>
+            </div>
+            <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${PRIORITY_TAG_COLORS[card.priority] ?? DEFAULT_PRIORITY_TAG}`}>
+              {card.priority}
+            </span>
+          </div>
+          {/* 信息行：负责人 + 创建日期 */}
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs text-muted-foreground truncate">{card.owner || '未分配'}</p>
+            <p className="text-xs text-muted-foreground/80 flex items-center gap-1 shrink-0">
+              <CalendarDays className="h-3 w-3" />
+              {card.createdAt}
+            </p>
+          </div>
+          {/* 快捷操作按钮：仅顶层父需求展示，阻止冒泡以免触发卡片点击 */}
+          {depth === 0 && (
+            <div
+              className="flex items-center gap-0.5 pt-2 border-t border-border/30"
+              onClick={e => e.stopPropagation()}
+            >
+              <CardActionBtn icon={<FileText className="h-3.5 w-3.5" />} title="查看详情" onClick={() => openDetail(card.id)} />
+              <CardActionBtn icon={<Layers className="h-3.5 w-3.5" />} title="查看设计" onClick={() => onNavigateToDesign?.(card.id)} />
+              <CardActionBtn
+                icon={<ListTree className="h-3.5 w-3.5" />}
+                title={hasChildren ? (isExpanded ? '收起子需求' : '展开子需求') : '查看子需求'}
+                onClick={() => toggleChildren(card)}
+              />
+              <div className="w-px h-4 bg-border/40 mx-0.5 shrink-0" />
+              <CardActionBtn icon={<Split className="h-3.5 w-3.5" />} title="AI拆分子需求" ai onClick={() => goToChat(card, AI_COMMANDS.split)} />
+              <CardActionBtn icon={<LayoutTemplate className="h-3.5 w-3.5" />} title="AI原型设计" ai onClick={() => goToChat(card, AI_COMMANDS.prototype)} />
+              <CardActionBtn icon={<PenLine className="h-3.5 w-3.5" />} title="AI写文档" ai onClick={() => goToChat(card, AI_COMMANDS.document)} />
+            </div>
+          )}
+        </div>
+        {/* 子需求：递归渲染，所有层级默认展开 */}
+        {(depth > 0 || isExpanded) && hasChildren && (
+          <div className="flex flex-col gap-2 mt-2">
+            {childCards.map(child => renderCard(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5 h-full overflow-y-auto p-5">
         {STATUSES.map(status => {
-          const columnCards = cards.filter(c => c.status === status);
+          // 列中只展示顶层需求，子需求折叠在父需求卡片内部。
+          const columnCards = cards.filter(c => !c.parentId && c.status === status);
           const colStyle = COLUMN_STYLES[status] ?? DEFAULT_COLUMN_STYLE;
-          const isDoneCol = DONE_STATUSES.includes(status);
           return (
             <div
               key={status}
@@ -306,52 +408,7 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
                 </span>
               </div>
               <div className="flex flex-col gap-3 flex-1 overflow-y-auto pr-1 min-h-[150px]">
-                {columnCards.map(card => (
-                  <div
-                    key={card.id}
-                    draggable
-                    onDragStart={e => handleDragStart(e, card.id)}
-                    onClick={() => openDetail(card.id)}
-                    className={`relative bg-card border border-border/50 rounded-xl pl-5 pr-3 py-3 cursor-pointer transition-all duration-200 active:cursor-grabbing hover:-translate-y-1 hover:shadow-lg dark:hover:shadow-black/30 ${
-                      draggedCardId === card.id ? 'opacity-50 border-primary' : ''
-                    } ${isDoneCol ? 'opacity-75' : ''}`}
-                  >
-                    <span className={`absolute left-0 top-0 h-full w-1 rounded-l-xl ${PRIORITY_BAR_COLORS[card.priority] ?? DEFAULT_PRIORITY_BAR}`} />
-                    {/* 标题行：类型图标 + 标题 + 优先级标签 */}
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div className="flex items-start gap-1.5 min-w-0 flex-1">
-                        <TypeIcon type={card.type} parentId={card.parentId} />
-                        <h4 className={`text-sm font-medium leading-snug line-clamp-2 ${isDoneCol ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
-                          {card.title}
-                        </h4>
-                      </div>
-                      <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${PRIORITY_TAG_COLORS[card.priority] ?? DEFAULT_PRIORITY_TAG}`}>
-                        {card.priority}
-                      </span>
-                    </div>
-                    {/* 信息行：负责人 + 创建日期 */}
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-xs text-muted-foreground truncate">{card.owner || '未分配'}</p>
-                      <p className="text-xs text-muted-foreground/80 flex items-center gap-1 shrink-0">
-                        <CalendarDays className="h-3 w-3" />
-                        {card.createdAt}
-                      </p>
-                    </div>
-                    {/* 快捷操作按钮：阻止冒泡以免触发卡片点击 */}
-                    <div
-                      className="flex items-center gap-0.5 pt-2 border-t border-border/30"
-                      onClick={e => e.stopPropagation()}
-                    >
-                      <CardActionBtn icon={<FileText className="h-3.5 w-3.5" />} title="查看详情" onClick={() => openDetail(card.id)} />
-                      <CardActionBtn icon={<Layers className="h-3.5 w-3.5" />} title="查看设计" onClick={() => onNavigateToDesign?.(card.id)} />
-                      <CardActionBtn icon={<ListTree className="h-3.5 w-3.5" />} title="查看子需求" onClick={() => toast.info('该需求暂无子需求')} />
-                      <div className="w-px h-4 bg-border/40 mx-0.5 shrink-0" />
-                      <CardActionBtn icon={<Split className="h-3.5 w-3.5" />} title="AI拆分子需求" ai onClick={() => goToChat(card, AI_COMMANDS.split)} />
-                      <CardActionBtn icon={<LayoutTemplate className="h-3.5 w-3.5" />} title="AI原型设计" ai onClick={() => goToChat(card, AI_COMMANDS.prototype)} />
-                      <CardActionBtn icon={<PenLine className="h-3.5 w-3.5" />} title="AI写文档" ai onClick={() => goToChat(card, AI_COMMANDS.document)} />
-                    </div>
-                  </div>
-                ))}
+                {columnCards.map(card => renderCard(card))}
                 {columnCards.length === 0 && (
                   <div className="flex items-center justify-center py-8 text-xs text-muted-foreground opacity-60 border border-dashed border-border/40 rounded-xl">
                     拖拽需求到此处

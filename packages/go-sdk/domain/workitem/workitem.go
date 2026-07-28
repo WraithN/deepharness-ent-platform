@@ -17,6 +17,7 @@ type WorkItem struct {
 	Reporter     string    `json:"reporter"`
 	Source       Source    `json:"source"`
 	ExternalID   string    `json:"externalId"`
+	ParentID     string    `json:"parentId"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 }

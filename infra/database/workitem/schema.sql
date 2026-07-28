@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS workitems (
     assignee_id VARCHAR(36),
     source VARCHAR(100) NOT NULL DEFAULT 'internal',
     external_id VARCHAR(200),
+    parent_id VARCHAR(36),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS workitems (
 CREATE INDEX IF NOT EXISTS idx_workitems_tenant ON workitems (tenant_id);
 CREATE INDEX IF NOT EXISTS idx_workitems_project ON workitems (project_id);
 CREATE INDEX IF NOT EXISTS idx_workitems_status ON workitems (status);
+CREATE INDEX IF NOT EXISTS idx_workitems_parent ON workitems (parent_id);
 
 DROP TRIGGER IF EXISTS trigger_workitems_updated_at ON workitems;
 CREATE TRIGGER trigger_workitems_updated_at

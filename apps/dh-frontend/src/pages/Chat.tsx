@@ -1739,6 +1739,7 @@ export const Chat: React.FC = () => {
   };
 
   // 将需求拆分中选中的子需求提交到工作项库，并刷新需求列表。
+  // 若拆分项存在多级 parentId，则按层级建立父子关系；最顶层的需求挂到当前引用的父需求下。
   const handleReqBreakdownSubmit = async (items: RequirementItem[]) => {
     const workspaceId = getCurrentWorkspaceId();
     let projectId = 'p1';
@@ -1750,10 +1751,14 @@ export const Chat: React.FC = () => {
       // 未配置工作项项目时回退到默认项目
     }
 
+    const rootParentId = quotedCard?.type === 'req' ? quotedCard.id : '';
     const priorityMap: Record<string, string> = { P0: 'high', P1: 'medium', P2: 'medium' };
     const created: { id: string; workitemId: string }[] = [];
+    // 先创建父需求，再创建子需求，保证能正确建立 parentId 映射。
+    const sortedItems = [...items].sort((a, b) => (a.parentId ? 1 : 0) - (b.parentId ? 1 : 0));
+    const idToWorkitemId = new Map<string, string>();
 
-    for (const item of items) {
+    for (const item of sortedItems) {
       const description = [
         item.description?.role && `角色：${item.description.role}`,
         item.description?.scenario && `场景：${item.description.scenario}`,
@@ -1761,6 +1766,10 @@ export const Chat: React.FC = () => {
         item.description?.value && `价值：${item.description.value}`,
         item.description?.constraints && `约束：${item.description.constraints}`,
       ].filter(Boolean).join('\n');
+
+      const parentId = item.parentId
+        ? idToWorkitemId.get(item.parentId) || rootParentId
+        : rootParentId;
 
       const res = await api.post<WorkItemDTO>('/v1/workitems', {
         tenantId: user?.tenantId || '',
@@ -1772,8 +1781,10 @@ export const Chat: React.FC = () => {
         priority: priorityMap[item.priority || 'P2'] || 'medium',
         source: 'internal',
         reporter: user?.name || '当前用户',
+        parentId,
       });
       created.push({ id: item.id, workitemId: res.id });
+      idToWorkitemId.set(item.id, res.id);
     }
 
     // 刷新需求列表，使新创建的需求立即出现在任务/看板中

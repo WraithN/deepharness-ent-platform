@@ -21,6 +21,7 @@ type CreateWorkItemRequest struct {
 	AssigneeID  string            `json:"assigneeId"`
 	Reporter    string            `json:"reporter"`
 	Source      workitem.Source   `json:"source"`
+	ParentID    string            `json:"parentId"`
 	CreatedAt   time.Time         `json:"createdAt"`
 	UpdatedAt   time.Time         `json:"updatedAt"`
 }

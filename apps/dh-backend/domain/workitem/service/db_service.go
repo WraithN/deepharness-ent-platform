@@ -51,7 +51,7 @@ func (s *DBWorkItemService) ListWorkItems(filter WorkItemFilter) ([]object.WorkI
 	}
 
 	query := `SELECT w.id, w.tenant_id, w.project_id, w."type", w.title, w.description, w.status, w.priority,
-		w.assignee_id, COALESCE(u.name, ''), w.reporter, w.source, w.external_id, w.created_at, w.updated_at
+		w.assignee_id, COALESCE(u.name, ''), w.reporter, w.source, w.external_id, w.parent_id, w.created_at, w.updated_at
 		FROM workitems w
 		LEFT JOIN users u ON u.id = w.assignee_id`
 	if len(conditions) > 0 {
@@ -68,11 +68,11 @@ func (s *DBWorkItemService) ListWorkItems(filter WorkItemFilter) ([]object.WorkI
 	result := make([]object.WorkItem, 0)
 	for rows.Next() {
 		var it object.WorkItem
-		var desc, assigneeID, assigneeName, reporter, externalID sql.NullString
+		var desc, assigneeID, assigneeName, reporter, externalID, parentID sql.NullString
 		err := rows.Scan(
 			&it.ID, &it.TenantID, &it.ProjectID,
 			&it.Type, &it.Title, &desc, &it.Status, &it.Priority,
-			&assigneeID, &assigneeName, &reporter, &it.Source, &externalID,
+			&assigneeID, &assigneeName, &reporter, &it.Source, &externalID, &parentID,
 			&it.CreatedAt, &it.UpdatedAt,
 		)
 		if err != nil {
@@ -93,6 +93,9 @@ func (s *DBWorkItemService) ListWorkItems(filter WorkItemFilter) ([]object.WorkI
 		if externalID.Valid {
 			it.ExternalID = externalID.String
 		}
+		if parentID.Valid {
+			it.ParentID = parentID.String
+		}
 		result = append(result, it)
 	}
 	return result, rows.Err()
@@ -101,17 +104,17 @@ func (s *DBWorkItemService) ListWorkItems(filter WorkItemFilter) ([]object.WorkI
 // GetWorkItem 按 ID 获取单个工作项详情。
 func (s *DBWorkItemService) GetWorkItem(id string) (object.WorkItem, error) {
 	var it object.WorkItem
-	var desc, assigneeID, assigneeName, reporter, externalID sql.NullString
+	var desc, assigneeID, assigneeName, reporter, externalID, parentID sql.NullString
 	err := s.db.QueryRow(`
 		SELECT w.id, w.tenant_id, w.project_id, w."type", w.title, w.description, w.status, w.priority,
-			w.assignee_id, COALESCE(u.name, ''), w.reporter, w.source, w.external_id, w.created_at, w.updated_at
+			w.assignee_id, COALESCE(u.name, ''), w.reporter, w.source, w.external_id, w.parent_id, w.created_at, w.updated_at
 		FROM workitems w
 		LEFT JOIN users u ON u.id = w.assignee_id
 		WHERE w.id = $1
 	`, id).Scan(
 		&it.ID, &it.TenantID, &it.ProjectID,
 		&it.Type, &it.Title, &desc, &it.Status, &it.Priority,
-		&assigneeID, &assigneeName, &reporter, &it.Source, &externalID,
+		&assigneeID, &assigneeName, &reporter, &it.Source, &externalID, &parentID,
 		&it.CreatedAt, &it.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -134,6 +137,9 @@ func (s *DBWorkItemService) GetWorkItem(id string) (object.WorkItem, error) {
 	}
 	if externalID.Valid {
 		it.ExternalID = externalID.String
+	}
+	if parentID.Valid {
+		it.ParentID = parentID.String
 	}
 	return it, nil
 }
@@ -162,21 +168,21 @@ func (s *DBWorkItemService) CreateWorkItem(req object.CreateWorkItemRequest) (ob
 
 	id := uuid.New().String()
 	var it object.WorkItem
-	var desc, assigneeID, reporter, externalID sql.NullString
+	var desc, assigneeID, reporter, externalID, parentID sql.NullString
 
 	err := s.db.QueryRow(`
 		INSERT INTO workitems (id, tenant_id, project_id, "type", title, description, status, priority,
-			assignee_id, reporter, source, external_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			assignee_id, reporter, source, external_id, parent_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING id, tenant_id, project_id, "type", title, description, status, priority,
-			assignee_id, reporter, source, external_id, created_at, updated_at
+			assignee_id, reporter, source, external_id, parent_id, created_at, updated_at
 	`, id, req.TenantID, req.ProjectID, string(req.Type), req.Title, req.Description,
 		string(req.Status), string(req.Priority), req.AssigneeID, req.Reporter,
-		string(req.Source), "", req.CreatedAt, req.UpdatedAt,
+		string(req.Source), "", sql.NullString{String: req.ParentID, Valid: req.ParentID != ""}, req.CreatedAt, req.UpdatedAt,
 	).Scan(
 		&it.ID, &it.TenantID, &it.ProjectID,
 		&it.Type, &it.Title, &desc, &it.Status, &it.Priority,
-		&assigneeID, &reporter, &it.Source, &externalID,
+		&assigneeID, &reporter, &it.Source, &externalID, &parentID,
 		&it.CreatedAt, &it.UpdatedAt,
 	)
 	if err != nil {
@@ -193,6 +199,9 @@ func (s *DBWorkItemService) CreateWorkItem(req object.CreateWorkItemRequest) (ob
 	}
 	if externalID.Valid {
 		it.ExternalID = externalID.String
+	}
+	if parentID.Valid {
+		it.ParentID = parentID.String
 	}
 	return it, nil
 }
