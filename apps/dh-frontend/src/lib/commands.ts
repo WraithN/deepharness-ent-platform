@@ -13,6 +13,8 @@ export interface CommandConfig {
   allowRepos: boolean;
   requireRepos: boolean;
   maxRepos: number;
+  /** 指令是否启用；禁用指令在会话页中展示为灰色且不可点击。 */
+  enabled: boolean;
   /** 指令对应的提示词模板（管理端展示用，前端会话页不使用）。 */
   template?: string;
 }

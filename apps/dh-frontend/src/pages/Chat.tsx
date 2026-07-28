@@ -789,6 +789,14 @@ export const Chat: React.FC = () => {
   const [referencedDocs, setReferencedDocs] = useState<ReferencedDoc[]>([]);
   const [materializingDocId, setMaterializingDocId] = useState<string | null>(null);
   const [commandConfigs, setCommandConfigs] = useState<CommandConfig[]>([]);
+
+  // 欢迎页快捷卡片过滤掉后端已禁用的指令；配置尚未加载时全部展示。
+  const visibleWelcomeCards = useMemo(() => {
+    if (commandConfigs.length === 0) return welcomeCards;
+    const enabledSet = new Set(commandConfigs.filter(c => c.enabled).map(c => c.cmd));
+    return welcomeCards.filter(card => enabledSet.has(card.cmd));
+  }, [welcomeCards, commandConfigs]);
+
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
   const [compactPlusOpen, setCompactPlusOpen] = useState(false);
@@ -1256,7 +1264,13 @@ export const Chat: React.FC = () => {
   // 插入指令到输入框开头（斜杠指令通常作为前缀），若已有内容则追加空格分隔。
   // 指令成为原子块（/code 整体删除），插入后光标定位到块尾。
   // 若已存在指令，则替换为新的指令；若指令不支持代码库且当前已选代码库，清空选择。
+  // 若指令已被禁用，给出提示并不插入。
   const insertCommand = (cmd: string) => {
+    const cfg = commandConfigs.find(c => c.cmd === cmd);
+    if (cfg && !cfg.enabled) {
+      toast.info(`指令 ${cmd} 已被禁用`);
+      return;
+    }
     const existingCmd = commandConfigs.find(c => {
       const after = input.slice(c.cmd.length);
       return input.startsWith(c.cmd) && (after === '' || /^\s/.test(after));
@@ -1265,7 +1279,6 @@ export const Chat: React.FC = () => {
     const newInput = rest ? `${cmd} ${rest}` : `${cmd} `;
     setInput(newInput);
     setCmdMenuOpen(false);
-    const cfg = commandConfigs.find(c => c.cmd === cmd);
     if (cfg && !cfg.allowRepos && selectedRepos.length > 0) {
       setSelectedRepos([]);
     }
@@ -1286,12 +1299,19 @@ export const Chat: React.FC = () => {
   }, [slashMenuOpen, input, commandConfigs]);
 
   // 选择斜杠菜单中的指令：替换输入框内容为 {cmd} 原子块，保留后面的内容，光标定位到块尾。
+  // 若指令已被禁用，给出提示并不插入。
   const selectSlashCommand = (cmd: string) => {
+    const cfg = commandConfigs.find(c => c.cmd === cmd);
+    if (cfg && !cfg.enabled) {
+      toast.info(`指令 ${cmd} 已被禁用`);
+      setSlashMenuOpen(false);
+      setSlashIndex(0);
+      return;
+    }
     const rest = input.replace(/^\/\S*/, '').trimStart();
     setInput(rest ? `${cmd} ${rest}` : `${cmd} `);
     setSlashMenuOpen(false);
     setSlashIndex(0);
-    const cfg = commandConfigs.find(c => c.cmd === cmd);
     if (cfg && !cfg.allowRepos && selectedRepos.length > 0) {
       setSelectedRepos([]);
     }
@@ -1471,6 +1491,12 @@ export const Chat: React.FC = () => {
     const activeCmd = cmdMatch ? cmdMatch[1] : '';
     const cmdCfg = commandConfigs.find(c => c.cmd === activeCmd);
     let effectiveRepos = selectedRepos.length > 0 ? [...selectedRepos] : undefined;
+
+    // 指令已被禁用时，拦截发送并提示用户。
+    if (cmdCfg && !cmdCfg.enabled) {
+      toast.info(`指令 ${activeCmd} 已被禁用，无法发送`);
+      return;
+    }
 
     // 指令不支持代码库时，提示并忽略。
     if (cmdCfg && !cmdCfg.allowRepos && selectedRepos.length > 0) {
@@ -2183,15 +2209,35 @@ export const Chat: React.FC = () => {
             .filter(item => COMMAND_CATEGORIES[item.cmd] === activeCommandTab)
             .map(item => {
               const Icon = COMMAND_ICON_MAP[item.cmd] ?? Terminal;
+              const disabled = !item.enabled;
               return (
                 <div
                   key={item.cmd}
-                  className="flex items-center gap-3 px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors"
-                  onClick={() => onSelect(item.cmd)}
+                  title={disabled ? '当前指令已被禁用' : item.desc}
+                  className={cn(
+                    'flex items-center gap-3 px-3 py-2 rounded-md transition-colors',
+                    disabled
+                      ? 'opacity-50 cursor-not-allowed text-muted-foreground'
+                      : 'cursor-pointer text-foreground hover:bg-accent'
+                  )}
+                  onClick={() => {
+                    if (disabled) {
+                      toast.info(`指令 ${item.cmd} 已被禁用`);
+                      return;
+                    }
+                    onSelect(item.cmd);
+                  }}
                 >
-                  <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <div className="flex flex-col min-w-0">
-                    <span className="font-medium text-sm leading-none">{item.cmd}</span>
+                  <Icon className={cn('h-4 w-4 shrink-0', disabled ? 'text-muted-foreground/60' : 'text-muted-foreground')} />
+                  <div className="flex flex-col min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className={cn('font-medium text-sm leading-none', disabled && 'line-through')}>{item.cmd}</span>
+                      {disabled && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-destructive/10 text-destructive border border-destructive/20">
+                          已禁用
+                        </span>
+                      )}
+                    </div>
                     <span className="text-xs text-muted-foreground mt-0.5">{item.label} · {item.desc}</span>
                   </div>
                 </div>
@@ -2518,7 +2564,7 @@ export const Chat: React.FC = () => {
                   我可以帮你撰写 PRD、调研需求、制作原型、编写代码。选择下方指令快速开始，或直接输入你的问题。
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
-                  {welcomeCards.map(card => {
+                  {visibleWelcomeCards.map(card => {
                     const Icon = COMMAND_ICON_MAP[card.cmd] ?? Terminal;
                     return (
                       <Button
@@ -2679,18 +2725,39 @@ export const Chat: React.FC = () => {
               <div className="absolute bottom-full left-4 mb-1 w-64 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
                 {filteredSlashCommands.map((item, idx) => {
                   const Icon = COMMAND_ICON_MAP[item.cmd] ?? Terminal;
+                  const disabled = !item.enabled;
                   return (
                     <div
                       key={item.cmd}
-                      className={cn('flex items-center gap-3 px-3 py-2 cursor-pointer text-foreground transition-colors', idx === slashIndex ? 'bg-accent' : 'hover:bg-accent')}
-                      onClick={() => selectSlashCommand(item.cmd)}
+                      title={disabled ? '当前指令已被禁用' : item.desc}
+                      className={cn(
+                        'flex items-center gap-3 px-3 py-2 transition-colors',
+                        disabled
+                          ? 'opacity-50 cursor-not-allowed text-muted-foreground'
+                          : 'cursor-pointer text-foreground hover:bg-accent',
+                        idx === slashIndex && !disabled && 'bg-accent'
+                      )}
+                      onClick={() => {
+                        if (disabled) {
+                          toast.info(`指令 ${item.cmd} 已被禁用`);
+                          return;
+                        }
+                        selectSlashCommand(item.cmd);
+                      }}
                     >
-                      <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <div className="flex flex-col min-w-0">
-                        <span className="font-medium text-sm leading-none">{item.cmd}</span>
+                      <Icon className={cn('h-4 w-4 shrink-0', disabled ? 'text-muted-foreground/60' : 'text-muted-foreground')} />
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className={cn('font-medium text-sm leading-none', disabled && 'line-through')}>{item.cmd}</span>
+                          {disabled && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-destructive/10 text-destructive border border-destructive/20">
+                              已禁用
+                            </span>
+                          )}
+                        </div>
                         <span className="text-xs text-muted-foreground mt-0.5">{item.label} · {item.desc}</span>
                       </div>
-                      {item.requireRepos && (
+                      {!disabled && item.requireRepos && (
                         <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400 shrink-0">需代码库</span>
                       )}
                     </div>

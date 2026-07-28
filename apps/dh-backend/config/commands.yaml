@@ -21,6 +21,7 @@ commands:
     allowRepos: false
     requireRepos: false
     maxRepos: 0
+    enabled: true
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -55,6 +56,7 @@ commands:
     allowRepos: false
     requireRepos: false
     maxRepos: 0
+    enabled: true
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -90,6 +92,7 @@ commands:
     allowRepos: true
     requireRepos: false
     maxRepos: 2
+    enabled: true
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -167,6 +170,7 @@ commands:
     allowRepos: true
     requireRepos: false
     maxRepos: 2
+    enabled: true
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -212,6 +216,7 @@ commands:
     allowRepos: true
     requireRepos: false
     maxRepos: 2
+    enabled: true
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -238,6 +243,7 @@ commands:
     allowRepos: true
     requireRepos: true
     maxRepos: 2
+    enabled: true
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -263,6 +269,7 @@ commands:
     allowRepos: true
     requireRepos: true
     maxRepos: 2
+    enabled: true
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -289,6 +296,7 @@ commands:
     allowRepos: true
     requireRepos: true
     maxRepos: 2
+    enabled: true
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -330,6 +338,7 @@ commands:
     allowRepos: false
     requireRepos: false
     maxRepos: 0
+    enabled: false
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -355,6 +364,7 @@ commands:
     allowRepos: true
     requireRepos: false
     maxRepos: 1
+    enabled: false
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -380,6 +390,7 @@ commands:
     allowRepos: false
     requireRepos: false
     maxRepos: 0
+    enabled: false
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -405,6 +416,7 @@ commands:
     allowRepos: false
     requireRepos: false
     maxRepos: 0
+    enabled: false
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -432,6 +444,7 @@ commands:
     allowRepos: false
     requireRepos: false
     maxRepos: 0
+    enabled: false
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -459,6 +472,7 @@ commands:
     allowRepos: false
     requireRepos: false
     maxRepos: 0
+    enabled: false
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -485,6 +499,7 @@ commands:
     allowRepos: false
     requireRepos: false
     maxRepos: 0
+    enabled: false
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -510,6 +525,7 @@ commands:
     allowRepos: false
     requireRepos: false
     maxRepos: 0
+    enabled: true
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
@@ -571,6 +587,7 @@ commands:
     allowRepos: false
     requireRepos: false
     maxRepos: 0
+    enabled: false
     template: |
       【语言要求】
       你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。

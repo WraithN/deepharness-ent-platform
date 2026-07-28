@@ -42,7 +42,10 @@ function getCommandCategoryLabelByKey(key: string): string {
 
 /** 指令约束徽章：代码库/任务相关约束的可视化展示。 */
 const ConstraintBadges: React.FC<{ cmd: CommandConfig }> = ({ cmd }) => {
-  const badges: { label: string; variant: 'default' | 'outline' }[] = [];
+  const badges: { label: string; variant: 'default' | 'outline' | 'secondary' | 'destructive' }[] = [];
+  if (!cmd.enabled) {
+    badges.push({ label: '已禁用', variant: 'destructive' });
+  }
   if (cmd.requireRepos) {
     badges.push({ label: '需代码库', variant: 'default' });
   } else if (cmd.allowRepos) {

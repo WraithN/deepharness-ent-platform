@@ -19,6 +19,7 @@ type CommandConfig struct {
 	AllowRepos    bool   `json:"allowRepos" yaml:"allowRepos"`
 	RequireRepos  bool   `json:"requireRepos" yaml:"requireRepos"`
 	MaxRepos      int    `json:"maxRepos" yaml:"maxRepos"`
+	Enabled       bool   `json:"enabled" yaml:"enabled"`
 	Template      string `json:"template" yaml:"template"`
 }
 
