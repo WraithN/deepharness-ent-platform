@@ -949,6 +949,8 @@ export const Chat: React.FC = () => {
 
   // Quoted card above input
   const [quotedCard, setQuotedCard] = useState<{ type: 'req' | 'defect' | 'case'; id: string; title: string; reporter: string } | null>(null);
+  // 记录最近一次 /req-breakdown 指令关联的父需求 ID。用户可能在提交前移除引用卡片，因此用 ref 保留根父需求。
+  const lastReqBreakdownRootId = useRef<string>('');
 
   // 原型采纳关联的需求 ID：优先使用显式引用的需求卡片；若用户通过“做原型”或 AI 回复里的
   // [[REQ_NAME:...]] 提供了需求标题，则尝试按标题匹配已有需求。确保采纳原型时能生成设计版本。
@@ -1659,6 +1661,11 @@ export const Chat: React.FC = () => {
       return;
     }
 
+    // 记录 /req-breakdown 关联的父需求，供后续提交时作为子需求 parentId，避免引用卡片被移除后丢失。
+    if (activeCmd === '/req-breakdown' && quotedCard?.type === 'req') {
+      lastReqBreakdownRootId.current = quotedCard.id;
+    }
+
     const context: SendContext | undefined =
       quotedCard || effectiveRepos
         ? { quotedCard: quotedCard ?? undefined, selectedRepos: effectiveRepos }
@@ -1767,7 +1774,8 @@ export const Chat: React.FC = () => {
       // 未配置工作项项目时回退到默认项目
     }
 
-    const rootParentId = quotedCard?.type === 'req' ? quotedCard.id : '';
+    const rootParentId = lastReqBreakdownRootId.current || (quotedCard?.type === 'req' ? quotedCard.id : '');
+    console.log('[ReqBreakdownSubmit] rootParentId=', rootParentId, 'quotedCard=', quotedCard);
     let parentPriority: string | undefined;
     if (rootParentId) {
       try {
@@ -1777,8 +1785,13 @@ export const Chat: React.FC = () => {
       }
     }
 
+    if (!rootParentId) {
+      console.warn('[ReqBreakdownSubmit] 未找到父需求 ID，无法建立父子关系，终止提交');
+      toast.error('未找到被拆分的父需求，请先引用需求卡片再执行拆分');
+      return { created: [] };
+    }
+
     const created: { id: string; workitemId: string }[] = [];
-    const idToWorkitemId = new Map<string, string>();
 
     for (const item of items) {
       const description = [
@@ -1802,7 +1815,6 @@ export const Chat: React.FC = () => {
         parentId: rootParentId,
       });
       created.push({ id: item.id, workitemId: res.id });
-      idToWorkitemId.set(item.id, res.id);
     }
 
     // 幂等：将创建的 workitemId 回写到需求拆分 JSON 源文件，避免刷新页面后重复提交。

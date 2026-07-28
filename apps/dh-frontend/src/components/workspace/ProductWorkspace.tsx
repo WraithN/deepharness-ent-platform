@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -443,6 +444,7 @@ export const ProductWorkspace: React.FC = () => {
 
   const { membership } = useAuth();
   const workspaceId = membership?.workspaceId ?? '';
+  const navigate = useNavigate();
 
   // 需求关联：选中需求后加载其关联的文档/原型，在看板和设计视图间共享
   const [selectedWorkitemId, setSelectedWorkitemId] = useState<string>('');
@@ -461,6 +463,9 @@ export const ProductWorkspace: React.FC = () => {
     share: null,
     allowComments: true,
   });
+
+  /** 需求无设计时，引导使用 AI 写 PRD 的确认弹窗 */
+  const [aiDesignDialog, setAiDesignDialog] = useState<{ open: boolean; req: WorkItemDTO | null }>({ open: false, req: null });
 
   /** 工作空间成员列表（用于评审通过/分配时选择受理人） */
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
@@ -508,6 +513,43 @@ export const ProductWorkspace: React.FC = () => {
 
   const handleTopChange = (value: ProductTopTab) => {
     setTabs(prev => ({ topTab: value, subTab: prev.subTab }));
+  };
+
+  // 从看板进入需求设计视图：若已有关联设计则直接切换；否则弹出 AI 设计引导。
+  const handleNavigateToDesign = async (id: string) => {
+    let req = requirements.find(r => r.id === id);
+    if (!req) {
+      try {
+        req = await api.get<WorkItemDTO>(`/v1/workitems/${id}`);
+      } catch {
+        toast.error('加载需求信息失败');
+        return;
+      }
+    }
+    try {
+      const links = await workItemDocApi.list(id);
+      if (links.length > 0) {
+        setTabs(prev => ({ ...prev, topTab: 'design' }));
+        setSelectedWorkitemId(id);
+        return;
+      }
+      setAiDesignDialog({ open: true, req });
+    } catch {
+      toast.error('检查设计关联失败');
+    }
+  };
+
+  // 确认使用 AI 写 PRD：跳转到智能会话并自动携带 /prd-write 指令与需求卡片。
+  const confirmAiDesign = () => {
+    const { req } = aiDesignDialog;
+    if (!req) return;
+    navigate('/chat', {
+      state: {
+        initialInput: `/prd-write ${req.title}`,
+        quotedCard: { type: 'req' as const, id: req.id, title: req.title, reporter: req.reporter || '' },
+      },
+    });
+    setAiDesignDialog({ open: false, req: null });
   };
 
   // 为需求创建统一的文档+原型分享链接，成功后弹出权限配置对话框。
@@ -942,10 +984,7 @@ export const ProductWorkspace: React.FC = () => {
 
           <Card className="flex-1 overflow-hidden border-none claude-card flex flex-col relative">
             {topTab === 'kanban' && (
-              <KanbanWorkspace onNavigateToDesign={(id) => {
-                setTabs(prev => ({ ...prev, topTab: 'design' }));
-                setSelectedWorkitemId(id);
-              }} />
+              <KanbanWorkspace onNavigateToDesign={handleNavigateToDesign} />
             )}
             {/* 设计视图 - 无选中需求：引导选择 */}
             {topTab === 'design' && !selectedWorkitemId && (
@@ -978,6 +1017,29 @@ export const ProductWorkspace: React.FC = () => {
           </Card>
         </div>
       </div>
+
+      {/* 需求无设计关联时，引导使用 AI 写 PRD */}
+      <Dialog open={aiDesignDialog.open} onOpenChange={open => setAiDesignDialog(prev => ({ ...prev, open }))}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-primary" />
+              当前需求尚未设计
+            </DialogTitle>
+            <DialogDescription>
+              需求「{aiDesignDialog.req?.title}」还没有关联设计文档或原型，是否让 AI 先写一份 PRD？
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAiDesignDialog({ open: false, req: null })}>
+              取消
+            </Button>
+            <Button onClick={confirmAiDesign}>
+              AI 设计
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 分享成功后的权限配置对话框 */}
       <Dialog open={shareDialog.open} onOpenChange={open => setShareDialog(prev => ({ ...prev, open }))}>
