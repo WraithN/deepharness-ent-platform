@@ -1520,8 +1520,12 @@ export const Settings: React.FC = () => {
                     />
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <Button size="sm" variant="outline" onClick={() => { setCreateSkillPrompt(''); setCreateSkillOpen(true); }}><Wand2 className="w-4 h-4 mr-2" />创建技能</Button>
-                    <Button size="sm" onClick={openSkillMarket}><Plus className="w-4 h-4 mr-2" />去市场添加</Button>
+                    <span title="技能配置功能暂未开放">
+                      <Button size="sm" variant="outline" disabled onClick={() => { setCreateSkillPrompt(''); setCreateSkillOpen(true); }}><Wand2 className="w-4 h-4 mr-2" />创建技能</Button>
+                    </span>
+                    <span title="技能配置功能暂未开放">
+                      <Button size="sm" disabled onClick={openSkillMarket}><Plus className="w-4 h-4 mr-2" />去市场添加</Button>
+                    </span>
                   </div>
                 </div>
 
@@ -1584,15 +1588,17 @@ export const Settings: React.FC = () => {
                           </Button>
                         </div>
                       ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="rounded-full h-9 w-9 p-0"
-                          onClick={() => setIsAddingSkillCategory(true)}
-                          title="新增分类"
-                        >
-                          <Plus className="h-4 w-4" />
-                        </Button>
+                        <span title="技能配置功能暂未开放">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-full h-9 w-9 p-0"
+                            disabled
+                            onClick={() => setIsAddingSkillCategory(true)}
+                          >
+                            <Plus className="h-4 w-4" />
+                          </Button>
+                        </span>
                       )
                     )}
                   </div>
@@ -1638,17 +1644,20 @@ export const Settings: React.FC = () => {
                                   </Badge>
                                 </div>
                               </div>
-                              <Switch
-                                checked={skill.installed}
-                                onCheckedChange={checked => {
-                                  teamApi.updateSkillInstalled(skill.id, checked, workspaceId)
-                                    .then(() => {
-                                      setSkills(prev => prev.map(s => s.id === skill.id ? { ...s, installed: checked } : s));
-                                      toast.success(checked ? '技能已安装到当前空间' : '技能已卸载');
-                                    })
-                                    .catch(() => toast.error('操作失败'));
-                                }}
-                              />
+                              <span title="技能配置功能暂未开放">
+                                <Switch
+                                  checked={skill.installed}
+                                  disabled
+                                  onCheckedChange={checked => {
+                                    teamApi.updateSkillInstalled(skill.id, checked, workspaceId)
+                                      .then(() => {
+                                        setSkills(prev => prev.map(s => s.id === skill.id ? { ...s, installed: checked } : s));
+                                        toast.success(checked ? '技能已安装到当前空间' : '技能已卸载');
+                                      })
+                                      .catch(() => toast.error('操作失败'));
+                                  }}
+                                />
+                              </span>
                             </div>
                             <p className="text-xs text-muted-foreground mt-3 line-clamp-2 flex-1">{skill.description}</p>
                             <div className="flex items-center gap-3 mt-3 text-[10px] text-muted-foreground">

@@ -7,6 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClientPagination } from '@/hooks/use-client-pagination';
@@ -50,7 +53,15 @@ export const PromptMarket: React.FC = () => {
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createPrompt, setCreatePrompt] = useState('');
+  const [createMode, setCreateMode] = useState<'ai' | 'manual'>('ai');
+  const [manualName, setManualName] = useState('');
+  const [manualDescription, setManualDescription] = useState('');
+  const [manualContent, setManualContent] = useState('');
+  const [manualUseCase, setManualUseCase] = useState('研发');
   const [isGenerating, setIsGenerating] = useState(false);
+
+  // 新建提示词时可选的场景分类（排除「全部」）。
+  const CREATE_USE_CASE_OPTIONS = CATEGORIES.filter(c => c !== '全部');
   // 添加到空间操作中的提示词 ID（按钮 loading 态兼防抖，避免重复点击重复计数）。
   const [addingPromptId, setAddingPromptId] = useState<string | null>(null);
   // 复制按钮冷却截止时间戳（按提示词 ID），冷却期内按钮禁用，实现 5 秒防抖。
@@ -141,23 +152,69 @@ export const PromptMarket: React.FC = () => {
     }
   };
 
+  // 根据用户描述自动生成结构化提示词内容（前端兜底实现，后续可替换为 Agent 生成接口）。
+  const buildAiPromptContent = (description: string, useCase: string) => `# 角色
+你是一位经验丰富的${useCase}专家助手。
+
+# 任务
+${description.trim()}
+
+# 输出要求
+- 请结合任务场景给出结构化、可复用的回答。
+- 保持回答简洁、专业、可操作。
+- 在需要时给出示例。`;
+
+  const resetCreateForm = () => {
+    setCreatePrompt('');
+    setManualName('');
+    setManualDescription('');
+    setManualContent('');
+    setManualUseCase('研发');
+    setCreateMode('ai');
+  };
+
   const handleCreatePrompt = async () => {
-    if (!createPrompt.trim()) {
-      toast.error('请输入提示词描述');
-      return;
+    const useCase = selectedCategory !== '全部' ? selectedCategory : '研发';
+    let payload: { name: string; description: string; content: string; useCase: string };
+
+    if (createMode === 'ai') {
+      const desc = createPrompt.trim();
+      if (!desc) {
+        toast.error('请输入提示词描述');
+        return;
+      }
+      payload = {
+        name: desc.slice(0, 30) || 'AI 生成自定义提示词',
+        description: desc,
+        content: buildAiPromptContent(desc, useCase),
+        useCase,
+      };
+    } else {
+      const name = manualName.trim();
+      const content = manualContent.trim();
+      if (!name) {
+        toast.error('请输入提示词名称');
+        return;
+      }
+      if (!content) {
+        toast.error('请输入提示词内容');
+        return;
+      }
+      payload = {
+        name,
+        description: manualDescription.trim(),
+        content,
+        useCase: manualUseCase,
+      };
     }
+
     setIsGenerating(true);
     try {
-      const prompt = await teamApi.createPrompt({
-        name: createPrompt.trim().slice(0, 30) || 'AI 生成自定义提示词',
-        description: createPrompt.trim(),
-        content: createPrompt.trim(),
-        useCase: selectedCategory !== '全部' ? selectedCategory : '研发',
-      });
+      const prompt = await teamApi.createPrompt(payload);
       setPrompts([prompt, ...prompts]);
       setIsGenerating(false);
       setIsCreateOpen(false);
-      setCreatePrompt('');
+      resetCreateForm();
       toast.success('自定义提示词已提交审核，仅你和超管可见');
     } catch {
       setIsGenerating(false);
@@ -183,25 +240,78 @@ export const PromptMarket: React.FC = () => {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <Dialog open={isCreateOpen} onOpenChange={(open) => { if (!open) resetCreateForm(); setIsCreateOpen(open); }}>
             <DialogTrigger asChild>
               <Button><Sparkles className="w-4 h-4 mr-2" /> 新建</Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-lg max-w-[calc(100%-2rem)]">
               <DialogHeader>
-                <DialogTitle>AI 创建自定义提示词</DialogTitle>
+                <DialogTitle>新建自定义提示词</DialogTitle>
                 <DialogDescription>
-                  输入您需要的场景和目标，AI 将帮您编写结构化的高质量 Prompt。
+                  选择创建方式。手工创建可直接填写名称、内容与模板参数；AI 创建会根据你的描述生成结构化 Prompt。
                 </DialogDescription>
               </DialogHeader>
-              <div className="py-4">
-                <Textarea 
-                  placeholder="例如：我需要一个用于审查 React 组件代码质量和可访问性的提示词..."
-                  className="min-h-[120px] resize-none"
-                  value={createPrompt}
-                  onChange={(e) => setCreatePrompt(e.target.value)}
-                />
-              </div>
+              <Tabs value={createMode} onValueChange={(v) => setCreateMode(v as 'ai' | 'manual')} className="w-full">
+                <TabsList className="aurora-tab-bar level-2 w-full mb-4">
+                  <TabsTrigger value="ai" className="aurora-tab-item level-2">AI 新建</TabsTrigger>
+                  <TabsTrigger value="manual" className="aurora-tab-item level-2">手工新建</TabsTrigger>
+                </TabsList>
+                {createMode === 'ai' ? (
+                  <div className="space-y-4 py-2">
+                    <div className="space-y-2">
+                      <Label>场景描述</Label>
+                      <Textarea
+                        placeholder="例如：我需要一个用于审查 React 组件代码质量和可访问性的提示词..."
+                        className="min-h-[140px] resize-none"
+                        value={createPrompt}
+                        onChange={(e) => setCreatePrompt(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4 py-2">
+                    <div className="space-y-2">
+                      <Label>名称</Label>
+                      <Input
+                        placeholder="例如：前端代码审查助手"
+                        value={manualName}
+                        onChange={(e) => setManualName(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>描述</Label>
+                      <Input
+                        placeholder="简要说明该提示词的用途"
+                        value={manualDescription}
+                        onChange={(e) => setManualDescription(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>场景</Label>
+                      <Select value={manualUseCase} onValueChange={setManualUseCase}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="选择场景" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CREATE_USE_CASE_OPTIONS.map(cat => (
+                            <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>内容</Label>
+                      <Textarea
+                        placeholder="填写提示词内容。使用 {{参数名}} 作为模板参数，在会话中选择提示词后会以原子块形式展示。"
+                        className="min-h-[160px] resize-none"
+                        value={manualContent}
+                        onChange={(e) => setManualContent(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">支持 {{参数名}} 模板语法，选中提示词后可在输入框中快速替换。</p>
+                    </div>
+                  </div>
+                )}
+              </Tabs>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>取消</Button>
                 <Button onClick={handleCreatePrompt} disabled={isGenerating}>

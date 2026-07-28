@@ -235,7 +235,33 @@ const DOC_REF_HEADER = '[引用的产品文档（相对工作目录路径，请�
 // @提及 在输入框中的完整文本形式（@标题+尾随空格），作为一个原子块整体插入/删除。
 const docMentionToken = (title: string) => `@${title} `;
 
-// 查找光标所处（或紧邻）的原子块区间（@文档提及 /code 指令 token 共用）；
+// 提示词模板参数原子块正则：{{参数名}}，作为整体删除/高亮。
+const PARAM_BLOCK_REGEX = /\{\{[^}]+\}\}/g;
+
+/** 从输入文本中提取所有模板参数 token。 */
+const extractParamTokens = (text: string): string[] => {
+  const tokens: string[] = [];
+  let match: RegExpExecArray | null;
+  // 必须每次重新创建正则，避免 global 标志导致连续调用跳过匹配。
+  const regex = new RegExp(PARAM_BLOCK_REGEX.source, 'g');
+  while ((match = regex.exec(text)) !== null) {
+    tokens.push(match[0]);
+  }
+  return tokens;
+};
+
+/** 查找所有模板参数块在文本中的区间。 */
+const findParamBlockRanges = (text: string): { start: number; end: number }[] => {
+  const ranges: { start: number; end: number }[] = [];
+  let match: RegExpExecArray | null;
+  const regex = new RegExp(PARAM_BLOCK_REGEX.source, 'g');
+  while ((match = regex.exec(text)) !== null) {
+    ranges.push({ start: match.index, end: match.index + match[0].length });
+  }
+  return ranges;
+};
+
+// 查找光标所处（或紧邻）的原子块区间（@文档提及 /code 指令 /{{参数}} 共用）；
 // mode 区分退格/前删的边界判定，找不到返回 null。
 const findAtomicRange = (
   text: string,
@@ -1179,19 +1205,23 @@ export const Chat: React.FC = () => {
     }
     return tokens;
   }, [commandConfigs]);
-  // 所有原子块 token：@文档提及 + 指令；用于整体删除判定。
+  // 当前输入中的模板参数 token（{{参数名}}）。
+  const paramTokens = useMemo(() => extractParamTokens(input), [input]);
+
+  // 所有原子块 token：@文档提及 + 指令 + 模板参数；用于整体删除判定。
   const atomicTokens = useMemo(
-    () => [...referencedDocs.map(d => docMentionToken(d.title)), ...commandTokens],
-    [referencedDocs, commandTokens],
+    () => [...referencedDocs.map(d => docMentionToken(d.title)), ...commandTokens, ...paramTokens],
+    [referencedDocs, commandTokens, paramTokens],
   );
 
-  // 输入框高亮渲染：仍存在的 @提及（主色）与指令块（紫色）包成高亮+阴影片段，其余为普通文本。
+  // 输入框高亮渲染：仍存在的 @提及（主色）、指令块（紫色）与模板参数块（琥珀色）
+  // 包成高亮+阴影片段，其余为普通文本。
   // 叠放在透明文字的 textarea 下方，二者字体/内边距保持一致以对齐字形。
   // 注意：高亮 span 用 px-0.5 + -mx-0.5 组合，获得视觉留白的同时不改变文本步进宽度，
   // 否则提及块后的文字会与 textarea 光标位置错位（光标看起来落在字中间）。
   const highlightedInput = useMemo((): React.ReactNode => {
-    const ranges: { start: number; end: number; kind: 'mention' | 'command' }[] = [];
-    const collectRanges = (token: string, kind: 'mention' | 'command') => {
+    const ranges: { start: number; end: number; kind: 'mention' | 'command' | 'param' }[] = [];
+    const collectRanges = (token: string, kind: 'mention' | 'command' | 'param') => {
       let idx = input.indexOf(token);
       while (idx !== -1) {
         ranges.push({ start: idx, end: idx + token.length, kind });
@@ -1200,6 +1230,7 @@ export const Chat: React.FC = () => {
     };
     for (const d of referencedDocs) collectRanges(docMentionToken(d.title), 'mention');
     for (const token of commandTokens) collectRanges(token, 'command');
+    for (const token of paramTokens) collectRanges(token, 'param');
     ranges.sort((a, b) => a.start - b.start || b.end - a.end);
     const nodes: React.ReactNode[] = [];
     let pos = 0;
@@ -1209,7 +1240,9 @@ export const Chat: React.FC = () => {
       const cls =
         r.kind === 'mention'
           ? 'bg-primary/10 text-primary shadow-[0_1px_3px_hsl(var(--primary)/0.35)]'
-          : 'bg-violet-500/10 text-violet-600 dark:text-violet-400 shadow-[0_1px_3px_rgba(139,92,246,0.35)]';
+          : r.kind === 'command'
+            ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400 shadow-[0_1px_3px_rgba(139,92,246,0.35)]'
+            : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 shadow-[0_1px_3px_rgba(245,158,11,0.35)]';
       nodes.push(
         <span key={r.start} className={`rounded-md px-0.5 -mx-0.5 ${cls}`}>
           {input.slice(r.start, r.end)}
@@ -1219,7 +1252,7 @@ export const Chat: React.FC = () => {
     }
     if (pos < input.length) nodes.push(input.slice(pos));
     return nodes;
-  }, [input, referencedDocs, commandTokens]);
+  }, [input, referencedDocs, commandTokens, paramTokens]);
 
   // 选中文档：先落盘拿到 agent 可读路径，再在输入框插入 @文档名 原子块。
   // 重复判定以输入框中是否仍存在该原子块为准（删除后可重新引用）。
@@ -1432,7 +1465,31 @@ export const Chat: React.FC = () => {
         return;
       }
     }
-    // 原子块整体删除（@文档提及 /code 指令）：光标在块内部或紧邻边界时，Backspace/Delete 整体移除该块
+    // 模板参数块键盘导航：左右方向键在相邻参数块之间快速跳转。
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && paramTokens.length > 0) {
+      const ta = e.currentTarget;
+      const ranges = findParamBlockRanges(input);
+      if (ranges.length > 0) {
+        const cursor = ta.selectionStart;
+        if (e.key === 'ArrowLeft') {
+          const prev = ranges.filter(r => r.end <= cursor).pop();
+          if (prev) {
+            e.preventDefault();
+            ta.setSelectionRange(prev.start, prev.start);
+            return;
+          }
+        } else {
+          const next = ranges.find(r => r.start >= cursor);
+          if (next) {
+            e.preventDefault();
+            ta.setSelectionRange(next.end, next.end);
+            return;
+          }
+        }
+      }
+    }
+
+    // 原子块整体删除（@文档提及 /code 指令 /{{参数}}）：光标在块内部或紧邻边界时，Backspace/Delete 整体移除该块
     if ((e.key === 'Backspace' || e.key === 'Delete') && atomicTokens.length > 0) {
       const ta = e.currentTarget;
       const range = ta.selectionStart === ta.selectionEnd
@@ -2897,11 +2954,16 @@ export const Chat: React.FC = () => {
                   }
                   if (type === 'skill') {
                     return (
-                      <div className="relative" key="skill" ref={skillMenuRef}>
-                        <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setSkillPopoverOpen(!skillPopoverOpen); setRepoMenuOpen(false); setPromptMenuOpen(false); setTaskMenuOpen(false); setCmdMenuOpen(false); }}>
+                      <div className="relative" key="skill" ref={skillMenuRef} title="执行自定义技能功能暂未开放">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled
+                          className={cn('rounded-full text-xs opacity-60 cursor-not-allowed', toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3')}
+                          onClick={() => toast.info('执行自定义技能功能暂未开放')}
+                        >
                           <Wand2 className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '技能'}
                         </Button>
-                        {skillPopoverOpen && renderSkillMenu(skill => { appendSkillTag(skill.name); setSkillPopoverOpen(false); })}
                       </div>
                     );
                   }
@@ -2975,9 +3037,10 @@ export const Chat: React.FC = () => {
                             return (
                               <button
                                 key="skill"
-                                className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
-                                title="技能"
-                                onClick={() => setCompactPlusSubmenu('skill')}
+                                disabled
+                                className="h-8 w-8 rounded-md flex items-center justify-center opacity-50 cursor-not-allowed transition-colors"
+                                title="执行自定义技能功能暂未开放"
+                                onClick={() => toast.info('执行自定义技能功能暂未开放')}
                               >
                                 <Wand2 className="h-4 w-4 text-muted-foreground" />
                               </button>
