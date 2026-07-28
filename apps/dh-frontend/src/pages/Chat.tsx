@@ -535,6 +535,9 @@ export const Chat: React.FC = () => {
   const [availableAgentsLoaded, setAvailableAgentsLoaded] = useState(false);
   const [workspaceAgentConfigs, setWorkspaceAgentConfigs] = useState<WorkspaceAgentConfig[]>([]);
 
+  // 智能会话初始化 loading：在 agent 配置与会话恢复/创建完成前，避免先闪「不可用」再闪欢迎页。
+  const [isInitializingChat, setIsInitializingChat] = useState(true);
+
   const [agentTabs, setAgentTabs] = useState<AgentTab[]>([]);
   const [activeAgentTabId, setActiveAgentTabId] = useState<string | null>(null);
 
@@ -1806,13 +1809,18 @@ export const Chat: React.FC = () => {
   // 否则按默认智能体创建新会话。必须等 /available-agents 加载完成后再决定默认插件 key，
   // 否则初始值会是 DEFAULT_AGENT_OPTIONS 里的 claude-code，
   // 若当前空间未启用该智能体，createSession 会收到 403。
+  // 整个恢复/创建过程通过 isInitializingChat 控制，避免先闪「会话不可用」再闪欢迎页。
   useEffect(() => {
     if (initializedRef.current || !availableAgentsLoaded || agentTabs.length > 0) return;
     initializedRef.current = true;
+    setIsInitializingChat(true);
 
     const workspaceId = getCurrentWorkspaceId();
     const savedTabsRaw = localStorage.getItem(getChatTabsStorageKey(workspaceId));
     const savedActiveRaw = localStorage.getItem(getChatActiveTabStorageKey(workspaceId));
+
+    const finish = () => setIsInitializingChat(false);
+
     if (savedTabsRaw) {
       try {
         const savedTabs = JSON.parse(savedTabsRaw) as AgentTab[];
@@ -1824,7 +1832,7 @@ export const Chat: React.FC = () => {
               : validTabs[0].sessionId;
             setAgentTabs(validTabs);
             setActiveAgentTabId(activeId);
-            switchSession(activeId).catch(() => {});
+            switchSession(activeId).catch(() => {}).finally(finish);
             return;
           }
         }
@@ -1836,6 +1844,7 @@ export const Chat: React.FC = () => {
     const defaultKey = resolveDefaultAgentKey(workspaceAgentConfigs, availableAgentOptions);
     if (!defaultKey) {
       toast.error('空间管理员没有配置智能体，请联系空间管理员。');
+      finish();
       return;
     }
 
@@ -1850,10 +1859,14 @@ export const Chat: React.FC = () => {
         };
         setAgentTabs([tab]);
         setActiveAgentTabId(savedId);
+        finish();
         return;
       }
       createSession(defaultKey).then(result => {
-        if (!result) return;
+        if (!result) {
+          finish();
+          return;
+        }
         const tab: AgentTab = {
           sessionId: result.sessionId,
           pluginKey: defaultKey,
@@ -1863,9 +1876,10 @@ export const Chat: React.FC = () => {
         };
         setAgentTabs([tab]);
         setActiveAgentTabId(result.sessionId);
+        finish();
       });
     });
-  }, [availableAgentsLoaded, availableAgentOptions, switchSession]);
+  }, [availableAgentsLoaded, availableAgentOptions, switchSession, workspaceAgentConfigs, createSession, tryRestoreSession]);
 
   // 智能体 tab 持久化：跳过首次渲染，只在用户操作导致的状态变更后写入 localStorage。
   useEffect(() => {
@@ -2606,7 +2620,13 @@ export const Chat: React.FC = () => {
         {/* Chat Messages */}
         <ScrollArea id="chat-scroll-area" className={cn('flex-1', showPreview ? 'p-2' : 'p-4 pr-8')}>
           <div className="space-y-6">
-            {!chatEnabled ? (
+            {isInitializingChat ? (
+              <div className="h-full flex flex-col items-center justify-center text-center pt-20">
+                <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
+                <h3 className="text-lg font-semibold mb-1">会话初始化中</h3>
+                <p className="text-muted-foreground text-sm">正在恢复智能体配置与会话历史，请稍候...</p>
+              </div>
+            ) : !chatEnabled ? (
               <div className="h-full flex flex-col items-center justify-center text-center pt-20">
                 <div className="h-14 w-14 rounded-2xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center mb-4">
                   <Bot className="h-7 w-7 text-amber-600 dark:text-amber-400" />
