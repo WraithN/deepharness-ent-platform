@@ -142,6 +142,7 @@ const COMMAND_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   '/debug': Bug,
   '/review': CheckCircle,
   '/unit-test': FlaskConical,
+  '/refactor': RefreshCw,
   '/test-case': ClipboardList,
   '/auto-test': Terminal,
   '/bug-analysis': Search,
@@ -177,6 +178,7 @@ const WELCOME_CARDS_BY_ROLE: Partial<Record<SubRole, WelcomeCard[]>> = {
     { cmd: '/debug', title: '修复 BUG', desc: '定位并修复代码中的缺陷' },
     { cmd: '/review', title: '代码评审', desc: '对变更代码进行智能评审' },
     { cmd: '/unit-test', title: '生成单测', desc: '为代码生成单元测试' },
+    { cmd: '/refactor', title: '重构代码', desc: '对指定功能或模块进行重构' },
   ],
   [SUB_ROLE.TESTER]: [
     { cmd: '/test-case', title: '生成测试用例', desc: '根据需求生成结构化测试用例' },
