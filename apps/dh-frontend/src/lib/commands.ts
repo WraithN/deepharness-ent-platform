@@ -40,6 +40,8 @@ export const COMMAND_CATEGORIES: Record<string, CommandCategory> = {
   '/review': 'dev',
   '/unit-test': 'dev',
   '/refactor': 'dev',
+  '/dev-doc': 'dev',
+  '/arch-design': 'dev',
   '/test-case': 'test',
   '/auto-test': 'test',
   '/bug-analysis': 'test',
