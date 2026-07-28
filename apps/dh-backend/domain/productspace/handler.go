@@ -585,6 +585,111 @@ func (h *Handler) ImportPrototype(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ImportDoc 处理 POST /api/v1/workspaces/{id}/product-space/import-doc。
+// 将用户个人工作目录中的文档文件采纳到产品空间 docs 目录；
+// 若请求携带 workitemId，还会将文档关联到该需求并生成一次产品设计版本。
+// 需求标题会作为 docs 下的子目录，便于在产品空间中对齐"对应的需求文档"。
+func (h *Handler) ImportDoc(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	userID, err := h.userID(r)
+	if err != nil {
+		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+
+	var req object.ImportDocRequest
+	if !h.decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.Path == "" {
+		h.writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
+	workspaceID := h.workspaceID(r)
+
+	// 若关联需求，使用需求标题作为 docs 下的子目录，形成"对应需求文档"的目录结构。
+	if req.WorkitemID != "" && h.workItemSvc != nil {
+		wi, err := h.workItemSvc.GetWorkItem(req.WorkitemID)
+		if err != nil {
+			h.handleServiceError(w, err, "failed to get workitem")
+			return
+		}
+		if req.Folder == "" {
+			req.Folder = wi.Title
+		}
+	}
+
+	item, err := h.svc.ImportDoc(r.Context(), workspaceID, userID, req)
+	if err != nil {
+		h.handleServiceError(w, err, "failed to import doc")
+		return
+	}
+
+	// 关联需求并生成设计版本：在 handler 层编排，避免 productspace service 与 workitem service 循环依赖。
+	if req.WorkitemID != "" && h.workItemSvc != nil {
+		_, linkErr := h.workItemSvc.CreateDocLink(req.WorkitemID, workitemobject.CreateDocLinkRequest{
+			ProductSpaceItemID: item.ID,
+			WorkspaceID:        workspaceID,
+			ItemType:           workitemservice.DocLinkTypeDoc,
+		})
+		if linkErr != nil {
+			log.Printf("[ProductSpace] create doc link failed for workitem %s item %s: %v", req.WorkitemID, item.ID, linkErr)
+		}
+
+		_, dvErr := h.workItemSvc.CreateDesignVersion(req.WorkitemID, workspaceID, userID, "采纳文档")
+		if dvErr != nil {
+			log.Printf("[ProductSpace] create design version failed for workitem %s: %v", req.WorkitemID, dvErr)
+		}
+	}
+
+	h.writeJSON(w, http.StatusOK, item)
+}
+
+// ImportDocStatus 处理 GET /api/v1/workspaces/{id}/product-space/import-doc/status。
+// 按源文件路径查询该文档是否已被采纳到产品空间，供前端持久化展示"已采纳"状态。
+func (h *Handler) ImportDocStatus(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	userID, err := h.userID(r)
+	if err != nil {
+		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
+		return
+	}
+
+	workspaceID := h.workspaceID(r)
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		h.writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
+	item, err := h.svc.GetDocImportStatus(r.Context(), workspaceID, userID, path)
+	if err != nil {
+		if errors.Is(err, service.ErrNotFound) {
+			h.writeJSON(w, http.StatusOK, map[string]interface{}{
+				"adopted": false,
+				"item":    nil,
+			})
+			return
+		}
+		h.handleServiceError(w, err, "failed to get doc import status")
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"adopted": true,
+		"item":    item,
+	})
+}
+
 // Comments 处理 GET / POST /api/v1/workspaces/{id}/product-space/items/{itemId}/comments。
 // GET 返回批注列表，POST 新增批注并返回包含用户名的完整对象。
 func (h *Handler) Comments(w http.ResponseWriter, r *http.Request) {

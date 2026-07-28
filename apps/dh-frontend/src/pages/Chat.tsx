@@ -2243,7 +2243,15 @@ export const Chat: React.FC = () => {
                   </div>
                 )}
                 <div className="flex-1 min-h-0 overflow-hidden">
-                  {previewPath && <InlineFilePreview path={previewPath} onClose={closePreview} onProtoMake={handleProtoMake} />}
+                  {previewPath && (
+                    <InlineFilePreview
+                      path={previewPath}
+                      onClose={closePreview}
+                      onProtoMake={handleProtoMake}
+                      workitemId={effectivePrototypeWorkitemId}
+                      requirementTitle={quotedCard?.type === 'req' ? quotedCard.title : protoMakeRequirementTitle}
+                    />
+                  )}
                   {projectPreview && (
                     <LivePreview
                       key={projectPreview.path}

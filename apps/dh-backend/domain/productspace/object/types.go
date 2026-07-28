@@ -101,6 +101,16 @@ type ImportPrototypeRequest struct {
 	WorkitemID string `json:"workitemId"`
 }
 
+// ImportDocRequest 将用户个人工作目录中的文档文件采纳到产品空间 docs 目录。
+// Path 为源文件相对路径（如 "projects/prds/xxx-prd.md"）。
+// Folder 可选：指定 docs 下的子目录（如需求标题），为空时直接放到 docs 根目录。
+// WorkitemID 可选：若提供，则将文档关联到该需求并生成一次产品设计版本。
+type ImportDocRequest struct {
+	Path       string `json:"path" validate:"required"`
+	Folder     string `json:"folder"`
+	WorkitemID string `json:"workitemId"`
+}
+
 // CreatePrototypeShareRequest 创建原型产品分享链接的请求体。
 // ProductFolder 为 prototypes 下的一级目录名（产品名），分享该产品下全部原型页面。
 type CreatePrototypeShareRequest struct {

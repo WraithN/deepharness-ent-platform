@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -45,13 +46,20 @@ func (c *AGUIClient) QuickComplete(ctx context.Context, prompt string, workspace
 	}
 
 	var sb strings.Builder
+	firstTokenLogged := false
 	for ev := range events {
 		switch ev.Type {
 		case agui.EventTextMessageContent:
 			sb.WriteString(ev.Delta)
+			if !firstTokenLogged {
+				firstTokenLogged = true
+				log.Printf("[QuickComplete-Stream] TTFT delta=%.80s", ev.Delta)
+			}
 		case agui.EventRunError:
+			log.Printf("[QuickComplete-Stream] RUN_ERROR msg=%s", ev.Message)
 			return sb.String(), fmt.Errorf("agent error: %s", ev.Message)
 		case agui.EventRunFinished:
+			log.Printf("[QuickComplete-Stream] RUN_FINISHED totalLen=%d", sb.Len())
 			return sb.String(), nil
 		}
 	}

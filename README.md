@@ -14,6 +14,7 @@
 - **代码库管理**：Git 仓库配置、克隆同步、用户工程目录映射
 - **数据大盘**：技能/提示词/会话/工作项等多维度统计
 - **高可靠 Agent 运行时**：AG-UI SSE 事件缓冲、断线重连回放、崩溃恢复、多 Agent 会话编排
+- **飞书机器人**：私聊/群聊 @机器人 调用 AI 编码平台，CardKit 流式卡片打字机输出，支持编码助手、群聊总结、需求提取、原型设计四种意图，白名单权限分级
 
 ## 产品展示
 
@@ -54,6 +55,7 @@
 │   │   │   ├── project/           # 项目管理
 │   │   │   ├── workitem/          # 需求、缺陷、测试用例
 │   │   │   ├── pragent/           # PR 评审 Agent
+│   │   │   ├── feishu/            # 飞书机器人（webhook + 意图路由 + CardKit 流式卡片）
 │   │   │   └── audit/             # 审计日志
 │   │   └── tests/test-agent       # Agent Client 本地测试工具
 │   └── mock/                      # 本地 Agent SSE mock（独立模块）
@@ -244,6 +246,133 @@ Schema 文件位于 `infra/database/`，首次启动 PostgreSQL 容器时会自�
 
 1. **前端断线重连回放** — 浏览器运行中掉线后，重连时重放缓冲事件。
 2. **崩溃恢复** — 服务运行中崩溃时，检查点保存的运行状态（reasoning / text / tool-call 片段）会在下次加载会话历史时恢复为完整的助手消息。
+
+## 飞书机器人
+
+飞书 IM 机器人对接 AI 编码平台，用户在私聊或群聊中 @机器人 发送消息，机器人调用 agent 生成回复，通过 CardKit 流式卡片实时输出（打字机效果）。
+
+### 两大场景
+
+| 场景 | 触发方式 | 能力 |
+|------|---------|------|
+| 个人编码助手 | `编码：xxx` / `原型：xxx` / `需求：xxx` | 调用 agent 执行编码/原型/需求任务，支持工具调用与多轮上下文 |
+| 群聊总结 | `总结群聊` / `生成需求卡片` | 拉取群历史消息，LLM 总结/提取需求/设计原型 |
+
+### 意图路由
+
+消息内容通过关键词前缀匹配识别意图，路由到不同分发路径：
+
+| 关键词前缀 | 意图 | Agent 模式 | 说明 |
+|-----------|------|-----------|------|
+| `编码：` `代码：` `code:` | 编码 | persistent | 多轮上下文 + 工具调用 |
+| `原型：` `proto:` | 原型设计 | persistent | 多轮上下文 + 工具调用 |
+| `需求：` `requirement:` | 需求卡片 | persistent | 多轮上下文 + 工具调用 |
+| 包含 `总结` `summary` | 群聊总结 | oneshot | 拉群历史 + LLM 总结 |
+| 其他 | 默认问答 | oneshot | QuickComplete 轻量问答 |
+
+### 权限分级
+
+| 权限 | 编码/原型/需求 | 问答/群总结 | 配置方式 |
+|------|--------------|------------|---------|
+| `full`（白名单） | ✅ | ✅ | `feishu.admin_user_ids` |
+| `basic`（默认） | ❌ | ✅ | 已绑定/兜底用户 |
+
+### CardKit 流式卡片生命周期
+
+```
+t=0s    Webhook 收到消息 -> 立即返回 200（飞书要求 3s 内响应）
+t=0s    创建卡片: "正在连接 AI 编码平台..."
+        ↓ (agent 启动)
+t=5s    首个 token -> 更新卡片正文（500ms 节流）
+t=5.5s  继续流式 -> 节流更新
+t=8s    工具调用 -> 状态行: "🔧 执行工具: bash"
+t=10s   工具返回 -> 状态行: "✅ 工具执行完成"
+t=15s   RUN_FINISHED -> 终态化: 全文 + 操作按钮 [复制全部] [重新生成]
+```
+
+- **节流策略**：500ms 间隔（约 2 次/秒），在飞书 API 限频安全范围内
+- **降级策略**：CardKit 不可用时自动降级为 batch 模式（收集全文后一次性发送）
+- **SSE 心跳**：15s 间隔发送 `: heartbeat` 注释，防止中间层 LB 空闲超时断连
+
+### 配置
+
+`apps/dh-backend/config.yaml`：
+
+```yaml
+feishu:
+  app_id: ""              # 飞书应用 App ID（mock 模式可空）
+  app_secret: ""          # App Secret
+  verify_token: ""        # 事件订阅 Token
+  encrypt_key: ""         # 加密 Key（生产启用）
+  webhook_token: "feishu-local-dev-token"  # 平台侧 webhook Bearer Token
+  api_base_url: "https://open.feishu.cn/open-apis"
+  bot_user_id: ""         # 兜底平台用户 ID
+  default_workspace: ""   # 兜底工作空间 ID
+  mock_mode: true         # true=本地调试（不连飞书），false=生产
+  dispatch_timeout: "30m"
+  admin_user_ids: []      # 白名单 open_id 列表（完整编码能力）
+```
+
+环境变量覆盖（优先级最高）：
+
+| 变量 | 说明 |
+|------|------|
+| `FEISHU_APP_ID` | 飞书应用 App ID |
+| `FEISHU_APP_SECRET` | App Secret |
+| `FEISHU_MOCK_MODE` | `true`/`false` |
+| `FEISHU_ADMIN_USER_IDS` | 逗号分隔的白名单 open_id |
+| `FEISHU_WEBHOOK_TOKEN` | 平台侧 Bearer Token |
+
+### 本地测试（Mock 模式）
+
+```bash
+# 1. 确保服务已启动
+bash scripts/restart-dev.sh
+
+# 2. 绑定飞书用户（首次需要）
+curl -s -X POST http://127.0.0.1:8080/api/v1/feishu/bindings \
+  -H "Authorization: Bearer admin" \
+  -H "Content-Type: application/json" \
+  -d '{"openId":"ou_test_user_001","userId":"admin","workspaceId":"default-workspace"}'
+
+# 3. 发送编码请求（需白名单权限）
+curl -s -X POST http://127.0.0.1:8080/api/v1/feishu/webhook \
+  -H "Authorization: Bearer feishu-local-dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{"mock_event":true,"chat_id":"oc_test","chat_type":"p2p","open_id":"ou_test_user_001","message_type":"text","content":"编码：用 Go 写一个 hello world","message_id":"om_1"}'
+
+# 4. 发送普通问答
+curl -s -X POST http://127.0.0.1:8080/api/v1/feishu/webhook \
+  -H "Authorization: Bearer feishu-local-dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{"mock_event":true,"chat_id":"oc_test","chat_type":"p2p","open_id":"ou_test_user_001","message_type":"text","content":"你好","message_id":"om_2"}'
+
+# 5. 查看流式输出日志
+tail -f /tmp/dh-backend.log | grep -E "\[Feishu"
+```
+
+也可直接运行完整测试脚本：
+
+```bash
+bash apps/dh-backend/tests/test-feishu/mock-event.sh
+```
+
+### 生产部署
+
+1. 在飞书开放平台创建自建应用，开启机器人能力
+2. 开通权限：`im:message`、`im:message:send_as_bot`、`im:message.history`（群总结需要）
+3. 配置事件订阅 URL：`https://<your-domain>/api/v1/feishu/webhook`
+4. 设置环境变量 `FEISHU_MOCK_MODE=false`，填入真实 `FEISHU_APP_ID`/`FEISHU_APP_SECRET`/`FEISHU_VERIFY_TOKEN`
+5. 配置 `FEISHU_ADMIN_USER_IDS` 为允许使用编码功能的用户 open_id 列表
+
+### API 端点
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|------|------|------|------|
+| POST | `/api/v1/feishu/webhook` | Bearer webhook_token | 飞书事件回调（webhook） |
+| POST | `/api/v1/feishu/bindings` | Bearer userId | 绑定飞书用户与平台用户 |
+| GET | `/api/v1/feishu/bindings` | Bearer userId | 查询绑定列表 |
+| GET | `/api/v1/feishu/chat-sessions` | Bearer userId | 查询飞书会话映射 |
 
 ## 技术栈
 

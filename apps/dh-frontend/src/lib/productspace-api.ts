@@ -180,6 +180,18 @@ export const productSpaceApi = {
    * 若提供 workitemId，导入后会自动将原型关联到该需求并生成一次产品设计版本。 */
   importPrototype: (workspaceId: string, folder: string, workitemId?: string) =>
     api.post<void>(`/v1/workspaces/${workspaceId}/product-space/import-prototype`, { folder, workitemId }),
+
+  /** 将用户个人工作目录中的文档文件采纳到产品空间 docs 目录。
+   * 若目标路径已存在则更新内容并创建新版本，否则新建 doc 条目。
+   * 若提供 workitemId，会自动将文档关联到该需求并生成一次产品设计版本。 */
+  importDoc: (workspaceId: string, path: string, workitemId?: string, folder?: string) =>
+    api.post<ProductSpaceItem>(`/v1/workspaces/${workspaceId}/product-space/import-doc`, { path, workitemId, folder }),
+
+  /** 查询指定源文件路径是否已被采纳到产品空间。 */
+  importDocStatus: (workspaceId: string, path: string) =>
+    api.get<{ adopted: boolean; item: ProductSpaceItem | null }>(
+      `/v1/workspaces/${workspaceId}/product-space/import-doc/status?path=${encodeURIComponent(path)}`
+    ),
 };
 
 /** 原型产品分享记录。 */

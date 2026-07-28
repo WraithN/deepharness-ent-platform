@@ -101,3 +101,29 @@ type DispatchResult struct {
 	// EventCount agent 产生的 SSE 事件数，用于日志观察。
 	EventCount int `json:"eventCount"`
 }
+
+// Intent 表示飞书消息的意图类型，决定分发路径。
+type Intent string
+
+const (
+	IntentCoding        Intent = "coding"        // 编码请求 -> AGUIClient.Run (persistent)
+	IntentPrototype     Intent = "prototype"     // 原型设计 -> AGUIClient.Run (persistent)
+	IntentRequirement   Intent = "requirement"   // 需求卡片 -> AGUIClient.Run (persistent)
+	IntentGroupSummary  Intent = "group_summary" // 群聊总结 -> 拉群历史 + LLM 总结
+	IntentChat          Intent = "chat"          // 默认问答 -> QuickComplete (oneshot)
+)
+
+// PermissionLevel 表示飞书用户的权限等级。
+type PermissionLevel string
+
+const (
+	PermFull   PermissionLevel = "full"   // 白名单用户：编码/原型/需求/总结
+	PermBasic  PermissionLevel = "basic"  // 普通用户：仅问答+总结
+)
+
+// CardButton 是流式卡片终态的操作按钮。
+type CardButton struct {
+	Text   string `json:"text"`
+	Action string `json:"action"` // "copy" | "regenerate" | "export"
+	Data   string `json:"data"`   // 按钮附加数据（如复制的文本内容）
+}

@@ -45,6 +45,11 @@ type Config struct {
 	// Chat / Message
 	MaxMessagesPerSession int
 
+	// ProductSpace 产品空间文档采纳后源文件清理配置。
+	DocAdoptionCleanupEnabled      bool
+	DocAdoptionCleanupRetentionDays int
+	DocAdoptionCleanupInterval     time.Duration
+
 	// Workitem external integration
 	WorkitemPlatformWhitelist []string
 	WorkitemSyncInterval      time.Duration
@@ -77,6 +82,7 @@ type Config struct {
 	FeishuDefaultWorkspace string
 	FeishuMockMode        bool
 	FeishuDispatchTimeout time.Duration
+	FeishuAdminUserIDs    []string
 }
 
 // CodingAgentDefinition 表示全局配置中一个 coding agent 的定义。
@@ -131,6 +137,13 @@ type yamlConfig struct {
 	PersonalStub struct {
 		URL string `yaml:"url"`
 	} `yaml:"personal_stub"`
+	ProductSpace struct {
+		DocAdoptionCleanup struct {
+			Enabled        bool   `yaml:"enabled"`
+			RetentionDays  int    `yaml:"retention_days"`
+			Interval       string `yaml:"interval"`
+		} `yaml:"doc_adoption_cleanup"`
+	} `yaml:"product_space"`
 	Workitem struct {
 		Platforms []string `yaml:"platforms"`
 		Sync      struct {
@@ -163,16 +176,17 @@ type yamlConfig struct {
 		BearerToken string `yaml:"bearer_token"`
 	} `yaml:"agent_runtime"`
 	Feishu struct {
-		AppID            string `yaml:"app_id"`
-		AppSecret        string `yaml:"app_secret"`
-		VerifyToken      string `yaml:"verify_token"`
-		EncryptKey       string `yaml:"encrypt_key"`
-		WebhookToken     string `yaml:"webhook_token"`
-		APIBaseURL       string `yaml:"api_base_url"`
-		BotUserID        string `yaml:"bot_user_id"`
-		DefaultWorkspace string `yaml:"default_workspace"`
-		MockMode         bool   `yaml:"mock_mode"`
-		DispatchTimeout  string `yaml:"dispatch_timeout"`
+		AppID            string   `yaml:"app_id"`
+		AppSecret        string   `yaml:"app_secret"`
+		VerifyToken      string   `yaml:"verify_token"`
+		EncryptKey       string   `yaml:"encrypt_key"`
+		WebhookToken     string   `yaml:"webhook_token"`
+		APIBaseURL       string   `yaml:"api_base_url"`
+		BotUserID        string   `yaml:"bot_user_id"`
+		DefaultWorkspace string   `yaml:"default_workspace"`
+		MockMode         bool     `yaml:"mock_mode"`
+		DispatchTimeout  string   `yaml:"dispatch_timeout"`
+		AdminUserIDs     []string `yaml:"admin_user_ids"`
 	} `yaml:"feishu"`
 }
 
@@ -215,6 +229,9 @@ func Load() (Config, error) {
 	cfg.DBConnMaxLifetime = parseDurationOrZero(yc.Database.ConnMaxLifetime)
 	cfg.WorkspaceRoot = yc.Workspace.Root
 	cfg.PersonalStubURL = yc.PersonalStub.URL
+	cfg.DocAdoptionCleanupEnabled = yc.ProductSpace.DocAdoptionCleanup.Enabled
+	cfg.DocAdoptionCleanupRetentionDays = yc.ProductSpace.DocAdoptionCleanup.RetentionDays
+	cfg.DocAdoptionCleanupInterval = parseDurationOrZero(yc.ProductSpace.DocAdoptionCleanup.Interval)
 	cfg.RedisAddrs = yc.Redis.Addrs
 	cfg.RedisPassword = yc.Redis.Password
 	cfg.RedisDB = yc.Redis.DB
@@ -259,6 +276,7 @@ func Load() (Config, error) {
 	cfg.FeishuDefaultWorkspace = yc.Feishu.DefaultWorkspace
 	cfg.FeishuMockMode = yc.Feishu.MockMode
 	cfg.FeishuDispatchTimeout = parseDurationOrZero(yc.Feishu.DispatchTimeout)
+	cfg.FeishuAdminUserIDs = yc.Feishu.AdminUserIDs
 
 	// 环境变量覆盖
 	cfg.Port = getEnv("PORT", cfg.Port)
@@ -275,6 +293,9 @@ func Load() (Config, error) {
 	cfg.DBName = getEnv("DB_NAME", cfg.DBName)
 	cfg.WorkspaceRoot = getEnv("WORKSPACE_ROOT", cfg.WorkspaceRoot)
 	cfg.PersonalStubURL = getEnv("PERSONAL_STUB_URL", cfg.PersonalStubURL)
+	cfg.DocAdoptionCleanupEnabled = getBoolEnv("DOC_ADOPTION_CLEANUP_ENABLED", cfg.DocAdoptionCleanupEnabled)
+	cfg.DocAdoptionCleanupRetentionDays = getIntEnv("DOC_ADOPTION_CLEANUP_RETENTION_DAYS", cfg.DocAdoptionCleanupRetentionDays)
+	cfg.DocAdoptionCleanupInterval = getDurationEnv("DOC_ADOPTION_CLEANUP_INTERVAL", cfg.DocAdoptionCleanupInterval)
 	cfg.DBMaxOpenConns = getIntEnv("DB_MAX_OPEN_CONNS", cfg.DBMaxOpenConns)
 	cfg.DBMaxIdleConns = getIntEnv("DB_MAX_IDLE_CONNS", cfg.DBMaxIdleConns)
 	cfg.DBConnMaxLifetime = getDurationEnv("DB_CONN_MAX_LIFETIME", cfg.DBConnMaxLifetime)
@@ -304,6 +325,9 @@ func Load() (Config, error) {
 	cfg.FeishuDefaultWorkspace = getEnv("FEISHU_DEFAULT_WORKSPACE", cfg.FeishuDefaultWorkspace)
 	cfg.FeishuMockMode = getBoolEnv("FEISHU_MOCK_MODE", cfg.FeishuMockMode)
 	cfg.FeishuDispatchTimeout = getDurationEnv("FEISHU_DISPATCH_TIMEOUT", cfg.FeishuDispatchTimeout)
+	if adminIDs := getEnv("FEISHU_ADMIN_USER_IDS", ""); adminIDs != "" {
+		cfg.FeishuAdminUserIDs = strings.Split(adminIDs, ",")
+	}
 
 	if err := cfg.validate(); err != nil {
 		return cfg, err

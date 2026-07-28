@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X, FileText, Pencil, LayoutTemplate, Trash2, Send, Loader2, ExternalLink, List, MoreHorizontal, Archive, Download } from 'lucide-react';
+import { X, FileText, Pencil, LayoutTemplate, Trash2, Send, Loader2, ExternalLink, List, MoreHorizontal, Archive, Download, FolderInput, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { MarkdownView } from '@/components/chat/MarkdownView';
 import { fileApi, type FileContent } from '@/lib/file-api';
+import { productSpaceApi } from '@/lib/productspace-api';
 import { api } from '@/lib/api';
 import type { WorkItemDTO, UserDTO } from '@/lib/api-types';
 import { useAuth } from '@/contexts/AuthContext';
@@ -26,6 +27,10 @@ interface InlineFilePreviewProps {
   onClose: () => void;
   /** 做原型：将当前文档作为卡片放入输入框并自动选择 /proto-make */
   onProtoMake?: (path: string, title: string) => void;
+  /** 关联的需求 ID；提供后点击采纳会自动关联需求并生成设计版本 */
+  workitemId?: string;
+  /** 关联的需求标题，用于展示 */
+  requirementTitle?: string;
 }
 
 /** 从 markdown 内容中提取 h1-h4 标题，用于生成文档大纲。 */
@@ -68,8 +73,9 @@ function isMarkdownFile(path: string): boolean {
  * 在 Chat 页的分栏区域内渲染文件内容，不跳转新页面。
  * 标题栏右侧提供：提需求、编辑、做原型、作废 四个操作。
  */
-export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onClose, onProtoMake }) => {
-  const { user: currentUser } = useAuth();
+export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onClose, onProtoMake, workitemId, requirementTitle }) => {
+  const { user: currentUser, membership } = useAuth();
+  const workspaceId = membership?.workspaceId ?? '';
   const [fileContent, setFileContent] = useState<FileContent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -94,6 +100,11 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
   // TOC 大纲显示/隐藏。
   const [showToc, setShowToc] = useState(true);
   const contentScrollRef = useRef<HTMLDivElement>(null);
+
+  // 采纳到产品空间状态。
+  const [importing, setImporting] = useState(false);
+  const [adopted, setAdopted] = useState(false);
+  const [checkingAdoptStatus, setCheckingAdoptStatus] = useState(false);
 
   const displayContent = useMemo(() => {
     if (!fileContent) return '';
@@ -142,6 +153,27 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
   useEffect(() => {
     loadFile(path);
   }, [path]);
+
+  // 查询采纳状态：刷新页面后仍能正确显示"已采纳"。
+  useEffect(() => {
+    if (!workspaceId || !isMarkdown) return;
+    let cancelled = false;
+    setCheckingAdoptStatus(true);
+    productSpaceApi
+      .importDocStatus(workspaceId, path)
+      .then((res) => {
+        if (!cancelled) setAdopted(res.adopted);
+      })
+      .catch(() => {
+        if (!cancelled) setAdopted(false);
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingAdoptStatus(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, path, isMarkdown]);
 
   // 加载用户列表用于受理人下拉框，排除管理员角色（super_admin）。
   useEffect(() => {
@@ -228,6 +260,30 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
     }
   };
 
+  // 采纳到产品空间：将当前文档采纳到产品空间 docs 目录并生成版本。
+  const handleAdopt = async () => {
+    if (!workspaceId) {
+      toast.error('未选择工作空间');
+      return;
+    }
+    if (!isMarkdown) {
+      toast.error('仅支持采纳 Markdown 文档');
+      return;
+    }
+    setImporting(true);
+    try {
+      await productSpaceApi.importDoc(workspaceId, path, workitemId);
+      toast.success(workitemId ? '文档已采纳并生成设计版本' : '文档已采纳到产品空间');
+      setAdopted(true);
+    } catch (e) {
+      console.error('[InlineFilePreview] adopt failed:', e);
+      const msg = e instanceof Error ? e.message : '';
+      toast.error(msg || '采纳失败，请确认是否已加入该工作空间');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-background">
       {/* 标题栏 */}
@@ -264,6 +320,20 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openFileViewPage(path)} title="在新页面打开" disabled={loading || !!error}>
             <ExternalLink className="h-4 w-4" />
           </Button>
+          {/* 采纳到产品空间（仅 markdown） */}
+          {workspaceId && isMarkdown && (
+            <Button
+              variant={adopted ? 'outline' : 'default'}
+              size="sm"
+              className="h-8 text-xs gap-1.5"
+              onClick={handleAdopt}
+              disabled={importing || adopted || checkingAdoptStatus || loading || !!error}
+              title={requirementTitle ? `关联需求：${requirementTitle}` : '采纳到产品空间'}
+            >
+              {importing || checkingAdoptStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : adopted ? <Check className="h-3.5 w-3.5" /> : <FolderInput className="h-3.5 w-3.5" />}
+              {adopted ? '已采纳' : '采纳到产品空间'}
+            </Button>
+          )}
           {/* 更多操作：提需求、做原型、作废 */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

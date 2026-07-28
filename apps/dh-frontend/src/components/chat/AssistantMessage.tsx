@@ -534,7 +534,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
           {!hasUserStory && nonReqBreakdownFileAttachments.length > 0 && !isRunning && (
             <div className="px-3 pb-2 flex flex-wrap gap-2">
               {nonReqBreakdownFileAttachments.map((path) => (
-                <FileAttachmentCard key={path} path={path} onPreview={onFilePreview} />
+                <FileAttachmentCard key={path} path={path} onPreview={onFilePreview} workitemId={resolvedWorkitemId} />
               ))}
             </div>
           )}

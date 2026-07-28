@@ -389,6 +389,18 @@ func validateRelativePath(relativePath string) error {
 	return nil
 }
 
+// isPathUnderWorkspaceRoot 校验绝对路径是否位于 workspaceRoot 之下。
+// 用于清理任务等需要先拼接相对路径再访问文件系统的场景，防止路径逃逸。
+func isPathUnderWorkspaceRoot(absPath, workspaceRoot string) bool {
+	cleanedAbs := filepath.Clean(absPath)
+	cleanedRoot := filepath.Clean(workspaceRoot)
+	if cleanedAbs == cleanedRoot {
+		return true
+	}
+	prefix := cleanedRoot + string(filepath.Separator)
+	return strings.HasPrefix(cleanedAbs, prefix)
+}
+
 // buildRelativePath 构造相对路径：category/[folder/]filename.ext。
 // folder 支持多级子目录，如 "a/b"。
 func buildRelativePath(category, folder, name, ext string) string {
@@ -707,6 +719,26 @@ func (s *DBProductSpaceService) fetchItemWithExecer(ctx context.Context, q query
 // fetchItem 是 fetchItemWithExecer 的便捷方法，使用普通数据库连接。
 func (s *DBProductSpaceService) fetchItem(ctx context.Context, workspaceID, userID, itemID string) (*object.ProductSpaceItem, error) {
 	return s.fetchItemWithExecer(ctx, s.db, workspaceID, userID, itemID)
+}
+
+// fetchItemByRelativePath 按工作空间、用户与相对路径查询产品空间条目。
+// 用于文档采纳时判断目标路径是否已存在。
+func (s *DBProductSpaceService) fetchItemByRelativePath(ctx context.Context, workspaceID, userID, relativePath string) (*object.ProductSpaceItem, error) {
+	const query = `
+		SELECT id, workspace_id, user_id, type, title, relative_path, current_version,
+		       file_ext, mime_type, size_bytes, status, created_by, created_at, updated_at
+		FROM product_docs
+		WHERE workspace_id = $1 AND user_id = $2 AND relative_path = $3
+	`
+	var item object.ProductSpaceItem
+	err := scanProductSpaceItem(s.db.QueryRowContext(ctx, query, workspaceID, userID, relativePath), &item)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
+		}
+		return nil, fmt.Errorf("fetch item by relative path failed: %w", err)
+	}
+	return &item, nil
 }
 
 // fetchItemForUpdate 在事务中按 ID 获取产品空间条目，并对 product_docs 行加写锁。
@@ -1383,6 +1415,130 @@ func (s *DBProductSpaceService) UpdateContent(ctx context.Context, workspaceID, 
 	}
 
 	return s.fetchItem(ctx, workspaceID, userID, itemID)
+}
+
+// ImportDoc 将用户个人工作目录中的文档文件采纳到产品空间 docs 目录。
+// 若目标相对路径已存在 doc 条目，则更新内容并创建新版本；否则新建条目。
+// 导入成功后不删除源文件，保持与原型采纳（ImportPrototype）一致的"复制"语义。
+func (s *DBProductSpaceService) ImportDoc(ctx context.Context, workspaceID, userID string, req object.ImportDocRequest) (*object.ProductSpaceItem, error) {
+	if err := s.requireMember(ctx, workspaceID, userID); err != nil {
+		return nil, err
+	}
+
+	if req.Path == "" {
+		return nil, invalidInput(errors.New("path is required"))
+	}
+
+	sc := stubclient.Default()
+	if sc == nil {
+		return nil, errors.New("personal-stub client not initialized")
+	}
+
+	content, err := sc.ReadFile(ctx, req.Path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: source file not found", ErrNotFound)
+	}
+
+	// 从源路径提取文件名，并确保有合法扩展名。
+	title := filepath.Base(req.Path)
+	ext := parseExtFromName(title)
+	if ext == "" {
+		ext = object.DocExtMarkdown
+		title = title + "." + ext
+	}
+	if !object.AllowedDocExts[ext] {
+		return nil, invalidInput(errors.New(errMsgInvalidExtension))
+	}
+
+	folder := ""
+	if req.Folder != "" {
+		folder, err = sanitizeFolderPath(req.Folder)
+		if err != nil {
+			return nil, invalidInput(err)
+		}
+	}
+
+	name := stripExt(title, ext)
+	relativePath := buildRelativePath(object.ProductSpaceDocsDir, folder, name, ext)
+	if err := validateRelativePath(relativePath); err != nil {
+		return nil, invalidInput(err)
+	}
+
+	existing, err := s.fetchItemByRelativePath(ctx, workspaceID, userID, relativePath)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+
+	if existing != nil {
+		item, updateErr := s.UpdateContent(ctx, workspaceID, userID, existing.ID, object.UpdateContentRequest{
+			Content:       content,
+			ChangeSummary: "采纳文档",
+		})
+		if updateErr != nil {
+			return nil, updateErr
+		}
+		if err := s.updateSourcePath(ctx, item.ID, req.Path); err != nil {
+			log.Printf("[ProductSpace] ImportDoc update source_path failed for %s: %v", item.ID, err)
+		}
+		return item, nil
+	}
+
+	createReq := object.CreateItemRequest{
+		Type:    object.ItemTypeDoc,
+		Title:   title,
+		Folder:  folder,
+		Content: content,
+	}
+	item, err := s.CreateItem(ctx, workspaceID, userID, createReq)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.updateSourcePath(ctx, item.ID, req.Path); err != nil {
+		log.Printf("[ProductSpace] ImportDoc update source_path failed for %s: %v", item.ID, err)
+	}
+	return item, nil
+}
+
+// updateSourcePath 将文档采纳时的源文件路径记录到 product_docs.source_path。
+func (s *DBProductSpaceService) updateSourcePath(ctx context.Context, itemID, sourcePath string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE product_docs
+		SET source_path = $1
+		WHERE id = $2
+	`, sourcePath, itemID)
+	if err != nil {
+		return fmt.Errorf("update source_path failed: %w", err)
+	}
+	return nil
+}
+
+// GetDocImportStatus 按源文件路径查询该文档是否已被采纳到产品空间。
+// 通过 source_path 精确匹配，避免同名文件误判。
+// 返回对应条目；未找到时返回 ErrNotFound。
+func (s *DBProductSpaceService) GetDocImportStatus(ctx context.Context, workspaceID, userID, sourcePath string) (*object.ProductSpaceItem, error) {
+	if err := s.requireMember(ctx, workspaceID, userID); err != nil {
+		return nil, err
+	}
+
+	if sourcePath == "" {
+		return nil, invalidInput(errors.New("path is required"))
+	}
+
+	var item object.ProductSpaceItem
+	err := scanProductSpaceItem(s.db.QueryRowContext(ctx, `
+		SELECT id, workspace_id, user_id, type, title, relative_path, current_version,
+		       file_ext, mime_type, size_bytes, status, created_by, created_at, updated_at
+		FROM product_docs
+		WHERE workspace_id = $1 AND user_id = $2 AND type = $3 AND source_path = $4
+		LIMIT 1
+	`, workspaceID, userID, object.ItemTypeDoc, sourcePath), &item)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, errMsgItemNotFound)
+		}
+		return nil, fmt.Errorf("fetch doc import status failed: %w", err)
+	}
+	return &item, nil
 }
 
 // updatePrototypeContentByID 按条目 ID 更新原型内容并创建新版本。
@@ -2828,4 +2984,104 @@ func (s *DBProductSpaceService) ListRequirementShareDocComments(token string) ([
 		return nil, fmt.Errorf("iterate requirement share doc comments failed: %w", err)
 	}
 	return comments, nil
+}
+
+// StartDocAdoptionCleanupTask 启动文档采纳源文件清理定时任务。
+// 任务按 interval 周期扫描 product_docs.source_path，删除超过 retentionDays 未修改的源草稿文件。
+// 返回的 stop 函数用于停止定时器；本方法不依赖 ProductSpace 其它接口状态。
+func (s *DBProductSpaceService) StartDocAdoptionCleanupTask(ctx context.Context, interval time.Duration, retentionDays int) func() {
+	if interval <= 0 || retentionDays <= 0 {
+		log.Printf("[ProductSpace] doc adoption cleanup disabled (interval=%v, retentionDays=%d)", interval, retentionDays)
+		return func() {}
+	}
+
+	ticker := time.NewTicker(interval)
+	stop := make(chan struct{})
+	go func() {
+		// 启动后立即执行一次清理，缩短配置生效的等待时间。
+		s.runDocAdoptionCleanup(ctx, retentionDays)
+		for {
+			select {
+			case <-ticker.C:
+				s.runDocAdoptionCleanup(ctx, retentionDays)
+			case <-stop:
+				ticker.Stop()
+				return
+			case <-ctx.Done():
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+
+	log.Printf("[ProductSpace] doc adoption cleanup started: interval=%v, retentionDays=%d", interval, retentionDays)
+	return func() { close(stop) }
+}
+
+// runDocAdoptionCleanup 执行一次源文件清理。
+// 查询所有已记录 source_path 的文档条目，对超过 retentionDays 未修改的源文件调用 personal-stub 删除。
+// 源文件删除失败不会影响产品空间中的正式文档内容。
+func (s *DBProductSpaceService) runDocAdoptionCleanup(ctx context.Context, retentionDays int) {
+	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT source_path
+		FROM product_docs
+		WHERE type = $1 AND source_path IS NOT NULL AND source_path != ''
+	`, object.ItemTypeDoc)
+	if err != nil {
+		log.Printf("[ProductSpace] cleanup query failed: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	sc := stubclient.Default()
+	if sc == nil {
+		log.Printf("[ProductSpace] cleanup skipped: personal-stub client not initialized")
+		return
+	}
+
+	for rows.Next() {
+		var sourcePath string
+		if err := rows.Scan(&sourcePath); err != nil {
+			log.Printf("[ProductSpace] cleanup scan source_path failed: %v", err)
+			continue
+		}
+
+		if err := validateRelativePath(sourcePath); err != nil {
+			log.Printf("[ProductSpace] cleanup skip invalid source_path %q: %v", sourcePath, err)
+			continue
+		}
+
+		absPath := filepath.Join(s.workspaceRoot, sourcePath)
+		if !isPathUnderWorkspaceRoot(absPath, s.workspaceRoot) {
+			log.Printf("[ProductSpace] cleanup skip path outside workspace root: %s", sourcePath)
+			continue
+		}
+
+		info, err := os.Stat(absPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			log.Printf("[ProductSpace] cleanup stat %s failed: %v", absPath, err)
+			continue
+		}
+		if info.IsDir() {
+			continue
+		}
+		if info.ModTime().After(cutoff) {
+			continue
+		}
+
+		if err := sc.DeleteFile(ctx, sourcePath); err != nil {
+			log.Printf("[ProductSpace] cleanup delete %s failed: %v", sourcePath, err)
+		} else {
+			log.Printf("[ProductSpace] cleanup deleted adopted source file %s (modified %s)", sourcePath, info.ModTime().Format(time.RFC3339))
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Printf("[ProductSpace] cleanup rows iteration failed: %v", err)
+	}
 }

@@ -37,6 +37,7 @@ type Config struct {
 	DefaultWorkspace string
 	MockMode         bool
 	DispatchTimeout  time.Duration
+	AdminUserIDs     []string
 }
 
 // DBFeishuService 是基于 PostgreSQL 的 FeishuService 实现。
@@ -48,12 +49,16 @@ type DBFeishuService struct {
 	workspaceRoot string
 	cfg           Config
 	replier       Replier
+	cardKit       CardKitManager
+	identity      *IdentityResolver
+	groupHistory  *GroupHistoryFetcher
 }
 
 // NewDBFeishuService 创建飞书机器人服务。
 // aguiClient 用于向 gatewayd 分发 agent 命令；sessions/messages 用于持久化会话与消息；
-// replier 负责将 agent 回复发送回飞书（mock 模式输出日志，真实模式调用飞书 Open API）。
-func NewDBFeishuService(db *sql.DB, aguiClient *client.AGUIClient, sessions chat.SessionStore, messages chat.MessageStore, workspaceRoot string, cfg Config, replier Replier) *DBFeishuService {
+// replier 负责将 agent 回复发送回飞书（mock 模式输出日志，真实模式调用飞书 Open API）；
+// cardKit 管理流式卡片生命周期；identity 解析用户权限；groupHistory 拉取群历史消息。
+func NewDBFeishuService(db *sql.DB, aguiClient *client.AGUIClient, sessions chat.SessionStore, messages chat.MessageStore, workspaceRoot string, cfg Config, replier Replier, cardKit CardKitManager, groupHistory *GroupHistoryFetcher) *DBFeishuService {
 	svc := &DBFeishuService{
 		db:            db,
 		aguiClient:    aguiClient,
@@ -62,6 +67,9 @@ func NewDBFeishuService(db *sql.DB, aguiClient *client.AGUIClient, sessions chat
 		workspaceRoot: workspaceRoot,
 		cfg:           cfg,
 		replier:       replier,
+		cardKit:       cardKit,
+		identity:      NewIdentityResolver(cfg.AdminUserIDs, cfg.BotUserID, cfg.DefaultWorkspace),
+		groupHistory:  groupHistory,
 	}
 	// 服务初始化时自动建表，避免开发/测试环境因未执行迁移脚本而缺少表。
 	_ = svc.ensureTables()

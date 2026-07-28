@@ -1,10 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { FileText, Eye, Download, Loader2 } from 'lucide-react';
+import { FileText, Eye, Download, Loader2, FolderInput, Check } from 'lucide-react';
 import { fileApi } from '@/lib/file-api';
+import { productSpaceApi } from '@/lib/productspace-api';
+import { useAuth } from '@/contexts/AuthContext';
+import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 interface FileAttachmentCardProps {
   path: string;
   onPreview?: (path: string) => void;
+  /** 关联的需求 ID；提供后点击采纳会自动关联需求并生成设计版本 */
+  workitemId?: string;
 }
 
 /**
@@ -29,12 +35,18 @@ function getFileType(fileName: string): string {
  * 并提供「预览」和「下载」操作。
  * 左上角显示文件类型标识徽章。
  */
-export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, onPreview }) => {
+export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, onPreview, workitemId }) => {
+  const { membership } = useAuth();
+  const workspaceId = membership?.workspaceId ?? '';
   const fileName = path.split('/').pop() || path;
   const displayTitle = buildDisplayTitle(fileName);
   const fileType = getFileType(fileName);
+  const isMarkdown = /\.(?:md|markdown)$/i.test(fileName);
   const [preview, setPreview] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [adopted, setAdopted] = useState(false);
+  const [checkingStatus, setCheckingStatus] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,6 +68,27 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
     };
   }, [path]);
 
+  // 查询采纳状态：刷新页面后仍能正确显示"已采纳"。
+  useEffect(() => {
+    if (!workspaceId || !isMarkdown) return;
+    let cancelled = false;
+    setCheckingStatus(true);
+    productSpaceApi
+      .importDocStatus(workspaceId, path)
+      .then((res) => {
+        if (!cancelled) setAdopted(res.adopted);
+      })
+      .catch(() => {
+        if (!cancelled) setAdopted(false);
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingStatus(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, path, isMarkdown]);
+
   const handlePreview = () => {
     if (onPreview) {
       onPreview(path);
@@ -64,6 +97,30 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
     const params = new URLSearchParams();
     params.set('path', path);
     window.open(`/file-view?${params.toString()}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleAdopt = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!workspaceId) {
+      toast.error('未选择工作空间');
+      return;
+    }
+    if (!isMarkdown) {
+      toast.error('仅支持采纳 Markdown 文档');
+      return;
+    }
+    setImporting(true);
+    try {
+      await productSpaceApi.importDoc(workspaceId, path, workitemId);
+      toast.success(workitemId ? '文档已采纳并生成设计版本' : '文档已采纳到产品空间');
+      setAdopted(true);
+    } catch (err) {
+      console.error('[FileAttachmentCard] adopt failed:', err);
+      const msg = err instanceof Error ? err.message : '';
+      toast.error(msg || '采纳失败，请确认是否已加入该工作空间');
+    } finally {
+      setImporting(false);
+    }
   };
 
   return (
@@ -86,7 +143,7 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
           {displayTitle}
         </p>
         <p className="text-xs text-muted-foreground">本地文件</p>
-        <div className="flex items-center gap-3 mt-2">
+        <div className="flex flex-wrap items-center gap-3 mt-2">
           <button
             type="button"
             onClick={handlePreview}
@@ -103,6 +160,20 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
             <Download className="h-3.5 w-3.5" />
             下载
           </a>
+          {workspaceId && isMarkdown && (
+            <button
+              type="button"
+              onClick={handleAdopt}
+              disabled={importing || adopted || checkingStatus}
+              className={cn(
+                'inline-flex items-center gap-1 text-xs font-medium hover:underline disabled:opacity-60 disabled:cursor-not-allowed',
+                adopted ? 'text-emerald-600' : 'text-primary'
+              )}
+            >
+              {importing || checkingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : adopted ? <Check className="h-3.5 w-3.5" /> : <FolderInput className="h-3.5 w-3.5" />}
+              {adopted ? '已采纳到产品空间' : '采纳到产品空间'}
+            </button>
+          )}
         </div>
       </div>
 

@@ -46,6 +46,17 @@ workspace:
 personal_stub:
   url: "http://127.0.0.1:8090"
 
+# 产品空间文档采纳配置
+# doc_adoption_cleanup: 文档采纳到产品空间后，自动清理个人工作区中的源草稿文件。
+#   enabled: 是否启用自动清理。
+#   retention_days: 源文件保留天数，超过后删除。
+#   interval: 清理任务执行间隔。
+product_space:
+  doc_adoption_cleanup:
+    enabled: true
+    retention_days: 14
+    interval: "24h"
+
 # 平台支持的 coding agent 与模型池配置
 # 该列表决定超管在空间管理时可选择哪些 agent 与模型。
 coding_agents:
@@ -133,6 +144,9 @@ feishu:
   default_workspace: ""
   mock_mode: true
   dispatch_timeout: "30m"
+  # admin_user_ids: 白名单用户 open_id 列表，拥有完整编码能力（编码/原型/需求/总结）
+  # 环境变量 FEISHU_ADMIN_USER_IDS 用逗号分隔多个 open_id
+  admin_user_ids: ["ou_test_user_001"]
 
 workitem:
   platforms:

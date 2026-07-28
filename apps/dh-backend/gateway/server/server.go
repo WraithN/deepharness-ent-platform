@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -78,7 +79,7 @@ func New(cfg config.Config) http.Handler {
 	initEventService(db)
 	initOrchestratorService(db)
 	workspaceService := initWorkspaceService(db, cfg.WorkspaceRoot, userService, cfg.CodingAgents)
-	initProductSpaceService(db, cfg.WorkspaceRoot, workspaceService)
+	initProductSpaceService(db, cfg, workspaceService)
 	initAgentConfigService(db, cfg.CodingAgents, cfg.CodingAgentModels, cfg.CodingAgentModelVendors)
 	initWorkspacePromptService(db)
 	initRepositoryService(db, cfg)
@@ -123,6 +124,14 @@ func New(cfg config.Config) http.Handler {
 	// 初始化全局 stubclient，供各 domain service 委托 personal-stub 执行文件/git 操作。
 	// 架构合规：dh-backend 不直接写共享目录、不直接 exec git/npm，全部通过 stubclient 代理。
 	stubclient.SetDefault(stubclient.New(cfg.PersonalStubURL))
+
+	// 启动文档采纳源文件清理任务：超过 retention_days 的源草稿文件由 personal-stub 删除。
+	// 必须在 stubclient 初始化之后启动，否则首次扫描无法委托删除。
+	if cfg.DocAdoptionCleanupEnabled {
+		productSpaceService.StartDocAdoptionCleanupTask(context.Background(), cfg.DocAdoptionCleanupInterval, cfg.DocAdoptionCleanupRetentionDays)
+	} else {
+		log.Println("[ProductSpace] doc adoption cleanup disabled by config")
+	}
 
 	// Routes
 	mux.HandleFunc("/health", handler.HealthCheck)
@@ -288,6 +297,8 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/workspaces/{id}/product-space/items/{itemId}/comments", middleware.Auth(http.HandlerFunc(psH.Comments)))
 	mux.Handle("/api/v1/workspaces/{id}/product-space/folders", middleware.Auth(http.HandlerFunc(psH.Folders)))
 	mux.Handle("/api/v1/workspaces/{id}/product-space/import-prototype", middleware.Auth(http.HandlerFunc(psH.ImportPrototype)))
+	mux.Handle("/api/v1/workspaces/{id}/product-space/import-doc", middleware.Auth(http.HandlerFunc(psH.ImportDoc)))
+	mux.Handle("/api/v1/workspaces/{id}/product-space/import-doc/status", middleware.Auth(http.HandlerFunc(psH.ImportDocStatus)))
 	mux.Handle("/api/v1/workspaces/{id}/product-space/serve/{path...}", middleware.Auth(http.HandlerFunc(psH.ServePrototype)))
 	// 原型产品分享：需 PM 权限创建，公开接口免登录访问
 	mux.Handle("/api/v1/workspaces/{id}/product-space/share", middleware.Auth(http.HandlerFunc(psH.CreateShare)))
@@ -452,16 +463,22 @@ func initTeamService(db *sql.DB, userService identityservice.UserService) {
 // 复用平台 session/message 存储持久化持久化会话，
 // replier 按 mock/real 模式选择回复发送器。
 func initFeishuService(db *sql.DB, cfg config.Config, sessions chat.SessionStore, messages chat.MessageStore) {
-	log.Printf("[Feishu] init mockMode=%v botUser=%s defaultWorkspace=%s",
-		cfg.FeishuMockMode, cfg.FeishuBotUserID, cfg.FeishuDefaultWorkspace)
+	log.Printf("[Feishu] init mockMode=%v botUser=%s defaultWorkspace=%s adminUsers=%d",
+		cfg.FeishuMockMode, cfg.FeishuBotUserID, cfg.FeishuDefaultWorkspace, len(cfg.FeishuAdminUserIDs))
 	aguiClient := client.NewAGUIClient(cfg.GatewaydAdminURL, cfg.GatewaydAgentID)
 	replier := feishuservice.NewReplier(cfg.FeishuMockMode, cfg.FeishuAppID, cfg.FeishuAppSecret, cfg.FeishuAPIBaseURL)
+	cardKit := feishuservice.NewCardKitManager(cfg.FeishuMockMode, cfg.FeishuAppID, cfg.FeishuAppSecret, cfg.FeishuAPIBaseURL)
+	var groupHistory *feishuservice.GroupHistoryFetcher
+	if !cfg.FeishuMockMode {
+		groupHistory = feishuservice.NewGroupHistoryFetcher(cfg.FeishuAppID, cfg.FeishuAppSecret, cfg.FeishuAPIBaseURL)
+	}
 	svc := feishuservice.NewDBFeishuService(db, aguiClient, sessions, messages, cfg.WorkspaceRoot, feishuservice.Config{
 		BotUserID:        cfg.FeishuBotUserID,
 		DefaultWorkspace: cfg.FeishuDefaultWorkspace,
 		MockMode:         cfg.FeishuMockMode,
 		DispatchTimeout:  cfg.FeishuDispatchTimeout,
-	}, replier)
+		AdminUserIDs:     cfg.FeishuAdminUserIDs,
+	}, replier, cardKit, groupHistory)
 	feishu.Init(svc)
 }
 
@@ -496,10 +513,10 @@ func initAgentRuntimeService(db *sql.DB, workspaceRoot string) agentruntimeservi
 	return svc
 }
 
-func initProductSpaceService(db *sql.DB, workspaceRoot string, workspaceService workspaceservice.WorkspaceService) {
-	log.Printf("[ProductSpace] using postgres storage, workspaceRoot=%s", workspaceRoot)
+func initProductSpaceService(db *sql.DB, cfg config.Config, workspaceService workspaceservice.WorkspaceService) {
+	log.Printf("[ProductSpace] using postgres storage, workspaceRoot=%s", cfg.WorkspaceRoot)
 	var err error
-	productSpaceService, err = psService.NewDBProductSpaceService(db, workspaceRoot, workspaceService)
+	productSpaceService, err = psService.NewDBProductSpaceService(db, cfg.WorkspaceRoot, workspaceService)
 	if err != nil {
 		log.Fatalf("init productspace service: %v", err)
 	}

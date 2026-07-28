@@ -4,6 +4,7 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	productdocobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
@@ -40,6 +41,15 @@ type ProductSpaceService interface {
 	DeleteFolder(ctx context.Context, workspaceID, userID string, req object.DeleteFolderRequest) error
 	// ImportPrototype 将原型工程目录导入产品空间，返回导入条目 ID 列表。
 	ImportPrototype(ctx context.Context, workspaceID, userID, folder string) ([]string, error)
+	// ImportDoc 将用户个人工作目录中的文档文件采纳到产品空间 docs 目录，返回创建的条目。
+	// 若目标路径已存在则更新内容并创建新版本；否则新建 doc 条目。
+	ImportDoc(ctx context.Context, workspaceID, userID string, req object.ImportDocRequest) (*object.ProductSpaceItem, error)
+	// GetDocImportStatus 按源文件路径查询该文档是否已被采纳到产品空间。
+	// 返回对应的 doc 条目；若未采纳则返回 ErrNotFound。
+	GetDocImportStatus(ctx context.Context, workspaceID, userID, sourcePath string) (*object.ProductSpaceItem, error)
+	// StartDocAdoptionCleanupTask 启动文档采纳源文件清理定时任务。
+	// 仅当配置启用时才会真正执行任务；返回的 stop 函数用于优雅停止。
+	StartDocAdoptionCleanupTask(ctx context.Context, interval time.Duration, retentionDays int) func()
 	DownloadVersion(ctx context.Context, workspaceID, userID, itemID string, version int) (string, []byte, error)
 	ListComments(ctx context.Context, workspaceID, userID, itemID string) ([]object.PrototypeComment, error)
 	AddComment(ctx context.Context, workspaceID, userID, itemID string, req object.AddCommentRequest) (*object.PrototypeComment, error)
