@@ -31,4 +31,8 @@ type WorkItemService interface {
 	// 需求级产品设计版本
 	CreateDesignVersion(workitemID, workspaceID, userID, changeSummary string) (object.DesignVersion, error)
 	ListDesignVersions(workitemID string) ([]object.DesignVersion, error)
+
+	// ListRequirementsWithDesignItems 按工作空间查询包含文档或原型关联的需求列表，
+	// 每个需求聚合其最新的一篇文档与最新的一个原型（若存在）。
+	ListRequirementsWithDesignItems(workspaceID string) ([]object.RequirementWithDesignItems, error)
 }

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -303,4 +304,86 @@ func (s *DBWorkItemService) CountWorkItemsPrevPeriod(projectID string, status wo
 		return 0, fmt.Errorf("count workitems prev period failed: %w", err)
 	}
 	return count, nil
+}
+
+// ListRequirementsWithDesignItems 按工作空间查询包含文档或原型关联的需求列表。
+// 每个需求聚合其最新的一篇文档与最新的一个原型（按 product_docs.updated_at 倒序取第一条），
+// 结果按需求 updated_at 倒序排列，供智能会话「设计」菜单按需求名分组展示。
+func (s *DBWorkItemService) ListRequirementsWithDesignItems(workspaceID string) ([]object.RequirementWithDesignItems, error) {
+	rows, err := s.db.Query(`
+		SELECT
+			w.id AS workitem_id,
+			w.title AS workitem_title,
+			w.status AS workitem_status,
+			w.updated_at AS workitem_updated_at,
+			d.id AS item_id,
+			d.type AS item_type,
+			d.title AS item_title,
+			d.relative_path,
+			d.status AS item_status,
+			d.current_version,
+			d.updated_at AS item_updated_at
+		FROM workitems w
+		JOIN workitem_doc_links l ON l.workitem_id = w.id
+		JOIN product_docs d ON d.id = l.product_space_item_id
+		WHERE l.workspace_id = $1 AND w."type" = 'requirement'
+		ORDER BY w.updated_at DESC, d.type, d.updated_at DESC
+	`, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list requirements with design items failed: %w", err)
+	}
+	defer rows.Close()
+
+	grouped := make(map[string]*object.RequirementWithDesignItems)
+	for rows.Next() {
+		var wiID, wiTitle, wiStatus string
+		var wiUpdatedAt time.Time
+		var item object.LinkedProductSpaceItem
+		var itemUpdatedAt time.Time
+		if err := rows.Scan(
+			&wiID, &wiTitle, &wiStatus, &wiUpdatedAt,
+			&item.ID, &item.Type, &item.Title, &item.RelativePath,
+			&item.Status, &item.CurrentVersion, &itemUpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan requirement design item failed: %w", err)
+		}
+		item.UpdatedAt = itemUpdatedAt
+
+		req, ok := grouped[wiID]
+		if !ok {
+			req = &object.RequirementWithDesignItems{
+				WorkitemID:    wiID,
+				WorkitemTitle: wiTitle,
+				Status:        wiStatus,
+				UpdatedAt:     wiUpdatedAt,
+			}
+			grouped[wiID] = req
+		}
+
+		// 每个需求只保留最新的一篇文档和最新的一个原型。
+		switch item.Type {
+		case "doc":
+			if req.Doc == nil || item.UpdatedAt.After(req.Doc.UpdatedAt) {
+				req.Doc = &item
+			}
+		case "prototype":
+			if req.Prototype == nil || item.UpdatedAt.After(req.Prototype.UpdatedAt) {
+				req.Prototype = &item
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate requirement design items failed: %w", err)
+	}
+
+	result := make([]object.RequirementWithDesignItems, 0, len(grouped))
+	for _, req := range grouped {
+		result = append(result, *req)
+	}
+
+	// 按需求更新时间倒序，与 SQL 排序保持一致。
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].UpdatedAt.After(result[j].UpdatedAt)
+	})
+	return result, nil
 }

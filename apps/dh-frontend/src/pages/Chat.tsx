@@ -83,6 +83,7 @@ import { fileApi } from '@/lib/file-api';
 import { type ProductDoc, productDocApi } from '@/lib/productdoc-api';
 import { sortPromptCategoriesByBuiltin } from '@/lib/prompt-categories';
 import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
+import { workItemApi, type RequirementWithDesignItems, type LinkedProductSpaceItem } from '@/lib/workitem-api';
 import { SUB_ROLE, type SubRole } from '@/lib/role-constants';
 import { teamApi } from '@/lib/team-api';
 import { cn } from '@/lib/utils';
@@ -813,8 +814,6 @@ export const Chat: React.FC = () => {
   const [promptMenuOpen, setPromptMenuOpen] = useState(false);
   const [taskMenuOpen, setTaskMenuOpen] = useState(false);
   const [cmdMenuOpen, setCmdMenuOpen] = useState(false);
-  const [docMenuOpen, setDocMenuOpen] = useState(false);
-  const [docMenuSearch, setDocMenuSearch] = useState('');
   // @ 触发的内联文档菜单：start/end 为 @query 在输入框中的区间，query 为检索词
   const [docMention, setDocMention] = useState<{ start: number; end: number; query: string } | null>(null);
   const [docMentionIndex, setDocMentionIndex] = useState(0);
@@ -822,6 +821,10 @@ export const Chat: React.FC = () => {
   const [availableDocs, setAvailableDocs] = useState<ProductDoc[]>([]);
   const [referencedDocs, setReferencedDocs] = useState<ReferencedDoc[]>([]);
   const [materializingDocId, setMaterializingDocId] = useState<string | null>(null);
+  // 「设计」按钮菜单：按需求名分组展示关联的文档与原型
+  const [designMenuOpen, setDesignMenuOpen] = useState(false);
+  const [designMenuSearch, setDesignMenuSearch] = useState('');
+  const [designItems, setDesignItems] = useState<RequirementWithDesignItems[]>([]);
   const [commandConfigs, setCommandConfigs] = useState<CommandConfig[]>([]);
 
   // 欢迎页快捷卡片过滤掉后端已禁用的指令；配置尚未加载时全部展示。
@@ -834,7 +837,7 @@ export const Chat: React.FC = () => {
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
   const [compactPlusOpen, setCompactPlusOpen] = useState(false);
-  const [compactPlusSubmenu, setCompactPlusSubmenu] = useState<'doc' | 'repo' | 'prompt' | 'skill' | 'cmd' | null>(null);
+  const [compactPlusSubmenu, setCompactPlusSubmenu] = useState<'design' | 'repo' | 'prompt' | 'skill' | 'cmd' | null>(null);
   const [activeSkillTab, setActiveSkillTab] = useState('全部');
   const [activeTaskTab, setActiveTaskTab] = useState<'req' | 'defect' | 'case'>('req');
   const [activeCommandTab, setActiveCommandTab] = useState<CommandCategory>(getDefaultCommandCategory(membership?.subRole));
@@ -843,7 +846,7 @@ export const Chat: React.FC = () => {
   const skillMenuRef = useRef<HTMLDivElement>(null);
   const taskMenuRef = useRef<HTMLDivElement>(null);
   const cmdMenuRef = useRef<HTMLDivElement>(null);
-  const docMenuRef = useRef<HTMLDivElement>(null);
+  const designMenuRef = useRef<HTMLDivElement>(null);
   const docMentionMenuRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mentionOverlayRef = useRef<HTMLDivElement>(null);
@@ -882,8 +885,8 @@ export const Chat: React.FC = () => {
 
   // 工具栏自适应：根据级别决定哪些按钮直接展示。
   const collapsibleToolbarItems = useMemo(() => {
-    const items: ('doc' | 'repo' | 'cmd' | 'prompt' | 'skill')[] = [];
-    if (canUseDocs) items.push('doc');
+    const items: ('design' | 'repo' | 'cmd' | 'prompt' | 'skill')[] = [];
+    if (canUseDocs) items.push('design');
     if (availableRepos.length > 0) items.push('repo');
     items.push('cmd', 'prompt', 'skill');
     return items;
@@ -1000,7 +1003,7 @@ export const Chat: React.FC = () => {
       if (skillMenuRef.current && !skillMenuRef.current.contains(t)) setSkillPopoverOpen(false);
       if (taskMenuRef.current && !taskMenuRef.current.contains(t)) setTaskMenuOpen(false);
       if (cmdMenuRef.current && !cmdMenuRef.current.contains(t)) setCmdMenuOpen(false);
-      if (docMenuRef.current && !docMenuRef.current.contains(t)) setDocMenuOpen(false);
+      if (designMenuRef.current && !designMenuRef.current.contains(t)) setDesignMenuOpen(false);
       // @ 内联菜单：点击菜单与输入框以外区域时关闭（输入框内点击由 onChange 重新判定）
       if (docMentionMenuRef.current && !docMentionMenuRef.current.contains(t) && !textareaRef.current?.contains(t)) {
         setDocMention(null);
@@ -1103,13 +1106,16 @@ export const Chat: React.FC = () => {
       workspaceApi.listPromptCategories(workspaceId).catch((): PromptCategory[] => []),
       // 产品空间文档（后端已按 updated_at 倒序）
       productDocApi.list(workspaceId).catch((): ProductDoc[] => []),
+      // 需求及其关联的文档/原型（供「设计」按钮菜单）
+      workItemApi.listRequirementsWithDesignItems(workspaceId).catch((): RequirementWithDesignItems[] => []),
     ])
-      .then(([loadedSkills, loadedPrompts, loadedCategories, loadedDocs]) => {
+      .then(([loadedSkills, loadedPrompts, loadedCategories, loadedDocs, loadedDesignItems]) => {
         if (cancelled) return;
         setAvailableSkills(loadedSkills);
         setAvailablePrompts(loadedPrompts);
         setPromptCategories(loadedCategories);
         setAvailableDocs(loadedDocs);
+        setDesignItems(loadedDesignItems);
       })
       .catch(err => {
         if (cancelled) return;
@@ -1192,8 +1198,8 @@ export const Chat: React.FC = () => {
   const appendSkillTag = (name: string) => { setInput(p => p.trimEnd() ? p.trimEnd() + ` #${name} ` : `#${name} `); };
 
   // 文档菜单：按标题搜索过滤（列表已由后端按修改时间倒序）。
-  // @ 内联触发时检索词来自输入框 @ 后的文本，按钮触发时来自菜单内搜索框。
-  const docFilterQuery = docMention ? docMention.query : docMenuSearch;
+  // @ 内联触发时检索词来自输入框 @ 后的文本。
+  const docFilterQuery = docMention ? docMention.query : '';
   const filteredDocs = useMemo(() => {
     const q = docFilterQuery.trim().toLowerCase();
     if (!q) return availableDocs;
@@ -1202,6 +1208,13 @@ export const Chat: React.FC = () => {
 
   // 文档按钮角标：输入框中仍存在的 @提及 数量（随整体删除实时变化）
   const activeRefCount = referencedDocs.filter(d => input.includes(docMentionToken(d.title))).length;
+
+  // 「设计」菜单：按需求标题过滤（结果已由后端按需求更新时间倒序）。
+  const filteredDesignItems = useMemo(() => {
+    const q = designMenuSearch.trim().toLowerCase();
+    if (!q) return designItems;
+    return designItems.filter(item => item.workitemTitle.toLowerCase().includes(q));
+  }, [designItems, designMenuSearch]);
 
   // 指令原子块 token 列表：空格后缀版本用于词边界安全匹配（如 /code 不误匹配 /code-review），
   // 裸命令版本用于命令在输入末尾且无后缀参数时的着色匹配。
@@ -1264,10 +1277,10 @@ export const Chat: React.FC = () => {
 
   // 选中文档：先落盘拿到 agent 可读路径，再在输入框插入 @文档名 原子块。
   // 重复判定以输入框中是否仍存在该原子块为准（删除后可重新引用）。
-  const handleSelectDoc = async (doc: ProductDoc) => {
+  const handleSelectDoc = async (doc: { id: string; title: string }, closeMenu?: () => void) => {
     const token = docMentionToken(doc.title);
     if (input.includes(token)) {
-      setDocMenuOpen(false);
+      closeMenu?.();
       setDocMention(null);
       return;
     }
@@ -1287,7 +1300,7 @@ export const Chat: React.FC = () => {
         // 按钮触发：追加到输入框末尾，光标定位到末尾
         setInput(p => (p.trimEnd() ? p.trimEnd() + ` ${token}` : token));
         cursorPos = (input.trimEnd() ? input.trimEnd().length + 1 : 0) + token.length;
-        setDocMenuOpen(false);
+        closeMenu?.();
       }
       // 等 React 提交新值后恢复焦点并定位光标到提及块之外
       requestAnimationFrame(() => {
@@ -1302,6 +1315,18 @@ export const Chat: React.FC = () => {
       setMaterializingDocId(null);
     }
   };
+
+  // 「设计」菜单：点击文档按钮，引用该需求对应的文档并关闭菜单。
+  const handleDesignDoc = (doc: LinkedProductSpaceItem) => {
+    handleSelectDoc({ id: doc.id, title: doc.title }, () => setDesignMenuOpen(false));
+  };
+
+  // 「设计」菜单：点击原型按钮，基于该需求标题触发 /proto-make 重新设计原型。
+  const handleDesignPrototype = (prototype: LinkedProductSpaceItem, requirementTitle: string) => {
+    handleProtoMake(prototype.relativePath, requirementTitle);
+    setDesignMenuOpen(false);
+  };
+
   // 插入指令到输入框开头（斜杠指令通常作为前缀），若已有内容则追加空格分隔。
   // 指令成为原子块（/code 整体删除），插入后光标定位到块尾。
   // 若已存在指令，则替换为新的指令；若指令不支持代码库且当前已选代码库，清空选择。
@@ -1386,7 +1411,7 @@ export const Chat: React.FC = () => {
     if (canUseDocs && atIdx >= 0 && atPrevOk && !/\s/.test(atQuery) && !isCompletedMention) {
       setDocMention({ start: atIdx, end: cursor, query: atQuery });
       setDocMentionIndex(0);
-      setDocMenuOpen(false);
+      setDesignMenuOpen(false);
     } else {
       setDocMention(null);
     }
@@ -2120,39 +2145,66 @@ export const Chat: React.FC = () => {
     );
   };
 
-  // 可复用的工具栏下拉菜单内容
-  const renderDocMenu = (onSelect: (doc: ProductDoc) => void) => (
-    <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
+  // 可复用的「设计」下拉菜单内容：按需求名分组，每个需求展示文档/原型两个操作按钮。
+  const renderDesignMenu = () => (
+    <div className="absolute bottom-full left-0 mb-2 w-96 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
       <div className="p-2 border-b border-border shrink-0">
         <Input
-          placeholder="搜索文档..."
-          value={docMenuSearch}
-          onChange={e => setDocMenuSearch(e.target.value)}
+          placeholder="搜索需求..."
+          value={designMenuSearch}
+          onChange={e => setDesignMenuSearch(e.target.value)}
           className="h-8 text-sm"
           autoFocus
         />
       </div>
       <div className="flex-1 overflow-y-auto p-1">
-        {filteredDocs.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center py-6">暂无文档</p>
+        {filteredDesignItems.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-6">暂无可设计的需求</p>
         ) : (
-          filteredDocs.map(doc => {
-            const referenced = referencedDocs.some(d => d.docId === doc.id);
+          filteredDesignItems.map(item => {
+            const doc = item.doc;
+            const prototype = item.prototype;
+            const docReferenced = doc ? referencedDocs.some(d => d.docId === doc.id) : false;
             return (
-              <button
-                key={doc.id}
-                disabled={materializingDocId === doc.id}
-                className={cn('flex items-center gap-2 w-full px-2.5 py-2 rounded-lg text-left text-sm transition-colors', referenced ? 'opacity-50 cursor-default' : 'hover:bg-accent')}
-                onClick={() => onSelect(doc)}
+              <div
+                key={item.workitemId}
+                className="flex items-center gap-2 w-full px-2.5 py-2 rounded-lg text-left text-sm"
               >
-                {materializingDocId === doc.id ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
-                ) : (
-                  <BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-                )}
-                <span className="flex-1 truncate">{doc.title}</span>
-                {referenced && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
-              </button>
+                <Palette className="h-4 w-4 text-muted-foreground shrink-0" />
+                <span className="flex-1 truncate font-medium">{item.workitemTitle}</span>
+                <div className="flex items-center gap-1">
+                  {doc && (
+                    <button
+                      disabled={materializingDocId === doc.id || docReferenced}
+                      title={docReferenced ? '已引用该文档' : '引用文档重新设计'}
+                      className={cn(
+                        'flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors',
+                        docReferenced
+                          ? 'opacity-50 cursor-default text-muted-foreground'
+                          : 'hover:bg-accent text-foreground'
+                      )}
+                      onClick={() => handleDesignDoc(doc)}
+                    >
+                      {materializingDocId === doc.id ? (
+                        <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                      ) : (
+                        <BookOpen className="h-3 w-3" />
+                      )}
+                      文档
+                    </button>
+                  )}
+                  {prototype && (
+                    <button
+                      title="基于需求重新生成原型"
+                      className="flex items-center gap-1 px-2 py-1 rounded-md text-xs hover:bg-accent text-foreground transition-colors"
+                      onClick={() => handleDesignPrototype(prototype, item.workitemTitle)}
+                    >
+                      <LayoutTemplate className="h-3 w-3" />
+                      原型
+                    </button>
+                  )}
+                </div>
+              </div>
             );
           })
         )}
@@ -2932,18 +2984,18 @@ export const Chat: React.FC = () => {
 
                 {/* 直接展示的可折叠按钮：按容器宽度决定直接展示或收入 + 号菜单 */}
                 {collapsibleToolbarItems.slice(0, visibleToolbarCount).map(type => {
-                  if (type === 'doc') {
+                  if (type === 'design') {
                     return (
-                      <div className="relative" key="doc" ref={docMenuRef}>
-                        <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setDocMenuOpen(!docMenuOpen); setDocMention(null); setTaskMenuOpen(false); setCmdMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); }}>
-                          <BookOpen className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '文档'}
+                      <div className="relative" key="design" ref={designMenuRef}>
+                        <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setDesignMenuOpen(!designMenuOpen); setDocMention(null); setTaskMenuOpen(false); setCmdMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); }}>
+                          <Palette className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '设计'}
                           {activeRefCount > 0 && (
                             <span className="ml-1.5 h-4 min-w-4 px-1 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center">
                               {activeRefCount}
                             </span>
                           )}
                         </Button>
-                        {docMenuOpen && renderDocMenu(doc => handleSelectDoc(doc))}
+                        {designMenuOpen && renderDesignMenu()}
                       </div>
                     );
                   }
@@ -3002,7 +3054,7 @@ export const Chat: React.FC = () => {
                       variant="outline"
                       size="sm"
                       className={cn('rounded-full p-0', toolbarLevel === 0 ? 'h-7 w-7' : 'h-8 w-8')}
-                      onClick={() => { setCompactPlusOpen(!compactPlusOpen); setCompactPlusSubmenu(null); setCmdMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); setDocMenuOpen(false); setTaskMenuOpen(false); }}
+                      onClick={() => { setCompactPlusOpen(!compactPlusOpen); setCompactPlusSubmenu(null); setCmdMenuOpen(false); setRepoMenuOpen(false); setPromptMenuOpen(false); setSkillPopoverOpen(false); setDesignMenuOpen(false); setTaskMenuOpen(false); }}
                       title="更多工具"
                     >
                       <Plus className="h-3.5 w-3.5" />
@@ -3010,15 +3062,15 @@ export const Chat: React.FC = () => {
                     {compactPlusOpen && !compactPlusSubmenu && (
                       <div className="absolute bottom-full left-0 mb-2 bg-popover border shadow-xl rounded-xl flex items-center gap-0.5 z-50 p-1 animate-in fade-in slide-in-from-bottom-2">
                         {collapsedToolbarItems.map(type => {
-                          if (type === 'doc') {
+                          if (type === 'design') {
                             return (
                               <button
-                                key="doc"
+                                key="design"
                                 className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
-                                title="文档"
-                                onClick={() => setCompactPlusSubmenu('doc')}
+                                title="设计"
+                                onClick={() => setCompactPlusSubmenu('design')}
                               >
-                                <BookOpen className="h-4 w-4 text-muted-foreground" />
+                                <Palette className="h-4 w-4 text-muted-foreground" />
                               </button>
                             );
                           }
@@ -3075,7 +3127,7 @@ export const Chat: React.FC = () => {
                         })}
                       </div>
                     )}
-                    {compactPlusSubmenu === 'doc' && renderDocMenu(doc => { handleSelectDoc(doc); setCompactPlusSubmenu(null); setCompactPlusOpen(false); })}
+                    {compactPlusSubmenu === 'design' && renderDesignMenu()}
                     {compactPlusSubmenu === 'repo' && renderRepoMenu(repo => { const syncStatus = userRepoStatuses.find(s => s.repositoryId === repo.id); if (syncStatus?.synced) { toggleRepo(repo); setCompactPlusSubmenu(null); setCompactPlusOpen(false); } })}
                     {compactPlusSubmenu === 'cmd' && renderCmdMenu(cmd => { insertCommand(cmd); setCompactPlusSubmenu(null); setCompactPlusOpen(false); })}
                     {compactPlusSubmenu === 'prompt' && renderPromptMenu(p => { insertPrompt(p); setCompactPlusSubmenu(null); setCompactPlusOpen(false); })}

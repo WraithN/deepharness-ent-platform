@@ -307,7 +307,7 @@ ${description.trim()}
                         value={manualContent}
                         onChange={(e) => setManualContent(e.target.value)}
                       />
-                      <p className="text-xs text-muted-foreground">支持 {{参数名}} 模板语法，选中提示词后可在输入框中快速替换。</p>
+                      <p className="text-xs text-muted-foreground">支持 {'{{参数名}}'} 模板语法，选中提示词后可在输入框中快速替换。</p>
                     </div>
                   </div>
                 )}

@@ -77,3 +77,25 @@ type CreateDesignVersionRequest struct {
 type ListDesignVersionsResponse struct {
 	Versions []DesignVersion `json:"versions"`
 }
+
+// LinkedProductSpaceItem 表示需求关联的单个产品空间条目（文档或原型）。
+type LinkedProductSpaceItem struct {
+	ID             string    `json:"id"`
+	Type           string    `json:"type"` // doc | prototype
+	Title          string    `json:"title"`
+	RelativePath   string    `json:"relativePath"`
+	Status         string    `json:"status"`
+	CurrentVersion int       `json:"currentVersion"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+// RequirementWithDesignItems 按需求聚合其关联的文档与原型，
+// 供智能会话「设计」按钮下拉菜单按需求名分组展示。
+type RequirementWithDesignItems struct {
+	WorkitemID    string                    `json:"workitemId"`
+	WorkitemTitle string                    `json:"workitemTitle"`
+	Status        string                    `json:"status"`
+	UpdatedAt     time.Time                 `json:"updatedAt"`
+	Doc           *LinkedProductSpaceItem   `json:"doc,omitempty"`
+	Prototype     *LinkedProductSpaceItem   `json:"prototype,omitempty"`
+}

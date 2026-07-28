@@ -200,6 +200,8 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/workitems/{id}/doc-links", workitem.DocLinks)
 	mux.HandleFunc("/api/v1/workitems/{id}/doc-links/{itemId}", workitem.DocLinkByID)
 	mux.HandleFunc("/api/v1/workitems/{id}/design-versions", workitem.ListDesignVersions)
+	// 按工作空间聚合需求及其关联的文档/原型，供智能会话「设计」按钮下拉菜单使用
+	mux.Handle("/api/v1/workspaces/{id}/workitems-with-design-items", middleware.Auth(http.HandlerFunc(workitem.ListRequirementsWithDesignItems)))
 	mux.HandleFunc("/api/v1/review/review", pragent.Reviews)
 	mux.HandleFunc("/api/v1/audit/events", audit.Events)
 	mux.HandleFunc("/api/v1/orchestrator/sessions", orchestrator.Sessions)

@@ -240,3 +240,32 @@ func ListDesignVersions(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewEncoder(w).Encode(object.ListDesignVersionsResponse{Versions: versions})
 }
+
+// ListRequirementsWithDesignItems 处理 GET /api/v1/workspaces/{id}/workitems-with-design-items。
+// 返回工作空间下包含文档或原型关联的需求列表，按需求更新时间倒序，
+// 每个需求聚合最新的一篇文档与最新的一个原型。
+func ListRequirementsWithDesignItems(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if defaultWorkItemService == nil {
+		http.Error(w, `{"code":1,"message":"workitem service not initialized"}`, http.StatusInternalServerError)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"code":1,"message":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	workspaceID := r.PathValue("id")
+	if workspaceID == "" {
+		http.Error(w, `{"code":1,"message":"missing workspace id"}`, http.StatusBadRequest)
+		return
+	}
+
+	items, err := defaultWorkItemService.ListRequirementsWithDesignItems(workspaceID)
+	if err != nil {
+		log.Printf("[WorkItem] ListRequirementsWithDesignItems failed: %v", err)
+		http.Error(w, `{"code":1,"message":"failed to list requirements with design items"}`, http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(items)
+}
