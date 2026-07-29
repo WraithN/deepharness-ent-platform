@@ -115,7 +115,7 @@ func (s *DBRepositoryService) Create(workspaceID, userID string, req CreateRepos
 		URL:           req.URL,
 		Type:          repository.RepoType(req.Type),
 		DefaultBranch: req.DefaultBranch,
-		LocalPath:     s.gitClient.DefaultLocalPath(workspaceID, name),
+		LocalPath:     s.gitClient.DefaultLocalPath(userID, workspaceID, name),
 		CloneStatus:   repository.CloneStatusPending,
 		CreatedAt:     now,
 		UpdatedAt:     now,
@@ -155,7 +155,7 @@ func (s *DBRepositoryService) Update(workspaceID, repoID, userID string, req Upd
 		existing.URL = req.URL
 		// URL 变更时重新解析名称与本地路径
 		existing.Name = ParseRepoName(req.URL)
-		existing.LocalPath = s.gitClient.DefaultLocalPath(workspaceID, existing.Name)
+		existing.LocalPath = s.gitClient.DefaultLocalPath(userID, workspaceID, existing.Name)
 	}
 	if req.Type != "" {
 		existing.Type = repository.RepoType(req.Type)

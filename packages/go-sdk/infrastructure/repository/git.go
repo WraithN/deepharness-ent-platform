@@ -30,11 +30,13 @@ func SanitizePathSegment(s string) string {
 }
 
 // buildLocalPath 在 root 下生成安全的本地路径，并校验不逃出 root。
-func buildLocalPath(root, workspaceID, repoName string) (string, error) {
+// 路径结构：{root}/{userID}/{workspaceID}/{repoName}，与 resolveWorkspacePath 保持一致。
+func buildLocalPath(root, userID, workspaceID, repoName string) (string, error) {
+	safeUser := SanitizePathSegment(userID)
 	safeWS := SanitizePathSegment(workspaceID)
 	safeName := SanitizePathSegment(repoName)
-	if safeWS == "" || safeName == "" {
-		return "", fmt.Errorf("workspace id and repo name are required")
+	if safeUser == "" || safeWS == "" || safeName == "" {
+		return "", fmt.Errorf("user id, workspace id and repo name are required")
 	}
 
 	absRoot, err := filepath.Abs(root)
@@ -42,7 +44,7 @@ func buildLocalPath(root, workspaceID, repoName string) (string, error) {
 		return "", fmt.Errorf("resolve root path failed: %w", err)
 	}
 
-	p := filepath.Join(absRoot, safeWS, safeName)
+	p := filepath.Join(absRoot, safeUser, safeWS, safeName)
 	if !strings.HasPrefix(p, absRoot+string(filepath.Separator)) {
 		return "", fmt.Errorf("invalid local path: %s", p)
 	}
@@ -50,8 +52,8 @@ func buildLocalPath(root, workspaceID, repoName string) (string, error) {
 }
 
 // DefaultLocalPath 使用默认根目录生成仓库本地路径。
-func DefaultLocalPath(workspaceID, repoName string) string {
-	p, err := buildLocalPath(DEFAULT_WORKSPACE_ROOT, workspaceID, repoName)
+func DefaultLocalPath(userID, workspaceID, repoName string) string {
+	p, err := buildLocalPath(DEFAULT_WORKSPACE_ROOT, userID, workspaceID, repoName)
 	if err != nil {
 		return ""
 	}
@@ -72,8 +74,9 @@ func NewGitClient(root string) *GitClient {
 }
 
 // DefaultLocalPath 生成仓库默认本地路径。
-func (c *GitClient) DefaultLocalPath(workspaceID, repoName string) string {
-	p, err := buildLocalPath(c.root, workspaceID, repoName)
+// 路径结构：{root}/{userID}/{workspaceID}/{repoName}，与 resolveWorkspacePath 保持一致。
+func (c *GitClient) DefaultLocalPath(userID, workspaceID, repoName string) string {
+	p, err := buildLocalPath(c.root, userID, workspaceID, repoName)
 	if err != nil {
 		return ""
 	}
