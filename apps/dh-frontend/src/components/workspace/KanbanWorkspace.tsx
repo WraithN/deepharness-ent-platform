@@ -586,7 +586,7 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
 
   return (
     <>
-      <div className="flex flex-col h-full">
+      <div className="flex flex-col h-full min-w-0">
         <div className="flex items-center justify-end px-5 pt-4 pb-2 shrink-0">
           <div className="inline-flex items-center rounded-lg border border-border/50 bg-muted/40 p-0.5">
             <button

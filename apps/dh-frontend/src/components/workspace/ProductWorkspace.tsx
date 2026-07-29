@@ -1001,7 +1001,7 @@ export const ProductWorkspace: React.FC = () => {
             </Tabs>
           )}
 
-          <Card className="flex-1 overflow-hidden border-none claude-card flex flex-col relative">
+          <Card className="flex-1 min-w-0 overflow-hidden border-none claude-card flex flex-col relative">
             {topTab === 'kanban' && (
               <KanbanWorkspace
                 onNavigateToDesign={handleNavigateToDesign}
