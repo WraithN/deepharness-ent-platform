@@ -284,8 +284,7 @@ export const RequirementBreakdownCard: React.FC<RequirementBreakdownCardProps> =
         }
         return next;
       });
-      toast.success(`已提交 ${result.created.length} 条需求`);
-      setSubmitDialogOpen(false);
+            setSubmitDialogOpen(false);
     } catch {
       toast.error('提交失败，请重试');
     } finally {

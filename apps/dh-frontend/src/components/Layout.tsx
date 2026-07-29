@@ -120,7 +120,6 @@ export const Layout: React.FC = () => {
   const handleLogout = () => {
     signOut();
     navigate('/login');
-    toast.success('已退出登录');
   };
 
   // 切换工作空间：更新上下文与 localStorage 后整页刷新，确保各页面重新加载空间数据
@@ -149,7 +148,6 @@ export const Layout: React.FC = () => {
         subRole: membership?.subRole,
         sourceWorkspaceId: getCurrentWorkspaceId(),
       });
-      toast.success('工作区创建成功');
       setCreateWorkspaceOpen(false);
       setWorkspaceName('');
       // 创建后立即刷新工作区列表并切换到新工作区

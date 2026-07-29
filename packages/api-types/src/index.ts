@@ -145,3 +145,44 @@ export interface AgentSessionDTO {
     content: string
   }>
 }
+
+export interface ReviewIssue {
+  id: string
+  filePath: string
+  line: number
+  severity: "critical" | "high" | "medium" | "low"
+  title: string
+  description: string
+  suggestion: string
+  status: "open" | "fixed" | "wont_fix" | "false_alarm"
+  linkedWorkitemId?: string
+  linkedWorkitemType?: string
+  completedAt?: string
+}
+
+export interface AgentReviewReport {
+  id: string
+  workspaceId: string
+  sessionId: string
+  projectPath: string
+  projectName: string
+  branch: string
+  commitHash: string
+  reportPath: string
+  summary: string
+  issues: ReviewIssue[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AdoptReviewReportRequest {
+  workspaceId: string
+  sessionId: string
+  projectPath: string
+  projectName: string
+  branch: string
+  commitHash: string
+  reportPath: string
+  summary: string
+  issues: Omit<ReviewIssue, "status" | "linkedWorkitemId" | "completedAt">[]
+}

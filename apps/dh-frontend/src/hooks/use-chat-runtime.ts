@@ -358,7 +358,6 @@ export function useChatRuntime(options: UseChatRuntimeOptions = {}): UseChatRunt
       sendMessageViaHttp(text);
     } else {
       pendingSendRef.current = { text, context };
-      toast.info('正在连接会话，连接成功后自动发送');
     }
   }, [markRunning]);
 

@@ -147,7 +147,6 @@ export const ShareDoc: React.FC = () => {
       setComposerOpen(false);
       setSelection(null);
       window.getSelection()?.removeAllRanges();
-      toast.success('批注已发表');
       loadComments();
     } catch {
       toast.error('发表批注失败');

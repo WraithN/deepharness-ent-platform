@@ -220,7 +220,6 @@ export const UserStoryCard: React.FC<UserStoryCardProps> = ({ data, isPreviewAct
     setSubmitting(true);
     try {
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      toast.success(`已提交 ${selectedIds.size} 条用户故事`);
       setSubmitDialogOpen(false);
     } catch {
       toast.error('提交失败，请重试');

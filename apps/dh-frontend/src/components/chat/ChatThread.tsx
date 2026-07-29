@@ -22,6 +22,11 @@ interface ChatThreadProps {
   activeReqBreakdownData?: RequirementBreakdownData | null;
   onReqBreakdownSubmit?: (items: RequirementItem[]) => Promise<RequirementBreakdownSubmitResult>;
   onPrototypePreview?: (path: string) => void;
+  onReviewReportPreview?: (reportPath: string) => void;
+  onReviewAdopt?: (data: import('./ReviewReportCard').ReviewReportData) => Promise<boolean>;
+  onReviewFix?: (reportPath: string, projectName: string) => void;
+  /** 当前正在预览的文件路径，用于判断评审报告预览按钮是否激活。 */
+  activePreviewPath?: string;
   requirementTitle?: string;
   workitemId?: string;
   /** 需求列表，用于原型卡片按标题自动匹配需求 ID。 */
@@ -77,6 +82,10 @@ const ChatMessageItem: React.FC<{
           activeReqBreakdownData={props.activeReqBreakdownData}
           onReqBreakdownSubmit={props.onReqBreakdownSubmit}
           onPrototypePreview={props.onPrototypePreview}
+          onReviewReportPreview={props.onReviewReportPreview}
+          onReviewAdopt={props.onReviewAdopt}
+          onReviewFix={props.onReviewFix}
+          activePreviewPath={props.activePreviewPath}
           requirementTitle={props.requirementTitle}
           workitemId={props.workitemId}
           requirements={props.requirements}

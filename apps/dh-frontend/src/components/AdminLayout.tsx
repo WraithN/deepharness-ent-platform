@@ -91,7 +91,6 @@ export const AdminLayout: React.FC = () => {
 
   const handleLogout = () => {
     signOut();
-    toast.success('已退出登录');
     navigate('/login');
   };
 

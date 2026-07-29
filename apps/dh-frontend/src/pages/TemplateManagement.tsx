@@ -222,7 +222,6 @@ export const TemplateManagement: React.FC = () => {
         label,
         content: `# ${label}\n\n${NEW_TEMPLATE_PLACEHOLDER}`,
       });
-      toast.success('模板已创建');
       setNewLabel('');
       setCreateOpen(false);
       const createListId = generateListRequestId();
@@ -243,7 +242,6 @@ export const TemplateManagement: React.FC = () => {
     clearPendingSave();
     try {
       await templateApi.delete(activeCategory, key);
-      toast.success('模板已删除');
       const deleteListId = generateListRequestId();
       await loadList(activeCategory, deleteListId);
     } catch (err) {
@@ -259,7 +257,7 @@ export const TemplateManagement: React.FC = () => {
 
     // 仅允许已发布模板之间移动；草稿态模板不能移动，也不能与发布态交换位置
     if (!templates[index].published || !templates[targetIndex].published) {
-      toast.info('仅已发布模板支持排序');
+      toast.error('仅已发布模板支持排序');
       return;
     }
 
@@ -289,7 +287,6 @@ export const TemplateManagement: React.FC = () => {
       setTemplates((prev) =>
         prev.map((t) => (t.key === key ? { ...t, published } : t)),
       );
-      toast.success(published ? '模板已发布' : '模板已下架');
       // 发布/下架会改变分组顺序（发布态始终在前），重新拉取列表以保证顺序正确
       const publishListId = generateListRequestId();
       await loadList(activeCategory, publishListId, { selectFirst: false });

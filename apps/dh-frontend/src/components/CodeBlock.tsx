@@ -149,7 +149,6 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
     try {
       await navigator.clipboard.writeText(content);
       setCopied(true);
-      toast.success('代码已复制到剪贴板');
       setTimeout(() => setCopied(false), 2000);
     } catch {
       toast.error('复制失败');

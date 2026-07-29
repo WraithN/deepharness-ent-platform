@@ -135,7 +135,6 @@ export const PersonalAssistantChat: React.FC = () => {
     const session = await createSession(id, '新会话');
     if (session) {
       setInput('');
-      toast.success('新会话已创建');
     }
   };
 
@@ -154,7 +153,6 @@ export const PersonalAssistantChat: React.FC = () => {
           await createSession(id, '新会话');
         }
       }
-      toast.success('会话已删除');
     } catch {
       toast.error('删除会话失败');
     }

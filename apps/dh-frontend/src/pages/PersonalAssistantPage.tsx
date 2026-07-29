@@ -72,7 +72,6 @@ export const PersonalAssistantPage: React.FC = () => {
       const created = await api.post<PersonalAssistantDTO>('/v1/personal-assistants', req);
       setLobsters(prev => [...prev, created]);
       setCreateOpen(false);
-      toast.success('虾班智守召唤成功！');
     } catch {
       toast.error('召唤失败');
     } finally {
@@ -141,7 +140,7 @@ export const PersonalAssistantPage: React.FC = () => {
               if (lobster.isMine) {
                 navigate(`/personal-assistant/chat/${lobster.id}`);
               } else {
-                toast.info('只能与自己创建的智守进行沟通');
+                toast.error('只能与自己创建的智守进行沟通');
               }
             }}
           >

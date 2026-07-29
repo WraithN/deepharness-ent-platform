@@ -5,7 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Folder, File, ChevronRight, ChevronDown, GitBranch, Code2, Book, Search, X, Share2, FileText, Activity, FileCode, Eye, ShieldCheck, Sparkles, RefreshCw, Loader2, Braces, Globe, Palette, Terminal, Settings, Image, FileJson, FileType, FileCode2, Database, Users, AlertCircle, CheckCircle, BarChart3, Code, Zap } from 'lucide-react';
+import { Folder, File, ChevronRight, ChevronDown, GitBranch, Code2, Book, Search, X, Share2, FileText, Activity, FileCode, Eye, ShieldCheck, Sparkles, RefreshCw, Loader2, Braces, Globe, Palette, Terminal, Settings, Image, FileJson, FileType, FileCode2, Database, Users, AlertCircle, CheckCircle, BarChart3, Code, Zap, Wrench, Bug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
@@ -14,6 +14,7 @@ import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
 import type { RepositoryDTO, FileNodeDTO, FileContentDTO, ScannedRepositoryDTO, RepositoryDetailsDTO, BranchInfoDTO } from '@/lib/api-types';
 import { LivePreview } from '@/components/chat/LivePreview';
 import { MarkdownView } from '@/components/chat/MarkdownView';
+import { displayFilePath } from '@/components/chat/ReviewReportCard';
 import { detectFrontendProject } from '@/lib/project-detector';
 import { CodeBlock } from '@/components/CodeBlock';
 import { useAuth } from '@/contexts/AuthContext';
@@ -504,6 +505,75 @@ interface ReviewReportSummary {
   content: string;
 }
 
+/** 已采纳评审报告（来自后端 DB） */
+interface AdoptedReviewReport {
+  id: string;
+  workspaceId: string;
+  sessionId: string;
+  projectPath: string;
+  projectName: string;
+  branch: string;
+  commitHash: string;
+  reportPath: string;
+  summary: string;
+  issues: AdoptedReviewIssue[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 评审问题（来自后端 DB） */
+interface AdoptedReviewIssue {
+  id: string;
+  filePath: string;
+  line: number;
+  severity: string;
+  title: string;
+  description: string;
+  suggestion: string;
+  status: string;
+  linkedWorkitemId?: string;
+  linkedWorkitemType?: string;
+  completedAt?: string;
+}
+
+/** 评审问题状态常量 */
+const ISSUE_STATUS_OPEN = 'open';
+const ISSUE_STATUS_FIXED = 'fixed';
+const ISSUE_STATUS_WONT_FIX = 'wont_fix';
+
+/** 严重程度中文标签 */
+const SEVERITY_LABELS: Record<string, string> = {
+  critical: '致命',
+  high: '严重',
+  medium: '一般',
+  low: '轻微',
+};
+
+/** 问题状态中文标签 */
+const STATUS_LABELS: Record<string, string> = {
+  [ISSUE_STATUS_OPEN]: '待处理',
+  [ISSUE_STATUS_FIXED]: '已修复',
+  [ISSUE_STATUS_WONT_FIX]: '不修复',
+};
+
+/** 严重程度样式映射 */
+const SEVERITY_STYLES: Record<string, string> = {
+  critical: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+  high: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+  medium: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  low: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+};
+
+/** 问题状态样式映射 */
+const STATUS_STYLES: Record<string, string> = {
+  [ISSUE_STATUS_OPEN]: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  [ISSUE_STATUS_FIXED]: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+  [ISSUE_STATUS_WONT_FIX]: 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-300',
+};
+
+/** 采纳评审列表请求最大条数 */
+const MAX_ADOPTED_REVIEWS = 50;
+
 /** 从评审报告 Markdown 内容中解析问题数量 */
 function parseIssueCounts(content: string): { critical: number; high: number; medium: number; low: number } {
   const counts = { critical: 0, high: 0, medium: 0, low: 0 };
@@ -533,7 +603,6 @@ const DocGenButton: React.FC = () => {
     setGenerating(true);
     setTimeout(() => {
       setGenerating(false);
-      toast.success('文档已重新生成');
     }, 2000);
   };
   return (
@@ -549,16 +618,25 @@ interface ReviewPanelProps {
   repoName?: string;
   repoId?: string;
   branch?: string;
+  workspaceId?: string;
 }
 
-const ReviewPanel: React.FC<ReviewPanelProps> = ({ repoPath, repoName, repoId, branch }) => {
+const ReviewPanel: React.FC<ReviewPanelProps> = ({ repoPath, repoName, repoId, branch, workspaceId }) => {
   const navigate = useNavigate();
   const [reports, setReports] = useState<ReviewReportSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedReport, setSelectedReport] = useState<ReviewReportSummary | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  // 智能评审：跳转到智能会话，预填 /review 指令并预选当前工程
+  // 已采纳评审（来自后端 DB）
+  const [adoptedReports, setAdoptedReports] = useState<AdoptedReviewReport[]>([]);
+  const [loadingAdopted, setLoadingAdopted] = useState(false);
+  const [selectedAdopted, setSelectedAdopted] = useState<AdoptedReviewReport | null>(null);
+  const [updatingIssue, setUpdatingIssue] = useState<string>('');
+  const [selectedIssueIds, setSelectedIssueIds] = useState<Set<string>>(new Set());
+  const [creatingWorkItems, setCreatingWorkItems] = useState(false);
+
+  // 智能评审：跳转到智能会话，预填 /review 指令并预选当前工程（含分支信息）
   const handleSmartReview = () => {
     if (!repoId || !repoName) {
       toast.error('请先选择一个工程');
@@ -567,10 +645,181 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({ repoPath, repoName, repoId, b
     navigate('/chat', {
       state: {
         initialInput: '/review ',
-        selectedRepos: [{ id: repoId, name: repoName }],
+        selectedRepos: [{ id: repoId, name: repoName, localPath: repoPath, branch }],
       },
     });
   };
+
+  // 修复评审问题：跳转到智能会话，用 /code 指令修复待处理问题
+  const handleFixIssues = (report: AdoptedReviewReport) => {
+    const openIssues = report.issues.filter(i => i.status === ISSUE_STATUS_OPEN);
+    if (openIssues.length === 0) {
+      toast.info('没有待处理的问题');
+      return;
+    }
+    const issueList = openIssues.map((issue, idx) =>
+      `${idx + 1}. [${SEVERITY_LABELS[issue.severity] || issue.severity}] ${issue.title} (${issue.filePath}:${issue.line})\n   描述: ${issue.description}\n   建议: ${issue.suggestion}`
+    ).join('\n');
+    const fixPrompt = `/code 根据评审结果修复 ${report.projectName} 工程中的以下问题，按严重程度从高到低逐一修复：\n${issueList}`;
+    navigate('/chat', {
+      state: {
+        initialInput: fixPrompt,
+        selectedRepos: [{ id: '', name: report.projectName, localPath: report.projectPath, branch: report.branch }],
+      },
+    });
+  };
+
+  // 重新评审：以上次评审结果为模板，检查已修复和新增问题
+  const handleReReview = (report: AdoptedReviewReport) => {
+    if (!repoId || !repoName) return;
+    const issueSummary = report.issues.map((issue, i) =>
+      `${i + 1}. [${SEVERITY_LABELS[issue.severity] || issue.severity}] ${issue.title} (${issue.filePath}:${issue.line}) - 状态: ${STATUS_LABELS[issue.status] || issue.status}`
+    ).join('\n');
+    const reReviewPrompt = `/review 基于上次评审结果进行重新评审。上次评审（分支: ${report.branch}, commit: ${report.commitHash.slice(0, 8)}）发现以下问题，请逐一检查这些问题是否已修复，并发现是否有新的问题：\n${issueSummary}`;
+    navigate('/chat', {
+      state: {
+        initialInput: reReviewPrompt,
+        selectedRepos: [{ id: repoId, name: repoName, localPath: repoPath, branch }],
+      },
+    });
+  };
+
+  // 批量创建需求/缺陷：用户自行选择类型，所有选中的 issues 创建为同一种类型
+  const handleBatchCreateWorkItems = async (type: 'requirement' | 'defect') => {
+    if (!selectedAdopted || selectedIssueIds.size === 0) return;
+    setCreatingWorkItems(true);
+    const report = selectedAdopted;
+    const selectedIssues = report.issues.filter(i => selectedIssueIds.has(i.id) && !i.linkedWorkitemId);
+    if (selectedIssues.length === 0) {
+      toast.info('没有可创建的问题');
+      setCreatingWorkItems(false);
+      return;
+    }
+    let successCount = 0;
+    let failCount = 0;
+    const linkedMap: Record<string, { id: string; type: string }> = {};
+    for (const issue of selectedIssues) {
+      const priority = issue.severity === 'critical' ? 'high' : issue.severity === 'high' ? 'high' : issue.severity === 'medium' ? 'medium' : 'low';
+      try {
+        const created = await api.post<{ id: string }>('/v1/workitems', {
+          type,
+          title: `[评审问题] ${issue.title}`,
+          description: `**来源**: 评审报告 ${report.id}\n**文件**: ${displayFilePath(issue.filePath, report.projectPath)}:${issue.line}\n**严重程度**: ${SEVERITY_LABELS[issue.severity] || issue.severity}\n**问题描述**: ${issue.description}\n**修改建议**: ${issue.suggestion}`,
+          status: 'backlog',
+          priority,
+          source: 'internal',
+        });
+        if (created.id) {
+          linkedMap[issue.id] = { id: created.id, type };
+          try {
+            await api.patch(`/v1/agent-reviews/reports/${report.id}/issues/${issue.id}`, {
+              issueId: issue.id,
+              linkedWorkitemId: created.id,
+              linkedWorkitemType: type,
+            });
+          } catch {
+            // 回写失败不阻塞创建流程
+          }
+        }
+        successCount++;
+      } catch {
+        failCount++;
+      }
+    }
+    // 更新本地状态
+    if (Object.keys(linkedMap).length > 0) {
+      const updateIssues = (issues: AdoptedReviewIssue[]) =>
+        issues.map(i => linkedMap[i.id] ? { ...i, linkedWorkitemId: linkedMap[i.id].id, linkedWorkitemType: linkedMap[i.id].type } : i);
+      setAdoptedReports(prev => prev.map(r => r.id === report.id ? { ...r, issues: updateIssues(r.issues) } : r));
+      setSelectedAdopted(prev => prev && prev.id === report.id ? { ...prev, issues: updateIssues(prev.issues) } : prev);
+    }
+    setCreatingWorkItems(false);
+    setSelectedIssueIds(new Set());
+    const typeLabel = type === 'defect' ? '缺陷' : '需求';
+    if (successCount > 0 && failCount === 0) {
+      toast.success(`成功创建 ${successCount} 个${typeLabel}`);
+    } else if (successCount > 0 && failCount > 0) {
+      toast.warning(`${typeLabel}：成功 ${successCount} 个，失败 ${failCount} 个`);
+    } else {
+      toast.error(`${typeLabel}创建失败，请重试`);
+    }
+  };
+
+  /** 选中的、未创建工作项的 issues 数量 */
+  const selectedCreatableCount = selectedAdopted?.issues.filter(i =>
+    selectedIssueIds.has(i.id) && !i.linkedWorkitemId
+  ).length ?? 0;
+
+  /** 可创建工作项的 issues（未关联 workitem 的） */
+  const creatableIssues = selectedAdopted?.issues.filter(i => !i.linkedWorkitemId) || [];
+  const allCreatableSelected = creatableIssues.length > 0 && selectedIssueIds.size === creatableIssues.length;
+
+  const toggleSelectAll = () => {
+    if (allCreatableSelected) {
+      setSelectedIssueIds(new Set());
+    } else {
+      setSelectedIssueIds(new Set(creatableIssues.map(i => i.id)));
+    }
+  };
+
+  const toggleIssueSelection = (issueId: string) => {
+    setSelectedIssueIds(prev => {
+      const next = new Set(prev);
+      next.has(issueId) ? next.delete(issueId) : next.add(issueId);
+      return next;
+    });
+  };
+
+  // 更新问题状态
+  const handleUpdateIssueStatus = async (reportId: string, issueId: string, status: string) => {
+    setUpdatingIssue(issueId);
+    try {
+      await api.patch(`/v1/agent-reviews/reports/${reportId}/issues/${issueId}`, { issueId, status });
+      setAdoptedReports(prev => prev.map(r => {
+        if (r.id !== reportId) return r;
+        return {
+          ...r,
+          issues: r.issues.map(i => i.id === issueId ? { ...i, status } : i),
+          updatedAt: new Date().toISOString(),
+        };
+      }));
+      if (selectedAdopted?.id === reportId) {
+        setSelectedAdopted(prev => prev ? {
+          ...prev,
+          issues: prev.issues.map(i => i.id === issueId ? { ...i, status } : i),
+        } : null);
+      }
+      toast.success('状态已更新');
+    } catch {
+      toast.error('更新失败');
+    } finally {
+      setUpdatingIssue('');
+    }
+  };
+
+  // 加载已采纳评审报告（从后端 DB，按 workspaceId 拉取全部）
+  useEffect(() => {
+    if (!workspaceId) {
+      setAdoptedReports([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingAdopted(true);
+    api.get<AdoptedReviewReport[]>(`/v1/agent-reviews/reports?workspaceId=${workspaceId}`)
+      .then((data) => {
+        if (cancelled) return;
+        // 按 workspaceId 拉取全部已采纳评审，客户端不再按 projectPath 精确过滤
+        // （agent 工作目录路径与仓库 localPath 可能不同，按工程名展示即可）
+        setAdoptedReports((data || []).slice(0, MAX_ADOPTED_REVIEWS));
+      })
+      .catch(() => {
+        if (!cancelled) setAdoptedReports([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingAdopted(false);
+      });
+    return () => { cancelled = true; };
+  }, [workspaceId]);
 
   // 加载 .review/ 目录下的历史评审报告
   useEffect(() => {
@@ -645,13 +894,13 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({ repoPath, repoName, repoId, b
       </div>
       <ScrollArea className="flex-1 p-4">
         <div className="space-y-3">
-          {loading && (
+          {(loading || loadingAdopted) && (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-5 w-5 animate-spin text-primary" />
             </div>
           )}
 
-          {!loading && reports.length === 0 && (
+          {!loading && !loadingAdopted && reports.length === 0 && adoptedReports.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               <ShieldCheck className="h-10 w-10 mx-auto mb-3 opacity-20" />
               <p className="text-sm">暂无评审报告</p>
@@ -660,7 +909,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({ repoPath, repoName, repoId, b
           )}
 
           {/* 总览统计 */}
-          {reports.length > 0 && (
+          {(reports.length > 0 || adoptedReports.length > 0) && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
               <div className="rounded-xl border border-border/50 bg-card p-3 text-center">
                 <p className="text-lg font-bold text-foreground">{totalIssues}</p>
@@ -681,61 +930,305 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({ repoPath, repoName, repoId, b
             </div>
           )}
 
-          {/* 历史评审报告列表 */}
-          {reports.map(report => {
-            const reportId = report.filePath;
-            const reportCritical = report.critical + report.high;
-            return (
-              <div key={reportId} className="rounded-xl border border-border/50 bg-card p-4 hover:shadow-sm transition-shadow">
-                <div className="flex items-center gap-2 mb-2">
-                  <FileText className="h-4 w-4 text-primary shrink-0" />
-                  <span className="text-sm font-medium text-foreground truncate">{report.date}</span>
-                  <button
-                    className="ml-auto text-xs text-muted-foreground hover:text-foreground flex items-center gap-0.5 shrink-0"
-                    onClick={() => toggleExpand(reportId)}
-                  >
-                    {expanded.has(reportId) ? '收起' : '展开'}
-                    <ChevronDown className={`h-3 w-3 transition-transform ${expanded.has(reportId) ? 'rotate-180' : ''}`} />
-                  </button>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {reportCritical > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">
-                      致命/严重 {reportCritical}
-                    </span>
-                  )}
-                  {report.medium > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
-                      一般 {report.medium}
-                    </span>
-                  )}
-                  {report.low > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-                      轻微 {report.low}
-                    </span>
-                  )}
-                  {reportCritical + report.medium + report.low === 0 && (
-                    <span className="text-[10px] text-emerald-600 font-semibold">未发现问题</span>
-                  )}
-                  <button
-                    className="text-xs text-primary hover:underline ml-auto"
-                    onClick={() => setSelectedReport(report)}
-                  >
-                    查看全文
-                  </button>
-                </div>
-                {expanded.has(reportId) && (
-                  <div className="mt-2 p-2.5 rounded-lg bg-muted/30 text-xs text-foreground leading-relaxed border border-border/30 max-h-60 overflow-y-auto">
-                    <MarkdownView content={report.content} />
-                  </div>
-                )}
+          {/* 已采纳评审报告列表（来自 DB） */}
+          {adoptedReports.length > 0 && (
+            <>
+              <div className="flex items-center gap-1.5 pt-1 pb-0.5">
+                <CheckCircle className="h-3.5 w-3.5 text-emerald-500" />
+                <span className="text-xs font-semibold text-muted-foreground">已采纳评审</span>
+                <span className="text-[10px] text-muted-foreground">({adoptedReports.length})</span>
               </div>
-            );
-          })}
+              {adoptedReports.map(report => {
+                const openCount = report.issues.filter(i => i.status === ISSUE_STATUS_OPEN).length;
+                const fixedCount = report.issues.filter(i => i.status === ISSUE_STATUS_FIXED).length;
+                return (
+                  <div key={report.id} className="rounded-xl border border-emerald-500/30 bg-emerald-50/30 dark:bg-emerald-900/5 p-4 hover:shadow-sm transition-shadow cursor-pointer"
+                    onClick={() => setSelectedAdopted(report)}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <ShieldCheck className="h-4 w-4 text-emerald-500 shrink-0" />
+                      <span className="text-sm font-medium text-foreground truncate">{report.projectName}</span>
+                      <span className="text-[10px] text-muted-foreground shrink-0">
+                        {new Date(report.createdAt).toLocaleString('zh-CN')}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground shrink-0 ml-1">
+                        {report.branch} · {report.commitHash.slice(0, 8)}
+                      </span>
+                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground ml-auto shrink-0" />
+                    </div>
+                    {report.summary && (
+                      <p className="text-xs text-muted-foreground mb-2 line-clamp-2">{report.summary}</p>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {report.issues.filter(i => i.severity === 'critical').length > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                          致命 {report.issues.filter(i => i.severity === 'critical').length}
+                        </span>
+                      )}
+                      {report.issues.filter(i => i.severity === 'high').length > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
+                          严重 {report.issues.filter(i => i.severity === 'high').length}
+                        </span>
+                      )}
+                      {report.issues.filter(i => i.severity === 'medium').length > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                          一般 {report.issues.filter(i => i.severity === 'medium').length}
+                        </span>
+                      )}
+                      {report.issues.filter(i => i.severity === 'low').length > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                          轻微 {report.issues.filter(i => i.severity === 'low').length}
+                        </span>
+                      )}
+                      {openCount > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                          待处理 {openCount}
+                        </span>
+                      )}
+                      {fixedCount > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                          已修复 {fixedCount}
+                        </span>
+                      )}
+                      {report.issues.length === 0 && (
+                        <span className="text-[10px] text-emerald-600 font-semibold">未发现问题</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+
+          {/* 本地评审报告列表 */}
+          {reports.length > 0 && (
+            <>
+              <div className="flex items-center gap-1.5 pt-2 pb-0.5">
+                <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-xs font-semibold text-muted-foreground">本地评审报告</span>
+                <span className="text-[10px] text-muted-foreground">({reports.length})</span>
+              </div>
+              {reports.map(report => {
+                const reportId = report.filePath;
+                const reportCritical = report.critical + report.high;
+                return (
+                  <div key={reportId} className="rounded-xl border border-border/50 bg-card p-4 hover:shadow-sm transition-shadow">
+                    <div className="flex items-center gap-2 mb-2">
+                      <FileText className="h-4 w-4 text-primary shrink-0" />
+                      <span className="text-sm font-medium text-foreground truncate">{report.date}</span>
+                      <button
+                        className="ml-auto text-xs text-muted-foreground hover:text-foreground flex items-center gap-0.5 shrink-0"
+                        onClick={() => toggleExpand(reportId)}
+                      >
+                        {expanded.has(reportId) ? '收起' : '展开'}
+                        <ChevronDown className={`h-3 w-3 transition-transform ${expanded.has(reportId) ? 'rotate-180' : ''}`} />
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {reportCritical > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                          致命/严重 {reportCritical}
+                        </span>
+                      )}
+                      {report.medium > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                          一般 {report.medium}
+                        </span>
+                      )}
+                      {report.low > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                          轻微 {report.low}
+                        </span>
+                      )}
+                      {reportCritical + report.medium + report.low === 0 && (
+                        <span className="text-[10px] text-emerald-600 font-semibold">未发现问题</span>
+                      )}
+                      <button
+                        className="text-xs text-primary hover:underline ml-auto"
+                        onClick={() => setSelectedReport(report)}
+                      >
+                        查看全文
+                      </button>
+                    </div>
+                    {expanded.has(reportId) && (
+                      <div className="mt-2 p-2.5 rounded-lg bg-muted/30 text-xs text-foreground leading-relaxed border border-border/30 max-h-60 overflow-y-auto">
+                        <MarkdownView content={report.content} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </>
+          )}
         </div>
       </ScrollArea>
 
-      {/* 报告全文预览弹窗 */}
+      {/* 已采纳评审详情弹窗：问题列表 + 状态管理 */}
+      <Dialog open={!!selectedAdopted} onOpenChange={(open) => { if (!open) { setSelectedAdopted(null); setSelectedIssueIds(new Set()); } }}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-emerald-500" />
+              评审详情
+              {selectedAdopted && (
+                <span className="text-xs text-muted-foreground font-normal ml-2">
+                  {selectedAdopted.branch} · {selectedAdopted.commitHash.slice(0, 8)}
+                </span>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          {selectedAdopted && (
+            <div className="flex-1 overflow-y-auto space-y-3">
+              {/* 操作按钮 */}
+              <div className="flex items-center gap-2 pb-2 border-b border-border/30">
+                <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => handleFixIssues(selectedAdopted)}>
+                  <Wrench className="h-3.5 w-3.5" />
+                  修复问题
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => handleReReview(selectedAdopted)}>
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  重新评审
+                </Button>
+                {selectedIssueIds.size > 0 && selectedCreatableCount > 0 && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="h-7 text-xs gap-1.5"
+                      disabled={creatingWorkItems}
+                      onClick={() => handleBatchCreateWorkItems('defect')}
+                    >
+                      {creatingWorkItems ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bug className="h-3.5 w-3.5" />}
+                      创建缺陷 ({selectedCreatableCount})
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs gap-1.5"
+                      disabled={creatingWorkItems}
+                      onClick={() => handleBatchCreateWorkItems('requirement')}
+                    >
+                      {creatingWorkItems ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+                      创建需求 ({selectedCreatableCount})
+                    </Button>
+                  </>
+                )}
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {new Date(selectedAdopted.createdAt).toLocaleString('zh-CN')}
+                </span>
+              </div>
+
+              {/* 评审总结 */}
+              {selectedAdopted.summary && (
+                <div className="rounded-lg bg-muted/30 p-3 text-xs text-foreground leading-relaxed">
+                  {selectedAdopted.summary}
+                </div>
+              )}
+
+              {/* 问题列表 */}
+              {selectedAdopted.issues.length > 0 ? (
+                <>
+                {/* 全选 */}
+                <div className="flex items-center gap-2 py-1">
+                  <input
+                    type="checkbox"
+                    checked={allCreatableSelected}
+                    onChange={toggleSelectAll}
+                  />
+                  <span className="text-xs text-muted-foreground">全选可创建的 ({creatableIssues.length})</span>
+                </div>
+                {selectedAdopted.issues.map((issue, idx) => (
+                  <div key={issue.id} className={`rounded-lg border border-border/50 p-3 space-y-2 ${issue.linkedWorkitemId ? 'opacity-60' : ''}`}>
+                    <div className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        className="mt-1 shrink-0"
+                        checked={selectedIssueIds.has(issue.id)}
+                        onChange={() => toggleIssueSelection(issue.id)}
+                        disabled={!!issue.linkedWorkitemId}
+                      />
+                      <span className="text-xs font-bold text-muted-foreground shrink-0 mt-0.5">#{idx + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${SEVERITY_STYLES[issue.severity] || 'bg-gray-100 text-gray-700'}`}>
+                            {SEVERITY_LABELS[issue.severity] || issue.severity}
+                          </span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${STATUS_STYLES[issue.status] || ''}`}>
+                            {STATUS_LABELS[issue.status] || issue.status}
+                          </span>
+                          {issue.linkedWorkitemId && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
+                              issue.linkedWorkitemType === 'defect'
+                                ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                                : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                            }`}>
+                              {issue.linkedWorkitemType === 'defect' ? '已创建缺陷' : '已创建需求'}
+                            </span>
+                          )}
+                          <span className="text-xs font-medium text-foreground">{issue.title}</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground mt-1 font-mono">
+                          {displayFilePath(issue.filePath, selectedAdopted.projectPath)}:{issue.line}
+                        </div>
+                        <p className="text-xs text-foreground mt-1.5">{issue.description}</p>
+                        {issue.suggestion && (
+                          <div className="text-xs text-muted-foreground mt-1.5 p-2 rounded bg-muted/30">
+                            <span className="font-medium">建议：</span>{issue.suggestion}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {/* 问题操作按钮 */}
+                    <div className="flex items-center gap-2 pl-8">
+                      {issue.status === ISSUE_STATUS_OPEN && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 text-[11px] gap-1 text-emerald-600 hover:text-emerald-700"
+                          disabled={updatingIssue === issue.id}
+                          onClick={() => handleUpdateIssueStatus(selectedAdopted.id, issue.id, ISSUE_STATUS_FIXED)}
+                        >
+                          {updatingIssue === issue.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+                          标记已修复
+                        </Button>
+                      )}
+                      {issue.status === ISSUE_STATUS_OPEN && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 text-[11px] gap-1 text-muted-foreground"
+                          disabled={updatingIssue === issue.id}
+                          onClick={() => handleUpdateIssueStatus(selectedAdopted.id, issue.id, ISSUE_STATUS_WONT_FIX)}
+                        >
+                          不修复
+                        </Button>
+                      )}
+                      {issue.status !== ISSUE_STATUS_OPEN && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 text-[11px] gap-1 text-amber-600"
+                          disabled={updatingIssue === issue.id}
+                          onClick={() => handleUpdateIssueStatus(selectedAdopted.id, issue.id, ISSUE_STATUS_OPEN)}
+                        >
+                          重新打开
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                </>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  <CheckCircle className="h-8 w-8 mx-auto mb-2 text-emerald-500" />
+                  <p className="text-sm">本次评审未发现问题</p>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* 本地报告全文预览弹窗 */}
       <Dialog open={!!selectedReport} onOpenChange={(open) => !open && setSelectedReport(null)}>
         <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
           <DialogHeader>
@@ -768,6 +1261,8 @@ export const ProjectCode: React.FC = () => {
 
   // 从 ReviewReportCard "采纳" 按钮导航过来的状态
   const [reviewRepoPath, setReviewRepoPath] = useState<string>('');
+  const [reviewRepoName, setReviewRepoName] = useState<string>('');
+  const [reviewBranch, setReviewBranch] = useState<string>('');
 
   // 用户仓库同步检测状态
   const [syncChecking, setSyncChecking] = useState(true);
@@ -801,12 +1296,19 @@ export const ProjectCode: React.FC = () => {
 
   // 处理从 ReviewReportCard "采纳" 按钮导航过来的情况：切换到评审模式并设置仓库路径
   useEffect(() => {
-    const navState = location.state as { viewMode?: string; repoPath?: string; repoName?: string } | null;
-    if (navState?.viewMode === 'review' && navState.repoPath) {
+    const navState = location.state as { viewMode?: string; repoPath?: string; repoName?: string; branch?: string } | null;
+    const searchParams = new URLSearchParams(location.search);
+    const urlMode = searchParams.get('mode');
+    if (navState?.viewMode === 'review' || urlMode === 'review') {
+      console.log('[采纳] location.state:', navState);
+      console.log('[采纳] location.search:', location.search);
       setViewMode('review');
-      setReviewRepoPath(navState.repoPath);
+      setReviewRepoPath(navState?.repoPath || searchParams.get('repoPath') || '');
+      setReviewRepoName(navState?.repoName || searchParams.get('repoName') || '');
+      setReviewBranch(navState?.branch || searchParams.get('branch') || '');
+      window.history.replaceState({}, '');
     }
-  }, [location.state]);
+  }, [location.state, location.search]);
 
   // Code view mode for file viewer
   const [codeViewMode, setCodeViewMode] = useState<'code' | 'preview' | 'blame'>('code');
@@ -845,7 +1347,6 @@ export const ProjectCode: React.FC = () => {
     setSyncingRepoId(repoId);
     try {
       await repositoryApi.syncUserRepo(workspaceId, repoId);
-      toast.info('正在同步仓库，请稍候...');
       // 轮询同步状态
       const poll = setInterval(async () => {
         try {
@@ -992,8 +1493,6 @@ export const ProjectCode: React.FC = () => {
         setRepoType(first.type as 'dev' | 'case');
         loadBranches(first.id);
       }
-
-      toast.success(`扫描完成，共 ${repos.length} 个仓库`);
     } catch {
       toast.error('扫描仓库失败');
     } finally {
@@ -1101,7 +1600,6 @@ export const ProjectCode: React.FC = () => {
       setOpenFiles([]);
       setActiveFile(null);
       setSearchQuery('');
-      toast.success(`已切换到分支: ${val}`);
     } catch {
       toast.error('切换分支失败');
     } finally {
@@ -1187,7 +1685,6 @@ export const ProjectCode: React.FC = () => {
         content: newContent,
       });
       handleUpdateFileContent(newContent);
-      toast.success('文件已保存');
     } catch (err) {
       toast.error('保存失败');
     }
@@ -1393,8 +1890,7 @@ export const ProjectCode: React.FC = () => {
         </div>
         
         {repoType === 'case' && (
-          <Button size="sm" variant="default" className="shadow-sm" onClick={() => {
-            toast.success('开始执行部署');
+            <Button size="sm" variant="default" className="shadow-sm" onClick={() => {
             const event = new CustomEvent('open-terminal-deploy');
             window.dispatchEvent(event);
           }}>
@@ -1552,9 +2048,10 @@ export const ProjectCode: React.FC = () => {
           return (
             <ReviewPanel
               repoPath={reviewRepoPath || selectedRepo?.localPath}
-              repoName={selectedRepo?.name}
-              repoId={selectedRepoId}
-              branch={selectedBranch}
+              repoName={selectedRepo?.name || reviewRepoName}
+              repoId={selectedRepoId || reviewRepoName}
+              branch={selectedBranch || reviewBranch}
+              workspaceId={workspaceId}
             />
           );
         })()}
@@ -1630,7 +2127,7 @@ export const ProjectCode: React.FC = () => {
                 <span className="text-sm font-semibold">预览模式</span>
                 <span className="text-xs text-muted-foreground">效果预览 · {currentRepo?.name} / {selectedBranch}</span>
               </div>
-              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => toast.success('已刷新预览')}>
+              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => {}}>
                 <RefreshCw className="h-3.5 w-3.5" />
                 刷新预览
               </Button>

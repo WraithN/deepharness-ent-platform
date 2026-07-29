@@ -74,7 +74,6 @@ export const PrototypeCard: React.FC<PrototypeCardProps> = ({ path, requirementT
     setImporting(true);
     try {
       await productSpaceApi.importPrototype(workspaceId, productName, workitemId);
-      toast.success(workitemId ? '原型已采纳并生成设计版本' : '原型已采纳到产品空间');
       setAdopted(true);
     } catch (err) {
       console.error('[PrototypeCard] adopt failed:', err);

@@ -436,7 +436,6 @@ export const ShareRequirement: React.FC = () => {
           y: pendingAnnotation.y,
         };
         await requirementShareApi.addPrototypeComment(token, selectedPage.itemId, req);
-        toast.success('批注已添加');
         setAnnotateMode(false);
         setPendingAnnotation(null);
         setAnnotationDialogOpen(false);
@@ -499,7 +498,6 @@ export const ShareRequirement: React.FC = () => {
       setComposerOpen(false);
       setSelection(null);
       window.getSelection()?.removeAllRanges();
-      toast.success('批注已发表');
       await loadDocComments();
     } catch {
       toast.error('发表批注失败');
@@ -526,7 +524,6 @@ export const ShareRequirement: React.FC = () => {
 
   // 添加/切换批注入口：右侧面板 + 按钮使用
   const handleAddDocComment = useCallback(() => {
-    toast.info('请选择要批注的文字');
   }, []);
 
   const handleAddPrototypeComment = useCallback(() => {

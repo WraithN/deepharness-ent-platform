@@ -77,7 +77,6 @@ export const PrdView: React.FC = () => {
     setSaving(true);
     try {
       await fileApi.save(filePath, content);
-      toast.success('保存成功');
     } catch (e) {
       console.error('[PrdView] save failed:', e);
       toast.error('保存失败');
@@ -90,7 +89,6 @@ export const PrdView: React.FC = () => {
     setSyncing(true);
     try {
       await fileApi.saveToFeishu(filePath);
-      toast.success('已同步到飞书知识库');
     } catch (e) {
       console.error('[PrdView] feishu sync failed:', e);
       toast.error('同步到飞书失败');
@@ -123,8 +121,6 @@ export const PrdView: React.FC = () => {
       } catch {
         // 无配置则使用默认名称
       }
-
-      toast.success(`已经同步到Meego的${projectName}项目`);
     } catch (e) {
       console.error('[PrdView] create requirement failed:', e);
       toast.error('创建需求失败');

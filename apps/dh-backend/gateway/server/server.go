@@ -17,6 +17,8 @@ import (
 	orchestratorservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/orchestrator/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agent_review"
+	agentreviewservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agent_review/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentruntime"
 	agentruntimeservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentruntime/service"
 	agentconfigservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/service"
@@ -78,6 +80,7 @@ func New(cfg config.Config) http.Handler {
 	initReviewService(db)
 	initEventService(db)
 	initOrchestratorService(db)
+	initAgentReviewService(db)
 	workspaceService := initWorkspaceService(db, cfg.WorkspaceRoot, userService, cfg.CodingAgents)
 	initProductSpaceService(db, cfg, workspaceService)
 	initAgentConfigService(db, cfg.CodingAgents, cfg.CodingAgentModels, cfg.CodingAgentModelVendors)
@@ -205,6 +208,11 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/review/review", pragent.Reviews)
 	mux.HandleFunc("/api/v1/audit/events", audit.Events)
 	mux.HandleFunc("/api/v1/orchestrator/sessions", orchestrator.Sessions)
+	// Agent Review 报告存储：采纳/查询/更新问题状态，需登录态，按 workspaceId 隔离
+	mux.Handle("POST /api/v1/agent-reviews/reports", middleware.Auth(http.HandlerFunc(agent_review.Adopt)))
+	mux.Handle("GET /api/v1/agent-reviews/reports", middleware.Auth(http.HandlerFunc(agent_review.ListReports)))
+	mux.Handle("GET /api/v1/agent-reviews/reports/{id}", middleware.Auth(http.HandlerFunc(agent_review.GetReport)))
+	mux.Handle("PATCH /api/v1/agent-reviews/reports/{id}/issues/{issueId}", middleware.Auth(http.HandlerFunc(agent_review.UpdateIssueStatus)))
 	// 数据大盘统计需登录并按 workspaceId 隔离
 	mux.Handle("/api/v1/stats/summary", middleware.Auth(http.HandlerFunc(statsHandler.Summary)))
 	mux.Handle("/api/v1/stats/trend", middleware.Auth(http.HandlerFunc(statsHandler.Trend)))
@@ -410,6 +418,11 @@ func initEventService(db *sql.DB) {
 func initOrchestratorService(db *sql.DB) {
 	log.Println("[Orchestrator] using postgres storage")
 	orchestrator.Init(orchestratorservice.NewDBSessionService(db))
+}
+
+func initAgentReviewService(db *sql.DB) {
+	log.Println("[AgentReview] using postgres storage")
+	agent_review.Init(agentreviewservice.NewDBAgentReviewService(db))
 }
 
 func initWorkspaceService(db *sql.DB, workspaceRoot string, userService identityservice.UserService, codingAgents []config.CodingAgentDefinition) workspaceservice.WorkspaceService {

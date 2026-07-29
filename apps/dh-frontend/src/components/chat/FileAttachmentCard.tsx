@@ -116,8 +116,7 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
     setImporting(true);
     try {
       await productSpaceApi.importDoc(workspaceId, path, workitemId);
-      toast.success(workitemId ? '文档已采纳并生成设计版本' : '文档已采纳到产品空间');
-      setAdopted(true);
+            setAdopted(true);
     } catch (err) {
       console.error('[FileAttachmentCard] adopt failed:', err);
       const msg = err instanceof Error ? err.message : '';

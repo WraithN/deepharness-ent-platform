@@ -1,8 +1,6 @@
 import React from 'react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { toast } from 'sonner';
-
 interface ChatCodeBlockProps {
   code: string;
   language?: string;
@@ -15,7 +13,7 @@ export const ChatCodeBlock: React.FC<ChatCodeBlockProps> = ({ code, language = '
         <span>{language}</span>
         <button
           className="hover:text-foreground transition-colors"
-          onClick={() => { navigator.clipboard.writeText(code); toast.success('已复制'); }}
+          onClick={() => { navigator.clipboard.writeText(code); }}
         >
           复制
         </button>

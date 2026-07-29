@@ -109,7 +109,7 @@ export const PromptMarket: React.FC = () => {
   // 前端 5 秒冷却防抖：冷却期内重复点击直接忽略并提示。
   const handleCopy = (prompt: Prompt) => {
     if (Date.now() < (copyCooldownUntil[prompt.id] ?? 0)) {
-      toast.info('操作过于频繁，请 5 秒后再试');
+      toast.error('操作过于频繁，请 5 秒后再试');
       return;
     }
     setCopyCooldownUntil(prev => ({ ...prev, [prompt.id]: Date.now() + COPY_COOLDOWN_MS }));
@@ -121,7 +121,7 @@ export const PromptMarket: React.FC = () => {
         return next;
       });
     }, COPY_COOLDOWN_MS);
-    navigator.clipboard.writeText(prompt.content || prompt.description).then(() => toast.success('提示词内容已复制到剪贴板'));
+    navigator.clipboard.writeText(prompt.content || prompt.description);
     teamApi.recordPromptUsage(prompt.id)
       .then(updated => setPrompts(prev => prev.map(p => p.id === updated.id ? { ...p, usageCount: updated.usageCount } : p)))
       .catch(err => console.warn('上报提示词复制次数失败:', err));
@@ -134,8 +134,7 @@ export const PromptMarket: React.FC = () => {
     try {
       await workspaceApi.addPrompt(currentWorkspaceId, prompt.id);
       setPrompts(prev => prev.map(p => p.id === prompt.id ? { ...p, addedToSpace: true, usageCount: p.usageCount + 1 } : p));
-      toast.success('提示词已添加到当前空间');
-    } catch {
+          } catch {
       toast.error('添加失败');
     } finally {
       setAddingPromptId(null);
@@ -145,8 +144,7 @@ export const PromptMarket: React.FC = () => {
   const handleReview = async (id: string, action: 'approve' | 'reject' | 'unshelf') => {
     try {
       await teamApi.reviewPrompt(id, action);
-      toast.success('审核操作已生效');
-      loadPrompts();
+            loadPrompts();
     } catch {
       toast.error('审核操作失败');
     }
@@ -215,8 +213,7 @@ ${description.trim()}
       setIsGenerating(false);
       setIsCreateOpen(false);
       resetCreateForm();
-      toast.success('自定义提示词已提交审核，仅你和超管可见');
-    } catch {
+          } catch {
       setIsGenerating(false);
       toast.error('提示词生成失败');
     }
@@ -407,7 +404,7 @@ ${description.trim()}
                     </Button>
                   )}
                   {canEdit && (
-                    <Button variant="ghost" size="sm" onClick={() => toast.info('编辑功能请在个人中心或 Admin 后台操作')}>
+                    <Button variant="ghost" size="sm">
                       编辑
                     </Button>
                   )}

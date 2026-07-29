@@ -198,7 +198,6 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
     e?.stopPropagation();
     const children = getChildren(cards, card.id);
     if (children.length === 0) {
-      toast.info('该需求暂无子需求');
       return;
     }
     setExpandedCardIds(prev => {
@@ -339,7 +338,6 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
         setItems(prev =>
           prev.map(i => (i.id === id ? { ...i, status: item.status } : i))
         );
-        toast.success(`需求 ${id} 已更新为 ${targetStatus}`);
       })
       .catch(() => toast.error('状态更新失败'));
     setDraggedCardId(null);

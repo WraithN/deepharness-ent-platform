@@ -127,23 +127,20 @@ export const FileView: React.FC = () => {
       await fileApi.save(path, editContent);
       setFileContent(prev => prev ? { ...prev, content: editContent } : prev);
       setEditing(false);
-      toast.success('保存成功');
-    } catch { toast.error('保存失败'); }
+          } catch { toast.error('保存失败'); }
     finally { setSaving(false); }
   };
 
   const handleArchive = async () => {
     try {
       const res = await fileApi.saveToFeishu(path);
-      toast.success(res.message || '已存档到飞书知识库');
-    } catch { toast.error('存档失败'); }
+          } catch { toast.error('存档失败'); }
   };
 
   // 做原型：通过 localStorage 通知聊天页面触发 /proto-make 流程（跨标签页通信）。
   const handleProtoMake = () => {
     localStorage.setItem(PROTO_MAKE_PENDING_KEY, JSON.stringify({ path, title: displayTitle, ts: Date.now() }));
-    toast.success('已通知聊天页面，正在切换...');
-    setTimeout(() => window.close(), 800);
+        setTimeout(() => window.close(), 800);
   };
 
   const handleSubmitRequirement = async () => {
@@ -154,8 +151,7 @@ export const FileView: React.FC = () => {
         title: displayTitle, description: fileContent?.content || '',
         status: 'backlog', priority: 'medium', assigneeId: reqAssignee, source: 'internal',
       });
-      toast.success('需求已提交');
-      setReqDialogOpen(false); setReqAssignee('');
+            setReqDialogOpen(false); setReqAssignee('');
     } catch { toast.error('提交需求失败'); }
     finally { setSubmitting(false); }
   };
@@ -164,8 +160,7 @@ export const FileView: React.FC = () => {
     setDeleting(true);
     try {
       await fileApi.delete(path);
-      toast.success('文档已作废');
-      setDeleteDialogOpen(false);
+            setDeleteDialogOpen(false);
       window.close();
     } catch { toast.error('作废失败'); }
     finally { setDeleting(false); }

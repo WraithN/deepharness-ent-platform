@@ -46,6 +46,8 @@ import type { ImperativePanelHandle } from 'react-resizable-panels';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ChatThread } from '@/components/chat/ChatThread';
+import type { ReviewReportData } from '@/components/chat/ReviewReportCard';
+import { parseIssuesFromMarkdown } from '@/components/chat/ReviewReportCard';
 import { InlineFilePreview } from '@/components/chat/InlineFilePreview';
 import { LivePreview, type PreviewMode } from '@/components/chat/LivePreview';
 import { MarkdownView } from '@/components/chat/MarkdownView';
@@ -259,6 +261,12 @@ interface ReferencedPrototype {
   title?: string;
 }
 
+/** 聊天中引用的评审报告，来自 ReviewReportCard 的"修复"操作。 */
+interface ReferencedReport {
+  fileName: string;
+  fullPath: string;
+}
+
 // 发送消息时附加的引用文档说明头，引导 agent 先读文档再按用户要求处理。
 const DOC_REF_HEADER = '[引用的产品文档（相对工作目录路径，请先读取文档内容，再按用户要求修改或处理）]';
 
@@ -270,6 +278,9 @@ const docMentionToken = (title: string) => `@${title} `;
 
 // 原型路径 @提及 在输入框中的完整文本形式，作为一个原子块整体插入/删除。
 const protoMentionToken = (path: string) => `@${path} `;
+
+// 评审报告 @提及 token，作为一个原子块整体插入/删除。
+const reportRefToken = (fileName: string) => `@${fileName} `;
 
 // 提示词模板参数原子块正则：{{参数名}}，作为整体删除/高亮。
 const PARAM_BLOCK_REGEX = /\{\{[^}]+\}\}/g;
@@ -543,7 +554,7 @@ export const Chat: React.FC = () => {
   const [input, setInput] = useState('');
 
   // Input toolbar dropdowns
-  const [selectedRepos, setSelectedRepos] = useState<{id: string; name: string; localPath?: string}[]>([]);
+  const [selectedRepos, setSelectedRepos] = useState<{id: string; name: string; localPath?: string; branch?: string}[]>([]);
   const [availableRepos, setAvailableRepos] = useState<{id: string; name: string; localPath?: string}[]>([]);
   const [userRepoStatuses, setUserRepoStatuses] = useState<UserRepoStatus[]>([]);
   const [syncingRepoId, setSyncingRepoId] = useState<string | null>(null);
@@ -720,11 +731,67 @@ export const Chat: React.FC = () => {
     pushPreviewHistory({ type: 'prototype_preview', path, requirementTitle: protoMakeRequirementTitle });
   }, [prototypePreviewPath, pushPreviewHistory, protoMakeRequirementTitle]);
 
-  // 评审报告修复：设置 /code 指令并引用评审报告路径，引导用户发送。
+  // 评审报告采纳：调用后端 API 存储评审报告结构化数据，返回是否成功。
+  // 当 issues 为空时（agent 使用旧格式 marker 未输出 issues），从评审报告文件解析兜底。
+  const handleReviewAdopt = useCallback(async (data: ReviewReportData): Promise<boolean> => {
+    try {
+      const workspaceId = getCurrentWorkspaceId();
+      let issues = data.issues || [];
+      let summary = data.summary || '';
+
+      // 兜底：agent 使用旧格式 marker 时 issues 为空，从评审报告 Markdown 文件解析
+      if (issues.length === 0 && data.reportPath) {
+        try {
+          const resolvedReportPath = data.reportPath.startsWith('/')
+            ? data.reportPath
+            : `${data.projectPath}/.review/${data.reportPath}`;
+          const response = await fetch(`/api/v1/files/content?path=${encodeURIComponent(resolvedReportPath)}`);
+          if (response.ok) {
+            const fileData = await response.json();
+            const markdown = fileData.content || fileData.data?.content || '';
+            if (markdown) {
+              issues = parseIssuesFromMarkdown(markdown, data.projectPath);
+            }
+          }
+        } catch {
+          // 文件读取失败不阻塞采纳流程
+        }
+      }
+
+      await api.post('/v1/agent-reviews/reports', {
+        workspaceId,
+        sessionId,
+        projectPath: data.projectPath,
+        projectName: data.projectName,
+        branch: data.branch,
+        commitHash: data.commit,
+        reportPath: data.reportPath,
+        summary,
+        issues: issues.map((issue) => ({
+          id: issue.id,
+          filePath: issue.filePath,
+          line: issue.line,
+          severity: issue.severity,
+          title: issue.title,
+          description: issue.description,
+          suggestion: issue.suggestion,
+        })),
+      });
+      toast.success(`评审报告已采纳${issues.length > 0 ? `（${issues.length} 个问题）` : ''}`);
+      return true;
+    } catch {
+      toast.error('采纳失败，请重试');
+      return false;
+    }
+  }, [sessionId]);
+
+  // 评审报告修复：设置 /code 指令并以 @文件名 引用评审报告；发送时展开为完整路径。
   const handleReviewFix = useCallback((reportPath: string, projectName: string) => {
-    const fixPrompt = `根据评审报告 ${reportPath} 修复 ${projectName} 工程中的所有问题，按严重程度从高到低逐一修复。`;
+    const fileName = reportPath.split('/').pop() || reportPath;
+    const token = reportRefToken(fileName);
+    setReferencedReports(prev => [...prev.filter(r => r.fileName !== fileName), { fileName, fullPath: reportPath }]);
+    const fixPrompt = `根据评审报告 ${token}修复 ${projectName} 工程中的所有问题，按严重程度从高到低逐一修复。`;
     setInput(`/code ${fixPrompt}`);
-    toast.info('已填入修复指令，请点击发送');
     requestAnimationFrame(() => {
       const ta = textareaRef.current;
       if (ta) {
@@ -859,6 +926,8 @@ export const Chat: React.FC = () => {
   const [referencedDocs, setReferencedDocs] = useState<ReferencedDoc[]>([]);
   // 已引用的原型工程路径，点击「设计」菜单中的原型时自动插入到输入框。
   const [referencedPrototypes, setReferencedPrototypes] = useState<ReferencedPrototype[]>([]);
+  // 已引用的评审报告，从 ReviewReportCard「修复」按钮设置，输入框展示 @文件名。
+  const [referencedReports, setReferencedReports] = useState<ReferencedReport[]>([]);
   const [materializingDocId, setMaterializingDocId] = useState<string | null>(null);
   // 「设计」按钮菜单：按需求名分组展示关联的文档与原型
   const [designMenuOpen, setDesignMenuOpen] = useState(false);
@@ -1273,25 +1342,26 @@ export const Chat: React.FC = () => {
   // 当前输入中的模板参数 token（{{参数名}}）。
   const paramTokens = useMemo(() => extractParamTokens(input), [input]);
 
-  // 所有原子块 token：@文档提及 + @原型路径 + 指令 + 模板参数；用于整体删除判定。
+  // 所有原子块 token：@文档提及 + @原型路径 + @评审报告 + 指令 + 模板参数；用于整体删除判定。
   const atomicTokens = useMemo(
     () => [
       ...referencedDocs.map(d => docMentionToken(d.title)),
       ...referencedPrototypes.map(p => protoMentionToken(p.path)),
+      ...referencedReports.map(r => reportRefToken(r.fileName)),
       ...commandTokens,
       ...paramTokens,
     ],
-    [referencedDocs, referencedPrototypes, commandTokens, paramTokens],
+    [referencedDocs, referencedPrototypes, referencedReports, commandTokens, paramTokens],
   );
 
-  // 输入框高亮渲染：仍存在的 @提及（主色）、@原型路径（青色）、指令块（紫色）与模板参数块（琥珀色）
+  // 输入框高亮渲染：@文档提及（主色）、@原型路径（青色）、@评审报告（翠绿色）、指令块（紫色）与模板参数块（琥珀色）
   // 包成高亮+阴影片段，其余为普通文本。
   // 叠放在透明文字的 textarea 下方，二者字体/内边距保持一致以对齐字形。
   // 注意：高亮 span 用 px-0.5 + -mx-0.5 组合，获得视觉留白的同时不改变文本步进宽度，
   // 否则提及块后的文字会与 textarea 光标位置错位（光标看起来落在字中间）。
   const highlightedInput = useMemo((): React.ReactNode => {
-    const ranges: { start: number; end: number; kind: 'mention' | 'prototype' | 'command' | 'param' }[] = [];
-    const collectRanges = (token: string, kind: 'mention' | 'prototype' | 'command' | 'param') => {
+    const ranges: { start: number; end: number; kind: 'mention' | 'prototype' | 'report' | 'command' | 'param' }[] = [];
+    const collectRanges = (token: string, kind: 'mention' | 'prototype' | 'report' | 'command' | 'param') => {
       let idx = input.indexOf(token);
       while (idx !== -1) {
         ranges.push({ start: idx, end: idx + token.length, kind });
@@ -1300,6 +1370,7 @@ export const Chat: React.FC = () => {
     };
     for (const d of referencedDocs) collectRanges(docMentionToken(d.title), 'mention');
     for (const p of referencedPrototypes) collectRanges(protoMentionToken(p.path), 'prototype');
+    for (const r of referencedReports) collectRanges(reportRefToken(r.fileName), 'report');
     for (const token of commandTokens) collectRanges(token, 'command');
     for (const token of paramTokens) collectRanges(token, 'param');
     ranges.sort((a, b) => a.start - b.start || b.end - a.end);
@@ -1313,9 +1384,11 @@ export const Chat: React.FC = () => {
           ? 'bg-primary/10 text-primary shadow-[0_1px_3px_hsl(var(--primary)/0.35)]'
           : r.kind === 'prototype'
             ? 'bg-teal-500/10 text-teal-600 dark:text-teal-400 shadow-[0_1px_3px_rgba(20,184,166,0.35)]'
-            : r.kind === 'command'
-              ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400 shadow-[0_1px_3px_rgba(139,92,246,0.35)]'
-              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 shadow-[0_1px_3px_rgba(245,158,11,0.35)]';
+            : r.kind === 'report'
+              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shadow-[0_1px_3px_rgba(16,185,129,0.35)]'
+              : r.kind === 'command'
+                ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400 shadow-[0_1px_3px_rgba(139,92,246,0.35)]'
+                : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 shadow-[0_1px_3px_rgba(245,158,11,0.35)]';
       nodes.push(
         <span key={r.start} className={`rounded-md px-0.5 -mx-0.5 ${cls}`}>
           {input.slice(r.start, r.end)}
@@ -1325,7 +1398,7 @@ export const Chat: React.FC = () => {
     }
     if (pos < input.length) nodes.push(input.slice(pos));
     return nodes;
-  }, [input, referencedDocs, referencedPrototypes, commandTokens, paramTokens]);
+  }, [input, referencedDocs, referencedPrototypes, referencedReports, commandTokens, paramTokens]);
 
   // 选中文档：先落盘拿到 agent 可读路径，再在输入框插入 @文档名 原子块。
   // 重复判定以输入框中是否仍存在该原子块为准（删除后可重新引用）。
@@ -1399,7 +1472,7 @@ export const Chat: React.FC = () => {
   const insertCommand = (cmd: string) => {
     const cfg = commandConfigs.find(c => c.cmd === cmd);
     if (cfg && !cfg.enabled) {
-      toast.info(`指令 ${cmd} 已被禁用`);
+      toast.error(`指令 ${cmd} 已被禁用`);
       return;
     }
     const existingCmd = commandConfigs.find(c => {
@@ -1429,12 +1502,12 @@ export const Chat: React.FC = () => {
     return commandConfigs.filter(c => c.cmd.startsWith(`/${query}`));
   }, [slashMenuOpen, input, commandConfigs]);
 
-  // 选择斜杠菜单中的指令：替换输入框内容为 {cmd} 原子块，保留后面的内容，光标定位到块尾。
+  // 斜杠指令选择回调：替换为指令文本。
   // 若指令已被禁用，给出提示并不插入。
   const selectSlashCommand = (cmd: string) => {
     const cfg = commandConfigs.find(c => c.cmd === cmd);
     if (cfg && !cfg.enabled) {
-      toast.info(`指令 ${cmd} 已被禁用`);
+      toast.error(`指令 ${cmd} 已被禁用`);
       setSlashMenuOpen(false);
       setSlashIndex(0);
       return;
@@ -1471,10 +1544,11 @@ export const Chat: React.FC = () => {
     const atIdx = beforeCursor.lastIndexOf('@');
     const atPrevOk = atIdx === 0 || /\s/.test(val[atIdx - 1] ?? '');
     const atQuery = atIdx >= 0 ? beforeCursor.slice(atIdx + 1) : '';
-    // 已完成的引用块（@标题 / @原型路径）中的 @ 不再重复触发菜单
+    // 已完成的引用块（@标题 / @原型路径 / @评审报告）中的 @ 不再重复触发菜单
     const isCompletedMention = atIdx >= 0 && (
       referencedDocs.some(d => val.startsWith(docMentionToken(d.title), atIdx)) ||
-      referencedPrototypes.some(p => val.startsWith(protoMentionToken(p.path), atIdx))
+      referencedPrototypes.some(p => val.startsWith(protoMentionToken(p.path), atIdx)) ||
+      referencedReports.some(r => val.startsWith(reportRefToken(r.fileName), atIdx))
     );
     if (canUseDocs && atIdx >= 0 && atPrevOk && !/\s/.test(atQuery) && !isCompletedMention) {
       setDocMention({ start: atIdx, end: cursor, query: atQuery });
@@ -1601,9 +1675,10 @@ export const Chat: React.FC = () => {
         const nextInput = input.slice(0, range.start) + input.slice(range.end);
         const removedToken = input.slice(range.start, range.end).trim();
         setInput(nextInput);
-        // 同步清理已不在输入框中的引用记录，使该文档/原型可再次引用
+        // 同步清理已不在输入框中的引用记录，使该文档/原型/评审报告可再次引用
         setReferencedDocs(prev => prev.filter(d => nextInput.includes(docMentionToken(d.title))));
         setReferencedPrototypes(prev => prev.filter(p => nextInput.includes(protoMentionToken(p.path))));
+        setReferencedReports(prev => prev.filter(r => nextInput.includes(reportRefToken(r.fileName))));
         // 删除 /proto-make 指令时同步清理由「做原型」自动带入的需求卡片和标题，
         // 避免需求卡片残留导致后续无法清除。
         if (removedToken === '/proto-make') {
@@ -1626,7 +1701,6 @@ export const Chat: React.FC = () => {
     setSyncingRepoId(repoId);
     repositoryApi.syncUserRepo(workspaceId, repoId)
       .then(() => {
-        toast.info('正在同步仓库，请稍候...');
         const poll = setInterval(async () => {
           try {
             const statuses = await repositoryApi.listUserRepos(workspaceId);
@@ -1660,13 +1734,13 @@ export const Chat: React.FC = () => {
 
     // 指令已被禁用时，拦截发送并提示用户。
     if (cmdCfg && !cmdCfg.enabled) {
-      toast.info(`指令 ${activeCmd} 已被禁用，无法发送`);
+      toast.error(`指令 ${activeCmd} 已被禁用，无法发送`);
       return;
     }
 
     // 指令不支持代码库时，提示并忽略。
     if (cmdCfg && !cmdCfg.allowRepos && selectedRepos.length > 0) {
-      toast.warning(`指令 ${activeCmd} 不支持代码库，已忽略`);
+        toast.warning(`指令 ${activeCmd} 不支持代码库，已忽略`);
       effectiveRepos = undefined;
     }
 
@@ -1691,6 +1765,12 @@ export const Chat: React.FC = () => {
     const activeRefDocs = referencedDocs.filter(d => input.includes(docMentionToken(d.title)));
     const activeRefProtos = referencedPrototypes.filter(p => input.includes(protoMentionToken(p.path)));
     let finalInput = input;
+    // 评审报告 @文件名 展开为完整路径，发送给 agent。
+    const activeRefReports = referencedReports.filter(r => input.includes(reportRefToken(r.fileName)));
+    const reportLines = activeRefReports.map(r => `- ${r.fileName}: ${r.fullPath}`).join('\n');
+    if (activeRefReports.length > 0) {
+      finalInput = `${finalInput}\n\n[引用的评审报告（请先读取报告内容，再按用户要求修复问题）]\n${reportLines}`;
+    }
     if (activeRefDocs.length > 0) {
       const docLines = activeRefDocs.map(d => `- ${d.title}: ${d.path}`).join('\n');
       finalInput = `${finalInput}\n\n${DOC_REF_HEADER}\n${docLines}`;
@@ -1717,7 +1797,6 @@ export const Chat: React.FC = () => {
         context,
       };
       setInputQueue(prev => [...prev, item]);
-      toast.info('已加入排队');
     } else {
       sendMessage(finalInput, context);
     }
@@ -1727,6 +1806,7 @@ export const Chat: React.FC = () => {
     setSelectedRepos([]);
     setReferencedDocs([]);
     setReferencedPrototypes([]);
+    setReferencedReports([]);
     setDocMention(null);
   };
 
@@ -1913,8 +1993,6 @@ export const Chat: React.FC = () => {
     const idx = list.findIndex(item => item.id === detailId);
     if (idx > 0) {
       setDetailId(list[idx - 1].id);
-    } else {
-      toast.info('已经是第一条了');
     }
   };
 
@@ -1928,8 +2006,6 @@ export const Chat: React.FC = () => {
     const idx = list.findIndex(item => item.id === detailId);
     if (idx !== -1 && idx < list.length - 1) {
       setDetailId(list[idx + 1].id);
-    } else {
-      toast.info('已经是最后一条了');
     }
   };
 
@@ -1949,7 +2025,6 @@ export const Chat: React.FC = () => {
           ...r,
           status: toUiStatus(item.status) as RequirementStatus,
         } : r));
-        toast.success('状态已更新');
       })
       .catch(() => toast.error('状态更新失败'));
   };
@@ -1960,7 +2035,6 @@ export const Chat: React.FC = () => {
           ...d,
           status: toUiStatus(item.status) as DefectStatus,
         } : d));
-        toast.success('状态已更新');
       })
       .catch(() => toast.error('状态更新失败'));
   };
@@ -1971,7 +2045,6 @@ export const Chat: React.FC = () => {
           ...c,
           status: toUiStatus(item.status) as CaseStatus,
         } : c));
-        toast.success('状态已更新');
       })
       .catch(() => toast.error('状态更新失败'));
   };
@@ -2546,7 +2619,7 @@ export const Chat: React.FC = () => {
                   )}
                   onClick={() => {
                     if (disabled) {
-                      toast.info(`指令 ${item.cmd} 已被禁用`);
+                      toast.error(`指令 ${item.cmd} 已被禁用`);
                       return;
                     }
                     onSelect(item.cmd);
@@ -2809,8 +2882,7 @@ export const Chat: React.FC = () => {
                             const existing = agentTabs.find(t => t.sessionId === h.id);
                             if (existing) {
                               switchAgentTab(existing);
-                              toast.success(`切换到：${h.title}`);
-                              return;
+              return;
                             }
                             const pluginKey = h.pluginKey || 'claude-code';
                             runIfIdleOrConfirm(() => {
@@ -2824,7 +2896,7 @@ export const Chat: React.FC = () => {
                               setAgentTabs(prev => [...prev, tab]);
                               setActiveAgentTabId(h.id);
                               switchSession(h.id);
-                              toast.success(`已打开：${h.title}`);
+
                             }, `打开历史：${h.title}`);
                           }}
                         >
@@ -2934,7 +3006,9 @@ export const Chat: React.FC = () => {
                   onReqBreakdownSubmit={handleReqBreakdownSubmit}
                   onPrototypePreview={handlePrototypePreview}
                   onReviewReportPreview={handleFilePreview}
+                  onReviewAdopt={handleReviewAdopt}
                   onReviewFix={handleReviewFix}
+                  activePreviewPath={previewPath ?? undefined}
                   requirementTitle={protoMakeRequirementTitle || quotedCard?.title}
                   workitemId={effectivePrototypeWorkitemId}
                   requirements={requirements}
@@ -3077,7 +3151,7 @@ export const Chat: React.FC = () => {
                       )}
                       onClick={() => {
                         if (disabled) {
-                          toast.info(`指令 ${item.cmd} 已被禁用`);
+                          toast.error(`指令 ${item.cmd} 已被禁用`);
                           return;
                         }
                         selectSlashCommand(item.cmd);
@@ -3241,7 +3315,7 @@ export const Chat: React.FC = () => {
                           size="sm"
                           disabled
                           className={cn('rounded-full text-xs opacity-60 cursor-not-allowed', toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3')}
-                          onClick={() => toast.info('执行自定义技能功能暂未开放')}
+                                onClick={() => {}}
                         >
                           <Wand2 className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '技能'}
                         </Button>
@@ -3321,7 +3395,7 @@ export const Chat: React.FC = () => {
                                 disabled
                                 className="h-8 w-8 rounded-md flex items-center justify-center opacity-50 cursor-not-allowed transition-colors"
                                 title="执行自定义技能功能暂未开放"
-                                onClick={() => toast.info('执行自定义技能功能暂未开放')}
+                          onClick={() => {}}
                               >
                                 <Wand2 className="h-4 w-4 text-muted-foreground" />
                               </button>
@@ -3346,7 +3420,6 @@ export const Chat: React.FC = () => {
                   className="hidden" 
                   onChange={(e) => {
                     if (e.target.files && e.target.files.length > 0) {
-                      toast.success(`已选择文件: ${e.target.files[0].name}`);
                       // Reset value so same file can be selected again
                       e.target.value = '';
                     }
@@ -3791,7 +3864,7 @@ export const Chat: React.FC = () => {
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>取消</AlertDialogCancel>
-              <AlertDialogAction onClick={() => { setCodeJumpOpen(false); navigate('/code'); toast.success('已跳转到工程代码窗口'); }}>
+              <AlertDialogAction onClick={() => { setCodeJumpOpen(false); navigate('/code'); }}>
                 确认跳转
               </AlertDialogAction>
             </AlertDialogFooter>

@@ -38,7 +38,6 @@ export const Login: React.FC = () => {
     try {
       const user = await signIn(email, password);
       const isAdmin = user.platformRole === PLATFORM_ROLE.SUPER_ADMIN;
-      toast.success('登录成功', { description: `欢迎回到 DeepHarness Platform` });
       // 超级管理员进入超管后台，其余进入工作空间智能会话
       navigate(isAdmin ? '/admin/dashboard' : '/chat');
     } catch (err) {

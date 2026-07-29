@@ -201,7 +201,6 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
         assigneeId: reqAssignee,
         source: 'internal',
       });
-      toast.success('需求已提交');
       setReqDialogOpen(false);
       setReqAssignee('');
     } catch (e) {
@@ -225,7 +224,6 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
       await fileApi.save(path, editContent);
       setFileContent(prev => prev ? { ...prev, content: editContent } : prev);
       setEditing(false);
-      toast.success('保存成功');
     } catch (e) {
       console.error('[InlineFilePreview] save failed:', e);
       toast.error('保存失败');
@@ -238,7 +236,6 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
   const handleArchive = async () => {
     try {
       const res = await fileApi.saveToFeishu(path);
-      toast.success(res.message || '已存档到飞书知识库');
     } catch (e) {
       console.error('[InlineFilePreview] archive failed:', e);
       toast.error('存档失败');
@@ -250,7 +247,6 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
     setDeleting(true);
     try {
       await fileApi.delete(path);
-      toast.success('文档已作废');
       setDeleteDialogOpen(false);
       onClose();
     } catch (e) {
@@ -277,7 +273,6 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
     setImporting(true);
     try {
       await productSpaceApi.importDoc(workspaceId, path, workitemId);
-      toast.success(workitemId ? '文档已采纳并生成设计版本' : '文档已采纳到产品空间');
       setAdopted(true);
     } catch (e) {
       console.error('[InlineFilePreview] adopt failed:', e);

@@ -151,8 +151,7 @@ export const PrototypePreviewPanel: React.FC<PrototypePreviewPanelProps> = ({
     setImporting(true);
     try {
       await productSpaceApi.importPrototype(workspaceId, folderName, workitemId);
-      toast.success(workitemId ? '原型已采纳并生成设计版本' : '原型已采纳到产品空间');
-      setAdopted(true);
+            setAdopted(true);
     } catch (err) {
       console.error('[PrototypePreviewPanel] adopt failed:', err);
       const msg = err instanceof Error ? err.message : '';

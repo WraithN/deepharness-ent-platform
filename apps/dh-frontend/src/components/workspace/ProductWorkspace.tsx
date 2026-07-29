@@ -608,7 +608,6 @@ export const ProductWorkspace: React.FC = () => {
     const url = `${window.location.origin}/share/requirement/${shareDialog.share.token}`;
     try {
       await navigator.clipboard.writeText(url);
-      toast.success('分享链接已复制', { description: url });
     } catch {
       toast.error('复制失败');
     }
@@ -641,7 +640,6 @@ export const ProductWorkspace: React.FC = () => {
       }
       const blob = await zip.generateAsync({ type: 'blob' });
       downloadBlob(blob, `${req.title}-文档与原型.zip`);
-      toast.success('已导出文档与原型');
     } catch {
       toast.error('导出失败');
     } finally {
@@ -695,7 +693,6 @@ export const ProductWorkspace: React.FC = () => {
     setReviewDialog(prev => ({ ...prev, processing: true }));
     try {
       await workItemApi.updateStatus(req.id, 'failed');
-      toast.success('已标记评审不通过');
       setReviewDialog(prev => ({ ...prev, open: false, processing: false }));
       await loadRequirements();
     } catch {
@@ -717,7 +714,6 @@ export const ProductWorkspace: React.FC = () => {
       await workItemApi.updateStatus(req.id, 'passed');
       await workItemApi.updateAssignee(req.id, selectedAssigneeId);
       await workItemApi.updateStatus(req.id, 'in_progress');
-      toast.success('评审通过并已受理');
       setReviewDialog({ open: false, step: 'review', req: null, share: null, selectedAssigneeId: '', processing: false });
       await loadRequirements();
     } catch {
@@ -747,7 +743,6 @@ export const ProductWorkspace: React.FC = () => {
     setAssignDialog(prev => ({ ...prev, processing: true }));
     try {
       await workItemApi.updateAssignee(req.id, selectedAssigneeId);
-      toast.success('已指定受理人');
       setAssignDialog({ open: false, req: null, selectedAssigneeId: '', processing: false });
       await loadRequirements();
     } catch {
@@ -1125,7 +1120,7 @@ export const ProductWorkspace: React.FC = () => {
                     onClick={() => {
                       if (!reviewDialog.share) return;
                       const url = `${window.location.origin}/share/requirement/${reviewDialog.share.token}`;
-                      navigator.clipboard.writeText(url).then(() => toast.success('链接已复制'));
+                      navigator.clipboard.writeText(url);
                     }}
                   >
                     <Copy className="h-3.5 w-3.5" />
@@ -1408,7 +1403,6 @@ const DocMode: React.FC<{ focusDocId?: string | null }> = ({ focusDocId }) => {
     try {
       const updated = await productDocApi.resolveShareComment(workspaceId, selectedDocId, commentId);
       setShareComments(prev => prev.map(c => (c.id === commentId ? updated : c)));
-      toast.success('批注已关闭');
     } catch {
       toast.error('关闭批注失败');
     }
@@ -1441,7 +1435,6 @@ const DocMode: React.FC<{ focusDocId?: string | null }> = ({ focusDocId }) => {
     try {
       const updated = await productDocApi.update(workspaceId, docId, { folderId });
       setDocs(prev => prev.map(d => (d.id === docId ? updated : d)));
-      toast.success(folderId ? '已移动到目录' : '已移回未分类');
     } catch {
       toast.error('移动文档失败');
     }
@@ -1470,7 +1463,6 @@ const DocMode: React.FC<{ focusDocId?: string | null }> = ({ focusDocId }) => {
     try {
       await productDocApi.updateFolder(workspaceId, folderId, { name });
       await loadFolders();
-      toast.success('目录已重命名');
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '重命名失败');
     }
@@ -1486,7 +1478,6 @@ const DocMode: React.FC<{ focusDocId?: string | null }> = ({ focusDocId }) => {
     setFolderSaving(true);
     try {
       await productDocApi.createFolder(workspaceId, { name, parentId: folderDialog.parentId || undefined });
-      toast.success('目录已创建');
       setFolderDialog(prev => ({ ...prev, open: false }));
       await loadFolders();
     } catch (err) {
@@ -1501,7 +1492,6 @@ const DocMode: React.FC<{ focusDocId?: string | null }> = ({ focusDocId }) => {
     try {
       await productDocApi.updateFolder(workspaceId, folder.id, { pinned: !folder.pinned });
       await loadFolders();
-      toast.success(folder.pinned ? '已取消置顶' : '已置顶');
     } catch {
       toast.error('操作失败');
     }
@@ -1511,7 +1501,6 @@ const DocMode: React.FC<{ focusDocId?: string | null }> = ({ focusDocId }) => {
     if (!workspaceId || !folderToDelete) return;
     try {
       await productDocApi.deleteFolder(workspaceId, folderToDelete.id);
-      toast.success('目录已删除，其中文档已移回未分类');
       await Promise.all([loadFolders(), loadDocs()]);
     } catch {
       toast.error('删除目录失败');
@@ -1541,7 +1530,6 @@ const DocMode: React.FC<{ focusDocId?: string | null }> = ({ focusDocId }) => {
         setIsCreating(false);
         setCreateInFolderId('');
         setLastSavedAt(new Date());
-        toast.success('文档已创建');
       } else if (selectedDocId) {
         const doc = await productDocApi.update(workspaceId, selectedDocId, {
           title: title.trim(),
@@ -1549,7 +1537,6 @@ const DocMode: React.FC<{ focusDocId?: string | null }> = ({ focusDocId }) => {
         });
         setDocs(prev => prev.map(d => (d.id === doc.id ? doc : d)));
         setLastSavedAt(new Date());
-        toast.success('草稿已保存');
       }
     } catch {
       toast.error('保存失败');
@@ -1567,7 +1554,6 @@ const DocMode: React.FC<{ focusDocId?: string | null }> = ({ focusDocId }) => {
       });
       await loadDocs();
       setLastSavedAt(new Date());
-      toast.success('版本已定稿');
     } catch {
       toast.error('发布失败');
     } finally {
@@ -1583,7 +1569,6 @@ const DocMode: React.FC<{ focusDocId?: string | null }> = ({ focusDocId }) => {
         changeSummary: `发布于 ${new Date().toLocaleString()}`,
       });
       await loadDocs();
-      toast.success('版本已定稿');
     } catch {
       toast.error('发布失败');
     }
@@ -1600,7 +1585,6 @@ const DocMode: React.FC<{ focusDocId?: string | null }> = ({ focusDocId }) => {
       await productDocApi.delete(workspaceId, docToDelete.id);
       setDocs(prev => prev.filter(d => d.id !== docToDelete.id));
       if (selectedDocId === docToDelete.id) setSelectedDocId(null);
-      toast.success('文档已删除');
     } catch {
       toast.error('删除失败');
     } finally {
@@ -1789,7 +1773,7 @@ const DocMode: React.FC<{ focusDocId?: string | null }> = ({ focusDocId }) => {
                       quoteText: quote,
                       content: commentContent,
                     });
-                    toast.success('批注已添加');
+
                     const list = await productDocApi.listDocShareComments(workspaceId, selectedDocId);
                     setShareComments(list ?? []);
                   }}

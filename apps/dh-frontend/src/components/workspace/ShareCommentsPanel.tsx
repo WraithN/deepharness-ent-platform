@@ -46,7 +46,7 @@ const CommentCard: React.FC<{
   const handleLocate = () => {
     const found = findInPage(comment.quoteText);
     if (!found) {
-      toast.info('未在文档中定位到该选中文本（内容可能已修改）');
+      toast.error('未在文档中定位到该选中文本（内容可能已修改）');
     }
   };
 

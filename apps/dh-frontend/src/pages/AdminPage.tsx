@@ -186,7 +186,6 @@ export const AdminPage: React.FC = () => {
         }
       }
 
-      toast.success('新增租户成功');
       setNewTenantOpen(false);
       setNewTenantName('');
       setNewAgentPolicy(defaultAgentPolicy());
@@ -209,7 +208,6 @@ export const AdminPage: React.FC = () => {
         name: editTenantName.trim(),
         agentPolicy: editAgentPolicy,
       });
-      toast.success('编辑租户成功');
       closeEditDialog();
       setEditingTenant(null);
       await loadTenants();
@@ -222,7 +220,6 @@ export const AdminPage: React.FC = () => {
     if (!deletingTenant) return;
     try {
       await tenantApi.delete(deletingTenant.id);
-      toast.success('删除租户成功');
       setDeleteTenantOpen(false);
       setDeletingTenant(null);
       await loadTenants();
@@ -250,7 +247,6 @@ export const AdminPage: React.FC = () => {
     const isAdmin = member.platformRole === PLATFORM_ROLE.TENANT_ADMIN;
     try {
       await tenantApi.setAdmin(editingTenant.id, member.id, !isAdmin);
-      toast.success('角色已更新');
       await loadTenantMembers(editingTenant.id);
     } catch {
       toast.error('更新角色失败');
@@ -275,7 +271,6 @@ export const AdminPage: React.FC = () => {
       setNewMemberEmail('');
       setNewMemberName('');
       await loadTenantMembers(editingTenant.id);
-      toast.success('成员添加成功');
     } catch {
       toast.error('添加成员失败');
     } finally {
@@ -338,7 +333,6 @@ export const AdminPage: React.FC = () => {
     try {
       const updated = await agentConfigApi.updateAgentType(key, enabled);
       setAgentTypes(prev => prev.map(at => at.key === key ? updated : at));
-      toast.success(`${updated.name} 已${enabled ? '启用' : '禁用'}`);
     } catch {
       toast.error('更新智能体状态失败');
     }

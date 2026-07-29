@@ -147,7 +147,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, o
             <button
               onClick={async () => {
                 await copyStructuredText(textPart.text, quotedCard, selectedRepos);
-                toast.success('已复制');
+
               }}
               className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-colors"
               title="复制"

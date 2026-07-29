@@ -1389,7 +1389,6 @@ export const PrototypeWorkspace: React.FC<{ focusItemId?: string | null }> = ({ 
           x: pendingAnnotation.x,
           y: pendingAnnotation.y,
         });
-        toast.success('批注已添加');
         setAnnotateMode(false);
         setPendingAnnotation(null);
         await loadComments(page.itemId);
@@ -1409,7 +1408,6 @@ export const PrototypeWorkspace: React.FC<{ focusItemId?: string | null }> = ({ 
       setRestoringVersion(version);
       try {
         await productSpaceApi.restoreVersion(workspaceId, page.itemId, version);
-        toast.success(`已恢复至 v${version}`);
         await loadPage(page.itemId);
       } catch {
         toast.error('恢复版本失败');
@@ -1423,7 +1421,6 @@ export const PrototypeWorkspace: React.FC<{ focusItemId?: string | null }> = ({ 
   const handleCreateProduct = async (name: string) => {
     try {
       await productSpaceApi.createFolder(workspaceId, 'prototypes', name);
-      toast.success('产品已创建');
       await loadTree();
       setSelectedProduct(name);
     } catch {
@@ -1440,7 +1437,6 @@ export const PrototypeWorkspace: React.FC<{ focusItemId?: string | null }> = ({ 
         folder,
         html: buildSkeletonHtml(params.name),
       });
-      toast.success('原型页面已创建');
       setSelectedProduct(params.product);
       await loadTree();
       loadPage(item.id);
@@ -1455,7 +1451,6 @@ export const PrototypeWorkspace: React.FC<{ focusItemId?: string | null }> = ({ 
     setDeleting(true);
     try {
       await productSpaceApi.deleteItem(workspaceId, deleteTarget.id);
-      toast.success('页面已删除');
       if (page?.itemId === deleteTarget.id) {
         setPage(null);
         setComments([]);

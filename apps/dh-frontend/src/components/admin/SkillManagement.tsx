@@ -107,7 +107,6 @@ export const SkillManagement: React.FC = () => {
     try {
       const updated = await teamApi.reviewSkill(skill.id, action);
       setSkills((prev) => prev.map((s) => (s.id === skill.id ? { ...s, status: updated.status } : s)));
-      toast.success(REVIEW_SUCCESS_MESSAGE);
     } catch {
       toast.error(REVIEW_FAILED_MESSAGE);
     }
@@ -125,7 +124,6 @@ export const SkillManagement: React.FC = () => {
       await teamApi.deleteSkill(skill.id);
       setSkills((prev) => prev.filter((s) => s.id !== skill.id));
       setTotal((prev) => prev - 1);
-      toast.success('删除技能成功');
     } catch {
       toast.error('删除技能失败');
     }

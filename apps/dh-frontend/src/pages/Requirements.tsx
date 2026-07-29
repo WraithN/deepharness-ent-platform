@@ -108,7 +108,6 @@ export const Requirements: React.FC = () => {
           ...r,
           status: API_STATUS_TO_UI[item.status] ?? targetStatus,
         } : r));
-        toast.success(`需求 ${reqId} 状态已更新为 ${targetStatus}`);
       })
       .catch(() => toast.error('状态更新失败'));
     setDraggedReqId(null);
@@ -161,7 +160,7 @@ export const Requirements: React.FC = () => {
               看板
             </Button>
           </div>
-          <Button variant="outline" onClick={() => toast.success('已从Meego同步最新需求')}>
+          <Button variant="outline" onClick={() => {}}>
             <RefreshCw className="h-4 w-4 mr-2" />
             从需求源同步
           </Button>
@@ -205,7 +204,7 @@ export const Requirements: React.FC = () => {
                       </TableCell>
                       <TableCell className="text-muted-foreground whitespace-nowrap">{req.createdAt}</TableCell>
                       <TableCell className="text-right whitespace-nowrap">
-                        <Button variant="ghost" size="icon" onClick={() => toast.success('打开操作菜单')}>
+                        <Button variant="ghost" size="icon" onClick={() => {}}>
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
                       </TableCell>

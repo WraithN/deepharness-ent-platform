@@ -23,6 +23,9 @@ import { cn, formatTime, isProductSpaceFile } from '@/lib/utils';
 
 const CARD_MARKER_REGEX = /\[\[CARD:([^\]]+)\]\]/g;
 const REQ_NAME_MARKER_REGEX = /\[\[REQ_NAME:([^\]]+)\]\]/g;
+// 匹配新旧两种评审报告标记，用于从展示文本中移除：
+// 新格式 [[REVIEW_REPORT_START]]...[[REVIEW_REPORT_END]]，旧格式 [[REVIEW_REPORT:{json}]]
+const REVIEW_REPORT_MARKER_REGEX = /\[\[REVIEW_REPORT_START\]\][\s\S]*?\[\[REVIEW_REPORT_END\]\]|\[\[REVIEW_REPORT:\{[^\]]*\}\]\]/g;
 
 const TEXT_COLLAPSE_LINE_THRESHOLD = 12;
 const TEXT_COLLAPSE_CHAR_THRESHOLD = 800;
@@ -77,15 +80,19 @@ interface AssistantMessageProps {
   onPrototypePreview?: (path: string) => void;
   /** 评审报告预览回调：在左侧分栏展示评审报告。 */
   onReviewReportPreview?: (reportPath: string) => void;
+  /** 评审报告采纳回调：返回 true 表示采纳成功，卡片切换为"已采纳"状态。 */
+  onReviewAdopt?: (data: import('./ReviewReportCard').ReviewReportData) => Promise<boolean>;
   /** 评审报告修复按钮回调：父组件用于设置 /code 指令并发送。 */
   onReviewFix?: (reportPath: string, projectName: string) => void;
+  /** 当前正在预览的文件路径，用于判断评审报告预览按钮是否激活。 */
+  activePreviewPath?: string;
   requirementTitle?: string;
   workitemId?: string;
   /** 需求列表，用于原型卡片按消息内的需求标题匹配真实需求 ID。 */
   requirements?: Array<{ id: string; title: string }>;
 }
 
-export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, runPhase, agentPluginKey, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview, onUserStoryPreview, activeUserStoryData, onReqBreakdownPreview, activeReqBreakdownData, onReqBreakdownSubmit, onPrototypePreview, onReviewReportPreview, onReviewFix, requirementTitle, workitemId, requirements }) => {
+export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, runPhase, agentPluginKey, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview, onUserStoryPreview, activeUserStoryData, onReqBreakdownPreview, activeReqBreakdownData, onReqBreakdownSubmit, onPrototypePreview, onReviewReportPreview, onReviewAdopt, onReviewFix, activePreviewPath, requirementTitle, workitemId, requirements }) => {
   const thread = useThread();
   const content = Array.isArray(message.content) ? message.content : [];
   const [textExpanded, setTextExpanded] = useState(false);
@@ -498,6 +505,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
                       .replace(REQ_NAME_MARKER_REGEX, '')
                       .replace(CARD_MARKER_REGEX, '')
                       .replace(REQ_BREAKDOWN_JSON_REGEX, '')
+                      .replace(REVIEW_REPORT_MARKER_REGEX, '')
                       .trim();
                     if (!cleanText) return null;
                     return (
@@ -575,9 +583,9 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
             <div className="px-3 py-2"><UserStoryCard data={userStoryData} isPreviewActive={isUserStoryActive(userStoryData)} onPreview={onUserStoryPreview} /></div>
           )}
 
-          {/* 从 [[REVIEW_REPORT:json]] 标记自动检测到的评审报告卡片，生成完成后再展示。 */}
+          {/* 从 [[REVIEW_REPORT_START]]...[[REVIEW_REPORT_END]] 标记自动检测到的评审报告卡片，生成完成后再展示。 */}
           {reviewReportData && !isRunning && (
-            <div className="px-3 py-2"><ReviewReportCard data={reviewReportData} onPreview={onReviewReportPreview} onFix={onReviewFix} /></div>
+            <div className="px-3 py-2"><ReviewReportCard data={reviewReportData} activePreviewPath={activePreviewPath} onPreview={onReviewReportPreview} onAdopt={onReviewAdopt} onFix={onReviewFix} /></div>
           )}
 
           {/* legacy data 部件（diff / task_list / tool_use / tool_result 等） */}
@@ -670,7 +678,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
             </button>
             {textContent && (
               <button
-                onClick={() => { navigator.clipboard.writeText(textContent); toast.success('已复制'); }}
+                onClick={() => { navigator.clipboard.writeText(textContent); }}
                 className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-colors"
                 title="复制"
               >

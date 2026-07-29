@@ -49,7 +49,6 @@ export function StandardGenerateDialog({ kind, workspaceId, onGenerated }: Stand
         return;
       }
       onGenerated(res.content);
-      toast.success(`${label}已生成，请确认后保存`);
       setOpen(false);
       setPrompt('');
     } catch (err) {

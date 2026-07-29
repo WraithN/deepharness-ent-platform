@@ -106,7 +106,6 @@ export const PrototypeTemplateManagement: React.FC = () => {
     setUploading(true);
     try {
       await prototypeTemplateApi.upload(fd);
-      toast.success('模版已上传，请点击「安装依赖」预装 node_modules');
       setUploadOpen(false);
       resetUploadForm();
       await load();
@@ -135,7 +134,6 @@ export const PrototypeTemplateManagement: React.FC = () => {
         description: editForm.description.trim(),
         tags: editForm.tags.trim(),
       });
-      toast.success('已保存');
       setEditTarget(null);
       await load();
     } catch (err) {
@@ -150,7 +148,6 @@ export const PrototypeTemplateManagement: React.FC = () => {
     setDeleting(true);
     try {
       await prototypeTemplateApi.delete(deleteTarget.id);
-      toast.success('模版已删除');
       setDeleteTarget(null);
       await load();
     } catch (err) {
@@ -166,7 +163,6 @@ export const PrototypeTemplateManagement: React.FC = () => {
       const updated = await prototypeTemplateApi.install(t.id);
       setTemplates((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
       if (updated.status === 'ready') {
-        toast.success(`「${updated.name}」依赖安装完成`);
       } else {
         toast.error(`「${updated.name}」依赖安装失败，请查看日志`);
         setLogTarget(updated);

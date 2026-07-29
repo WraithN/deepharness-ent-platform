@@ -613,7 +613,6 @@ export const Settings: React.FC = () => {
       if (failedCount > 0) {
         toast.error(`${failedCount} 个提示词添加失败，请重试`);
       } else {
-        toast.success(`已将 ${added.length} 个提示词添加到空间`);
         setPromptMarketOpen(false);
       }
     } finally {
@@ -626,7 +625,7 @@ export const Settings: React.FC = () => {
     try {
       await workspaceApi.removePrompt(wsId, promptId);
       setPrompts(prev => prev.filter(p => p.id !== promptId));
-      toast.success('已移除');
+      
     } catch {
       toast.error('移除失败');
     }
@@ -640,7 +639,7 @@ export const Settings: React.FC = () => {
       if (selectedPrompt?.id === promptId) {
         setSelectedPrompt(updated);
       }
-      toast.success('分类已更新');
+      
     } catch {
       toast.error('更新分类失败');
     }
@@ -654,7 +653,7 @@ export const Settings: React.FC = () => {
       if (selectedPrompt?.id === promptId) {
         setSelectedPrompt(updated);
       }
-      toast.success(enabled ? '提示词已启用' : '提示词已停用');
+      
     } catch {
       toast.error('操作失败');
     }
@@ -668,7 +667,7 @@ export const Settings: React.FC = () => {
     try {
       const copy = await workspaceApi.copyPrompt(wsId, prompt.id);
       setPrompts(prev => [copy, ...prev]);
-      toast.success('已复制为空间提示词，可自由编辑');
+      
       // 在详情弹窗中复制时，直接切换到副本并同步编辑态。
       if (selectedPrompt?.id === prompt.id) {
         setSelectedPrompt(copy);
@@ -692,7 +691,7 @@ export const Settings: React.FC = () => {
       if (selectedPrompt?.id === promptId) {
         setSelectedPrompt(updated);
       }
-      toast.success('已分享到市场，等待管理员审核');
+      
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '分享失败');
     } finally {
@@ -713,7 +712,7 @@ export const Settings: React.FC = () => {
       });
       setPrompts(prev => prev.map(p => p.id === updated.id ? updated : p));
       setSelectedPrompt(updated);
-      toast.success('提示词已保存');
+      
     } catch {
       toast.error('保存失败');
     } finally {
@@ -777,7 +776,7 @@ export const Settings: React.FC = () => {
       setPromptCategories(prev => [...prev, created]);
       setNewCategoryName('');
       setIsAddingCategory(false);
-      toast.success('分类已添加');
+      
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
         toast.error('暂无权限添加分类');
@@ -798,7 +797,7 @@ export const Settings: React.FC = () => {
       setSkillCategories(prev => [...prev, created]);
       setNewSkillCategoryName('');
       setIsAddingSkillCategory(false);
-      toast.success('分类已添加');
+      
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
         toast.error('暂无权限添加技能分类，请联系租户管理员');
@@ -837,7 +836,7 @@ export const Settings: React.FC = () => {
         ...p,
         categories: p.categories.filter(c => c.id !== categoryId),
       })));
-      toast.success('分类已删除');
+      
     } catch {
       toast.error('删除分类失败');
     } finally {
@@ -870,7 +869,7 @@ export const Settings: React.FC = () => {
       if (categoryName && selectedSkillCategory === categoryName) {
         setSelectedSkillCategory('全部');
       }
-      toast.success('分类已删除');
+      
     } catch {
       toast.error('删除分类失败');
     } finally {
@@ -961,7 +960,7 @@ export const Settings: React.FC = () => {
   };
 
   const handleSave = () => {
-    toast.success('设置已保存');
+    
   };
 
   const handleSaveAgentConfigs = async () => {
@@ -974,7 +973,7 @@ export const Settings: React.FC = () => {
     const lockedKeys = workspace?.lockedAgentKeys ?? [];
     const savableConfigs = agentConfigs.filter(cfg => !lockedKeys.includes(cfg.agentKey));
     if (savableConfigs.length === 0) {
-      toast.info('所有智能体均被锁定，无需保存');
+      toast.error('所有智能体均被锁定，无需保存');
       return;
     }
     try {
@@ -989,7 +988,7 @@ export const Settings: React.FC = () => {
         temperature: cfg.temperature,
         advancedConfig: cfg.advancedConfig,
       })));
-      toast.success('智能体配置已保存');
+      
     } catch {
       toast.error('保存智能体配置失败');
     }
@@ -1003,7 +1002,7 @@ export const Settings: React.FC = () => {
         externalKey: settings.reqProjectId,
         name: workspace?.name || settings.reqProjectId,
       });
-      toast.success('需求管理配置已保存');
+      
     } catch {
       toast.error('保存需求管理配置失败');
     }
@@ -1025,7 +1024,7 @@ export const Settings: React.FC = () => {
         return r;
       }));
       setGitRepos(savedRepos);
-      toast.success('代码仓库配置已保存');
+      
     } catch {
       toast.error('保存代码仓库配置失败');
     }
@@ -1050,7 +1049,7 @@ export const Settings: React.FC = () => {
           content: settings.designStandard,
         }),
       ]);
-      toast.success('研发规范已保存');
+      
     } catch {
       toast.error('保存研发规范失败');
     }
@@ -1064,7 +1063,7 @@ export const Settings: React.FC = () => {
         webhookUrl: cicdWebhook,
         script: cicdScript,
       });
-      toast.success('CICD 配置已保存');
+      
     } catch {
       toast.error('保存 CICD 配置失败');
     }
@@ -1154,7 +1153,7 @@ export const Settings: React.FC = () => {
     const subRole = inviteRole;
     workspaceApi.addMember(workspaceId, { userId: inviteEmail, role, subRole })
       .then(() => {
-        toast.success(`已添加成员 ${inviteEmail}`);
+        
         setIsInviteOpen(false);
         setInviteEmail('');
         setInviteRole('developer');
@@ -1169,7 +1168,7 @@ export const Settings: React.FC = () => {
     const role = asAdmin ? SPACE_ROLE.SPACE_ADMIN : SPACE_ROLE.MEMBER;
     workspaceApi.updateMemberRole(workspaceId, user.id, { role, subRole: user.subRole })
       .then(() => {
-        toast.success(asAdmin ? '已设为空间管理员' : '已取消空间管理员');
+        
         loadMembers();
       })
       .catch(() => toast.error('设置失败'));
@@ -1187,7 +1186,7 @@ export const Settings: React.FC = () => {
     setIsProcessing(true);
     workspaceApi.removeMember(workspaceId, memberToDelete.id, assetAssigneeId || undefined)
       .then(() => {
-        toast.success('成员已删除');
+        
         setIsDeleteDialogOpen(false);
         setMemberToDelete(null);
         setAssetAssigneeId('');
@@ -1652,8 +1651,7 @@ export const Settings: React.FC = () => {
                                     teamApi.updateSkillInstalled(skill.id, checked, workspaceId)
                                       .then(() => {
                                         setSkills(prev => prev.map(s => s.id === skill.id ? { ...s, installed: checked } : s));
-                                        toast.success(checked ? '技能已安装到当前空间' : '技能已卸载');
-                                      })
+                                                                              })
                                       .catch(() => toast.error('操作失败'));
                                   }}
                                 />
@@ -1962,7 +1960,7 @@ export const Settings: React.FC = () => {
                 </div>
                 <div className="px-6 py-3.5 border-t bg-muted/30 flex justify-end gap-2 shrink-0">
                   <Button variant="outline" onClick={() => {
-                    navigator.clipboard.writeText(selectedPrompt.content).then(() => toast.success('内容已复制到剪贴板'));
+                    navigator.clipboard.writeText(selectedPrompt.content);
                   }}>
                     <Copy className="h-4 w-4 mr-2" /> 复制
                   </Button>
@@ -2381,7 +2379,7 @@ export const Settings: React.FC = () => {
                 Promise.all(selectedSkillIds.map(id => teamApi.updateSkillInstalled(id, true, workspaceId)))
                   .then(() => {
                     loadSkills(skillPage);
-                    toast.success(`已将 ${selectedSkillIds.length} 个技能安装到当前空间`);
+                    
                     setSkillMarketOpen(false);
                     setSelectedSkillIds([]);
                   })
@@ -2435,7 +2433,7 @@ export const Settings: React.FC = () => {
                 }, workspaceId).then(skill => {
                   setSkills(prev => [skill, ...prev]);
                   setIsGeneratingSkill(false);
-                  toast.success('自定义技能生成成功并已自动安装');
+                  
                   setCreateSkillOpen(false);
                   setCreateSkillPrompt('');
                 }).catch(() => {

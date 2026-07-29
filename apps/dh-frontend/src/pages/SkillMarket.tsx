@@ -62,7 +62,6 @@ export const SkillMarket: React.FC = () => {
     teamApi.updateSkillInstalled(id, true, workspaceId)
       .then(() => {
         setSkills(skills.map(s => s.id === id ? { ...s, installed: true } : s));
-        toast.success('技能已安装到当前工作空间');
       })
       .catch(() => toast.error('安装失败'));
   };
@@ -86,7 +85,6 @@ export const SkillMarket: React.FC = () => {
       setIsGenerating(false);
       setIsCreateOpen(false);
       setCreatePrompt('');
-      toast.success('自定义技能生成成功并已自动安装');
     }).catch(() => {
       setIsGenerating(false);
       toast.error('技能生成失败');

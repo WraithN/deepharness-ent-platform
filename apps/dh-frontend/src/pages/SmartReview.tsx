@@ -116,8 +116,8 @@ export const SmartReview: React.FC = () => {
           <p className="text-muted-foreground mt-1">基于空间编码规范的自动化代码评审。</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => toast.success('已触发手动同步')}>手动同步</Button>
-          <Button onClick={() => toast.success('全局评审设置已保存')}>评审设置</Button>
+          <Button variant="outline" onClick={() => {}}>手动同步</Button>
+          <Button onClick={() => {}}>评审设置</Button>
         </div>
       </div>
 
@@ -203,7 +203,6 @@ export const SmartReview: React.FC = () => {
                             className="h-8 shadow-none"
                             onClick={(e) => {
                               e.stopPropagation();
-                              toast.success(`已提交测试: ${pr.id}`);
                             }}
                           >
                             <Rocket className="w-3.5 h-3.5 mr-1 text-primary" />
@@ -254,7 +253,7 @@ export const SmartReview: React.FC = () => {
                     </div>
                     <div className="mt-1 flex flex-col items-end gap-3">
                       {getStatusBadge(selectedPR.status)}
-                      <Button size="sm" onClick={() => toast.success(`已向测试环境发起提测：${selectedPR.branch}`)}>
+                      <Button size="sm" onClick={() => {}}>
                         <Send className="w-4 h-4 mr-2" />
                         提测
                       </Button>

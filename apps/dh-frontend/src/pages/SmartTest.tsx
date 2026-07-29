@@ -210,7 +210,6 @@ export const SmartTest: React.FC = () => {
         }))
       );
       setIsRunning(false);
-      toast.success('用例执行完毕');
     }, 2500);
   };
 
@@ -231,7 +230,6 @@ export const SmartTest: React.FC = () => {
         }))
       );
       setIsRunning(false);
-      toast.success('当前用例执行完毕');
     }, 2000);
   };
 
@@ -273,7 +271,6 @@ def test_ai_generated_case():
       setSelectedTestCaseId(newTC.id);
       setIsGenerating(false);
       setGenPrompt('');
-      toast.success('AI 已成功生成测试用例');
     }, 1500);
   };
 
@@ -474,7 +471,7 @@ def test_ai_generated_case():
                       defaultValue={selectedInfo.tc.title}
                       className="h-7 text-sm font-medium bg-transparent border-transparent hover:border-input focus:border-input focus:bg-card px-1.5 w-auto min-w-[200px] max-w-[400px]"
                     />
-                    <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" title="编辑标题" onClick={() => toast.info('点击标题输入框即可直接编辑')}>
+                    <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" title="编辑标题" onClick={() => {}}>
                       <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
                     </Button>
                   </div>

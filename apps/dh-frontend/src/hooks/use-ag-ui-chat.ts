@@ -9,7 +9,7 @@ import { parseRequirementBreakdownFromText } from '@/components/chat/Requirement
 
 export interface SendContext {
   quotedCard?: { type: 'req' | 'defect' | 'case'; id: string; title: string; reporter: string };
-  selectedRepos?: { id: string; name: string; localPath?: string }[];
+  selectedRepos?: { id: string; name: string; localPath?: string; branch?: string }[];
 }
 
 interface UseAgUiChatOptions {

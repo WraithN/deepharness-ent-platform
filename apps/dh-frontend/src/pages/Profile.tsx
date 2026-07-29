@@ -51,7 +51,6 @@ export const Profile: React.FC = () => {
 
   const handleLogout = () => {
     signOut();
-    toast.success('已退出登录');
     navigate('/login');
   };
 
@@ -64,7 +63,6 @@ export const Profile: React.FC = () => {
         description: profile.description,
         sshKey: profile.sshKey,
       });
-      toast.success('个人资料已保存');
     } catch {
       toast.error('保存个人资料失败');
     } finally {
@@ -103,7 +101,7 @@ export const Profile: React.FC = () => {
               </div>
               <button
                 className="absolute bottom-0 right-0 h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-md hover:bg-primary/90 transition-colors"
-                onClick={() => toast.info('头像上传功能将在后续版本支持')}
+                onClick={() => {}}
               >
                 <Camera className="h-4 w-4" />
               </button>

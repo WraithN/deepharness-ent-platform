@@ -87,7 +87,6 @@ export function RepoStandardsDialog({ workspaceId, repo, isReadOnly }: RepoStand
       if (res.warnings && res.warnings.length > 0) {
         for (const w of res.warnings) toast.warning(w);
       } else {
-        toast.success('规范文件已生成');
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '智能检测失败，请稍后重试');
@@ -105,7 +104,6 @@ export function RepoStandardsDialog({ workspaceId, repo, isReadOnly }: RepoStand
       await repositoryApi.commit(workspaceId, repo.id, STANDARD_COMMIT_MESSAGE);
       setDirtyAgents(false);
       setDirtyDesign(false);
-      toast.success('规范已保存并提交到仓库');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '保存规范失败');
     } finally {

@@ -41,7 +41,6 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({
     try {
       await onCreate(trimmed);
       setNewName('');
-      toast.success('分类创建成功');
     } catch {
       toast.error('分类创建失败');
     } finally {
@@ -52,7 +51,6 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({
   const handleDelete = async (id: string) => {
     try {
       await onDelete(id);
-      toast.success('分类删除成功');
     } catch {
       toast.error('分类删除失败');
     }

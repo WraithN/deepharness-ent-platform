@@ -57,7 +57,6 @@ export function CategoryMultiCell({ options, value, onSave, disabled }: Category
     setSaving(true);
     try {
       await onSave(next);
-      toast.success(SAVE_SUCCESS_MESSAGE);
     } catch {
       setSelected(previous);
       toast.error(SAVE_FAILED_MESSAGE);

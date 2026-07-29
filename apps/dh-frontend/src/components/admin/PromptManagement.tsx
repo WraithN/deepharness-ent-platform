@@ -109,7 +109,6 @@ export const PromptManagement: React.FC = () => {
     try {
       const updated = await teamApi.reviewPrompt(prompt.id, action);
       setPrompts((prev) => prev.map((p) => (p.id === prompt.id ? { ...p, status: updated.status } : p)));
-      toast.success(REVIEW_SUCCESS_MESSAGE);
     } catch {
       toast.error(REVIEW_FAILED_MESSAGE);
     }

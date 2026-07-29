@@ -66,6 +66,7 @@ type RepoInfo struct {
 	ID        string
 	Name      string
 	LocalPath string
+	Branch    string
 }
 
 // extractSelectedRepos 从 RunAgentInput.Context 中提取用户选择的代码库列表。
@@ -79,6 +80,7 @@ func extractSelectedRepos(ctxItems []agui.ContextItem) ([]RepoInfo, bool, error)
 			ID        string `json:"id"`
 			Name      string `json:"name"`
 			LocalPath string `json:"localPath"`
+			Branch    string `json:"branch"`
 		}
 		if err := json.Unmarshal(item.Value, &repos); err != nil {
 			return nil, false, fmt.Errorf("parse selectedRepos: %w", err)
@@ -88,7 +90,7 @@ func extractSelectedRepos(ctxItems []agui.ContextItem) ([]RepoInfo, bool, error)
 		}
 		result := make([]RepoInfo, 0, len(repos))
 		for _, r := range repos {
-			result = append(result, RepoInfo{ID: r.ID, Name: r.Name, LocalPath: r.LocalPath})
+			result = append(result, RepoInfo{ID: r.ID, Name: r.Name, LocalPath: r.LocalPath, Branch: r.Branch})
 		}
 		return result, true, nil
 	}
@@ -120,12 +122,14 @@ func buildTaskCardBlock(item workitem.WorkItem) string {
 }
 
 // buildRepoBlock 构建代码库上下文文本块，注入到提示词中供 agent 参考。
-// 包含仓库本地路径，使 agent 能直接定位工程目录。
+// 包含仓库本地路径和分支信息，使 agent 能直接定位工程目录并切换到正确分支。
 func buildRepoBlock(repos []RepoInfo) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n【关联代码库】\n")
 	for i, r := range repos {
-		if r.LocalPath != "" {
+		if r.LocalPath != "" && r.Branch != "" {
+			sb.WriteString(fmt.Sprintf("%d. %s (路径: %s, 分支: %s)\n", i+1, r.Name, r.LocalPath, r.Branch))
+		} else if r.LocalPath != "" {
 			sb.WriteString(fmt.Sprintf("%d. %s (路径: %s)\n", i+1, r.Name, r.LocalPath))
 		} else {
 			sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, r.Name))

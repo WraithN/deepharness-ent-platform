@@ -117,7 +117,6 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
       }
 
       const result = await projectApi.sync(syncReq);
-      toast.success(result.message || '项目已同步到仓库');
     } catch (err) {
       console.error('[ProjectCard] sync failed:', err);
       toast.error('同步失败，请重试');
