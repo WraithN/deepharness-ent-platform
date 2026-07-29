@@ -1046,9 +1046,7 @@ export const ProjectCode: React.FC = () => {
 
   const tabs = [
     { key: 'code' as const, label: '代码模式', icon: FileCode },
-    { key: 'graph' as const, label: '图谱模式', icon: Share2 },
     { key: 'review' as const, label: '评审模式', icon: ShieldCheck },
-    { key: 'doc' as const, label: '文档模式', icon: FileText },
     { key: 'preview' as const, label: '预览模式', icon: Eye },
     { key: 'details' as const, label: '仓库详情', icon: Activity },
   ];
