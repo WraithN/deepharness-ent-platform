@@ -43,7 +43,7 @@ func notifyNotInitialized(w http.ResponseWriter) {
 	handler.WriteJSONError(w, http.StatusInternalServerError, 1, "notification service not initialized")
 }
 
-// List 列出当前工作空间下用户的通知
+// List 列出当前用户的通知（按租户维度，跨空间展示全部待办）
 func List(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if defaultNotificationService == nil {
@@ -51,9 +51,14 @@ func List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, _ := middleware.UserIDFromContext(r.Context())
-	workspaceID := r.URL.Query().Get("workspaceId")
 	unreadOnly := r.URL.Query().Get("unread") == "true"
-	list, err := defaultNotificationService.ListByWorkspaceAndUser(workspaceID, userID, unreadOnly)
+	// 从 users 表查询用户所属租户，按租户+用户维度展示通知
+	tenantID, err := defaultNotificationService.GetUserTenantID(userID)
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to resolve tenant")
+		return
+	}
+	list, err := defaultNotificationService.ListByTenantAndUser(tenantID, userID, unreadOnly)
 	if err != nil {
 		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
 		return
@@ -83,7 +88,7 @@ func MarkAsRead(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// MarkAllAsRead 标记当前工作空间下所有通知已读
+// MarkAllAsRead 标记当前用户所有通知已读（跨空间）
 func MarkAllAsRead(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if defaultNotificationService == nil {
@@ -91,8 +96,12 @@ func MarkAllAsRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, _ := middleware.UserIDFromContext(r.Context())
-	workspaceID := r.URL.Query().Get("workspaceId")
-	if err := defaultNotificationService.MarkAllAsRead(workspaceID, userID); err != nil {
+	tenantID, err := defaultNotificationService.GetUserTenantID(userID)
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to resolve tenant")
+		return
+	}
+	if err := defaultNotificationService.MarkAllAsRead(tenantID, userID); err != nil {
 		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
 		return
 	}

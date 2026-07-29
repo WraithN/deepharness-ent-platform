@@ -13,7 +13,7 @@ import (
 var defaultWorkItemService service.WorkItemService
 
 // AssigneeAssignedCallback 需求分配回调，由编排层注入
-type AssigneeAssignedCallback func(workitemID string, workspaceID string, assigneeID string, assigneeName string, title string, description string)
+type AssigneeAssignedCallback func(workitemID string, workspaceID string, tenantID string, assigneeID string, assigneeName string, title string, description string)
 
 var onAssigneeAssigned AssigneeAssignedCallback
 
@@ -131,9 +131,9 @@ func UpdateWorkItemAssignee(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"code":1,"message":"workitem not found"}`, http.StatusNotFound)
 		return
 	}
-	// 触发需求分配回调（通知编排层创建通知），使用 workspaceID 而非 projectID
+	// 触发需求分配回调（通知编排层创建通知），使用 workspaceID 和 tenantID
 	if onAssigneeAssigned != nil && req.AssigneeID != "" {
-		go onAssigneeAssigned(id, item.WorkspaceID, req.AssigneeID, item.AssigneeName, item.Title, item.Description)
+		go onAssigneeAssigned(id, item.WorkspaceID, item.TenantID, req.AssigneeID, item.AssigneeName, item.Title, item.Description)
 	}
 	json.NewEncoder(w).Encode(item)
 }

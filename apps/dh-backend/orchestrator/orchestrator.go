@@ -54,11 +54,11 @@ func NewDevReviewOrchestrator(
 }
 
 // OnWorkitemAssigned 需求分配回调：创建通知发给研发
-func (o *DevReviewOrchestrator) OnWorkitemAssigned(ctx context.Context, workitemID string, workspaceID string, assigneeID string, assigneeName string, title string, description string) {
+func (o *DevReviewOrchestrator) OnWorkitemAssigned(ctx context.Context, workitemID string, workspaceID string, tenantID string, assigneeID string, assigneeName string, title string, description string) {
 	if assigneeID == "" {
 		return
 	}
-	existing, _ := o.notificationSvc.ListByTypeAndData(ctx, workspaceID, object.TypeWorkitemAssigned, "workitemId", workitemID)
+	existing, _ := o.notificationSvc.ListByTypeAndData(ctx, tenantID, object.TypeWorkitemAssigned, "workitemId", workitemID)
 	for _, n := range existing {
 		if n.ActionStatus == object.ActionPending {
 			log.Printf("[Orchestrator] workitem %s already has pending assignment notification, skip", workitemID)
@@ -77,6 +77,7 @@ func (o *DevReviewOrchestrator) OnWorkitemAssigned(ctx context.Context, workitem
 
 	_, err := o.notificationSvc.Create(object.CreateNotificationRequest{
 		UserID:      assigneeID,
+		TenantID:    tenantID,
 		WorkspaceID: workspaceID,
 		Type:        object.TypeWorkitemAssigned,
 		Title:       fmt.Sprintf("需求分配: %s", title),
@@ -88,6 +89,7 @@ func (o *DevReviewOrchestrator) OnWorkitemAssigned(ctx context.Context, workitem
 			"workitemDesc":  description,
 			"assigneeId":    assigneeID,
 			"assigneeName":  assigneeName,
+			"workspaceId":   workspaceID,
 		},
 	})
 	if err != nil {
@@ -102,14 +104,15 @@ func (o *DevReviewOrchestrator) OnApproveAIDev(ctx context.Context, notification
 	item, err := o.workItemSvc.GetWorkItem(workitemID)
 	if err != nil {
 		log.Printf("[Orchestrator] get workitem %s failed: %v", workitemID, err)
-		o.notifyFailed(userID, "", workitemID, fmt.Sprintf("获取需求失败: %v", err))
+		o.notifyFailed(userID, "", item.TenantID, workitemID, fmt.Sprintf("获取需求失败: %v", err))
 		return
 	}
 
-	workspaceID := item.ProjectID
+	workspaceID := item.WorkspaceID
 
 	o.notificationSvc.Create(object.CreateNotificationRequest{
 		UserID:      userID,
+		TenantID:    item.TenantID,
 		WorkspaceID: workspaceID,
 		Type:        object.TypeAIDevStarted,
 		Title:       fmt.Sprintf("AI开发已启动: %s", item.Title),
@@ -119,11 +122,11 @@ func (o *DevReviewOrchestrator) OnApproveAIDev(ctx context.Context, notification
 		},
 	})
 
-	go o.runDevReviewFlow(ctx, userID, workitemID, workspaceID, item.Title, item.Description)
+	go o.runDevReviewFlow(ctx, userID, workitemID, workspaceID, item.TenantID, item.Title, item.Description)
 }
 
 // runDevReviewFlow 执行 /code -> /review 自动化流程
-func (o *DevReviewOrchestrator) runDevReviewFlow(ctx context.Context, userID string, workitemID string, workspaceID string, workitemTitle string, workitemDesc string) {
+func (o *DevReviewOrchestrator) runDevReviewFlow(ctx context.Context, userID string, workitemID string, workspaceID string, tenantID string, workitemTitle string, workitemDesc string) {
 	log.Printf("[Orchestrator] starting dev-review flow for workitem %s, user %s, workspace %s", workitemID, userID, workspaceID)
 
 	workspacePath := fmt.Sprintf("%s/%s/%s", o.workspaceRoot, userID, workspaceID)
@@ -173,7 +176,7 @@ func (o *DevReviewOrchestrator) runDevReviewFlow(ctx context.Context, userID str
 	if err != nil {
 		log.Printf("[Orchestrator] /code agent run failed: %v", err)
 		updateProcessStage(processobject.StageDevelopment, processobject.StageStatusFailed)
-		o.notifyFailed(userID, workspaceID, workitemID, fmt.Sprintf("AI开发启动失败: %v", err))
+		o.notifyFailed(userID, workspaceID, tenantID, workitemID, fmt.Sprintf("AI开发启动失败: %v", err))
 		return
 	}
 
@@ -222,7 +225,7 @@ func (o *DevReviewOrchestrator) runDevReviewFlow(ctx context.Context, userID str
 	if codeResult.Error != nil {
 		log.Printf("[Orchestrator] /code error: %v", codeResult.Error)
 		updateProcessStage(processobject.StageDevelopment, processobject.StageStatusFailed)
-		o.notifyFailed(userID, workspaceID, workitemID, fmt.Sprintf("AI开发失败: %v", codeResult.Error))
+		o.notifyFailed(userID, workspaceID, tenantID, workitemID, fmt.Sprintf("AI开发失败: %v", codeResult.Error))
 		return
 	}
 
@@ -238,7 +241,7 @@ func (o *DevReviewOrchestrator) runDevReviewFlow(ctx context.Context, userID str
 	if err != nil {
 		log.Printf("[Orchestrator] /review agent run failed: %v", err)
 		updateProcessStage(processobject.StageReview, processobject.StageStatusFailed)
-		o.notifyFailed(userID, workspaceID, workitemID, fmt.Sprintf("评审启动失败: %v", err))
+		o.notifyFailed(userID, workspaceID, tenantID, workitemID, fmt.Sprintf("评审启动失败: %v", err))
 		return
 	}
 
@@ -267,7 +270,7 @@ func (o *DevReviewOrchestrator) runDevReviewFlow(ctx context.Context, userID str
 	if reviewResult.Error != nil {
 		log.Printf("[Orchestrator] /review error: %v", reviewResult.Error)
 		updateProcessStage(processobject.StageReview, processobject.StageStatusFailed)
-		o.notifyFailed(userID, workspaceID, workitemID, fmt.Sprintf("评审失败: %v", reviewResult.Error))
+		o.notifyFailed(userID, workspaceID, tenantID, workitemID, fmt.Sprintf("评审失败: %v", reviewResult.Error))
 		return
 	}
 
@@ -277,6 +280,7 @@ func (o *DevReviewOrchestrator) runDevReviewFlow(ctx context.Context, userID str
 	projectPath := fmt.Sprintf("%s/projects", workspacePath)
 	o.notificationSvc.Create(object.CreateNotificationRequest{
 		UserID:      userID,
+		TenantID:    tenantID,
 		WorkspaceID: workspaceID,
 		Type:        object.TypeAIDevCompleted,
 		Title:       fmt.Sprintf("评审完成: %s", workitemTitle),
@@ -294,9 +298,10 @@ func (o *DevReviewOrchestrator) runDevReviewFlow(ctx context.Context, userID str
 }
 
 // notifyFailed 通知研发 AI 开发失败
-func (o *DevReviewOrchestrator) notifyFailed(userID string, workspaceID string, workitemID string, errMsg string) {
+func (o *DevReviewOrchestrator) notifyFailed(userID string, workspaceID string, tenantID string, workitemID string, errMsg string) {
 	_, _ = o.notificationSvc.Create(object.CreateNotificationRequest{
 		UserID:      userID,
+		TenantID:    tenantID,
 		WorkspaceID: workspaceID,
 		Type:        object.TypeAIDevFailed,
 		Title:       "AI托管开发失败",

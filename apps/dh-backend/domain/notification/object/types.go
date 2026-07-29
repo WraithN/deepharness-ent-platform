@@ -29,6 +29,7 @@ const (
 type Notification struct {
 	ID           string            `json:"id"`
 	UserID       string            `json:"userId"`
+	TenantID     string            `json:"tenantId"`
 	WorkspaceID  string            `json:"workspaceId"`
 	Type         string            `json:"type"`
 	Title        string            `json:"title"`
@@ -45,6 +46,7 @@ type Notification struct {
 // CreateNotificationRequest 创建通知请求
 type CreateNotificationRequest struct {
 	UserID       string         `json:"userId"`
+	TenantID     string         `json:"tenantId"`
 	WorkspaceID  string         `json:"workspaceId"`
 	Type         string         `json:"type"`
 	Title        string         `json:"title"`

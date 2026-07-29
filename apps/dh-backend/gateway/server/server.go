@@ -458,8 +458,8 @@ func initDevReviewOrchestrator(db *sql.DB, cfg config.Config, workItemSvc workit
 	aguiClient := client.NewAGUIClient(cfg.GatewaydAdminURL, cfg.GatewaydAgentID)
 	orch := devorchestrator.NewDevReviewOrchestrator(notificationSvc, workItemSvc, aguiClient, sessions, messages, cfg.WorkspaceRoot, cfg.GatewaydAgentID)
 	// 注入 workitem 分配回调
-	workitem.SetAssigneeAssignedCallback(func(workitemID, workspaceID, assigneeID, assigneeName, title, description string) {
-		orch.OnWorkitemAssigned(context.Background(), workitemID, workspaceID, assigneeID, assigneeName, title, description)
+	workitem.SetAssigneeAssignedCallback(func(workitemID, workspaceID, tenantID, assigneeID, assigneeName, title, description string) {
+		orch.OnWorkitemAssigned(context.Background(), workitemID, workspaceID, tenantID, assigneeID, assigneeName, title, description)
 	})
 	// 注入通知操作回调：研发批准 AI 开发时触发编排
 	notification.SetActionCallback(func(notificationID, userID, action string, data map[string]any) {

@@ -34,6 +34,7 @@ import type { WorkitemPlatform } from '@/types';
 interface NotificationItem {
   id: string;
   userId: string;
+  tenantId: string;
   workspaceId: string;
   type: string;
   title: string;
@@ -78,6 +79,7 @@ export const NotificationCenter: React.FC = () => {
   // ── 项目绑定对话框状态 ──
   const [showBindDialog, setShowBindDialog] = useState(false);
   const [pendingApproveId, setPendingApproveId] = useState<string | null>(null);
+  const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string>('');
   const [platforms, setPlatforms] = useState<WorkitemPlatform[]>(DEFAULT_WORKITEM_PLATFORMS);
   const [selectedPlatform, setSelectedPlatform] = useState('');
   const [projectIdInput, setProjectIdInput] = useState('');
@@ -87,14 +89,13 @@ export const NotificationCenter: React.FC = () => {
   const selectedPlatformMeta = effectivePlatforms.find(p => p.key === selectedPlatform);
 
   const fetchNotifications = useCallback(async () => {
-    if (!workspaceId) return;
     try {
-      const list = await api.get<NotificationItem[]>(`/v1/notifications?unread=true&workspaceId=${encodeURIComponent(workspaceId)}`);
+      const list = await api.get<NotificationItem[]>('/v1/notifications?unread=true');
       setNotifications(list || []);
     } catch {
       // 静默失败，不打断用户
     }
-  }, [workspaceId]);
+  }, []);
 
   useEffect(() => {
     fetchNotifications();
@@ -102,19 +103,19 @@ export const NotificationCenter: React.FC = () => {
     return () => clearInterval(timer);
   }, [fetchNotifications]);
 
-  const handleApprove = async (id: string) => {
-    // 先检查是否已绑定需求管理工程
+  const handleApprove = async (id: string, notifWorkspaceId: string) => {
+    // 使用通知来源空间检查项目绑定（而非研发当前所在空间）
     try {
-      const wp = await workspaceApi.getWorkitemProject(workspaceId);
+      const wp = await workspaceApi.getWorkitemProject(notifWorkspaceId);
       if (!wp.platform || !wp.externalKey) {
-        // 未绑定项目工程 → 弹出绑定对话框
         setPendingApproveId(id);
+        setPendingWorkspaceId(notifWorkspaceId);
         openBindDialog();
         return;
       }
     } catch {
-      // getWorkitemProject 失败（未绑定或网络问题）→ 同样弹出对话框
       setPendingApproveId(id);
+      setPendingWorkspaceId(notifWorkspaceId);
       openBindDialog();
       return;
     }
@@ -177,7 +178,7 @@ export const NotificationCenter: React.FC = () => {
 
     setBindingLoading(true);
     try {
-      await workspaceApi.setWorkitemProject(workspaceId, {
+      await workspaceApi.setWorkitemProject(pendingWorkspaceId, {
         platform: selectedPlatform,
         externalKey: projectIdInput.trim(),
         name: selectedPlatformMeta?.name ?? selectedPlatform,
@@ -203,11 +204,11 @@ export const NotificationCenter: React.FC = () => {
       toast.error('没有可用的需求管理平台');
       return;
     }
-    const autoProjectId = `auto-${workspaceId}`;
+    const autoProjectId = `auto-${pendingWorkspaceId}`;
 
     setBindingLoading(true);
     try {
-      await workspaceApi.setWorkitemProject(workspaceId, {
+      await workspaceApi.setWorkitemProject(pendingWorkspaceId, {
         platform: platform.key,
         externalKey: autoProjectId,
         name: platform.name,
@@ -238,9 +239,8 @@ export const NotificationCenter: React.FC = () => {
   };
 
   const handleMarkAllRead = async () => {
-    if (!workspaceId) return;
     try {
-      await api.post(`/v1/notifications/all-read?workspaceId=${encodeURIComponent(workspaceId)}`);
+      await api.post('/v1/notifications/all-read');
       setNotifications([]);
     } catch {
       toast.error('操作失败');
@@ -307,7 +307,7 @@ export const NotificationCenter: React.FC = () => {
                             size="sm"
                             className="h-7 text-xs gap-1"
                             disabled={acting === n.id}
-                            onClick={() => handleApprove(n.id)}
+                            onClick={() => handleApprove(n.id, n.workspaceId)}
                           >
                             {acting === n.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
                             批准AI开发

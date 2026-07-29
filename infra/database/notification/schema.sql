@@ -4,6 +4,7 @@
 CREATE TABLE IF NOT EXISTS notifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id VARCHAR(64) NOT NULL,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT '',
     workspace_id VARCHAR(36) NOT NULL DEFAULT '',
     type VARCHAR(32) NOT NULL,
     title VARCHAR(256) NOT NULL,
@@ -18,6 +19,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_tenant_user ON notifications(tenant_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_workspace ON notifications(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id, read) WHERE read = FALSE;
 CREATE INDEX IF NOT EXISTS idx_notifications_ws_unread ON notifications(workspace_id, user_id, read) WHERE read = FALSE;
