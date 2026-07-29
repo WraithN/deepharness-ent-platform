@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Bot, Box, FileCode2, ListTodo, CheckCircle2, Wrench, X, Copy, RefreshCw, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import type { MessageState, TextMessagePart, ReasoningMessagePart, DataMessagePart, ToolCallMessagePart } from '@assistant-ui/react';
 import { useThread } from '@assistant-ui/react';
@@ -365,8 +365,8 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     ? nonProjectFileAttachments.filter(path => !REQ_BREAKDOWN_FILE_REGEX.test(path))
     : nonProjectFileAttachments;
 
-  // 解析 [[REVIEW_REPORT:json]] 标记，提取评审报告元数据。
-  const reviewReportData = parseReviewReportFromText(allTextContent);
+  // 解析 [[REVIEW_REPORT:json]] 标记，提取评审报告元数据。useMemo 避免每次渲染创建新对象导致 useEffect 死循环。
+  const reviewReportData = useMemo(() => parseReviewReportFromText(allTextContent), [allTextContent]);
 
   // 评审报告卡片出现时，抑制评审报告文件的 FileAttachmentCard，确保只展示一个卡片。
   const nonReviewFileAttachments = reviewReportData
