@@ -12,6 +12,7 @@ import { SmartTest } from "@/pages/SmartTest";
 import { Settings } from "@/pages/Settings";
 import { Requirements } from "@/pages/Requirements";
 import { PersonalSpace } from "@/pages/PersonalSpace";
+import { FlowTracking } from "@/components/workspace/FlowTracking";
 import { PersonalAssistantPage } from "@/pages/PersonalAssistantPage";
 import { PersonalAssistantChat } from "@/pages/PersonalAssistantChat";
 import { FileView } from "@/pages/FileView";
@@ -68,6 +69,7 @@ export const routes: RouteObject[] = [
       { path: "chat", element: <Chat /> },
       { path: "requirements", element: <Requirements /> },
       { path: "personal-space", element: <PermissionRoute perm="canViewCode"><PersonalSpace /></PermissionRoute> },
+      { path: "personal/flow", element: <FlowTracking /> },
       { path: "code", element: <Navigate to="/personal-space" replace /> },
       { path: "prd", element: <PrdView /> },
       { path: "dashboard", element: <PermissionRoute perm="canViewDashboard"><Dashboard /></PermissionRoute> },

@@ -186,3 +186,20 @@ export interface AdoptReviewReportRequest {
   summary: string
   issues: Omit<ReviewIssue, "status" | "linkedWorkitemId" | "completedAt">[]
 }
+
+// ========== Notification ==========
+
+export interface Notification {
+  id: string
+  userId: string
+  type: "workitem_assigned" | "ai_dev_started" | "ai_dev_completed" | "ai_dev_failed"
+  title: string
+  body: string
+  data?: Record<string, unknown>
+  read: boolean
+  actionType?: string
+  actionStatus?: string
+  actionUrl?: string
+  createdAt: string
+  updatedAt: string
+}

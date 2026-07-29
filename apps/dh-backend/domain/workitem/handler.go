@@ -12,6 +12,16 @@ import (
 
 var defaultWorkItemService service.WorkItemService
 
+// AssigneeAssignedCallback 需求分配回调，由编排层注入
+type AssigneeAssignedCallback func(workitemID string, workspaceID string, assigneeID string, assigneeName string, title string, description string)
+
+var onAssigneeAssigned AssigneeAssignedCallback
+
+// SetAssigneeAssignedCallback 注册需求分配回调（由 server.go 在初始化时注入编排器）
+func SetAssigneeAssignedCallback(cb AssigneeAssignedCallback) {
+	onAssigneeAssigned = cb
+}
+
 // Init 设置 WorkItem 服务实现。
 func Init(svc service.WorkItemService) {
 	defaultWorkItemService = svc
@@ -107,6 +117,10 @@ func UpdateWorkItemAssignee(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, `{"code":1,"message":"workitem not found"}`, http.StatusNotFound)
 		return
+	}
+	// 触发需求分配回调（通知编排层创建通知）
+	if onAssigneeAssigned != nil && req.AssigneeID != "" {
+		go onAssigneeAssigned(id, item.ProjectID, req.AssigneeID, item.AssigneeName, item.Title, item.Description)
 	}
 	json.NewEncoder(w).Encode(item)
 }

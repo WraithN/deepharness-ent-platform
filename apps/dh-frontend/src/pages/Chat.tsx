@@ -43,7 +43,7 @@ import {
 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ImperativePanelHandle } from 'react-resizable-panels';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ChatThread } from '@/components/chat/ChatThread';
 import type { ReviewReportData } from '@/components/chat/ReviewReportCard';
@@ -544,6 +544,7 @@ const SEVERITY_BAR_COLORS: Record<string, string> = {
 export const Chat: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { membership, user } = useAuth();
   // 按职能子角色选择欢迎页快捷卡片（无子角色时使用默认）
   const welcomeCards =
@@ -1035,12 +1036,38 @@ export const Chat: React.FC = () => {
   // 记录最近一次 /req-breakdown 指令关联的父需求 ID。用户可能在提交前移除引用卡片，因此用 ref 保留根父需求。
   const lastReqBreakdownRootId = useRef<string>('');
 
-  // 原型采纳关联的需求 ID：优先使用显式引用的需求卡片；若用户通过“做原型”或 AI 回复里的
+  // 从消息历史中回溯最近一条引用了需求卡片的用户消息，返回 { id, title }。
+  // 解决页面刷新或组件 remount 导致 quotedCard 状态丢失后，采纳文档/原型时 workitemId 为空的问题。
+  const findLatestQuotedReqFromMessages = useCallback((msgs: ThreadMessageLike[]): { id: string; title: string } | null => {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i];
+      if (msg.role !== 'user') continue;
+      const meta = (msg.metadata?.custom ?? {}) as { quotedCard?: { type?: string; id?: string; title?: string } };
+      if (meta.quotedCard?.type === 'req' && meta.quotedCard.id) {
+        return { id: meta.quotedCard.id, title: meta.quotedCard.title ?? '' };
+      }
+    }
+    return null;
+  }, []);
+
+  // 从消息历史回溯的 quotedReq，作为 quotedCard 丢失时的兜底。
+  const fallbackQuotedReq = useMemo(() => findLatestQuotedReqFromMessages(messages), [messages, findLatestQuotedReqFromMessages]);
+
+  // 原型采纳关联的需求 ID：优先使用显式引用的需求卡片；若用户通过"做原型"或 AI 回复里的
   // [[REQ_NAME:...]] 提供了需求标题，则尝试按标题匹配已有需求。确保采纳原型时能生成设计版本。
+  // 兜底：从消息历史回溯最近引用的需求卡片 ID（解决页面刷新后 quotedCard 丢失的问题）。
   const effectivePrototypeWorkitemId = useMemo(() => {
     if (quotedCard?.type === 'req') return quotedCard.id;
-    return resolveWorkitemIdByTitle(protoMakeRequirementTitle, requirements);
-  }, [quotedCard, protoMakeRequirementTitle, requirements]);
+    const byTitle = resolveWorkitemIdByTitle(protoMakeRequirementTitle, requirements);
+    if (byTitle) return byTitle;
+    if (fallbackQuotedReq) return fallbackQuotedReq.id;
+    return undefined;
+  }, [quotedCard, protoMakeRequirementTitle, requirements, fallbackQuotedReq]);
+
+  // 兜底需求标题：quotedCard 丢失时从消息历史回溯，确保 AssistantMessage 的 resolvedWorkitemId 标题匹配兜底有效。
+  const effectiveRequirementTitle = useMemo(() => {
+    return protoMakeRequirementTitle || quotedCard?.title || fallbackQuotedReq?.title || '';
+  }, [protoMakeRequirementTitle, quotedCard, fallbackQuotedReq]);
 
   // 当“做原型”标题变化时，自动匹配并引用对应需求卡片，让 AI 和后续采纳都获得正确的需求上下文。
   // 如果用户已显式引用其他需求/缺陷/用例卡片，则保留原引用不做覆盖。
@@ -1855,6 +1882,27 @@ export const Chat: React.FC = () => {
       });
   };
 
+  // 从消息历史中查找最近一条包含 /req-breakdown 指令且引用了需求卡片的用户消息，
+  // 返回其 quotedCard.id 作为父需求 ID。
+  // 解决页面刷新或组件 remount 导致 lastReqBreakdownRootId useRef 丢失的场景。
+  const findReqBreakdownParentId = (msgs: ThreadMessageLike[]): string => {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i];
+      if (msg.role !== 'user') continue;
+      const content = typeof msg.content === 'string'
+        ? [{ type: 'text' as const, text: msg.content }]
+        : msg.content;
+      const textPart = content.find(p => p.type === 'text') as { text?: string } | undefined;
+      const text = textPart?.text ?? '';
+      if (!text.includes('/req-breakdown')) continue;
+      const meta = (msg.metadata?.custom ?? {}) as { quotedCard?: { type?: string; id?: string } };
+      if (meta.quotedCard?.type === 'req' && meta.quotedCard.id) {
+        return meta.quotedCard.id;
+      }
+    }
+    return '';
+  };
+
   // 将需求拆分中选中的子需求提交到工作项库，并刷新需求列表。
   // 所有提交项统一作为被引用父需求的直接子需求，并限制子需求优先级不得高于父需求。
   // 提交成功后，将创建的 workitemId 回写到需求拆分 JSON 源文件，做幂等处理。
@@ -1869,7 +1917,16 @@ export const Chat: React.FC = () => {
       // 未配置工作项项目时回退到默认项目
     }
 
-    const rootParentId = lastReqBreakdownRootId.current || (quotedCard?.type === 'req' ? quotedCard.id : '');
+    // 优先使用发送 /req-breakdown 时缓存的父需求 ID（useRef，组件存活期间有效）；
+    // 其次使用当前仍引用的需求卡片；
+    // 然后兜底：从消息历史中查找最近一条包含 /req-breakdown 且引用了需求卡片的用户消息；
+    // 最后兜底：从消息历史回溯最近一条引用了需求卡片的用户消息（通用回溯）。
+    // 解决页面刷新或组件 remount 导致 useRef/quotedCard 丢失的场景。
+    const rootParentId = lastReqBreakdownRootId.current
+      || (quotedCard?.type === 'req' ? quotedCard.id : '')
+      || findReqBreakdownParentId(messages)
+      || fallbackQuotedReq?.id
+      || '';
     console.log('[ReqBreakdownSubmit] rootParentId=', rootParentId, 'quotedCard=', quotedCard);
     let parentPriority: string | undefined;
     if (rootParentId) {
@@ -2174,6 +2231,31 @@ export const Chat: React.FC = () => {
       });
     });
   }, [availableAgentsLoaded, availableAgentOptions, switchSession, workspaceAgentConfigs, createSession, tryRestoreSession]);
+
+  const sessionFromQuery = searchParams.get('session');
+  const sessionQueryHandledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isInitializingChat || !sessionFromQuery || !availableAgentsLoaded) return;
+    if (sessionQueryHandledRef.current === sessionFromQuery) return;
+    if (agentTabs.some(t => t.sessionId === sessionFromQuery)) {
+      setActiveAgentTabId(sessionFromQuery);
+      switchSession(sessionFromQuery).catch(() => {});
+      sessionQueryHandledRef.current = sessionFromQuery;
+      return;
+    }
+    const defaultKey = resolveDefaultAgentKey(workspaceAgentConfigs, availableAgentOptions) ?? 'claude-code';
+    const tab: AgentTab = {
+      sessionId: sessionFromQuery,
+      pluginKey: defaultKey,
+      title: `[AI托管] ${sessionFromQuery.slice(-8)}`,
+      instanceId: '',
+      status: 'idle',
+    };
+    setAgentTabs(prev => [...prev, tab]);
+    setActiveAgentTabId(sessionFromQuery);
+    switchSession(sessionFromQuery).catch(() => {});
+    sessionQueryHandledRef.current = sessionFromQuery;
+  }, [isInitializingChat, sessionFromQuery, availableAgentsLoaded, agentTabs, workspaceAgentConfigs, availableAgentOptions, switchSession]);
 
   // 智能体 tab 持久化：跳过首次渲染，只在用户操作导致的状态变更后写入 localStorage。
   useEffect(() => {
@@ -3009,7 +3091,7 @@ export const Chat: React.FC = () => {
                   onReviewAdopt={handleReviewAdopt}
                   onReviewFix={handleReviewFix}
                   activePreviewPath={previewPath ?? undefined}
-                  requirementTitle={protoMakeRequirementTitle || quotedCard?.title}
+                  requirementTitle={effectiveRequirementTitle}
                   workitemId={effectivePrototypeWorkitemId}
                   requirements={requirements}
                   onEditMessage={(text, context) => {

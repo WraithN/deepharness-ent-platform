@@ -1,12 +1,15 @@
 import React from 'react';
 import { ProjectCode } from '@/pages/ProjectCode';
 
-/**
- * 研发空间工作台。
+/** 研发空间工作台。
  *
- * 本期先直接复用 ProjectCode 组件，保证现有研发能力不变。
- * 后续按阶段 5 逐步拆分内部视图，避免 2040 行大组件继续膨胀。
+ * 提供代码仓库浏览、文件树、diff、预览等研发工程能力。
+ * 流程追踪已提取为独立的侧边栏入口（/personal/flow）。
  */
 export const DevWorkspace: React.FC = () => {
-  return <ProjectCode />;
+  return (
+    <div className="h-full flex flex-col">
+      <ProjectCode />
+    </div>
+  );
 };

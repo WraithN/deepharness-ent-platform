@@ -28,6 +28,11 @@ import (
 	feishuservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/feishu/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity"
 	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/notification"
+	notificationservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/notification/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process"
+	processservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process/service"
+	processstore "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process/store"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant"
 	paservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/platformtemplate"
@@ -48,6 +53,7 @@ import (
 	workitemservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace"
 	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
+	devorchestrator "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/orchestrator"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
@@ -81,7 +87,11 @@ func New(cfg config.Config) http.Handler {
 	initEventService(db)
 	initOrchestratorService(db)
 	initAgentReviewService(db)
+	notificationSvc := initNotificationService(db)
+	initProcessService()
+	initDevReviewOrchestrator(db, cfg, workItemSvc, notificationSvc, sessions, messages)
 	workspaceService := initWorkspaceService(db, cfg.WorkspaceRoot, userService, cfg.CodingAgents)
+	notification.SetWorkspaceService(workspaceService)
 	initProductSpaceService(db, cfg, workspaceService)
 	initAgentConfigService(db, cfg.CodingAgents, cfg.CodingAgentModels, cfg.CodingAgentModelVendors)
 	initWorkspacePromptService(db)
@@ -213,6 +223,16 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("GET /api/v1/agent-reviews/reports", middleware.Auth(http.HandlerFunc(agent_review.ListReports)))
 	mux.Handle("GET /api/v1/agent-reviews/reports/{id}", middleware.Auth(http.HandlerFunc(agent_review.GetReport)))
 	mux.Handle("PATCH /api/v1/agent-reviews/reports/{id}/issues/{issueId}", middleware.Auth(http.HandlerFunc(agent_review.UpdateIssueStatus)))
+	// 通知系统：列出/标记已读/操作，需登录态
+	mux.Handle("GET /api/v1/notifications", middleware.Auth(http.HandlerFunc(notification.List)))
+	mux.Handle("POST /api/v1/notifications/all-read", middleware.Auth(http.HandlerFunc(notification.MarkAllAsRead)))
+	mux.Handle("PATCH /api/v1/notifications/{id}/read", middleware.Auth(http.HandlerFunc(notification.MarkAsRead)))
+	mux.Handle("POST /api/v1/notifications/{id}/action", middleware.Auth(http.HandlerFunc(notification.Action)))
+	// 流程追踪：列出/详情/创建/更新阶段
+	mux.Handle("GET /api/v1/processes", middleware.Auth(http.HandlerFunc(process.List)))
+	mux.Handle("GET /api/v1/processes/{id}", middleware.Auth(http.HandlerFunc(process.GetByID)))
+	mux.Handle("POST /api/v1/processes", middleware.Auth(http.HandlerFunc(process.Create)))
+	mux.Handle("PATCH /api/v1/processes/{id}/stages/{stageName}", middleware.Auth(http.HandlerFunc(process.UpdateStage)))
 	// 数据大盘统计需登录并按 workspaceId 隔离
 	mux.Handle("/api/v1/stats/summary", middleware.Auth(http.HandlerFunc(statsHandler.Summary)))
 	mux.Handle("/api/v1/stats/trend", middleware.Auth(http.HandlerFunc(statsHandler.Trend)))
@@ -425,6 +445,33 @@ func initAgentReviewService(db *sql.DB) {
 	agent_review.Init(agentreviewservice.NewDBAgentReviewService(db))
 }
 
+func initNotificationService(db *sql.DB) notificationservice.NotificationService {
+	log.Println("[Notification] using postgres storage")
+	svc := notificationservice.NewDBNotificationService(db)
+	notification.Init(svc)
+	return svc
+}
+
+// initDevReviewOrchestrator 初始化研发->评审自动化编排器，并注入 workitem 分配回调
+func initDevReviewOrchestrator(db *sql.DB, cfg config.Config, workItemSvc workitemservice.WorkItemService, notificationSvc notificationservice.NotificationService, sessions chat.SessionStore, messages chat.MessageStore) {
+	aguiClient := client.NewAGUIClient(cfg.GatewaydAdminURL, cfg.GatewaydAgentID)
+	orch := devorchestrator.NewDevReviewOrchestrator(notificationSvc, workItemSvc, aguiClient, sessions, messages, cfg.WorkspaceRoot, cfg.GatewaydAgentID)
+	// 注入 workitem 分配回调
+	workitem.SetAssigneeAssignedCallback(func(workitemID, workspaceID, assigneeID, assigneeName, title, description string) {
+		orch.OnWorkitemAssigned(context.Background(), workitemID, workspaceID, assigneeID, assigneeName, title, description)
+	})
+	// 注入通知操作回调：研发批准 AI 开发时触发编排
+	notification.SetActionCallback(func(notificationID, userID, action string, data map[string]any) {
+		if action == "approve" {
+			workitemID, _ := data["workitemId"].(string)
+			if workitemID != "" {
+				orch.OnApproveAIDev(context.Background(), notificationID, userID, workitemID)
+			}
+		}
+	})
+	log.Println("[Orchestrator] dev-review orchestrator initialized")
+}
+
 func initWorkspaceService(db *sql.DB, workspaceRoot string, userService identityservice.UserService, codingAgents []config.CodingAgentDefinition) workspaceservice.WorkspaceService {
 	log.Printf("[Workspace] using postgres storage, workspaceRoot=%s", workspaceRoot)
 	svc := workspaceservice.NewDBWorkspaceService(db, workspaceRoot)
@@ -584,4 +631,11 @@ func (r *dbSSHKeyResolver) ResolveSSHKey(userID string) (string, error) {
 		return "", fmt.Errorf("resolve ssh key failed: %w", err)
 	}
 	return key, nil
+}
+
+// initProcessService 初始化流程追踪服务（内存存储）
+func initProcessService() {
+	store := processstore.NewMemoryProcessStore()
+	svc := processservice.NewProcessService(store)
+	process.Init(svc)
 }

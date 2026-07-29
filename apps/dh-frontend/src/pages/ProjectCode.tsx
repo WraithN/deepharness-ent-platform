@@ -2204,7 +2204,7 @@ export const ProjectCode: React.FC = () => {
                       </Card>
                       <Card>
                         <CardContent className="p-4 text-center">
-                          <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{repoDetails.branches.length}</p>
+                          <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{repoDetails.branches?.length ?? 0}</p>
                           <p className="text-xs text-muted-foreground mt-1">分支</p>
                         </CardContent>
                       </Card>

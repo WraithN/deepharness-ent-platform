@@ -7,9 +7,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
-  FileText, LayoutGrid, Eye, History, Trash2, Save, Loader2, Send, Clock, ChevronLeft, ChevronRight,
+  FileText, LayoutGrid, LayoutTemplate, Eye, History, Trash2, Save, Loader2, Send, Clock, ChevronLeft, ChevronRight,
   ChevronDown, Folder, FolderPlus, Pin, MoreVertical, FolderInput, Pencil, Share2, MessageSquare,
-  Layers, Download, Copy, Gavel, CheckCircle2, XCircle, UserCheck,
+  Layers, Download, Copy, Gavel, CheckCircle2, XCircle, UserCheck, Sparkles,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -465,7 +465,7 @@ export const ProductWorkspace: React.FC = () => {
   });
 
   /** 需求无设计时，引导使用 AI 写 PRD 的确认弹窗 */
-  const [aiDesignDialog, setAiDesignDialog] = useState<{ open: boolean; req: WorkItemDTO | null }>({ open: false, req: null });
+  const [aiDesignDialog, setAiDesignDialog] = useState<{ open: boolean; req: WorkItemDTO | null; type?: 'doc' | 'prototype' }>({ open: false, req: null });
 
   /** 工作空间成员列表（用于评审通过/分配时选择受理人） */
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
@@ -516,7 +516,7 @@ export const ProductWorkspace: React.FC = () => {
   };
 
   // 从看板进入需求设计视图：若已有关联设计则直接切换；否则弹出 AI 设计引导。
-  const handleNavigateToDesign = async (id: string) => {
+  const handleNavigateToDesign = async (id: string, tab?: 'doc' | 'prototype') => {
     let req = requirements.find(r => r.id === id);
     if (!req) {
       try {
@@ -529,8 +529,8 @@ export const ProductWorkspace: React.FC = () => {
     try {
       const links = await workItemDocApi.list(id);
       if (links.length > 0) {
-        setTabs(prev => ({ ...prev, topTab: 'design' }));
         setSelectedWorkitemId(id);
+        setTabs(prev => ({ ...prev, topTab: 'design', subTab: tab ?? prev.subTab }));
         return;
       }
       setAiDesignDialog({ open: true, req });
@@ -539,17 +539,41 @@ export const ProductWorkspace: React.FC = () => {
     }
   };
 
+  // 看板卡片无设计时点击文档/原型按钮，弹出 AI 设计引导
+  const handleAiDesignPrompt = async (id: string, type: 'doc' | 'prototype') => {
+    let req = requirements.find(r => r.id === id);
+    if (!req) {
+      try {
+        req = await api.get<WorkItemDTO>(`/v1/workitems/${id}`);
+      } catch {
+        toast.error('加载需求信息失败');
+        return;
+      }
+    }
+    setAiDesignDialog({ open: true, req, type });
+  };
+
   // 确认使用 AI 写 PRD：跳转到智能会话并自动携带 /prd-write 指令与需求卡片。
   const confirmAiDesign = () => {
-    const { req } = aiDesignDialog;
+    const { req, type } = aiDesignDialog;
     if (!req) return;
+    const command = type === 'prototype' ? 'proto-make' : 'prd-write';
+    navigate('/chat', {
+      state: {
+        initialInput: `/${command} ${req.title}`,
+        quotedCard: { type: 'req' as const, id: req.id, title: req.title, reporter: req.reporter || '' },
+      },
+    });
+    setAiDesignDialog({ open: false, req: null });
+  };
+
+  const handleAIDesignFromKanban = (req: WorkItemDTO) => {
     navigate('/chat', {
       state: {
         initialInput: `/prd-write ${req.title}`,
         quotedCard: { type: 'req' as const, id: req.id, title: req.title, reporter: req.reporter || '' },
       },
     });
-    setAiDesignDialog({ open: false, req: null });
   };
 
   // 为需求创建统一的文档+原型分享链接，成功后弹出权限配置对话框。
@@ -979,7 +1003,13 @@ export const ProductWorkspace: React.FC = () => {
 
           <Card className="flex-1 overflow-hidden border-none claude-card flex flex-col relative">
             {topTab === 'kanban' && (
-              <KanbanWorkspace onNavigateToDesign={handleNavigateToDesign} />
+              <KanbanWorkspace
+                onNavigateToDesign={handleNavigateToDesign}
+                onAssign={openAssignDialog}
+                onReview={handleReviewRequirement}
+                onAiDesign={handleAIDesignFromKanban}
+                onAiDesignPrompt={handleAiDesignPrompt}
+              />
             )}
             {/* 设计视图 - 无选中需求：引导选择 */}
             {topTab === 'design' && !selectedWorkitemId && (
@@ -1015,22 +1045,45 @@ export const ProductWorkspace: React.FC = () => {
 
       {/* 需求无设计关联时，引导使用 AI 写 PRD */}
       <Dialog open={aiDesignDialog.open} onOpenChange={open => setAiDesignDialog(prev => ({ ...prev, open }))}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileText className="h-4 w-4 text-primary" />
-              当前需求尚未设计
-            </DialogTitle>
-            <DialogDescription>
-              需求「{aiDesignDialog.req?.title}」还没有关联设计文档或原型，是否让 AI 先写一份 PRD？
-            </DialogDescription>
+        <DialogContent className="sm:max-w-[440px] p-0 flex flex-col overflow-hidden">
+          <DialogHeader className="px-6 py-4 border-b border-border/50">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/20 flex items-center justify-center shrink-0">
+                {aiDesignDialog.type === 'prototype' ? (
+                  <LayoutTemplate className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                ) : (
+                  <FileText className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                )}
+              </div>
+              <div className="text-left">
+                <DialogTitle className="text-base font-semibold">
+                  {aiDesignDialog.type === 'prototype' ? '当前需求尚无原型' : aiDesignDialog.type === 'doc' ? '当前需求尚无文档' : '当前需求尚未设计'}
+                </DialogTitle>
+                <DialogDescription className="text-sm text-muted-foreground mt-0.5">
+                  需求「{aiDesignDialog.req?.title}」还没有关联{aiDesignDialog.type === 'prototype' ? '原型' : aiDesignDialog.type === 'doc' ? '产品文档' : '设计文档或原型'}
+                </DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAiDesignDialog({ open: false, req: null })}>
-              取消
+
+          <div className="px-6 py-4">
+            <p className="text-sm text-muted-foreground">
+              {aiDesignDialog.type === 'prototype'
+                ? '是否让 AI 生成产品原型？AI 将根据需求描述自动生成交互原型页面。'
+                : '是否让 AI 先生成产品文档？AI 将根据需求标题、描述以及空间上下文自动生成产品设计文档。'}
+            </p>
+          </div>
+
+          <DialogFooter className="px-6 py-3.5 border-t border-border/50 bg-muted/30 flex justify-between">
+            <Button
+              variant="outline"
+              onClick={() => setAiDesignDialog({ open: false, req: null })}
+            >
+              稍后再说
             </Button>
             <Button onClick={confirmAiDesign}>
-              AI 设计
+              <Sparkles className="h-4 w-4 mr-1.5" />
+              {aiDesignDialog.type === 'prototype' ? 'AI 生成原型' : 'AI 生成文档'}
             </Button>
           </DialogFooter>
         </DialogContent>

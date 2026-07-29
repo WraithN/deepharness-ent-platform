@@ -4,15 +4,16 @@ import {
   CalendarDays,
   ChevronDown,
   ChevronRight,
+  ClipboardCheck,
   FileText,
   Github,
-  GitBranch,
+  Info,
   LayoutTemplate,
-  ListTree,
   Loader2,
   PenLine,
   Split,
-  Layers,
+  Sparkles,
+  UserPlus,
 } from 'lucide-react';
 import { MarkdownView } from '@/components/chat/MarkdownView';
 import { toast } from 'sonner';
@@ -26,8 +27,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/contexts/AuthContext';
 import { workItemDocApi } from '@/lib/workitem-doc-api';
+import { workItemApi } from '@/lib/workitem-api';
 import { productSpaceApi, requirementShareApi, findPrototypeProductName } from '@/lib/productspace-api';
 import type { WorkItemDTO } from '@/lib/api-types';
 import {
@@ -153,14 +161,22 @@ interface KanbanCard {
  *
  * 数据来自 /v1/workitems?type=requirement，支持拖拽更新状态。
  * 点击卡片弹出居中详情弹窗。
- * 卡片底部提供6个快捷操作按钮：查看详情、查看设计、查看子需求、AI拆分子需求、AI原型设计、AI写文档。
+ * 卡片底部提供快捷操作按钮：分配、评审、AI 操作，右侧为文档/原型状态按钮。
  */
 interface KanbanWorkspaceProps {
-  /** 点击"需求文档"等关联资源时回调，跳转到需求设计视图 */
-  onNavigateToDesign?: (workitemId: string) => void;
+  /** 点击文档/原型状态按钮跳转到需求设计视图 */
+  onNavigateToDesign?: (workitemId: string, tab?: 'doc' | 'prototype') => void;
+  /** 分配需求给开发人员 */
+  onAssign?: (req: WorkItemDTO) => void;
+  /** 评审需求设计 */
+  onReview?: (req: WorkItemDTO) => void;
+  /** AI 设计引导（跳转到 /prd-write） */
+  onAiDesign?: (req: WorkItemDTO) => void;
+  /** 无设计时点击文档/原型按钮，弹出 AI 设计引导 */
+  onAiDesignPrompt?: (workitemId: string, type: 'doc' | 'prototype') => void;
 }
 
-export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDesign }) => {
+export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDesign, onAssign, onReview, onAiDesign, onAiDesignPrompt }) => {
   const navigate = useNavigate();
   const { membership } = useAuth();
   const workspaceId = membership?.workspaceId ?? '';
@@ -172,6 +188,14 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
   const [detailItem, setDetailItem] = useState<WorkItemDTO | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [productDesignLoading, setProductDesignLoading] = useState(false);
+
+  const [designInfoMap, setDesignInfoMap] = useState<Record<string, { hasDoc: boolean; hasPrototype: boolean }>>({});
+  // 无设计引导弹窗：分配/评审时发现需求无设计，询问是否先进行 AI 设计
+  const [noDesignDialog, setNoDesignDialog] = useState<{ open: boolean; req: WorkItemDTO | null }>({
+    open: false,
+    req: null,
+  });
+  const [designChecking, setDesignChecking] = useState(false);
   // 当前在看板卡片中展开显示子需求的需求 ID 集合（仅在收缩模式下生效）。
   const [expandedCardIds, setExpandedCardIds] = useState<Set<string>>(new Set());
   // 被数字徽章选中的子需求 ID 集合（展开模式下蓝框圈选）。
@@ -248,7 +272,17 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
       })
       .catch(() => toast.error('加载需求失败'))
       .finally(() => setLoading(false));
-  }, []);
+
+    if (workspaceId) {
+      workItemApi.listRequirementsWithDesignItems(workspaceId).then(designItems => {
+        const map: Record<string, { hasDoc: boolean; hasPrototype: boolean }> = {};
+        for (const d of designItems) {
+          map[d.workitemId] = { hasDoc: !!d.doc, hasPrototype: !!d.prototype };
+        }
+        setDesignInfoMap(map);
+      }).catch(() => {});
+    }
+  }, [workspaceId]);
 
   const openDetail = (id: string) => {
     const item = items.find(i => i.id === id);
@@ -298,6 +332,50 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
         quotedCard: { type: cardType, id: card.id, title: card.title, reporter: card.reporter },
       },
     });
+  };
+
+  /**
+   * 检查需求是否有设计（文档/原型关联），无设计时弹出引导对话框。
+   * 返回 true 表示有设计可以继续操作，false 表示无设计已弹出引导。
+   */
+  const checkDesignBeforeAction = async (card: KanbanCard): Promise<boolean> => {
+    setDesignChecking(true);
+    try {
+      const links = await workItemDocApi.list(card.id);
+      if (links.length > 0) return true;
+    } catch {
+      // 查询失败时保守处理，视为无设计
+    } finally {
+      setDesignChecking(false);
+    }
+    const req = items.find(i => i.id === card.id);
+    if (!req) return false;
+    setNoDesignDialog({ open: true, req });
+    return false;
+  };
+
+  /** 点击分配：先检查设计，有设计才打开分配对话框 */
+  const handleAssignClick = async (card: KanbanCard) => {
+    const hasDesign = await checkDesignBeforeAction(card);
+    if (!hasDesign) return;
+    const req = items.find(i => i.id === card.id);
+    if (req) onAssign?.(req);
+  };
+
+  /** 点击评审：先检查设计，有设计才打开评审对话框 */
+  const handleReviewClick = async (card: KanbanCard) => {
+    const hasDesign = await checkDesignBeforeAction(card);
+    if (!hasDesign) return;
+    const req = items.find(i => i.id === card.id);
+    if (req) onReview?.(req);
+  };
+
+  /** 无设计弹窗确认：跳转到 AI 设计 */
+  const confirmNoDesignAiDesign = () => {
+    const { req } = noDesignDialog;
+    if (!req) return;
+    onAiDesign?.(req);
+    setNoDesignDialog({ open: false, req: null });
   };
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
@@ -371,15 +449,22 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
           draggable={!card.parentId}
           onDragStart={!card.parentId ? e => handleDragStart(e, card.id) : undefined}
           onClick={() => openDetail(card.id)}
-          className={`relative bg-card border border-border/50 rounded-xl pl-5 pr-3 py-3 cursor-pointer transition-all duration-200 active:cursor-grabbing hover:-translate-y-1 hover:shadow-lg dark:hover:shadow-black/30 ${
+          className={`relative bg-card border border-border/50 rounded-xl pl-5 pr-3 py-2.5 cursor-pointer transition-all duration-200 active:cursor-grabbing hover:-translate-y-1 hover:shadow-lg dark:hover:shadow-black/30 ${
             draggedCardId === card.id ? 'opacity-50 border-primary' : ''
           } ${isSelected ? 'ring-2 ring-blue-500 border-blue-500' : ''} ${isDoneCol ? 'opacity-75' : ''}`}
         >
           <span className={`absolute left-0 top-0 h-full w-1 rounded-l-xl ${PRIORITY_BAR_COLORS[card.priority] ?? DEFAULT_PRIORITY_BAR}`} />
           {/* 标题行：类型图标 + 展开按钮 + 标题 + 子需求数量 + 优先级标签 */}
-          <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="flex items-start justify-between gap-2 mb-1.5">
             <div className="flex items-start gap-1.5 min-w-0 flex-1">
-              <TypeIcon type={card.type} parentId={card.parentId} />
+              <button
+                type="button"
+                className="shrink-0 mt-0.5"
+                onClick={e => { e.stopPropagation(); openDetail(card.id); }}
+                title="查看详情"
+              >
+                <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground transition-colors" />
+              </button>
               {isCollapseMode && (
                 <button
                   type="button"
@@ -414,9 +499,9 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
             </span>
           </div>
           {/* 信息行：负责人 + 创建日期 */}
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-muted-foreground truncate">{card.owner || '未分配'}</p>
-            <p className="text-xs text-muted-foreground/80 flex items-center gap-1 shrink-0">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-1.5 mb-1.5">
+            <p className="text-xs text-muted-foreground">{card.owner || '未分配'}</p>
+            <p className="text-xs text-muted-foreground/80 flex items-center gap-1 shrink-0 ml-auto">
               <CalendarDays className="h-3 w-3" />
               {card.createdAt}
             </p>
@@ -424,26 +509,68 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
           {/* 快捷操作按钮：仅顶层父需求展示，阻止冒泡以免触发卡片点击 */}
           {!card.parentId && (
             <div
-              className="flex items-center gap-0.5 pt-2 border-t border-border/30"
+              className="flex items-center gap-0.5 pt-1.5 border-t border-border/30"
               onClick={e => e.stopPropagation()}
             >
-              <CardActionBtn icon={<FileText className="h-3.5 w-3.5" />} title="查看详情" onClick={() => openDetail(card.id)} />
-              <CardActionBtn icon={<Layers className="h-3.5 w-3.5" />} title="查看设计" onClick={() => onNavigateToDesign?.(card.id)} />
               <CardActionBtn
-                icon={<ListTree className="h-3.5 w-3.5" />}
-                title={hasChildren ? (isExpanded ? '收起子需求' : '展开子需求') : '查看子需求'}
-                onClick={() => toggleChildren(card)}
+                icon={<UserPlus className="h-3.5 w-3.5" />}
+                title="分配人员"
+                onClick={() => handleAssignClick(card)}
               />
-              <div className="w-px h-4 bg-border/40 mx-0.5 shrink-0" />
               <CardActionBtn
-                icon={<Split className="h-3.5 w-3.5" />}
-                title="AI拆分子需求"
-                ai
-                disabled={!canSplitMore(cards, card.id)}
-                onClick={() => goToChat(card, AI_COMMANDS.split)}
+                icon={<ClipboardCheck className="h-3.5 w-3.5" />}
+                title="评审设计"
+                onClick={() => handleReviewClick(card)}
               />
-              <CardActionBtn icon={<LayoutTemplate className="h-3.5 w-3.5" />} title="AI原型设计" ai onClick={() => goToChat(card, AI_COMMANDS.prototype)} />
-              <CardActionBtn icon={<PenLine className="h-3.5 w-3.5" />} title="AI写文档" ai onClick={() => goToChat(card, AI_COMMANDS.document)} />
+              {/* AI 操作下拉菜单 */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="h-7 w-7 flex items-center justify-center rounded-md transition-colors shrink-0 text-primary hover:bg-primary/10 hover:text-primary/80"
+                    title="AI 操作"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" onClick={e => e.stopPropagation()}>
+                  <DropdownMenuItem onClick={() => goToChat(card, AI_COMMANDS.split)} disabled={!canSplitMore(cards, card.id)}>
+                    <Split className="h-4 w-4 mr-2" />
+                    AI 拆分子需求
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => goToChat(card, AI_COMMANDS.prototype)}>
+                    <LayoutTemplate className="h-4 w-4 mr-2" />
+                    AI 原型设计
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => goToChat(card, AI_COMMANDS.document)}>
+                    <PenLine className="h-4 w-4 mr-2" />
+                    AI 写文档
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {/* 空白占位，将文档/原型按钮推到最右 */}
+              <div className="flex-1" />
+              <DesignStatusBtn
+                hasDesign={designInfoMap[card.id]?.hasDoc ?? false}
+                type="doc"
+                onClick={() => {
+                  if (designInfoMap[card.id]?.hasDoc) {
+                    onNavigateToDesign?.(card.id, 'doc');
+                  } else {
+                    onAiDesignPrompt?.(card.id, 'doc');
+                  }
+                }}
+              />
+              <DesignStatusBtn
+                hasDesign={designInfoMap[card.id]?.hasPrototype ?? false}
+                type="prototype"
+                onClick={() => {
+                  if (designInfoMap[card.id]?.hasPrototype) {
+                    onNavigateToDesign?.(card.id, 'prototype');
+                  } else {
+                    onAiDesignPrompt?.(card.id, 'prototype');
+                  }
+                }}
+              />
             </div>
           )}
         </div>
@@ -480,7 +607,7 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5 flex-1 min-h-0 overflow-y-auto p-5 pt-2">
+        <div className="flex gap-4 flex-1 min-h-0 overflow-x-auto overflow-y-hidden p-5 pt-2 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
           {STATUSES.map(status => {
             // 展开模式下列中展示所有需求；收缩模式下列中只展示顶层需求，子需求折叠在父需求卡片内部。
             const columnCards = cards.filter(c => c.status === status && (viewMode === 'expand' || !c.parentId));
@@ -488,7 +615,7 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
             return (
               <div
                 key={status}
-                className="flex flex-col min-w-0"
+                className="flex flex-col w-[280px] shrink-0"
                 onDragOver={handleDragOver}
                 onDrop={e => handleDrop(e, status)}
               >
@@ -498,7 +625,7 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
                     {columnCards.length}
                   </span>
                 </div>
-                <div className="flex flex-col gap-3 flex-1 overflow-y-auto pr-1 min-h-[150px]">
+                <div className="flex flex-col gap-2 flex-1 overflow-y-auto pr-1 min-h-[150px]">
                   {columnCards.map(card => renderCard(card))}
                   {columnCards.length === 0 && (
                     <div className="flex items-center justify-center py-8 text-xs text-muted-foreground opacity-60 border border-dashed border-border/40 rounded-xl">
@@ -519,7 +646,7 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
               <DialogHeader className="px-6 py-5 border-b border-border/50">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                    <FileText className="h-4 w-4 text-primary" />
+                    <Info className="h-4 w-4 text-primary" />
                   </div>
                   <div className="text-left">
                     <DialogTitle className="text-lg font-semibold">需求详情</DialogTitle>
@@ -590,32 +717,47 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
           )}
         </DialogContent>
       </Dialog>
+
+      {/* 无设计引导弹窗：分配/评审时发现需求无设计，引导用户先进行 AI 设计 */}
+      <Dialog open={noDesignDialog.open} onOpenChange={(open) => setNoDesignDialog(prev => ({ ...prev, open }))}>
+        <DialogContent className="sm:max-w-[440px] p-0 flex flex-col overflow-hidden">
+          <DialogHeader className="px-6 py-4 border-b border-border/50">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/20 flex items-center justify-center shrink-0">
+                <FileText className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div className="text-left">
+                <DialogTitle className="text-base font-semibold">该需求尚无设计文档</DialogTitle>
+                <DialogDescription className="text-sm text-muted-foreground mt-0.5">
+                  该需求还没有对应的产品设计（PRD/原型），请先通过 AI 生成设计后再操作。
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="px-6 py-4">
+            <p className="text-sm text-muted-foreground">
+              是否让 AI 先生成产品设计文档？AI 将根据需求标题、描述以及空间上下文自动生成产品设计文档。
+            </p>
+          </div>
+
+          <DialogFooter className="px-6 py-3.5 border-t border-border/50 bg-muted/30 flex justify-between">
+            <Button
+              variant="outline"
+              onClick={() => setNoDesignDialog({ open: false, req: null })}
+            >
+              稍后再说
+            </Button>
+            <Button onClick={confirmNoDesignAiDesign}>
+              <Sparkles className="h-4 w-4 mr-1.5" />
+              AI 生成文档
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };
-
-/** 类型图标：需求用 FileText，子需求用 GitBranch，其他类型用对应图标 */
-function TypeIcon({ type, parentId }: { type: string; parentId?: string }) {
-  if (parentId) {
-    return (
-      <span title="子需求">
-        <GitBranch className="h-3.5 w-3.5 shrink-0 mt-0.5 text-purple-500" />
-      </span>
-    );
-  }
-  if (type === 'defect') {
-    return (
-      <span title="缺陷">
-        <FileText className="h-3.5 w-3.5 shrink-0 mt-0.5 text-red-500" />
-      </span>
-    );
-  }
-  return (
-    <span title="需求">
-      <FileText className="h-3.5 w-3.5 shrink-0 mt-0.5 text-blue-500" />
-    </span>
-  );
-}
 
 /** 卡片快捷操作按钮 */
 function CardActionBtn({
@@ -645,6 +787,36 @@ function CardActionBtn({
       title={disabled ? `${title}（已达最大层级）` : title}
     >
       {icon}
+    </button>
+  );
+}
+
+/** 设计状态按钮（文档/原型），有设计时彩色可跳转，无设计时灰色可触发 AI 引导 */
+function DesignStatusBtn({
+  hasDesign,
+  type,
+  onClick,
+}: {
+  hasDesign: boolean;
+  type: 'doc' | 'prototype';
+  onClick: () => void;
+}) {
+  const isDoc = type === 'doc';
+  const activeClass = isDoc
+    ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:hover:bg-emerald-900/50'
+    : 'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:hover:bg-purple-900/50';
+  const mutedClass = 'bg-muted/50 text-muted-foreground/60 hover:bg-muted hover:text-muted-foreground';
+
+  return (
+    <button
+      className={`h-6 shrink-0 inline-flex items-center gap-0.5 px-1.5 rounded text-[10px] font-medium transition-colors ${
+        hasDesign ? activeClass : mutedClass
+      }`}
+      onClick={onClick}
+      title={hasDesign ? (isDoc ? '查看产品文档' : '查看产品原型') : (isDoc ? '暂无文档，点击生成' : '暂无原型，点击生成')}
+    >
+      {isDoc ? <FileText className="h-2.5 w-2.5" /> : <LayoutTemplate className="h-2.5 w-2.5" />}
+      {isDoc ? '文档' : '原型'}
     </button>
   );
 }

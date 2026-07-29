@@ -15,9 +15,11 @@ import {
   Palette,
   Sun,
   Moon,
-  LogOut
+  LogOut,
+  Workflow
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { NotificationCenter } from '@/components/NotificationCenter';
 import { useTheme } from 'next-themes';
 import {
   Dialog,
@@ -63,6 +65,7 @@ const globalNavItems: NavItem[] = [
 const tenantNavItems: NavItem[] = [
   { path: '/chat', label: '智能会话', icon: MessageCircle },
   { path: '/personal-space', label: '研发空间', icon: Code2, perm: 'canViewCode' },
+  { path: '/personal/flow', label: '流程追踪', icon: Workflow },
   { path: '/dashboard', label: '数据大盘', icon: LayoutDashboard, perm: 'canViewDashboard' },
   // 虾班智守功能暂时屏蔽，侧边栏不展示。
   { path: '/settings', label: '空间设置', icon: Settings, perm: 'canViewSettings' },
@@ -381,6 +384,8 @@ export const Layout: React.FC = () => {
                 <span className="sr-only">Toggle theme</span>
               </Button>
 
+              <NotificationCenter />
+
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" className="hidden md:flex w-44 justify-between">
@@ -433,6 +438,7 @@ export const Layout: React.FC = () => {
                 {location.pathname === '/market/prompts' && '提示词市场'}
                 {location.pathname === '/chat' && '智能会话'}
                 {location.pathname === '/personal-space' && codeSpaceLabel}
+                {location.pathname === '/personal/flow' && '流程追踪'}
                 {location.pathname === '/dashboard' && '数据大盘'}
                 {location.pathname.startsWith('/personal-assistant') && '虾班智守'}
                 {location.pathname === '/settings' && '空间设置'}
@@ -443,6 +449,7 @@ export const Layout: React.FC = () => {
                 {location.pathname === '/market/prompts' && '发现和使用团队沉淀的优质提示词'}
                 {location.pathname === '/chat' && 'AI 驱动的多轮对话与问题解决辅助'}
                 {location.pathname === '/personal-space' && '按角色组织的个人工作台'}
+                {location.pathname === '/personal/flow' && 'AI 开发流程的阶段追踪与看板视图'}
                 {location.pathname === '/dashboard' && '查看团队在当前工作空间的统计数据与研发效率'}
                 {location.pathname.startsWith('/personal-assistant') && '代码守护与自动审查助手'}
                 {location.pathname === '/settings' && '管理当前工作空间的成员与研发规范等配置'}

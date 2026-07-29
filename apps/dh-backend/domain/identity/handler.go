@@ -149,6 +149,34 @@ func RequireSuperAdmin(w http.ResponseWriter, r *http.Request) bool {
 	return requireSuperAdmin(w, r)
 }
 
+// requireTenantOrSuperAdmin 校验当前请求用户是否有权操作指定租户的资源。
+// 超级管理员可操作任意租户；租户管理员仅可操作自己所属的租户。
+// tenantID 参数为 URL 中的租户 ID。
+func requireTenantOrSuperAdmin(w http.ResponseWriter, r *http.Request, tenantID string) bool {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		return false
+	}
+	if defaultUserService == nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "user service not initialized")
+		return false
+	}
+	currentUser, err := defaultUserService.GetByID(userID)
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "failed to authenticate user")
+		return false
+	}
+	if currentUser.PlatformRole == identity.PlatformRoleSuperAdmin {
+		return true
+	}
+	if currentUser.PlatformRole == identity.PlatformRoleTenantAdmin && currentUser.TenantID == tenantID {
+		return true
+	}
+	handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or super admin required")
+	return false
+}
+
 // IsSuperAdmin 判断当前请求用户是否为超级管理员，不写入响应。
 func IsSuperAdmin(r *http.Request) bool {
 	userID, ok := middleware.UserIDFromContext(r.Context())
