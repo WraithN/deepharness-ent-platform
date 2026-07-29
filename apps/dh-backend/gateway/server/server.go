@@ -464,8 +464,10 @@ func initDevReviewOrchestrator(db *sql.DB, cfg config.Config, workItemSvc workit
 	notification.SetActionCallback(func(notificationID, userID, action string, data map[string]any) {
 		if action == "approve" {
 			workitemID, _ := data["workitemId"].(string)
+			repositoryID, _ := data["repositoryId"].(string)
+			projectName, _ := data["projectName"].(string)
 			if workitemID != "" {
-				orch.OnApproveAIDev(context.Background(), notificationID, userID, workitemID)
+				orch.OnApproveAIDev(context.Background(), notificationID, userID, workitemID, repositoryID, projectName)
 			}
 		}
 	})

@@ -129,6 +129,14 @@ func Action(w http.ResponseWriter, r *http.Request) {
 		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
 		return
 	}
+	// 将研发选择的仓库/工程名注入 data，供编排层使用
+	if req.Action == "approve" && (req.RepositoryID != "" || req.ProjectName != "") {
+		if updated.Data == nil {
+			updated.Data = map[string]any{}
+		}
+		updated.Data["repositoryId"] = req.RepositoryID
+		updated.Data["projectName"] = req.ProjectName
+	}
 	if onAction != nil && req.Action == "approve" {
 		userID, _ := middleware.UserIDFromContext(r.Context())
 		go onAction(id, userID, req.Action, updated.Data)

@@ -100,7 +100,7 @@ func (o *DevReviewOrchestrator) OnWorkitemAssigned(ctx context.Context, workitem
 }
 
 // OnApproveAIDev 研发批准 AI 开发：启动 /code -> /review 自动化流程
-func (o *DevReviewOrchestrator) OnApproveAIDev(ctx context.Context, notificationID string, userID string, workitemID string) {
+func (o *DevReviewOrchestrator) OnApproveAIDev(ctx context.Context, notificationID string, userID string, workitemID string, repositoryID string, projectName string) {
 	item, err := o.workItemSvc.GetWorkItem(workitemID)
 	if err != nil {
 		log.Printf("[Orchestrator] get workitem %s failed: %v", workitemID, err)
@@ -122,11 +122,11 @@ func (o *DevReviewOrchestrator) OnApproveAIDev(ctx context.Context, notification
 		},
 	})
 
-	go o.runDevReviewFlow(ctx, userID, workitemID, workspaceID, item.TenantID, item.Title, item.Description)
+	go o.runDevReviewFlow(ctx, userID, workitemID, workspaceID, item.TenantID, item.Title, item.Description, repositoryID, projectName)
 }
 
 // runDevReviewFlow 执行 /code -> /review 自动化流程
-func (o *DevReviewOrchestrator) runDevReviewFlow(ctx context.Context, userID string, workitemID string, workspaceID string, tenantID string, workitemTitle string, workitemDesc string) {
+func (o *DevReviewOrchestrator) runDevReviewFlow(ctx context.Context, userID string, workitemID string, workspaceID string, tenantID string, workitemTitle string, workitemDesc string, repositoryID string, projectName string) {
 	log.Printf("[Orchestrator] starting dev-review flow for workitem %s, user %s, workspace %s", workitemID, userID, workspaceID)
 
 	workspacePath := fmt.Sprintf("%s/%s/%s", o.workspaceRoot, userID, workspaceID)
@@ -166,7 +166,7 @@ func (o *DevReviewOrchestrator) runDevReviewFlow(ctx context.Context, userID str
 	}
 
 	// 构造 /code 提示词
-	codePrompt := o.buildCodePrompt(workitemTitle, workitemDesc, workspacePath)
+	codePrompt := o.buildCodePrompt(workitemTitle, workitemDesc, workspacePath, repositoryID, projectName)
 	log.Printf("[Orchestrator] /code prompt length=%d for workitem %s", len(codePrompt), workitemID)
 
 	updateProcessStage(processobject.StageDevelopment, processobject.StageStatusInProgress)
@@ -314,12 +314,16 @@ func (o *DevReviewOrchestrator) notifyFailed(userID string, workspaceID string, 
 }
 
 // buildCodePrompt 构造 /code 提示词
-func (o *DevReviewOrchestrator) buildCodePrompt(title string, description string, workspacePath string) string {
+func (o *DevReviewOrchestrator) buildCodePrompt(title string, description string, workspacePath string, repositoryID string, projectName string) string {
 	var sb strings.Builder
 	sb.WriteString("【语言要求】\n你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。\n\n")
 	sb.WriteString("你是一位资深工程师。请根据以下需求完成开发任务。\n\n")
 	sb.WriteString("【工程目录】\n")
-	sb.WriteString(fmt.Sprintf("请在 %s/projects/ 目录下进行开发。如果已有对应工程目录请在其下修改，否则创建新工程。\n\n", workspacePath))
+	if projectName != "" {
+		sb.WriteString(fmt.Sprintf("请在 %s/projects/%s 目录下进行开发。如果已有对应工程目录请在其下修改，否则创建新工程。\n\n", workspacePath, projectName))
+	} else {
+		sb.WriteString(fmt.Sprintf("请在 %s/projects/ 目录下进行开发。如果已有对应工程目录请在其下修改，否则创建新工程。\n\n", workspacePath))
+	}
 	sb.WriteString("【代码输出要求】\n1. 遵循工程现有的代码风格和目录结构。\n2. 代码需包含必要的错误处理和注释。\n3. 完成后使用 [[PROJECT:工程完整路径]] 标记输出。\n\n")
 	sb.WriteString("【需求描述】\n")
 	sb.WriteString(fmt.Sprintf("标题: %s\n", title))

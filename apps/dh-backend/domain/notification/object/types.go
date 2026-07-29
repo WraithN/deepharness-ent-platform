@@ -58,5 +58,7 @@ type CreateNotificationRequest struct {
 
 // ActionNotificationRequest 通知操作请求
 type ActionNotificationRequest struct {
-	Action string `json:"action"` // approve / reject
+	Action       string `json:"action"`        // approve / reject
+	RepositoryID string `json:"repositoryId"`  // 选择的 git 仓库 ID（可选）
+	ProjectName  string `json:"projectName"`   // 自定义工程名（无仓库时填写）
 }
