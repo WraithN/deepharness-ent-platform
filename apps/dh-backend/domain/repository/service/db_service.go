@@ -1113,12 +1113,8 @@ func (s *DBRepositoryService) GetFileTree(workspaceID, repoID, branch string) ([
 		return nil, err
 	}
 
-	if repo.LocalPath == "" {
-		return nil, fmt.Errorf("repository not cloned yet")
-	}
-
-	if _, err := os.Stat(repo.LocalPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("repository local path not found")
+	if err := s.ensureLocalPath(repo); err != nil {
+		return nil, err
 	}
 
 	// Load .gitignore patterns
@@ -1321,12 +1317,8 @@ func (s *DBRepositoryService) GetFileContent(workspaceID, repoID, branch, path s
 		return nil, err
 	}
 
-	if repo.LocalPath == "" {
-		return nil, fmt.Errorf("repository not cloned yet")
-	}
-
-	if _, err := os.Stat(repo.LocalPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("repository local path not found")
+	if err := s.ensureLocalPath(repo); err != nil {
+		return nil, err
 	}
 
 	// 优先读取本地工作区文件（以便显示编辑后的内容）
@@ -1430,7 +1422,12 @@ func (s *DBRepositoryService) fetchBranchesFromGit(workspaceID, repoID string) (
 	}
 
 	if _, err := os.Stat(repo.LocalPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("repository local path not found")
+		// DB 显示已克隆但本地目录不存在（可能被清理或磁盘迁移），
+		// 标记为 pending 并触发异步重新克隆，返回默认分支作为降级。
+		log.Printf("[Repository] local path missing for repo %s (path=%s), triggering re-clone", repoID, repo.LocalPath)
+		s.updateStatus(repo.ID, repository.CloneStatusPending, "local path missing, re-cloning")
+		go s.syncRepository(repo, repo.SSHKey)
+		return s.fallbackBranches(repo), nil
 	}
 
 	// Fetch latest from remote first
@@ -1488,6 +1485,32 @@ func (s *DBRepositoryService) fetchBranchesFromGit(workspaceID, repoID string) (
 	return branches, nil
 }
 
+// fallbackBranches 在本地仓库不可用时返回降级分支列表（仅默认分支）。
+func (s *DBRepositoryService) fallbackBranches(repo repository.Repository) []BranchInfo {
+	branchName := repo.DefaultBranch
+	if branchName == "" {
+		branchName = "main"
+	}
+	return []BranchInfo{
+		{Name: branchName, IsCurrent: true},
+	}
+}
+
+// ensureLocalPath 检查仓库本地目录是否存在。若不存在则触发异步重新克隆，
+// 返回 error 表示目录当前不可用。调用方应根据返回的 error 决定降级策略。
+func (s *DBRepositoryService) ensureLocalPath(repo repository.Repository) error {
+	if repo.LocalPath == "" {
+		return fmt.Errorf("repository not cloned yet")
+	}
+	if _, err := os.Stat(repo.LocalPath); os.IsNotExist(err) {
+		log.Printf("[Repository] local path missing for repo %s (path=%s), triggering re-clone", repo.ID, repo.LocalPath)
+		s.updateStatus(repo.ID, repository.CloneStatusPending, "local path missing, re-cloning")
+		go s.syncRepository(repo, repo.SSHKey)
+		return fmt.Errorf("repository local path missing, re-cloning in background")
+	}
+	return nil
+}
+
 // SwitchBranch 切换分支并拉取最新代码。
 func (s *DBRepositoryService) SwitchBranch(workspaceID, repoID, branchName string) error {
 	repo, err := s.Get(workspaceID, repoID)
@@ -1495,12 +1518,8 @@ func (s *DBRepositoryService) SwitchBranch(workspaceID, repoID, branchName strin
 		return err
 	}
 
-	if repo.LocalPath == "" {
-		return fmt.Errorf("repository not cloned yet")
-	}
-
-	if _, err := os.Stat(repo.LocalPath); os.IsNotExist(err) {
-		return fmt.Errorf("repository local path not found")
+	if err := s.ensureLocalPath(repo); err != nil {
+		return err
 	}
 
 	// Fetch latest from remote
@@ -1550,12 +1569,8 @@ func (s *DBRepositoryService) SaveFileContent(workspaceID, repoID, path, content
 		return err
 	}
 
-	if repo.LocalPath == "" {
-		return fmt.Errorf("repository not cloned yet")
-	}
-
-	if _, err := os.Stat(repo.LocalPath); os.IsNotExist(err) {
-		return fmt.Errorf("repository local path not found")
+	if err := s.ensureLocalPath(repo); err != nil {
+		return err
 	}
 
 	fullPath := filepath.Join(repo.LocalPath, path)
@@ -1579,12 +1594,8 @@ func (s *DBRepositoryService) GitCommit(workspaceID, repoID, message string) (st
 		return "", err
 	}
 
-	if repo.LocalPath == "" {
-		return "", fmt.Errorf("repository not cloned yet")
-	}
-
-	if _, err := os.Stat(repo.LocalPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("repository local path not found")
+	if err := s.ensureLocalPath(repo); err != nil {
+		return "", err
 	}
 
 	// Add all changes
@@ -1621,12 +1632,8 @@ func (s *DBRepositoryService) GitStatus(workspaceID, repoID string) (string, err
 		return "", err
 	}
 
-	if repo.LocalPath == "" {
-		return "", fmt.Errorf("repository not cloned yet")
-	}
-
-	if _, err := os.Stat(repo.LocalPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("repository local path not found")
+	if err := s.ensureLocalPath(repo); err != nil {
+		return "", err
 	}
 
 	status, err := gitExec(repo.LocalPath, "status", "--porcelain")
