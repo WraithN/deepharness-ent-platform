@@ -91,7 +91,6 @@ func New(cfg config.Config) http.Handler {
 	initProcessService()
 	initDevReviewOrchestrator(db, cfg, workItemSvc, notificationSvc, sessions, messages)
 	workspaceService := initWorkspaceService(db, cfg.WorkspaceRoot, userService, cfg.CodingAgents)
-	notification.SetWorkspaceService(workspaceService)
 	initProductSpaceService(db, cfg, workspaceService)
 	initAgentConfigService(db, cfg.CodingAgents, cfg.CodingAgentModels, cfg.CodingAgentModelVendors)
 	initWorkspacePromptService(db)

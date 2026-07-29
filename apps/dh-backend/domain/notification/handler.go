@@ -6,13 +6,11 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/notification/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/notification/service"
-	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 )
 
 var defaultNotificationService service.NotificationService
-var workspaceService workspaceservice.WorkspaceService
 
 // ActionCallback 通知操作回调，由编排层注入
 type ActionCallback func(notificationID string, userID string, action string, data map[string]any)
@@ -32,11 +30,6 @@ func Init(svc service.NotificationService) {
 // GetService 获取通知服务实例（供编排层调用）
 func GetService() service.NotificationService {
 	return defaultNotificationService
-}
-
-// SetWorkspaceService 注入工作空间服务（用于AI开发工程绑定检查）
-func SetWorkspaceService(svc workspaceservice.WorkspaceService) {
-	workspaceService = svc
 }
 
 func notifyNotInitialized(w http.ResponseWriter) {
@@ -131,13 +124,6 @@ func Action(w http.ResponseWriter, r *http.Request) {
 		status = object.ActionRejected
 	}
 
-	if req.Action == "approve" {
-		if err := checkProjectBinding(id); err != nil {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, "请先在研发空间中绑定AI开发工程，再进行批准操作")
-			return
-		}
-	}
-
 	updated, err := defaultNotificationService.UpdateActionStatus(id, status)
 	if err != nil {
 		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
@@ -148,20 +134,4 @@ func Action(w http.ResponseWriter, r *http.Request) {
 		go onAction(id, userID, req.Action, updated.Data)
 	}
 	json.NewEncoder(w).Encode(updated)
-}
-
-// checkProjectBinding 检查工作空间是否已绑定AI开发工程
-func checkProjectBinding(notificationID string) error {
-	notif, err := defaultNotificationService.GetByID(notificationID)
-	if err != nil {
-		return err
-	}
-	if workspaceService == nil {
-		return nil
-	}
-	_, err = workspaceService.GetWorkitemProject(notif.WorkspaceID)
-	if err != nil {
-		return err
-	}
-	return nil
 }

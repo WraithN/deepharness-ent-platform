@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, Zap, FileCheck, AlertCircle, Rocket, Loader2, Link2, Wand2 } from 'lucide-react';
+import { Bell, Zap, FileCheck, AlertCircle, Rocket, Loader2, LogIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -15,20 +15,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { api } from '@/lib/api';
 import { workspaceApi } from '@/lib/workspace-api';
 import { useAuth } from '@/contexts/AuthContext';
+import { SPACE_ROLE, SUB_ROLE } from '@/lib/role-constants';
 import { toast } from 'sonner';
-import type { WorkitemPlatform } from '@/types';
 
 /** 通知数据类型 */
 interface NotificationItem {
@@ -59,34 +50,20 @@ const NOTIFICATION_ICONS: Record<string, React.ElementType> = {
   ai_dev_failed: AlertCircle,
 };
 
-/** 需求管理平台接口失败时的回退列表，保证下拉框始终可用 */
-const DEFAULT_WORKITEM_PLATFORMS: WorkitemPlatform[] = [
-  { key: 'meego', name: 'Meego', needsProjectId: true, projectIdPlaceholder: '输入 Meego 项目 ID...' },
-  { key: 'jira', name: 'Jira', needsProjectId: true, projectIdPlaceholder: '输入 Jira 项目 Key（如 PROJ）...' },
-  { key: 'pingcode', name: 'PingCode', needsProjectId: true, projectIdPlaceholder: '输入 PingCode 项目 ID...' },
-];
-
 export const NotificationCenter: React.FC = () => {
   const navigate = useNavigate();
-  const { membership } = useAuth();
+  const { user, membership, workspaces, refreshWorkspaces, switchWorkspace } = useAuth();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState<string>('');
 
   const unreadCount = notifications.filter(n => !n.read).length;
-  const workspaceId = membership?.workspaceId ?? '';
 
-  // ── 项目绑定对话框状态 ──
-  const [showBindDialog, setShowBindDialog] = useState(false);
+  // ── 加入空间对话框状态 ──
+  const [showJoinDialog, setShowJoinDialog] = useState(false);
   const [pendingApproveId, setPendingApproveId] = useState<string | null>(null);
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string>('');
-  const [platforms, setPlatforms] = useState<WorkitemPlatform[]>(DEFAULT_WORKITEM_PLATFORMS);
-  const [selectedPlatform, setSelectedPlatform] = useState('');
-  const [projectIdInput, setProjectIdInput] = useState('');
-  const [bindingLoading, setBindingLoading] = useState(false);
-
-  const effectivePlatforms = platforms.length > 0 ? platforms : DEFAULT_WORKITEM_PLATFORMS;
-  const selectedPlatformMeta = effectivePlatforms.find(p => p.key === selectedPlatform);
+  const [pendingWorkspaceName, setPendingWorkspaceName] = useState<string>('');
+  const [joining, setJoining] = useState(false);
 
   const fetchNotifications = useCallback(async () => {
     try {
@@ -103,24 +80,27 @@ export const NotificationCenter: React.FC = () => {
     return () => clearInterval(timer);
   }, [fetchNotifications]);
 
+  /** 检查用户是否已是通知来源空间的成员 */
+  const isMemberOfWorkspace = (wsId: string) => workspaces.some(w => w.workspaceId === wsId);
+
   const handleApprove = async (id: string, notifWorkspaceId: string) => {
-    // 使用通知来源空间检查项目绑定（而非研发当前所在空间）
-    try {
-      const wp = await workspaceApi.getWorkitemProject(notifWorkspaceId);
-      if (!wp.platform || !wp.externalKey) {
-        setPendingApproveId(id);
-        setPendingWorkspaceId(notifWorkspaceId);
-        openBindDialog();
-        return;
+    // 如果已是该空间成员，直接批准
+    if (isMemberOfWorkspace(notifWorkspaceId)) {
+      // 若当前不在该空间，先切换过去
+      if (membership?.workspaceId !== notifWorkspaceId) {
+        switchWorkspace(notifWorkspaceId);
       }
-    } catch {
-      setPendingApproveId(id);
-      setPendingWorkspaceId(notifWorkspaceId);
-      openBindDialog();
+      doApprove(id);
       return;
     }
 
-    doApprove(id);
+    // 不是该空间成员 -> 弹出加入空间对话框
+    const notif = notifications.find(n => n.id === id);
+    const wsName = notif?.data?.['workspaceName'] as string || notifWorkspaceId;
+    setPendingApproveId(id);
+    setPendingWorkspaceId(notifWorkspaceId);
+    setPendingWorkspaceName(wsName);
+    setShowJoinDialog(true);
   };
 
   const handleReject = async (id: string) => {
@@ -150,79 +130,27 @@ export const NotificationCenter: React.FC = () => {
     }
   };
 
-  /** 打开项目绑定对话框，同时预加载平台列表 */
-  const openBindDialog = async () => {
-    setShowBindDialog(true);
-    // 尝试从后端获取平台列表
+  /** 加入空间并批准 */
+  const handleJoinAndApprove = async () => {
+    if (!user?.id || !pendingWorkspaceId) return;
+    setJoining(true);
     try {
-      const list = await workspaceApi.listWorkitemPlatforms();
-      if (list && list.length > 0) {
-        setPlatforms(list);
-        setSelectedPlatform(list[0].key);
-      }
-    } catch {
-      // 保持 DEFAULT_WORKITEM_PLATFORMS 回退
-    }
-  };
-
-  /** 绑定项目工程后继续批准 */
-  const handleBindAndApprove = async () => {
-    if (!selectedPlatform) {
-      toast.error('请选择需求管理平台');
-      return;
-    }
-    if (selectedPlatformMeta?.needsProjectId && !projectIdInput.trim()) {
-      toast.error('请输入项目 ID');
-      return;
-    }
-
-    setBindingLoading(true);
-    try {
-      await workspaceApi.setWorkitemProject(pendingWorkspaceId, {
-        platform: selectedPlatform,
-        externalKey: projectIdInput.trim(),
-        name: selectedPlatformMeta?.name ?? selectedPlatform,
+      await workspaceApi.addMember(pendingWorkspaceId, {
+        userId: user.id,
+        role: SPACE_ROLE.MEMBER,
+        subRole: SUB_ROLE.DEVELOPER,
       });
-      toast.success('项目工程已绑定');
-      setShowBindDialog(false);
-
-      // 继续批准
+      await refreshWorkspaces();
+      switchWorkspace(pendingWorkspaceId);
+      toast.success(`已加入空间「${pendingWorkspaceName}」`);
+      setShowJoinDialog(false);
       if (pendingApproveId) {
         doApprove(pendingApproveId);
       }
     } catch {
-      toast.error('绑定失败，请重试');
+      toast.error('加入空间失败，请重试');
     } finally {
-      setBindingLoading(false);
-    }
-  };
-
-  /** 自动创建项目工程绑定并批准 */
-  const handleAutoCreateAndApprove = async () => {
-    const platform = effectivePlatforms[0];
-    if (!platform) {
-      toast.error('没有可用的需求管理平台');
-      return;
-    }
-    const autoProjectId = `auto-${pendingWorkspaceId}`;
-
-    setBindingLoading(true);
-    try {
-      await workspaceApi.setWorkitemProject(pendingWorkspaceId, {
-        platform: platform.key,
-        externalKey: autoProjectId,
-        name: platform.name,
-      });
-      toast.success('已自动创建并绑定工程');
-      setShowBindDialog(false);
-
-      if (pendingApproveId) {
-        doApprove(pendingApproveId);
-      }
-    } catch {
-      toast.error('自动创建失败，请重试');
-    } finally {
-      setBindingLoading(false);
+      setJoining(false);
     }
   };
 
@@ -354,87 +282,52 @@ export const NotificationCenter: React.FC = () => {
       </DropdownMenuContent>
     </DropdownMenu>
 
-    {/* ── 项目绑定对话框 ── */}
-    <Dialog open={showBindDialog} onOpenChange={setShowBindDialog}>
-      <DialogContent className="sm:max-w-[440px] p-0 flex flex-col overflow-hidden">
+    {/* ── 加入空间对话框 ── */}
+    <Dialog open={showJoinDialog} onOpenChange={setShowJoinDialog}>
+      <DialogContent className="sm:max-w-[400px] p-0 flex flex-col overflow-hidden">
         <DialogHeader className="px-6 py-4 border-b border-border/50">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Link2 className="h-4 w-4 text-primary" />
+              <LogIn className="h-4 w-4 text-primary" />
             </div>
             <div className="text-left">
-              <DialogTitle className="text-base font-semibold">绑定 AI 开发工程</DialogTitle>
+              <DialogTitle className="text-base font-semibold">加入工作空间</DialogTitle>
               <DialogDescription className="text-sm text-muted-foreground mt-0.5">
-                批准 AI 托管开发前，需绑定需求管理平台的项目工程
+                该需求属于其他工作空间，加入后即可进行 AI 开发
               </DialogDescription>
             </div>
           </div>
         </DialogHeader>
 
-        <div className="px-6 py-5 space-y-5">
-          <div className="space-y-2">
-            <Label htmlFor="bind-platform">需求管理平台</Label>
-            <Select value={selectedPlatform} onValueChange={(v) => { setSelectedPlatform(v); setProjectIdInput(''); }}>
-              <SelectTrigger id="bind-platform">
-                <SelectValue placeholder="选择平台" />
-              </SelectTrigger>
-              <SelectContent>
-                {effectivePlatforms.map(p => (
-                  <SelectItem key={p.key} value={p.key}>{p.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {selectedPlatformMeta?.needsProjectId && (
-            <div className="space-y-2">
-              <Label htmlFor="bind-project-id">项目 ID</Label>
-              <Input
-                id="bind-project-id"
-                placeholder={selectedPlatformMeta.projectIdPlaceholder || '输入项目 ID...'}
-                value={projectIdInput}
-                onChange={e => setProjectIdInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleBindAndApprove(); }}
-              />
-            </div>
-          )}
+        <div className="px-6 py-5">
+          <p className="text-sm text-muted-foreground">
+            需求所在空间：<span className="font-medium text-foreground">{pendingWorkspaceName}</span>
+          </p>
+          <p className="text-xs text-muted-foreground/70 mt-2">
+            加入后将以「开发人员」身份加入该空间，并自动切换到该空间进行开发。
+          </p>
         </div>
 
-        <DialogFooter className="px-6 py-3.5 border-t border-border/50 bg-muted/30 flex justify-between">
+        <DialogFooter className="px-6 py-3.5 border-t border-border/50 bg-muted/30 flex justify-end gap-2">
           <Button
             variant="outline"
-            onClick={() => setShowBindDialog(false)}
-            disabled={bindingLoading}
+            onClick={() => setShowJoinDialog(false)}
+            disabled={joining}
           >
             取消
           </Button>
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              onClick={handleAutoCreateAndApprove}
-              disabled={bindingLoading}
-              className="gap-1.5"
-            >
-              {bindingLoading ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Wand2 className="h-3.5 w-3.5" />
-              )}
-              自动创建
-            </Button>
-            <Button
-              onClick={handleBindAndApprove}
-              disabled={bindingLoading}
-              className="gap-1.5"
-            >
-              {bindingLoading ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Zap className="h-3.5 w-3.5" />
-              )}
-              绑定并批准
-            </Button>
-          </div>
+          <Button
+            onClick={handleJoinAndApprove}
+            disabled={joining}
+            className="gap-1.5"
+          >
+            {joining ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <LogIn className="h-3.5 w-3.5" />
+            )}
+            加入并批准
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
