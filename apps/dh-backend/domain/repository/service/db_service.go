@@ -1440,7 +1440,8 @@ func (s *DBRepositoryService) fetchBranchesFromGit(workspaceID, repoID string) (
 	currentBranch = strings.TrimSpace(currentBranch)
 
 	// List all local and remote branches
-	branchesOut, err := gitExec(repo.LocalPath, "branch", "-av", "--format=%(refname:short);%(objectname);%(committerdate:iso8601)")
+	// 使用逗号分隔，避免分号被 personal-stub 的 gitShellUnsafeChars 校验拒绝
+	branchesOut, err := gitExec(repo.LocalPath, "branch", "-av", "--format=%(refname:short),%(objectname),%(committerdate:iso8601)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list branches: %w", err)
 	}
@@ -1453,7 +1454,7 @@ func (s *DBRepositoryService) fetchBranchesFromGit(workspaceID, repoID string) (
 			continue
 		}
 
-		parts := strings.Split(line, ";")
+		parts := strings.Split(line, ",")
 		if len(parts) >= 2 {
 			branchName := parts[0]
 			// Skip HEAD references (origin/HEAD) and remote dir itself (origin)
