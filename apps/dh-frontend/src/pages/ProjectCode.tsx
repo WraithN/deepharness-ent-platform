@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -547,13 +547,30 @@ const DocGenButton: React.FC = () => {
 interface ReviewPanelProps {
   repoPath?: string;
   repoName?: string;
+  repoId?: string;
+  branch?: string;
 }
 
-const ReviewPanel: React.FC<ReviewPanelProps> = ({ repoPath, repoName }) => {
+const ReviewPanel: React.FC<ReviewPanelProps> = ({ repoPath, repoName, repoId, branch }) => {
+  const navigate = useNavigate();
   const [reports, setReports] = useState<ReviewReportSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedReport, setSelectedReport] = useState<ReviewReportSummary | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // 智能评审：跳转到智能会话，预填 /review 指令并预选当前工程
+  const handleSmartReview = () => {
+    if (!repoId || !repoName) {
+      toast.error('请先选择一个工程');
+      return;
+    }
+    navigate('/chat', {
+      state: {
+        initialInput: '/review ',
+        selectedRepos: [{ id: repoId, name: repoName }],
+      },
+    });
+  };
 
   // 加载 .review/ 目录下的历史评审报告
   useEffect(() => {
@@ -619,8 +636,12 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({ repoPath, repoName }) => {
           <ShieldCheck className="h-4 w-4 text-primary" />
           <span className="text-sm font-semibold">代码评审</span>
           {repoName && <span className="text-xs text-muted-foreground">· {repoName}</span>}
-          <span className="text-xs text-muted-foreground">({reports.length} 份报告)</span>
+          {branch && <span className="text-xs text-muted-foreground">· {branch}</span>}
         </div>
+        <Button size="sm" onClick={handleSmartReview} className="h-7 text-xs gap-1.5">
+          <Sparkles className="h-3.5 w-3.5" />
+          智能评审
+        </Button>
       </div>
       <ScrollArea className="flex-1 p-4">
         <div className="space-y-3">
@@ -634,7 +655,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({ repoPath, repoName }) => {
             <div className="text-center py-12 text-muted-foreground">
               <ShieldCheck className="h-10 w-10 mx-auto mb-3 opacity-20" />
               <p className="text-sm">暂无评审报告</p>
-              <p className="text-xs mt-1">使用 /review 指令进行代码评审后，报告将自动保存到此处</p>
+              <p className="text-xs mt-1">点击右上角"智能评审"按钮开始代码评审</p>
             </div>
           )}
 
@@ -1526,12 +1547,17 @@ export const ProjectCode: React.FC = () => {
           </div>
         )}
 
-        {viewMode === 'review' && (
-          <ReviewPanel
-            repoPath={reviewRepoPath || repositories.find(r => r.id === selectedRepoId)?.localPath}
-            repoName={repositories.find(r => r.id === selectedRepoId)?.name}
-          />
-        )}
+        {viewMode === 'review' && (() => {
+          const selectedRepo = repositories.find(r => r.id === selectedRepoId);
+          return (
+            <ReviewPanel
+              repoPath={reviewRepoPath || selectedRepo?.localPath}
+              repoName={selectedRepo?.name}
+              repoId={selectedRepoId}
+              branch={selectedBranch}
+            />
+          );
+        })()}
 
         {viewMode === 'doc' && (
           <div className="h-full flex flex-col">

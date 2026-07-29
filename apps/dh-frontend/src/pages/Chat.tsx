@@ -1064,6 +1064,7 @@ export const Chat: React.FC = () => {
   useEffect(() => {
     if (location.state?.initialInput) setInput(location.state.initialInput);
     if (location.state?.quotedCard) setQuotedCard(location.state.quotedCard);
+    if (location.state?.selectedRepos) setSelectedRepos(location.state.selectedRepos);
   }, [location.state]);
 
   // 从后端 API 加载工作项数据
@@ -2932,6 +2933,7 @@ export const Chat: React.FC = () => {
                   activeReqBreakdownData={reqBreakdownPreview}
                   onReqBreakdownSubmit={handleReqBreakdownSubmit}
                   onPrototypePreview={handlePrototypePreview}
+                  onReviewReportPreview={handleFilePreview}
                   onReviewFix={handleReviewFix}
                   requirementTitle={protoMakeRequirementTitle || quotedCard?.title}
                   workitemId={effectivePrototypeWorkitemId}

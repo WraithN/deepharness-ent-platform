@@ -75,6 +75,8 @@ interface AssistantMessageProps {
   activeReqBreakdownData?: RequirementBreakdownData | null;
   onReqBreakdownSubmit?: (items: RequirementItem[], options?: { jsonFilePath?: string }) => Promise<RequirementBreakdownSubmitResult>;
   onPrototypePreview?: (path: string) => void;
+  /** 评审报告预览回调：在左侧分栏展示评审报告。 */
+  onReviewReportPreview?: (reportPath: string) => void;
   /** 评审报告修复按钮回调：父组件用于设置 /code 指令并发送。 */
   onReviewFix?: (reportPath: string, projectName: string) => void;
   requirementTitle?: string;
@@ -83,7 +85,7 @@ interface AssistantMessageProps {
   requirements?: Array<{ id: string; title: string }>;
 }
 
-export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, runPhase, agentPluginKey, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview, onUserStoryPreview, activeUserStoryData, onReqBreakdownPreview, activeReqBreakdownData, onReqBreakdownSubmit, onPrototypePreview, onReviewFix, requirementTitle, workitemId, requirements }) => {
+export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, runPhase, agentPluginKey, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview, onUserStoryPreview, activeUserStoryData, onReqBreakdownPreview, activeReqBreakdownData, onReqBreakdownSubmit, onPrototypePreview, onReviewReportPreview, onReviewFix, requirementTitle, workitemId, requirements }) => {
   const thread = useThread();
   const content = Array.isArray(message.content) ? message.content : [];
   const [textExpanded, setTextExpanded] = useState(false);
@@ -366,6 +368,11 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
   // 解析 [[REVIEW_REPORT:json]] 标记，提取评审报告元数据。
   const reviewReportData = parseReviewReportFromText(allTextContent);
 
+  // 评审报告卡片出现时，抑制评审报告文件的 FileAttachmentCard，确保只展示一个卡片。
+  const nonReviewFileAttachments = reviewReportData
+    ? nonReqBreakdownFileAttachments.filter(path => path !== reviewReportData.reportPath)
+    : nonReqBreakdownFileAttachments;
+
   // 用户故事/需求拆分/评审报告卡片出现时，默认展开完整文本，避免"内容没有输出完整"的观感。
   useEffect(() => {
     if (hasUserStoryFromMarker || hasUserStoryFromLegacy || hasReqBreakdownFromMarker || hasReqBreakdownFromLegacy || reviewReportData) {
@@ -548,11 +555,11 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
             </div>
           )}
 
-          {/* 非原型文件附件卡片统一放在消息底部（有 user_story 或 req_breakdown 数据时隐藏，避免重复展示）。
+          {/* 非原型文件附件卡片统一放在消息底部（有 user_story / req_breakdown / review_report 数据时隐藏对应文件，避免重复展示）。
               生成完成后再展示。 */}
-          {!hasUserStory && nonReqBreakdownFileAttachments.length > 0 && !isRunning && (
+          {!hasUserStory && nonReviewFileAttachments.length > 0 && !isRunning && (
             <div className="px-3 pb-2 flex flex-wrap gap-2">
-              {nonReqBreakdownFileAttachments.map((path) => (
+              {nonReviewFileAttachments.map((path) => (
                 <FileAttachmentCard key={path} path={path} onPreview={onFilePreview} workitemId={resolvedWorkitemId} />
               ))}
             </div>
@@ -570,7 +577,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
 
           {/* 从 [[REVIEW_REPORT:json]] 标记自动检测到的评审报告卡片，生成完成后再展示。 */}
           {reviewReportData && !isRunning && (
-            <div className="px-3 py-2"><ReviewReportCard data={reviewReportData} onFix={onReviewFix} /></div>
+            <div className="px-3 py-2"><ReviewReportCard data={reviewReportData} onPreview={onReviewReportPreview} onFix={onReviewFix} /></div>
           )}
 
           {/* legacy data 部件（diff / task_list / tool_use / tool_result 等） */}
