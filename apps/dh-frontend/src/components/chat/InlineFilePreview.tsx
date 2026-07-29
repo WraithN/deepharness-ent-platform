@@ -193,6 +193,7 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
       await api.post<WorkItemDTO>('/v1/workitems', {
         tenantId: currentUser?.tenantId || '',
         projectId: 'p1',
+        workspaceId,
         type: 'requirement',
         title: displayTitle,
         description: fileContent?.content || '',

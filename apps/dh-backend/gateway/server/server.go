@@ -205,14 +205,15 @@ func New(cfg config.Config) http.Handler {
 	mux.Handle("/api/v1/agent-runtimes", middleware.Auth(http.HandlerFunc(agentruntime.ListRuntimes)))
 	mux.Handle("/api/v1/agent-runtimes/{id}", middleware.Auth(http.HandlerFunc(agentruntime.GetRuntime)))
 
-	mux.HandleFunc("/api/v1/workitems", workitem.WorkItems)
-	mux.HandleFunc("/api/v1/workitem-platforms", workitem.Platforms)
-	mux.HandleFunc("/api/v1/workitems/{id}", workitem.WorkItemByID)
-	mux.HandleFunc("/api/v1/workitems/{id}/status", workitem.UpdateWorkItemStatus)
-	mux.HandleFunc("/api/v1/workitems/{id}/assignee", workitem.UpdateWorkItemAssignee)
-	mux.HandleFunc("/api/v1/workitems/{id}/doc-links", workitem.DocLinks)
-	mux.HandleFunc("/api/v1/workitems/{id}/doc-links/{itemId}", workitem.DocLinkByID)
-	mux.HandleFunc("/api/v1/workitems/{id}/design-versions", workitem.ListDesignVersions)
+	// 工作项：需登录态，按 workspaceId 隔离
+	mux.Handle("/api/v1/workitems", middleware.Auth(http.HandlerFunc(workitem.WorkItems)))
+	mux.Handle("/api/v1/workitem-platforms", middleware.Auth(http.HandlerFunc(workitem.Platforms)))
+	mux.Handle("/api/v1/workitems/{id}", middleware.Auth(http.HandlerFunc(workitem.WorkItemByID)))
+	mux.Handle("/api/v1/workitems/{id}/status", middleware.Auth(http.HandlerFunc(workitem.UpdateWorkItemStatus)))
+	mux.Handle("/api/v1/workitems/{id}/assignee", middleware.Auth(http.HandlerFunc(workitem.UpdateWorkItemAssignee)))
+	mux.Handle("/api/v1/workitems/{id}/doc-links", middleware.Auth(http.HandlerFunc(workitem.DocLinks)))
+	mux.Handle("/api/v1/workitems/{id}/doc-links/{itemId}", middleware.Auth(http.HandlerFunc(workitem.DocLinkByID)))
+	mux.Handle("/api/v1/workitems/{id}/design-versions", middleware.Auth(http.HandlerFunc(workitem.ListDesignVersions)))
 	// 按工作空间聚合需求及其关联的文档/原型，供智能会话「设计」按钮下拉菜单使用
 	mux.Handle("/api/v1/workspaces/{id}/workitems-with-design-items", middleware.Auth(http.HandlerFunc(workitem.ListRequirementsWithDesignItems)))
 	mux.HandleFunc("/api/v1/review/review", pragent.Reviews)

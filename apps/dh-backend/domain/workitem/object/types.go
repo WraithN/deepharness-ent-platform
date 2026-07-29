@@ -13,6 +13,7 @@ type WorkItem = workitem.WorkItem
 type CreateWorkItemRequest struct {
 	TenantID    string            `json:"tenantId"`
 	ProjectID   string            `json:"projectId"`
+	WorkspaceID string            `json:"workspaceId"`
 	Type        workitem.Type     `json:"type"`
 	Title       string            `json:"title"`
 	Description string            `json:"description"`

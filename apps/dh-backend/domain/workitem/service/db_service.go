@@ -23,105 +23,21 @@ func NewDBWorkItemService(db *sql.DB) *DBWorkItemService {
 	return &DBWorkItemService{db: db}
 }
 
-// ListWorkItems 返回满足过滤条件的工作项列表。
-func (s *DBWorkItemService) ListWorkItems(filter WorkItemFilter) ([]object.WorkItem, error) {
-	var conditions []string
-	var args []any
-	argIdx := 1
+// workItemSelectColumns 是 workitems 表的统一 SELECT 列列表（含 LEFT JOIN users 取受理人姓名）。
+const workItemSelectColumns = `w.id, w.tenant_id, w.project_id, w.workspace_id, w."type", w.title, w.description, w.status, w.priority,
+		w.assignee_id, COALESCE(u.name, ''), w.reporter, w.source, w.external_id, w.parent_id, w.created_at, w.updated_at`
 
-	if filter.ProjectID != "" {
-		conditions = append(conditions, fmt.Sprintf("project_id = $%d", argIdx))
-		args = append(args, filter.ProjectID)
-		argIdx++
-	}
-	if filter.Type != "" {
-		conditions = append(conditions, fmt.Sprintf("\"type\" = $%d", argIdx))
-		args = append(args, string(filter.Type))
-		argIdx++
-	}
-	if filter.Status != "" {
-		conditions = append(conditions, fmt.Sprintf("status = $%d", argIdx))
-		args = append(args, string(filter.Status))
-		argIdx++
-	}
-	if filter.AssigneeID != "" {
-		conditions = append(conditions, fmt.Sprintf("assignee_id = $%d", argIdx))
-		args = append(args, filter.AssigneeID)
-		argIdx++
-	}
-
-	query := `SELECT w.id, w.tenant_id, w.project_id, w."type", w.title, w.description, w.status, w.priority,
-		w.assignee_id, COALESCE(u.name, ''), w.reporter, w.source, w.external_id, w.parent_id, w.created_at, w.updated_at
-		FROM workitems w
-		LEFT JOIN users u ON u.id = w.assignee_id`
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
-	query += " ORDER BY created_at DESC"
-
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list workitems failed: %w", err)
-	}
-	defer rows.Close()
-
-	result := make([]object.WorkItem, 0)
-	for rows.Next() {
-		var it object.WorkItem
-		var desc, assigneeID, assigneeName, reporter, externalID, parentID sql.NullString
-		err := rows.Scan(
-			&it.ID, &it.TenantID, &it.ProjectID,
-			&it.Type, &it.Title, &desc, &it.Status, &it.Priority,
-			&assigneeID, &assigneeName, &reporter, &it.Source, &externalID, &parentID,
-			&it.CreatedAt, &it.UpdatedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("scan workitem failed: %w", err)
-		}
-		if desc.Valid {
-			it.Description = desc.String
-		}
-		if assigneeID.Valid {
-			it.AssigneeID = assigneeID.String
-		}
-		if assigneeName.Valid {
-			it.AssigneeName = assigneeName.String
-		}
-		if reporter.Valid {
-			it.Reporter = reporter.String
-		}
-		if externalID.Valid {
-			it.ExternalID = externalID.String
-		}
-		if parentID.Valid {
-			it.ParentID = parentID.String
-		}
-		result = append(result, it)
-	}
-	return result, rows.Err()
-}
-
-// GetWorkItem 按 ID 获取单个工作项详情。
-func (s *DBWorkItemService) GetWorkItem(id string) (object.WorkItem, error) {
-	var it object.WorkItem
+// scanWorkItem 将一行扫描到 WorkItem 对象中，统一处理 NULL 字段。
+func scanWorkItem(scanner interface{ Scan(dest ...any) error }, it *object.WorkItem) error {
 	var desc, assigneeID, assigneeName, reporter, externalID, parentID sql.NullString
-	err := s.db.QueryRow(`
-		SELECT w.id, w.tenant_id, w.project_id, w."type", w.title, w.description, w.status, w.priority,
-			w.assignee_id, COALESCE(u.name, ''), w.reporter, w.source, w.external_id, w.parent_id, w.created_at, w.updated_at
-		FROM workitems w
-		LEFT JOIN users u ON u.id = w.assignee_id
-		WHERE w.id = $1
-	`, id).Scan(
-		&it.ID, &it.TenantID, &it.ProjectID,
+	err := scanner.Scan(
+		&it.ID, &it.TenantID, &it.ProjectID, &it.WorkspaceID,
 		&it.Type, &it.Title, &desc, &it.Status, &it.Priority,
 		&assigneeID, &assigneeName, &reporter, &it.Source, &externalID, &parentID,
 		&it.CreatedAt, &it.UpdatedAt,
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return object.WorkItem{}, errors.New("workitem not found")
-	}
 	if err != nil {
-		return object.WorkItem{}, fmt.Errorf("get workitem failed: %w", err)
+		return err
 	}
 	if desc.Valid {
 		it.Description = desc.String
@@ -140,6 +56,81 @@ func (s *DBWorkItemService) GetWorkItem(id string) (object.WorkItem, error) {
 	}
 	if parentID.Valid {
 		it.ParentID = parentID.String
+	}
+	return nil
+}
+
+// ListWorkItems 返回满足过滤条件的工作项列表。
+func (s *DBWorkItemService) ListWorkItems(filter WorkItemFilter) ([]object.WorkItem, error) {
+	var conditions []string
+	var args []any
+	argIdx := 1
+
+	if filter.WorkspaceID != "" {
+		conditions = append(conditions, fmt.Sprintf("w.workspace_id = $%d", argIdx))
+		args = append(args, filter.WorkspaceID)
+		argIdx++
+	}
+	if filter.TenantID != "" {
+		conditions = append(conditions, fmt.Sprintf("w.tenant_id = $%d", argIdx))
+		args = append(args, filter.TenantID)
+		argIdx++
+	}
+	if filter.ProjectID != "" {
+		conditions = append(conditions, fmt.Sprintf("w.project_id = $%d", argIdx))
+		args = append(args, filter.ProjectID)
+		argIdx++
+	}
+	if filter.Type != "" {
+		conditions = append(conditions, fmt.Sprintf("w.\"type\" = $%d", argIdx))
+		args = append(args, string(filter.Type))
+		argIdx++
+	}
+	if filter.Status != "" {
+		conditions = append(conditions, fmt.Sprintf("w.status = $%d", argIdx))
+		args = append(args, string(filter.Status))
+		argIdx++
+	}
+	if filter.AssigneeID != "" {
+		conditions = append(conditions, fmt.Sprintf("w.assignee_id = $%d", argIdx))
+		args = append(args, filter.AssigneeID)
+		argIdx++
+	}
+
+	query := fmt.Sprintf(`SELECT %s FROM workitems w LEFT JOIN users u ON u.id = w.assignee_id`, workItemSelectColumns)
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY w.created_at DESC"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list workitems failed: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]object.WorkItem, 0)
+	for rows.Next() {
+		var it object.WorkItem
+		if err := scanWorkItem(rows, &it); err != nil {
+			return nil, fmt.Errorf("scan workitem failed: %w", err)
+		}
+		result = append(result, it)
+	}
+	return result, rows.Err()
+}
+
+// GetWorkItem 按 ID 获取单个工作项详情。
+func (s *DBWorkItemService) GetWorkItem(id string) (object.WorkItem, error) {
+	var it object.WorkItem
+	row := s.db.QueryRow(fmt.Sprintf(`
+		SELECT %s FROM workitems w LEFT JOIN users u ON u.id = w.assignee_id WHERE w.id = $1
+	`, workItemSelectColumns), id)
+	if err := scanWorkItem(row, &it); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return object.WorkItem{}, errors.New("workitem not found")
+		}
+		return object.WorkItem{}, fmt.Errorf("get workitem failed: %w", err)
 	}
 	return it, nil
 }
@@ -167,123 +158,74 @@ func (s *DBWorkItemService) CreateWorkItem(req object.CreateWorkItemRequest) (ob
 	}
 
 	id := uuid.New().String()
-	var it object.WorkItem
-	var desc, assigneeID, reporter, externalID, parentID sql.NullString
-
-	err := s.db.QueryRow(`
-		INSERT INTO workitems (id, tenant_id, project_id, "type", title, description, status, priority,
+	_, err := s.db.Exec(`
+		INSERT INTO workitems (id, tenant_id, project_id, workspace_id, "type", title, description, status, priority,
 			assignee_id, reporter, source, external_id, parent_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-		RETURNING id, tenant_id, project_id, "type", title, description, status, priority,
-			assignee_id, reporter, source, external_id, parent_id, created_at, updated_at
-	`, id, req.TenantID, req.ProjectID, string(req.Type), req.Title, req.Description,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+	`, id, req.TenantID, req.ProjectID, req.WorkspaceID, string(req.Type), req.Title, req.Description,
 		string(req.Status), string(req.Priority), req.AssigneeID, req.Reporter,
 		string(req.Source), "", sql.NullString{String: req.ParentID, Valid: req.ParentID != ""}, req.CreatedAt, req.UpdatedAt,
-	).Scan(
-		&it.ID, &it.TenantID, &it.ProjectID,
-		&it.Type, &it.Title, &desc, &it.Status, &it.Priority,
-		&assigneeID, &reporter, &it.Source, &externalID, &parentID,
-		&it.CreatedAt, &it.UpdatedAt,
 	)
 	if err != nil {
 		return object.WorkItem{}, fmt.Errorf("create workitem failed: %w", err)
 	}
-	if desc.Valid {
-		it.Description = desc.String
-	}
-	if assigneeID.Valid {
-		it.AssigneeID = assigneeID.String
-	}
-	if reporter.Valid {
-		it.Reporter = reporter.String
-	}
-	if externalID.Valid {
-		it.ExternalID = externalID.String
-	}
-	if parentID.Valid {
-		it.ParentID = parentID.String
-	}
-	return it, nil
+
+	// 重新查询以获取完整的 JOIN 字段（assignee_name 等）
+	return s.reloadWorkItem(id)
 }
 
 // UpdateWorkItemStatus 更新指定工作项的状态。
 func (s *DBWorkItemService) UpdateWorkItemStatus(id string, status workitem.Status) (object.WorkItem, error) {
 	now := time.Now().UTC()
-	var it object.WorkItem
-	var desc, assigneeID, assigneeName, reporter, externalID sql.NullString
-	err := s.db.QueryRow(`
-		UPDATE workitems SET status = $1, updated_at = $2 WHERE id = $3
-		RETURNING id, tenant_id, project_id, "type", title, description, status, priority,
-			assignee_id, reporter, source, external_id, created_at, updated_at
-	`, string(status), now, id).Scan(
-		&it.ID, &it.TenantID, &it.ProjectID,
-		&it.Type, &it.Title, &desc, &it.Status, &it.Priority,
-		&assigneeID, &reporter, &it.Source, &externalID,
-		&it.CreatedAt, &it.UpdatedAt,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return object.WorkItem{}, errors.New("workitem not found")
-	}
+	_, err := s.db.Exec(`UPDATE workitems SET status = $1, updated_at = $2 WHERE id = $3`, string(status), now, id)
 	if err != nil {
 		return object.WorkItem{}, fmt.Errorf("update workitem status failed: %w", err)
 	}
-	if desc.Valid {
-		it.Description = desc.String
-	}
-	if assigneeID.Valid {
-		it.AssigneeID = assigneeID.String
-	}
-	if assigneeName.Valid {
-		it.AssigneeName = assigneeName.String
-	}
-	if reporter.Valid {
-		it.Reporter = reporter.String
-	}
-	if externalID.Valid {
-		it.ExternalID = externalID.String
-	}
-	return it, nil
+	return s.reloadWorkItem(id)
 }
 
 // UpdateWorkItemAssignee 更新指定工作项的受理人，并自动关联用户姓名。
 // assigneeID 为空字符串时表示清空受理人。
 func (s *DBWorkItemService) UpdateWorkItemAssignee(id string, assigneeID string) (object.WorkItem, error) {
 	now := time.Now().UTC()
-	var it object.WorkItem
-	var desc, newAssigneeID, assigneeName, reporter, externalID sql.NullString
-	err := s.db.QueryRow(`
-		UPDATE workitems SET assignee_id = $1, updated_at = $2 WHERE id = $3
-		RETURNING id, tenant_id, project_id, "type", title, description, status, priority,
-			assignee_id, reporter, source, external_id, created_at, updated_at
-	`, sql.NullString{String: assigneeID, Valid: assigneeID != ""}, now, id).Scan(
-		&it.ID, &it.TenantID, &it.ProjectID,
-		&it.Type, &it.Title, &desc, &it.Status, &it.Priority,
-		&newAssigneeID, &reporter, &it.Source, &externalID,
-		&it.CreatedAt, &it.UpdatedAt,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return object.WorkItem{}, errors.New("workitem not found")
-	}
+	_, err := s.db.Exec(`UPDATE workitems SET assignee_id = $1, updated_at = $2 WHERE id = $3`,
+		sql.NullString{String: assigneeID, Valid: assigneeID != ""}, now, id)
 	if err != nil {
 		return object.WorkItem{}, fmt.Errorf("update workitem assignee failed: %w", err)
 	}
-	if desc.Valid {
-		it.Description = desc.String
+	return s.reloadWorkItem(id)
+}
+
+// ValidateAssigneeTenant 校验待指派用户是否属于指定租户。
+func (s *DBWorkItemService) ValidateAssigneeTenant(assigneeID string, tenantID string) error {
+	if assigneeID == "" || tenantID == "" {
+		return errors.New("assigneeId or tenantId is empty")
 	}
-	if newAssigneeID.Valid {
-		it.AssigneeID = newAssigneeID.String
+	var userTenantID string
+	err := s.db.QueryRow(`SELECT tenant_id FROM users WHERE id = $1`, assigneeID).Scan(&userTenantID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("assignee user not found")
 	}
-	if it.AssigneeID != "" {
-		_ = s.db.QueryRow(`SELECT COALESCE(name, '') FROM users WHERE id = $1`, it.AssigneeID).Scan(&assigneeName)
-		if assigneeName.Valid {
-			it.AssigneeName = assigneeName.String
+	if err != nil {
+		return fmt.Errorf("validate assignee tenant failed: %w", err)
+	}
+	if userTenantID != tenantID {
+		return errors.New("assignee does not belong to the same tenant")
+	}
+	return nil
+}
+
+// reloadWorkItem 重新查询工作项详情（含 JOIN 字段），用于 UPDATE 后返回完整对象。
+func (s *DBWorkItemService) reloadWorkItem(id string) (object.WorkItem, error) {
+	var it object.WorkItem
+	row := s.db.QueryRow(fmt.Sprintf(`
+		SELECT %s FROM workitems w LEFT JOIN users u ON u.id = w.assignee_id WHERE w.id = $1
+	`, workItemSelectColumns), id)
+	if err := scanWorkItem(row, &it); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return object.WorkItem{}, errors.New("workitem not found")
 		}
-	}
-	if reporter.Valid {
-		it.Reporter = reporter.String
-	}
-	if externalID.Valid {
-		it.ExternalID = externalID.String
+		return object.WorkItem{}, fmt.Errorf("reload workitem failed: %w", err)
 	}
 	return it, nil
 }
@@ -335,7 +277,7 @@ func (s *DBWorkItemService) ListRequirementsWithDesignItems(workspaceID string) 
 		FROM workitems w
 		JOIN workitem_doc_links l ON l.workitem_id = w.id
 		JOIN product_docs d ON d.id = l.product_space_item_id
-		WHERE l.workspace_id = $1 AND w."type" = 'requirement'
+		WHERE w.workspace_id = $1 AND w."type" = 'requirement'
 		ORDER BY w.updated_at DESC, d.type, d.updated_at DESC
 	`, workspaceID)
 	if err != nil {

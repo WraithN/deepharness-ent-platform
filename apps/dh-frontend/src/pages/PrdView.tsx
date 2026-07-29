@@ -104,6 +104,7 @@ export const PrdView: React.FC = () => {
       await api.post<WorkItemDTO>('/v1/workitems', {
         tenantId: user?.tenantId || '',
         projectId: 'p1',
+        workspaceId: wsId,
         type: 'requirement',
         title,
         description: content,

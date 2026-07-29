@@ -46,7 +46,8 @@ function buildDisplayTitle(fileName: string): string {
 export const FileView: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const path = searchParams.get('path') || '';
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, membership } = useAuth();
+  const workspaceId = membership?.workspaceId ?? '';
 
   const [fileContent, setFileContent] = useState<FileContent | null>(null);
   const [loading, setLoading] = useState(true);
@@ -147,7 +148,7 @@ export const FileView: React.FC = () => {
     setSubmitting(true);
     try {
       await api.post<WorkItemDTO>('/v1/workitems', {
-        tenantId: currentUser?.tenantId || '', projectId: 'p1', type: 'requirement',
+        tenantId: currentUser?.tenantId || '', projectId: 'p1', workspaceId, type: 'requirement',
         title: displayTitle, description: fileContent?.content || '',
         status: 'backlog', priority: 'medium', assigneeId: reqAssignee, source: 'internal',
       });

@@ -31,6 +31,7 @@ export interface WorkItemDTO {
   id: string;
   tenantId: string;
   projectId: string;
+  workspaceId: string;
   title: string;
   description: string;
   status: WorkItemStatus;

@@ -252,7 +252,7 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
   useEffect(() => {
     setLoading(true);
     api
-      .get<WorkItemDTO[]>('/v1/workitems?type=requirement')
+      .get<WorkItemDTO[]>(`/v1/workitems?type=requirement&workspaceId=${encodeURIComponent(workspaceId)}`)
       .then(fetched => {
         setItems(fetched);
         setCards(

@@ -7,6 +7,7 @@ type WorkItem struct {
 	ID           string    `json:"id"`
 	TenantID     string    `json:"tenantId"`
 	ProjectID    string    `json:"projectId"`
+	WorkspaceID  string    `json:"workspaceId"`
 	Type         Type      `json:"type"`
 	Title        string    `json:"title"`
 	Description  string    `json:"description"`

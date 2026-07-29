@@ -7,10 +7,12 @@ import (
 
 // WorkItemFilter 定义工作项列表的查询条件。
 type WorkItemFilter struct {
-	ProjectID  string
-	Type       workitem.Type
-	Status     workitem.Status
-	AssigneeID string
+	WorkspaceID string
+	ProjectID   string
+	TenantID    string
+	Type        workitem.Type
+	Status      workitem.Status
+	AssigneeID  string
 }
 
 // WorkItemService 定义 workitem 模块的服务接口。
@@ -20,6 +22,8 @@ type WorkItemService interface {
 	CreateWorkItem(item object.CreateWorkItemRequest) (object.WorkItem, error)
 	UpdateWorkItemStatus(id string, status workitem.Status) (object.WorkItem, error)
 	UpdateWorkItemAssignee(id string, assigneeID string) (object.WorkItem, error)
+	// ValidateAssigneeTenant 校验待指派用户与指定租户是否一致，不一致则返回错误。
+	ValidateAssigneeTenant(assigneeID string, tenantID string) error
 	CountWorkItems(projectID string, status workitem.Status, days int) (int, error)
 	CountWorkItemsPrevPeriod(projectID string, status workitem.Status, days int) (int, error)
 

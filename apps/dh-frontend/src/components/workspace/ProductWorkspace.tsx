@@ -778,7 +778,7 @@ export const ProductWorkspace: React.FC = () => {
   /** 加载需求列表及每个需求关联的文档/原型链接 */
   const loadRequirements = async () => {
     try {
-      const reqs = await api.get<WorkItemDTO[]>('/v1/workitems?type=requirement');
+      const reqs = await api.get<WorkItemDTO[]>(`/v1/workitems?type=requirement&workspaceId=${encodeURIComponent(workspaceId)}`);
       setRequirements(reqs);
       const linkResults = await Promise.all(
         reqs.map(req => workItemDocApi.list(req.id).catch(() => [] as WorkItemDocLink[]))

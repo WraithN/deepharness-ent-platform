@@ -702,6 +702,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({ repoPath, repoName, repoId, b
       const priority = issue.severity === 'critical' ? 'high' : issue.severity === 'high' ? 'high' : issue.severity === 'medium' ? 'medium' : 'low';
       try {
         const created = await api.post<{ id: string }>('/v1/workitems', {
+          workspaceId,
           type,
           title: `[评审问题] ${issue.title}`,
           description: `**来源**: 评审报告 ${report.id}\n**文件**: ${displayFilePath(issue.filePath, report.projectPath)}:${issue.line}\n**严重程度**: ${SEVERITY_LABELS[issue.severity] || issue.severity}\n**问题描述**: ${issue.description}\n**修改建议**: ${issue.suggestion}`,

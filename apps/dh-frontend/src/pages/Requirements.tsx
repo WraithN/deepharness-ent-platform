@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import type { WorkItemDTO } from '@/lib/api-types';
+import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -62,7 +63,7 @@ export const Requirements: React.FC = () => {
   const paginatedRequirements = requirements.slice(startIndex, endIndex);
 
   useEffect(() => {
-    api.get<WorkItemDTO[]>('/v1/workitems?type=requirement')
+    api.get<WorkItemDTO[]>(`/v1/workitems?type=requirement&workspaceId=${encodeURIComponent(getCurrentWorkspaceId())}`)
       .then(items => {
         setRequirements(items.map(item => ({
           id: item.id,

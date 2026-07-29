@@ -27,6 +27,15 @@ export interface RequirementWithDesignItems {
 }
 
 export const workItemApi = {
+  /** 按空间列出工作项（支持可选的 type/status 过滤） */
+  listByWorkspace: (workspaceId: string, params?: { type?: string; status?: string; assigneeId?: string }) => {
+    const query = new URLSearchParams({ workspaceId });
+    if (params?.type) query.set('type', params.type);
+    if (params?.status) query.set('status', params.status);
+    if (params?.assigneeId) query.set('assigneeId', params.assigneeId);
+    return api.get<WorkItemDTO[]>(`/v1/workitems?${query.toString()}`);
+  },
+
   /** 更新工作项状态 */
   updateStatus: (id: string, status: WorkItemStatus) =>
     api.patch<WorkItemDTO>(`/v1/workitems/${id}/status`, { status }),

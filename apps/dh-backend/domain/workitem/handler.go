@@ -113,14 +113,27 @@ func UpdateWorkItemAssignee(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 指派受理人前校验：非空受理人必须与工作项属于同一租户
+	if req.AssigneeID != "" {
+		existing, err := defaultWorkItemService.GetWorkItem(id)
+		if err != nil {
+			http.Error(w, `{"code":1,"message":"workitem not found"}`, http.StatusNotFound)
+			return
+		}
+		if err := defaultWorkItemService.ValidateAssigneeTenant(req.AssigneeID, existing.TenantID); err != nil {
+			http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusForbidden)
+			return
+		}
+	}
+
 	item, err := defaultWorkItemService.UpdateWorkItemAssignee(id, req.AssigneeID)
 	if err != nil {
 		http.Error(w, `{"code":1,"message":"workitem not found"}`, http.StatusNotFound)
 		return
 	}
-	// 触发需求分配回调（通知编排层创建通知）
+	// 触发需求分配回调（通知编排层创建通知），使用 workspaceID 而非 projectID
 	if onAssigneeAssigned != nil && req.AssigneeID != "" {
-		go onAssigneeAssigned(id, item.ProjectID, req.AssigneeID, item.AssigneeName, item.Title, item.Description)
+		go onAssigneeAssigned(id, item.WorkspaceID, req.AssigneeID, item.AssigneeName, item.Title, item.Description)
 	}
 	json.NewEncoder(w).Encode(item)
 }
@@ -158,10 +171,11 @@ func UpdateWorkItemStatus(w http.ResponseWriter, r *http.Request) {
 func parseWorkItemFilter(r *http.Request) service.WorkItemFilter {
 	q := r.URL.Query()
 	return service.WorkItemFilter{
-		ProjectID:  q.Get("projectId"),
-		Type:       workitem.Type(q.Get("type")),
-		Status:     workitem.Status(q.Get("status")),
-		AssigneeID: q.Get("assigneeId"),
+		WorkspaceID: q.Get("workspaceId"),
+		ProjectID:   q.Get("projectId"),
+		Type:        workitem.Type(q.Get("type")),
+		Status:      workitem.Status(q.Get("status")),
+		AssigneeID:  q.Get("assigneeId"),
 	}
 }
 

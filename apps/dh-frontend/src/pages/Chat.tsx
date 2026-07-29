@@ -1166,7 +1166,7 @@ export const Chat: React.FC = () => {
   // 从后端 API 加载工作项数据
   useEffect(() => {
     let cancelled = false;
-    api.get<WorkItemDTO[]>('/v1/workitems')
+    api.get<WorkItemDTO[]>(`/v1/workitems?workspaceId=${encodeURIComponent(getCurrentWorkspaceId())}`)
       .then(items => {
         if (cancelled) return;
         const reqs: ReqItem[] = [];
@@ -1957,6 +1957,7 @@ export const Chat: React.FC = () => {
       const res = await api.post<WorkItemDTO>('/v1/workitems', {
         tenantId: user?.tenantId || '',
         projectId,
+        workspaceId,
         type: 'requirement',
         title: item.title,
         description,
@@ -1994,7 +1995,7 @@ export const Chat: React.FC = () => {
     }
 
     // 刷新需求列表，使新创建的需求立即出现在任务/看板中
-    api.get<WorkItemDTO[]>('/v1/workitems')
+    api.get<WorkItemDTO[]>(`/v1/workitems?workspaceId=${encodeURIComponent(getCurrentWorkspaceId())}`)
       .then(items => {
         const reqs: ReqItem[] = [];
         items.forEach(item => {
