@@ -607,7 +607,7 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
             </button>
           </div>
         </div>
-        <div className="flex gap-4 flex-1 min-h-0 min-w-0 overflow-x-auto overflow-y-hidden p-5 pt-2">
+        <div className="flex gap-3 flex-1 min-h-0 min-w-0 overflow-x-auto overflow-y-hidden p-4 pt-2">
           {STATUSES.map(status => {
             // 展开模式下列中展示所有需求；收缩模式下列中只展示顶层需求，子需求折叠在父需求卡片内部。
             const columnCards = cards.filter(c => c.status === status && (viewMode === 'expand' || !c.parentId));
@@ -615,7 +615,7 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
             return (
               <div
                 key={status}
-                className="flex flex-col w-[280px] shrink-0"
+                className="flex flex-col w-[240px] shrink-0"
                 onDragOver={handleDragOver}
                 onDrop={e => handleDrop(e, status)}
               >
