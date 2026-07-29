@@ -15,6 +15,8 @@ import { UserStoryCard, parseUserStoryFromText } from './UserStoryCard';
 import type { UserStoryData } from './UserStoryCard';
 import { RequirementBreakdownCard, useRequirementBreakdownData } from './RequirementBreakdownCard';
 import type { RequirementBreakdownData, RequirementBreakdownSubmitResult, RequirementItem } from './RequirementBreakdownCard';
+import { ReviewReportCard, parseReviewReportFromText } from './ReviewReportCard';
+import type { ReviewReportData } from './ReviewReportCard';
 import type { ChatPart } from './types';
 import { toast } from 'sonner';
 import { cn, formatTime, isProductSpaceFile } from '@/lib/utils';
@@ -73,13 +75,15 @@ interface AssistantMessageProps {
   activeReqBreakdownData?: RequirementBreakdownData | null;
   onReqBreakdownSubmit?: (items: RequirementItem[], options?: { jsonFilePath?: string }) => Promise<RequirementBreakdownSubmitResult>;
   onPrototypePreview?: (path: string) => void;
+  /** 评审报告修复按钮回调：父组件用于设置 /code 指令并发送。 */
+  onReviewFix?: (reportPath: string, projectName: string) => void;
   requirementTitle?: string;
   workitemId?: string;
   /** 需求列表，用于原型卡片按消息内的需求标题匹配真实需求 ID。 */
   requirements?: Array<{ id: string; title: string }>;
 }
 
-export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, runPhase, agentPluginKey, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview, onUserStoryPreview, activeUserStoryData, onReqBreakdownPreview, activeReqBreakdownData, onReqBreakdownSubmit, onPrototypePreview, requirementTitle, workitemId, requirements }) => {
+export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, runPhase, agentPluginKey, onArtifactClick, onRegenerate, onFilePreview, onProjectPreview, onUserStoryPreview, activeUserStoryData, onReqBreakdownPreview, activeReqBreakdownData, onReqBreakdownSubmit, onPrototypePreview, onReviewFix, requirementTitle, workitemId, requirements }) => {
   const thread = useThread();
   const content = Array.isArray(message.content) ? message.content : [];
   const [textExpanded, setTextExpanded] = useState(false);
@@ -359,12 +363,15 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     ? nonProjectFileAttachments.filter(path => !REQ_BREAKDOWN_FILE_REGEX.test(path))
     : nonProjectFileAttachments;
 
-  // 用户故事/需求拆分卡片出现时，默认展开完整文本，避免"内容没有输出完整"的观感。
+  // 解析 [[REVIEW_REPORT:json]] 标记，提取评审报告元数据。
+  const reviewReportData = parseReviewReportFromText(allTextContent);
+
+  // 用户故事/需求拆分/评审报告卡片出现时，默认展开完整文本，避免"内容没有输出完整"的观感。
   useEffect(() => {
-    if (hasUserStoryFromMarker || hasUserStoryFromLegacy || hasReqBreakdownFromMarker || hasReqBreakdownFromLegacy) {
+    if (hasUserStoryFromMarker || hasUserStoryFromLegacy || hasReqBreakdownFromMarker || hasReqBreakdownFromLegacy || reviewReportData) {
       setTextExpanded(true);
     }
-  }, [hasUserStoryFromMarker, hasUserStoryFromLegacy, hasReqBreakdownFromMarker, hasReqBreakdownFromLegacy]);
+  }, [hasUserStoryFromMarker, hasUserStoryFromLegacy, hasReqBreakdownFromMarker, hasReqBreakdownFromLegacy, reviewReportData]);
 
   const showCollapsed = shouldCollapseText && !textExpanded && !isStreaming;
 
@@ -559,6 +566,11 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
           {/* 从 [[CARD:user_story]] 标记自动检测到的用户故事卡片，生成完成后再展示。 */}
           {!hasUserStoryFromLegacy && hasUserStoryFromMarker && userStoryData && !isRunning && (
             <div className="px-3 py-2"><UserStoryCard data={userStoryData} isPreviewActive={isUserStoryActive(userStoryData)} onPreview={onUserStoryPreview} /></div>
+          )}
+
+          {/* 从 [[REVIEW_REPORT:json]] 标记自动检测到的评审报告卡片，生成完成后再展示。 */}
+          {reviewReportData && !isRunning && (
+            <div className="px-3 py-2"><ReviewReportCard data={reviewReportData} onFix={onReviewFix} /></div>
           )}
 
           {/* legacy data 部件（diff / task_list / tool_use / tool_result 等） */}

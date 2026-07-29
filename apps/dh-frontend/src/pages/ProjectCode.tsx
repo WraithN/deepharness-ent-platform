@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -12,10 +13,14 @@ import { api } from '@/lib/api';
 import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
 import type { RepositoryDTO, FileNodeDTO, FileContentDTO, ScannedRepositoryDTO, RepositoryDetailsDTO, BranchInfoDTO } from '@/lib/api-types';
 import { LivePreview } from '@/components/chat/LivePreview';
+import { MarkdownView } from '@/components/chat/MarkdownView';
 import { detectFrontendProject } from '@/lib/project-detector';
 import { CodeBlock } from '@/components/CodeBlock';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from 'next-themes';
+import { projectApi } from '@/lib/project-api';
+import { fileApi } from '@/lib/file-api';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 const SYNC_POLL_INTERVAL_MS = 2000;
 
@@ -485,27 +490,43 @@ const PreviewPanel: React.FC<{ repoId: string; branch: string; repoName: string;
   );
 };
 
-// ─── Review issue types ───
-interface ReviewIssue {
-  id: string;
-  severity: 'critical' | 'high' | 'medium' | 'low';
-  line: number;
-  message: string;
-  suggestion: string;
-  file: string;
+// ─── Review Panel ───
+
+/** 历史评审报告摘要 */
+interface ReviewReportSummary {
+  fileName: string;
+  filePath: string;
+  date: string;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  content: string;
 }
 
-const SEVERITY_BADGE: Record<string, string> = {
-  critical: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
-  high: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
-  medium: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300',
-  low: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
-};
-const SEVERITY_LABEL: Record<string, string> = {
-  critical: '致命', high: '严重', medium: '一般', low: '轻微',
-};
+/** 从评审报告 Markdown 内容中解析问题数量 */
+function parseIssueCounts(content: string): { critical: number; high: number; medium: number; low: number } {
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+  const patterns: Array<[keyof typeof counts, RegExp]> = [
+    ['critical', /致命[：:]\s*(\d+)/],
+    ['high', /严重[：:]\s*(\d+)/],
+    ['medium', /一般[：:]\s*(\d+)/],
+    ['low', /轻微[：:]\s*(\d+)/],
+  ];
+  for (const [key, regex] of patterns) {
+    const match = content.match(regex);
+    if (match?.[1]) counts[key] = parseInt(match[1], 10) || 0;
+  }
+  return counts;
+}
 
-// ─── Review Panel ───
+/** 从文件名解析日期（review-YYYY-MM-DD-HHmmss.md -> YYYY-MM-DD HH:mm:ss） */
+function parseDateFromFileName(fileName: string): string {
+  const match = fileName.match(/review-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})/);
+  if (!match) return fileName;
+  return `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}:${match[6]}`;
+}
+
 const DocGenButton: React.FC = () => {
   const [generating, setGenerating] = useState(false);
   const handleClick = () => {
@@ -523,18 +544,65 @@ const DocGenButton: React.FC = () => {
   );
 };
 
-const ReviewPanel: React.FC = () => {
-  const [reviewing, setReviewing] = useState(false);
-  const [issues, setIssues] = useState<ReviewIssue[]>([]);
+interface ReviewPanelProps {
+  repoPath?: string;
+  repoName?: string;
+}
+
+const ReviewPanel: React.FC<ReviewPanelProps> = ({ repoPath, repoName }) => {
+  const [reports, setReports] = useState<ReviewReportSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedReport, setSelectedReport] = useState<ReviewReportSummary | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const startReview = () => {
-    setReviewing(true);
-    setTimeout(() => {
-      setReviewing(false);
-      setIssues([]);
-    }, 2000);
-  };
+  // 加载 .review/ 目录下的历史评审报告
+  useEffect(() => {
+    if (!repoPath) {
+      setReports([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    const reviewDir = `${repoPath}/.review`;
+    projectApi
+      .tree(reviewDir)
+      .then(async (files) => {
+        if (cancelled) return;
+        const reviewFiles = files.filter(f => f.type === 'file' && f.name.endsWith('.md'));
+        const summaries = await Promise.all(
+          reviewFiles.slice(0, 20).map(async (f) => {
+            try {
+              const content = await fileApi.content(f.path);
+              const counts = parseIssueCounts(content.content);
+              return {
+                fileName: f.name,
+                filePath: f.path,
+                date: parseDateFromFileName(f.name),
+                ...counts,
+                content: content.content,
+              } as ReviewReportSummary;
+            } catch {
+              return null;
+            }
+          })
+        );
+        if (!cancelled) {
+          setReports(summaries.filter((s): s is ReviewReportSummary => s !== null));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setReports([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [repoPath]);
+
+  const totalIssues = reports.reduce((sum, r) => sum + r.critical + r.high + r.medium + r.low, 0);
+  const totalCritical = reports.reduce((sum, r) => sum + r.critical + r.high, 0);
+  const totalMedium = reports.reduce((sum, r) => sum + r.medium, 0);
+  const totalLow = reports.reduce((sum, r) => sum + r.low, 0);
 
   const toggleExpand = (id: string) => {
     setExpanded(prev => {
@@ -550,61 +618,116 @@ const ReviewPanel: React.FC = () => {
         <div className="flex items-center gap-2">
           <ShieldCheck className="h-4 w-4 text-primary" />
           <span className="text-sm font-semibold">代码评审</span>
-          <span className="text-xs text-muted-foreground">({issues.length} 个问题)</span>
+          {repoName && <span className="text-xs text-muted-foreground">· {repoName}</span>}
+          <span className="text-xs text-muted-foreground">({reports.length} 份报告)</span>
         </div>
-        <Button size="sm" onClick={startReview} disabled={reviewing} className="h-7 text-xs gap-1.5">
-          {reviewing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-          {reviewing ? '评审中...' : '智能评审'}
-        </Button>
       </div>
       <ScrollArea className="flex-1 p-4">
         <div className="space-y-3">
-          {/* 总览 */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
-            <div className="rounded-xl border border-border/50 bg-card p-3 text-center">
-              <p className="text-lg font-bold text-foreground">{issues.length}</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">总问题数</p>
+          {loading && (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-primary" />
             </div>
-            <div className="rounded-xl border border-border/50 bg-card p-3 text-center">
-              <p className="text-lg font-bold text-red-600 dark:text-red-400">{issues.filter(i => i.severity === 'critical' || i.severity === 'high').length}</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">严重/致命</p>
-            </div>
-            <div className="rounded-xl border border-border/50 bg-card p-3 text-center">
-              <p className="text-lg font-bold text-amber-600 dark:text-amber-400">{issues.filter(i => i.severity === 'medium').length}</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">一般问题</p>
-            </div>
-            <div className="rounded-xl border border-border/50 bg-card p-3 text-center">
-              <p className="text-lg font-bold text-blue-600 dark:text-blue-400">{issues.filter(i => i.severity === 'low').length}</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">轻微问题</p>
-            </div>
-          </div>
+          )}
 
-          {/* 问题列表 */}
-          {issues.map(issue => (
-            <div key={issue.id} className="rounded-xl border border-border/50 bg-card p-4 hover:shadow-sm transition-shadow">
-              <div className="flex items-center gap-2 mb-2">
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${SEVERITY_BADGE[issue.severity]}`}>
-                  {SEVERITY_LABEL[issue.severity]}
-                </span>
-                <span className="text-xs text-muted-foreground">{issue.file} · 第 {issue.line} 行</span>
-                <button
-                  className="ml-auto text-xs text-muted-foreground hover:text-foreground flex items-center gap-0.5"
-                  onClick={() => toggleExpand(issue.id)}
-                >
-                  {expanded.has(issue.id) ? '收起' : '展开'}
-                  <ChevronDown className={`h-3 w-3 transition-transform ${expanded.has(issue.id) ? 'rotate-180' : ''}`} />
-                </button>
-              </div>
-              <p className="text-sm font-medium text-foreground mb-1">{issue.message}</p>
-              {expanded.has(issue.id) && (
-                <div className="mt-2 p-2.5 rounded-lg bg-muted/30 text-xs text-foreground leading-relaxed border border-border/30">
-                  <span className="font-semibold text-muted-foreground">建议：</span>{issue.suggestion}
-                </div>
-              )}
+          {!loading && reports.length === 0 && (
+            <div className="text-center py-12 text-muted-foreground">
+              <ShieldCheck className="h-10 w-10 mx-auto mb-3 opacity-20" />
+              <p className="text-sm">暂无评审报告</p>
+              <p className="text-xs mt-1">使用 /review 指令进行代码评审后，报告将自动保存到此处</p>
             </div>
-          ))}
+          )}
+
+          {/* 总览统计 */}
+          {reports.length > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
+              <div className="rounded-xl border border-border/50 bg-card p-3 text-center">
+                <p className="text-lg font-bold text-foreground">{totalIssues}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">总问题数</p>
+              </div>
+              <div className="rounded-xl border border-border/50 bg-card p-3 text-center">
+                <p className="text-lg font-bold text-red-600 dark:text-red-400">{totalCritical}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">严重/致命</p>
+              </div>
+              <div className="rounded-xl border border-border/50 bg-card p-3 text-center">
+                <p className="text-lg font-bold text-amber-600 dark:text-amber-400">{totalMedium}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">一般问题</p>
+              </div>
+              <div className="rounded-xl border border-border/50 bg-card p-3 text-center">
+                <p className="text-lg font-bold text-blue-600 dark:text-blue-400">{totalLow}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">轻微问题</p>
+              </div>
+            </div>
+          )}
+
+          {/* 历史评审报告列表 */}
+          {reports.map(report => {
+            const reportId = report.filePath;
+            const reportCritical = report.critical + report.high;
+            return (
+              <div key={reportId} className="rounded-xl border border-border/50 bg-card p-4 hover:shadow-sm transition-shadow">
+                <div className="flex items-center gap-2 mb-2">
+                  <FileText className="h-4 w-4 text-primary shrink-0" />
+                  <span className="text-sm font-medium text-foreground truncate">{report.date}</span>
+                  <button
+                    className="ml-auto text-xs text-muted-foreground hover:text-foreground flex items-center gap-0.5 shrink-0"
+                    onClick={() => toggleExpand(reportId)}
+                  >
+                    {expanded.has(reportId) ? '收起' : '展开'}
+                    <ChevronDown className={`h-3 w-3 transition-transform ${expanded.has(reportId) ? 'rotate-180' : ''}`} />
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {reportCritical > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                      致命/严重 {reportCritical}
+                    </span>
+                  )}
+                  {report.medium > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                      一般 {report.medium}
+                    </span>
+                  )}
+                  {report.low > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                      轻微 {report.low}
+                    </span>
+                  )}
+                  {reportCritical + report.medium + report.low === 0 && (
+                    <span className="text-[10px] text-emerald-600 font-semibold">未发现问题</span>
+                  )}
+                  <button
+                    className="text-xs text-primary hover:underline ml-auto"
+                    onClick={() => setSelectedReport(report)}
+                  >
+                    查看全文
+                  </button>
+                </div>
+                {expanded.has(reportId) && (
+                  <div className="mt-2 p-2.5 rounded-lg bg-muted/30 text-xs text-foreground leading-relaxed border border-border/30 max-h-60 overflow-y-auto">
+                    <MarkdownView content={report.content} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </ScrollArea>
+
+      {/* 报告全文预览弹窗 */}
+      <Dialog open={!!selectedReport} onOpenChange={(open) => !open && setSelectedReport(null)}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-primary" />
+              {selectedReport?.date} 评审报告
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto px-1">
+            {selectedReport && <MarkdownView content={selectedReport.content} />}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
@@ -612,6 +735,7 @@ const ReviewPanel: React.FC = () => {
 export const ProjectCode: React.FC = () => {
   const { membership } = useAuth();
   const workspaceId = membership?.workspaceId ?? '';
+  const location = useLocation();
 
   const [repositories, setRepositories] = useState<RepositoryDTO[]>([]);
   const [fileSystem, setFileSystem] = useState<Record<string, FileNode[]>>({});
@@ -620,6 +744,9 @@ export const ProjectCode: React.FC = () => {
   const [repoType, setRepoType] = useState<'dev' | 'case'>('dev');
   const [loadingRepos, setLoadingRepos] = useState(false);
   const [loadingTree, setLoadingTree] = useState(false);
+
+  // 从 ReviewReportCard "采纳" 按钮导航过来的状态
+  const [reviewRepoPath, setReviewRepoPath] = useState<string>('');
 
   // 用户仓库同步检测状态
   const [syncChecking, setSyncChecking] = useState(true);
@@ -650,6 +777,15 @@ export const ProjectCode: React.FC = () => {
 
   // View mode tabs
   const [viewMode, setViewMode] = useState<'code' | 'graph' | 'review' | 'doc' | 'preview' | 'details'>('code');
+
+  // 处理从 ReviewReportCard "采纳" 按钮导航过来的情况：切换到评审模式并设置仓库路径
+  useEffect(() => {
+    const navState = location.state as { viewMode?: string; repoPath?: string; repoName?: string } | null;
+    if (navState?.viewMode === 'review' && navState.repoPath) {
+      setViewMode('review');
+      setReviewRepoPath(navState.repoPath);
+    }
+  }, [location.state]);
 
   // Code view mode for file viewer
   const [codeViewMode, setCodeViewMode] = useState<'code' | 'preview' | 'blame'>('code');
@@ -1391,7 +1527,10 @@ export const ProjectCode: React.FC = () => {
         )}
 
         {viewMode === 'review' && (
-          <ReviewPanel />
+          <ReviewPanel
+            repoPath={reviewRepoPath || repositories.find(r => r.id === selectedRepoId)?.localPath}
+            repoName={repositories.find(r => r.id === selectedRepoId)?.name}
+          />
         )}
 
         {viewMode === 'doc' && (

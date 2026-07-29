@@ -720,6 +720,20 @@ export const Chat: React.FC = () => {
     pushPreviewHistory({ type: 'prototype_preview', path, requirementTitle: protoMakeRequirementTitle });
   }, [prototypePreviewPath, pushPreviewHistory, protoMakeRequirementTitle]);
 
+  // 评审报告修复：设置 /code 指令并引用评审报告路径，引导用户发送。
+  const handleReviewFix = useCallback((reportPath: string, projectName: string) => {
+    const fixPrompt = `根据评审报告 ${reportPath} 修复 ${projectName} 工程中的所有问题，按严重程度从高到低逐一修复。`;
+    setInput(`/code ${fixPrompt}`);
+    toast.info('已填入修复指令，请点击发送');
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      }
+    });
+  }, []);
+
   // navigatePreview 在历史栈中前进或后退，恢复对应的预览状态。
   const navigatePreview = useCallback((direction: 'back' | 'forward') => {
     const newIndex = direction === 'back' ? historyIndex - 1 : historyIndex + 1;
@@ -2918,6 +2932,7 @@ export const Chat: React.FC = () => {
                   activeReqBreakdownData={reqBreakdownPreview}
                   onReqBreakdownSubmit={handleReqBreakdownSubmit}
                   onPrototypePreview={handlePrototypePreview}
+                  onReviewFix={handleReviewFix}
                   requirementTitle={protoMakeRequirementTitle || quotedCard?.title}
                   workitemId={effectivePrototypeWorkitemId}
                   requirements={requirements}
