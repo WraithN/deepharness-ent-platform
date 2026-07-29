@@ -23,6 +23,21 @@ function loadMermaid() {
 }
 
 /**
+ * 预处理 Mermaid 代码，修复 AI 生成时常见的语法问题。
+ *
+ * Mermaid 不支持反斜杠转义引号（\"），但 AI 经常在 ER 图属性注释、
+ * 流程图节点标签等位置生成转义引号，导致解析失败。
+ * 将转义双引号替换为单引号，既消除反斜杠又避免双引号嵌套冲突。
+ */
+function preprocessMermaidCode(code: string): string {
+  return code
+    .replace(/\\"/g, "'")     // 转义双引号 -> 单引号
+    .replace(/\\'/g, "'")     // 转义单引号 -> 单引号
+    .replace(/&quot;/g, "'")  // HTML 实体双引号 -> 单引号
+    .replace(/&#34;/g, "'");  // 数字 HTML 实体双引号 -> 单引号
+}
+
+/**
  * Mermaid 图表渲染组件。
  *
  * 动态导入 mermaid 库，将 mermaid 语法代码渲染为 SVG 图表。
@@ -45,7 +60,7 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({ code }) => {
     loadMermaid()
       .then(mod => {
         if (cancelled) return;
-        return mod.default.render(diagramId, code.trim());
+        return mod.default.render(diagramId, preprocessMermaidCode(code.trim()));
       })
       .then(result => {
         if (cancelled) return;

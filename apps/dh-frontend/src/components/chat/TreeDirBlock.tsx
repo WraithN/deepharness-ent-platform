@@ -13,11 +13,15 @@ const ICON_REGEX = /^(\s*[|+\-`\\/=\u2500-\u257F]*\s*)(([📦✅📤📁📋🔧
  * 判断代码块内容是否为目录树结构。
  * 1. 包含 Unicode 制表符直接判定为树。
  * 2. 至少 3 行以树形连接符（ASCII 或 Unicode）开头，则判定为 ASCII 树。
+ *    注意：只检查行首字符，避免含 / - = 等字符的普通代码（如 Mermaid）被误判。
  */
 export function isTreeDirContent(code: string): boolean {
   const lines = code.split('\n');
   if (lines.some((line) => /[\u2500-\u257F]/.test(line))) return true;
-  const treeLikeLines = lines.filter((line) => TREE_CONNECTOR_CHARS.test(line.trimStart()));
+  const treeLikeLines = lines.filter((line) => {
+    const trimmed = line.trimStart();
+    return trimmed.length > 0 && TREE_CONNECTOR_CHARS.test(trimmed[0]);
+  });
   return treeLikeLines.length >= 3;
 }
 

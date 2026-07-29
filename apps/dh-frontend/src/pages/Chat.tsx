@@ -2851,7 +2851,12 @@ export const Chat: React.FC = () => {
         </div>
 
         {/* Chat Messages */}
-        <ScrollArea id="chat-scroll-area" className={cn('flex-1', showPreview ? 'p-2' : 'p-4 pr-8')}>
+        {/* min-h-0：flex 列布局中 flex-1 子项默认 min-height:auto（内容高度），
+            会导致内容超长时 ScrollArea 撑高而非滚动，把底部输入框挤出可见区被
+            overflow-hidden 裁掉。min-h-0 允许其收缩到剩余空间并启用内部滚动。
+            overflow-x-hidden 覆盖 ScrollArea 默认 overflow-x-visible，防止长内容把面板横向撑出会话窗口。 */}
+        <ScrollArea id="chat-scroll-area" className={cn('flex-1 min-h-0 min-w-0 max-w-full overflow-x-hidden', showPreview ? 'p-2' : 'p-4 pr-8')}
+>
           <div className="space-y-6">
             {isInitializingChat ? (
               <div className="h-full flex flex-col items-center justify-center text-center pt-20">

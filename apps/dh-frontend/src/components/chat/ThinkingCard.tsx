@@ -60,9 +60,15 @@ export const ThinkingCard: React.FC<ThinkingCardProps> = ({
         <span>{summary}</span>
       </button>
       {isOpen && (
-        <div className="mt-2 rounded-lg bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+        <div className="mt-2 rounded-lg bg-muted/30 pl-3 pr-1 py-2 text-sm text-muted-foreground overflow-hidden">
           <div className="text-xs font-medium text-muted-foreground/70 mb-1.5">思考过程</div>
-          {children}
+          {/* 思考内容区固定为不超过视口 30% 高的可滚动区域，避免展开后把下方
+              用户输入框/会话挤出可视区；宽度限制为小于会话窗口并开启横向滚动条，
+              让内部长内容（如工具卡片代码预览）可左右滚动而不撑爆气泡；
+              overscroll-contain 防止滚动链穿透到消息列表 */}
+          <div className="max-h-[30vh] overflow-y-auto overflow-x-auto overscroll-contain w-full max-w-[calc(100vw-400px)]">
+            {children}
+          </div>
         </div>
       )}
     </div>

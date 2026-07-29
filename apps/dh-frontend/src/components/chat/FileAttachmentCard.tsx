@@ -4,7 +4,7 @@ import { fileApi } from '@/lib/file-api';
 import { productSpaceApi } from '@/lib/productspace-api';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
+import { cn, isProductSpaceFile } from '@/lib/utils';
 
 interface FileAttachmentCardProps {
   path: string;
@@ -42,6 +42,7 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
   const displayTitle = buildDisplayTitle(fileName);
   const fileType = getFileType(fileName);
   const isMarkdown = /\.(?:md|markdown)$/i.test(fileName);
+  const canAdoptToProductSpace = isMarkdown && isProductSpaceFile(path);
   const [preview, setPreview] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -68,9 +69,9 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
     };
   }, [path]);
 
-  // 查询采纳状态：刷新页面后仍能正确显示"已采纳"。
+  // 查询采纳状态：刷新页面后仍能正确显示"已采纳"。仅产品空间文件需要查询。
   useEffect(() => {
-    if (!workspaceId || !isMarkdown) return;
+    if (!workspaceId || !canAdoptToProductSpace) return;
     let cancelled = false;
     setCheckingStatus(true);
     productSpaceApi
@@ -87,7 +88,7 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, path, isMarkdown]);
+  }, [workspaceId, path, canAdoptToProductSpace]);
 
   const handlePreview = () => {
     if (onPreview) {
@@ -107,6 +108,9 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
     }
     if (!isMarkdown) {
       toast.error('仅支持采纳 Markdown 文档');
+      return;
+    }
+    if (!isProductSpaceFile(path)) {
       return;
     }
     setImporting(true);
@@ -160,7 +164,7 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
             <Download className="h-3.5 w-3.5" />
             下载
           </a>
-          {workspaceId && isMarkdown && (
+          {workspaceId && canAdoptToProductSpace && (
             <button
               type="button"
               onClick={handleAdopt}

@@ -433,6 +433,8 @@ html {
 @layer components {
   .markdown-preview {
     @apply text-sm leading-relaxed;
+    overflow-wrap: break-word;
+    word-break: break-word;
   }
 
   /* ── 标题层级 ── */

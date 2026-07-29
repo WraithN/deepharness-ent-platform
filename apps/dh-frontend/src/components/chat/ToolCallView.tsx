@@ -110,12 +110,12 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({ part, compact = fals
 
   return (
     <div className={cn(
-      'text-sm rounded-xl border bg-muted/30 border-border/50',
+      'text-sm rounded-xl border bg-muted/30 border-border/50 min-w-0 max-w-full',
       compact ? 'px-3 py-2 my-1' : 'mx-4 my-2 px-4 py-2.5'
     )}>
       {/* 摘要行：图标 + 名称 + 状态 + 参数预览 */}
       <div
-        className={cn('flex items-start gap-2.5', canExpand && 'cursor-pointer hover:bg-muted/50 rounded-lg transition-colors')}
+        className={cn('flex items-start gap-2.5 min-w-0', canExpand && 'cursor-pointer hover:bg-muted/50 rounded-lg transition-colors')}
         onClick={canExpand ? () => setExpanded(!expanded) : undefined}
         role={canExpand ? 'button' : undefined}
         tabIndex={canExpand ? 0 : undefined}
@@ -141,10 +141,10 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({ part, compact = fals
             )}
           </div>
           {argsPreview && !expanded && (
-            <div className="mt-1 text-xs text-muted-foreground truncate font-mono">{argsPreview}</div>
+            <div className="mt-1 text-xs text-muted-foreground truncate font-mono w-full">{argsPreview}</div>
           )}
           {resultPreview && !expanded && (
-            <div className="mt-0.5 text-xs text-green-600/70 dark:text-green-400/70 truncate font-mono">→ {resultPreview}</div>
+            <div className="mt-0.5 text-xs text-green-600/70 dark:text-green-400/70 truncate font-mono w-full">→ {resultPreview}</div>
           )}
         </div>
       </div>
@@ -155,7 +155,7 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({ part, compact = fals
           {argsJson && argsJson.length > 20 && (
             <div>
               <div className="text-xs font-medium text-muted-foreground mb-1">输入参数</div>
-              <pre className="text-xs bg-background/60 rounded-md p-2 overflow-x-auto max-h-48 font-mono whitespace-pre-wrap break-all">
+              <pre className="text-xs bg-background/60 rounded-md p-2 overflow-x-auto max-h-48 max-w-full font-mono whitespace-pre-wrap break-all">
                 {sanitizeWorkspacePaths(argsJson)}
               </pre>
             </div>
@@ -163,7 +163,7 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({ part, compact = fals
           {hasResult && (
             <div>
               <div className="text-xs font-medium text-muted-foreground mb-1">执行结果</div>
-              <pre className="text-xs bg-background/60 rounded-md p-2 overflow-x-auto max-h-64 font-mono whitespace-pre-wrap break-all">
+              <pre className="text-xs bg-background/60 rounded-md p-2 overflow-x-auto max-h-64 max-w-full font-mono whitespace-pre-wrap break-all">
                 {sanitizeWorkspacePaths(resultStr || '')}
               </pre>
             </div>

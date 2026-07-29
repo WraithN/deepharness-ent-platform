@@ -88,8 +88,9 @@ const ChatMessageItem: React.FC<{
 
 export const ChatThread: React.FC<ChatThreadProps> = (props) => {
   return (
-    <ThreadPrimitive.Root className="flex flex-col h-full">
-      <ThreadPrimitive.Viewport className="flex-1 space-y-4 px-1">
+    <ThreadPrimitive.Root className="flex flex-col h-full min-w-0">
+      {/* min-w-0 / max-w-full 防止消息内容（如长 reasoning 文本）把滚动容器横向撑开 */}
+      <ThreadPrimitive.Viewport className="flex-1 space-y-4 px-1 min-w-0 max-w-full">
         <ThreadPrimitive.Messages>
           {({ message }) => (
             <ChatMessageItem message={message} props={props} />

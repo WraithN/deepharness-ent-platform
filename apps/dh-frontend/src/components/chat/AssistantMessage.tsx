@@ -17,7 +17,7 @@ import { RequirementBreakdownCard, useRequirementBreakdownData } from './Require
 import type { RequirementBreakdownData, RequirementBreakdownSubmitResult, RequirementItem } from './RequirementBreakdownCard';
 import type { ChatPart } from './types';
 import { toast } from 'sonner';
-import { cn, formatTime } from '@/lib/utils';
+import { cn, formatTime, isProductSpaceFile } from '@/lib/utils';
 
 const CARD_MARKER_REGEX = /\[\[CARD:([^\]]+)\]\]/g;
 const REQ_NAME_MARKER_REGEX = /\[\[REQ_NAME:([^\]]+)\]\]/g;
@@ -329,6 +329,17 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
         !prototypeRootPaths.some(root => path === root || path.startsWith(`${root}/`))
       );
 
+  // 有普通工程卡片时，抑制该工程目录下的文件附件（它们属于工程内部文件，
+  // 已由 ProjectCard 代表），仅保留产品空间文件（products-jobs/）作为独立卡片。
+  // 这样每个指令只展示一个结果卡片，避免工程卡片+文件卡片重复出现。
+  const hasNormalProjectCards = normalProjectPaths.length > 0;
+  const nonProjectFileAttachments = hasNormalProjectCards
+    ? nonPrototypeFileAttachments.filter(path =>
+        isProductSpaceFile(path) ||
+        !normalProjectPaths.some(projPath => path === projPath || path.startsWith(`${projPath}/`))
+      )
+    : nonPrototypeFileAttachments;
+
   const cardTypes = extractCardTypes(allTextContent);
   const hasUserStoryFromMarker = cardTypes.includes('user_story');
   const userStoryData = hasUserStoryFromMarker
@@ -345,8 +356,8 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
   const hasReqBreakdown = hasReqBreakdownFromLegacy || hasReqBreakdownFromMarker;
 
   const nonReqBreakdownFileAttachments = hasReqBreakdownFromMarker
-    ? nonPrototypeFileAttachments.filter(path => !REQ_BREAKDOWN_FILE_REGEX.test(path))
-    : nonPrototypeFileAttachments;
+    ? nonProjectFileAttachments.filter(path => !REQ_BREAKDOWN_FILE_REGEX.test(path))
+    : nonProjectFileAttachments;
 
   // 用户故事/需求拆分卡片出现时，默认展开完整文本，避免"内容没有输出完整"的观感。
   useEffect(() => {
@@ -395,7 +406,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
   }, [isRunning, message.createdAt]);
 
   return (
-    <div className="flex gap-3 justify-start">
+    <div className="flex gap-3 justify-start min-w-0 max-w-full">
       <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-1">
         <Bot className="h-4 w-4 text-primary" />
       </div>
@@ -434,12 +445,12 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
                       {/* 步骤内容 */}
                       <div className="flex-1 min-w-0">
                         {item.type === 'reasoning' && (
-                          <div className="text-xs sm:text-sm whitespace-pre-wrap text-muted-foreground leading-relaxed">
+                          <div className="text-xs sm:text-sm whitespace-pre-wrap break-all min-w-0 text-muted-foreground leading-relaxed">
                             {item.text}
                           </div>
                         )}
                         {item.type === 'text' && (
-                          <div className="text-xs sm:text-sm text-muted-foreground break-words leading-relaxed">
+                          <div className="text-xs sm:text-sm text-muted-foreground break-words min-w-0 leading-relaxed">
                             <MarkdownView content={item.text} />
                           </div>
                         )}

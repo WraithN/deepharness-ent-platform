@@ -74,6 +74,15 @@ export function isSameDay(a: Date | string | number, b: Date | string | number):
 }
 
 /**
+ * 判断文件路径是否属于产品空间目录。
+ * 产品空间文件包括：原型工程（products/prototypes/）和产品文档（products-jobs/）。
+ * 只有产品空间文件才显示"采纳到产品空间"按钮，非产品指令产出的文件不显示。
+ */
+export function isProductSpaceFile(path: string): boolean {
+  return path.includes('/products/prototypes/') || path.includes('/products-jobs/');
+}
+
+/**
  * 将内容中的工作区绝对路径前缀脱敏为相对路径。
  * 先剥离 {workspaceRoot}/{workspaceId}/{userId}/ 两层 ID 段，
  * 再剥离 products/prototypes/ 业务前缀，仅保留原型工程名起头的相对路径。

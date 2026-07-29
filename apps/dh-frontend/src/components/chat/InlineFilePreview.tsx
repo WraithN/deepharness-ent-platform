@@ -15,7 +15,7 @@ import { api } from '@/lib/api';
 import type { WorkItemDTO, UserDTO } from '@/lib/api-types';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
+import { cn, isProductSpaceFile } from '@/lib/utils';
 
 interface TocItem {
   level: number;
@@ -116,6 +116,7 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
   }, [fileContent]);
 
   const isMarkdown = isMarkdownFile(path);
+  const canAdoptToProductSpace = isMarkdown && isProductSpaceFile(path);
 
   // 提取 markdown 标题作为文档大纲。
   const tocItems = useMemo(() => {
@@ -154,9 +155,9 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
     loadFile(path);
   }, [path]);
 
-  // 查询采纳状态：刷新页面后仍能正确显示"已采纳"。
+  // 查询采纳状态：刷新页面后仍能正确显示"已采纳"。仅产品空间文件需要查询。
   useEffect(() => {
-    if (!workspaceId || !isMarkdown) return;
+    if (!workspaceId || !canAdoptToProductSpace) return;
     let cancelled = false;
     setCheckingAdoptStatus(true);
     productSpaceApi
@@ -173,7 +174,7 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, path, isMarkdown]);
+  }, [workspaceId, path, canAdoptToProductSpace]);
 
   // 加载用户列表用于受理人下拉框，排除管理员角色（super_admin）。
   useEffect(() => {
@@ -270,6 +271,9 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
       toast.error('仅支持采纳 Markdown 文档');
       return;
     }
+    if (!isProductSpaceFile(path)) {
+      return;
+    }
     setImporting(true);
     try {
       await productSpaceApi.importDoc(workspaceId, path, workitemId);
@@ -320,8 +324,8 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openFileViewPage(path)} title="在新页面打开" disabled={loading || !!error}>
             <ExternalLink className="h-4 w-4" />
           </Button>
-          {/* 采纳到产品空间（仅 markdown） */}
-          {workspaceId && isMarkdown && (
+          {/* 采纳到产品空间（仅产品空间目录下的 markdown 文档） */}
+          {workspaceId && canAdoptToProductSpace && (
             <Button
               variant={adopted ? 'outline' : 'default'}
               size="sm"
