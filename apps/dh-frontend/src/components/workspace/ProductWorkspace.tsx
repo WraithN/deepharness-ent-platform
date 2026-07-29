@@ -984,7 +984,7 @@ export const ProductWorkspace: React.FC = () => {
         )}
 
         {/* 主区域：上方子 Tab + 下方内容 */}
-        <div className="flex-1 flex flex-col gap-4 min-h-0">
+        <div className="flex-1 flex flex-col gap-4 min-h-0 min-w-0">
           {topTab === 'design' && !hasNoDesign && !!selectedWorkitemId && (
             <Tabs value={subTab} onValueChange={value => setTabs(prev => ({ ...prev, subTab: value as ProductSubTab }))} className="w-full">
               <TabsList className="aurora-tab-bar level-2 mb-0">
