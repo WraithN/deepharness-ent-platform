@@ -543,8 +543,8 @@ export const Chat: React.FC = () => {
   const [input, setInput] = useState('');
 
   // Input toolbar dropdowns
-  const [selectedRepos, setSelectedRepos] = useState<{id: string; name: string}[]>([]);
-  const [availableRepos, setAvailableRepos] = useState<{id: string; name: string}[]>([]);
+  const [selectedRepos, setSelectedRepos] = useState<{id: string; name: string; localPath?: string}[]>([]);
+  const [availableRepos, setAvailableRepos] = useState<{id: string; name: string; localPath?: string}[]>([]);
   const [userRepoStatuses, setUserRepoStatuses] = useState<UserRepoStatus[]>([]);
   const [syncingRepoId, setSyncingRepoId] = useState<string | null>(null);
   const [availableSkills, setAvailableSkills] = useState<Skill[]>([]);
@@ -1122,7 +1122,7 @@ export const Chat: React.FC = () => {
     repositoryApi.list(workspaceId)
       .then(repos => {
         if (cancelled) return;
-        setAvailableRepos(repos.map(r => ({ id: r.id, name: r.name })));
+        setAvailableRepos(repos.map(r => ({ id: r.id, name: r.name, localPath: r.localPath })));
       })
       .catch(err => {
         if (cancelled) return;
@@ -1238,7 +1238,7 @@ export const Chat: React.FC = () => {
     );
   }, [availableSkills, activeSkillTab, skillMenuSearch]);
 
-  const toggleRepo = (repo: {id: string; name: string}) => setSelectedRepos(prev => prev.find(r => r.id === repo.id) ? prev.filter(r => r.id !== repo.id) : [...prev, repo]);
+  const toggleRepo = (repo: {id: string; name: string; localPath?: string}) => setSelectedRepos(prev => prev.find(r => r.id === repo.id) ? prev.filter(r => r.id !== repo.id) : [...prev, repo]);
   const appendSkillTag = (name: string) => { setInput(p => p.trimEnd() ? p.trimEnd() + ` #${name} ` : `#${name} `); };
 
   // 文档菜单：按标题搜索过滤（列表已由后端按修改时间倒序）。
@@ -2408,7 +2408,7 @@ export const Chat: React.FC = () => {
     </div>
   );
 
-  const renderRepoMenu = (onSelect: (repo: { id: string; name: string }) => void) => (
+  const renderRepoMenu = (onSelect: (repo: { id: string; name: string; localPath?: string }) => void) => (
     <div className="absolute bottom-full left-0 mb-2 w-56 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden py-1 animate-in fade-in slide-in-from-bottom-2">
       {availableRepos.map(repo => {
         const sel = selectedRepos.some(r => r.id === repo.id);

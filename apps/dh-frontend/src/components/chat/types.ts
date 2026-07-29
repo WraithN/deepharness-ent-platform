@@ -12,5 +12,5 @@ export interface ChatMsg {
   parts: ChatPart[];
   messageID?: string;
   quotedCard?: { type: 'req' | 'defect' | 'case'; id: string; title: string; reporter: string };
-  selectedRepos?: { id: string; name: string }[];
+  selectedRepos?: { id: string; name: string; localPath?: string }[];
 }

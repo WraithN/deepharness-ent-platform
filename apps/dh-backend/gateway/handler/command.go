@@ -61,15 +61,24 @@ func extractQuotedCard(ctxItems []agui.ContextItem) (quotedCardInfo, bool, error
 	return quotedCardInfo{}, false, nil
 }
 
+// RepoInfo 包含代码库的基本信息，传递给 agent 作为上下文。
+type RepoInfo struct {
+	ID        string
+	Name      string
+	LocalPath string
+}
+
 // extractSelectedRepos 从 RunAgentInput.Context 中提取用户选择的代码库列表。
-func extractSelectedRepos(ctxItems []agui.ContextItem) ([]string, bool, error) {
+// 返回 RepoInfo 切片（含 localPath），供 buildRepoBlock 构建带路径的代码库上下文。
+func extractSelectedRepos(ctxItems []agui.ContextItem) ([]RepoInfo, bool, error) {
 	for _, item := range ctxItems {
 		if item.Name != "selectedRepos" {
 			continue
 		}
 		var repos []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			LocalPath string `json:"localPath"`
 		}
 		if err := json.Unmarshal(item.Value, &repos); err != nil {
 			return nil, false, fmt.Errorf("parse selectedRepos: %w", err)
@@ -77,11 +86,11 @@ func extractSelectedRepos(ctxItems []agui.ContextItem) ([]string, bool, error) {
 		if len(repos) == 0 {
 			return nil, false, nil
 		}
-		names := make([]string, 0, len(repos))
+		result := make([]RepoInfo, 0, len(repos))
 		for _, r := range repos {
-			names = append(names, r.Name)
+			result = append(result, RepoInfo{ID: r.ID, Name: r.Name, LocalPath: r.LocalPath})
 		}
-		return names, true, nil
+		return result, true, nil
 	}
 	return nil, false, nil
 }
@@ -111,13 +120,18 @@ func buildTaskCardBlock(item workitem.WorkItem) string {
 }
 
 // buildRepoBlock 构建代码库上下文文本块，注入到提示词中供 agent 参考。
-func buildRepoBlock(repoNames []string) string {
+// 包含仓库本地路径，使 agent 能直接定位工程目录。
+func buildRepoBlock(repos []RepoInfo) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n【关联代码库】\n")
-	for i, name := range repoNames {
-		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, name))
+	for i, r := range repos {
+		if r.LocalPath != "" {
+			sb.WriteString(fmt.Sprintf("%d. %s (路径: %s)\n", i+1, r.Name, r.LocalPath))
+		} else {
+			sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, r.Name))
+		}
 	}
-	sb.WriteString("请在回答中参考上述代码库信息。")
+	sb.WriteString("请在回答中参考上述代码库信息，工程文件操作请在对应路径下进行。")
 	return sb.String()
 }
 
@@ -216,7 +230,7 @@ func applyCommandConfig(messages []agui.Message, idx int, cfg CommandConfig, arg
 	if err != nil {
 		return false, err
 	}
-	repoNames, hasRepos, err := extractSelectedRepos(ctxItems)
+	repos, hasRepos, err := extractSelectedRepos(ctxItems)
 	if err != nil {
 		return false, err
 	}
@@ -247,7 +261,7 @@ func applyCommandConfig(messages []agui.Message, idx int, cfg CommandConfig, arg
 		}
 	}
 	if cfg.AllowRepos && hasRepos {
-		rendered += buildRepoBlock(repoNames)
+		rendered += buildRepoBlock(repos)
 	}
 
 	// 记录被忽略的上下文。
