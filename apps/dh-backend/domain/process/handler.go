@@ -22,7 +22,7 @@ func GetService() service.ProcessService {
 }
 
 func notInitialized(w http.ResponseWriter) {
-	handler.WriteJSONError(w, http.StatusInternalServerError, 1, "process service not initialized")
+	handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "process service not initialized")
 }
 
 // List 列出当前工作空间下的流程
@@ -34,12 +34,12 @@ func List(w http.ResponseWriter, r *http.Request) {
 	}
 	workspaceID := r.URL.Query().Get("workspaceId")
 	if workspaceID == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "missing workspaceId")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "missing workspaceId")
 		return
 	}
 	list, err := defaultProcessService.ListByWorkspace(r.Context(), workspaceID)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	json.NewEncoder(w).Encode(list)
@@ -54,12 +54,12 @@ func GetByID(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if id == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "missing process id")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "missing process id")
 		return
 	}
 	p, err := defaultProcessService.GetByID(r.Context(), id)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusNotFound, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusNotFound, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	json.NewEncoder(w).Encode(p)
@@ -74,12 +74,12 @@ func Create(w http.ResponseWriter, r *http.Request) {
 	}
 	var req object.CreateProcessRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid request body")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid request body")
 		return
 	}
 	p, err := defaultProcessService.Create(r.Context(), req)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -96,17 +96,17 @@ func UpdateStage(w http.ResponseWriter, r *http.Request) {
 	processID := r.PathValue("id")
 	stageName := r.PathValue("stageName")
 	if processID == "" || stageName == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "missing process id or stage name")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "missing process id or stage name")
 		return
 	}
 	var req object.UpdateStageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid request body")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid request body")
 		return
 	}
 	p, err := defaultProcessService.UpdateStage(r.Context(), processID, stageName, req)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	json.NewEncoder(w).Encode(p)

@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/object"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
 
 // AgentGlobalConfig 保存来自 config.yaml 的全局 agent 与模型配置。
@@ -47,7 +51,7 @@ func NewDBAgentConfigService(db *sql.DB, cfg AgentGlobalConfig) *DBAgentConfigSe
 	svc := &DBAgentConfigService{db: db, globalCfg: cfg}
 	if err := svc.seedBuiltinAgentTypes(); err != nil {
 		// 初始化种子失败不应阻塞启动，仅记录日志。
-		fmt.Printf("[AgentConfig] seed builtin agent types failed: %v\n", err)
+		log.Printf("[AgentConfig] seed builtin agent types failed: %v", err)
 	}
 	return svc
 }
@@ -143,7 +147,7 @@ func (s *DBAgentConfigService) UpdateAgentType(key string, enabled bool) (agent.
 		return agent.AgentType{}, fmt.Errorf("get rows affected failed: %w", err)
 	}
 	if n == 0 {
-		return agent.AgentType{}, errors.New("agent type not found")
+		return agent.AgentType{}, common.NotFoundErrorf("agent type not found")
 	}
 	return s.GetAgentType(key)
 }
@@ -156,7 +160,7 @@ func (s *DBAgentConfigService) GetAgentType(key string) (agent.AgentType, error)
 		FROM platform_agent_types WHERE agent_key = $1
 	`, key).Scan(&at.Key, &at.Name, &at.Description, &at.Enabled, &at.Builtin, &at.CreatedAt, &at.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return agent.AgentType{}, errors.New("agent type not found")
+		return agent.AgentType{}, common.NotFoundErrorf("agent type not found")
 	}
 	if err != nil {
 		return agent.AgentType{}, fmt.Errorf("get agent type failed: %w", err)
@@ -186,7 +190,7 @@ func (s *DBAgentConfigService) getWorkspaceAgentPolicy(workspaceID string) (work
 		WHERE w.id = $1
 	`, workspaceID).Scan(&locked, &lockedKeysArr, &allowedKeys, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return workspaceAgentPolicy{}, errors.New("workspace not found")
+		return workspaceAgentPolicy{}, common.NotFoundErrorf("workspace not found")
 	}
 	if err != nil {
 		return workspaceAgentPolicy{}, fmt.Errorf("get tenant policy failed: %w", err)
@@ -282,7 +286,7 @@ func (s *DBAgentConfigService) ListWorkspaceConfigs(workspaceID string) ([]agent
 	for rows.Next() {
 		cfg, err := scanWorkspaceAgentConfig(workspaceID, rows)
 		if err != nil {
-			fmt.Printf("[AgentConfig] scan workspace config failed: %v\n", err)
+			log.Printf("[AgentConfig] scan workspace config failed: %v", err)
 			return nil, err
 		}
 		if !policy.isAgentAllowed(cfg.AgentKey) {
@@ -341,7 +345,7 @@ func (s *DBAgentConfigService) CanModifyWorkspaceConfig(workspaceID, agentKey st
 }
 
 // SaveWorkspaceConfig 保存或更新空间级智能体配置。
-func (s *DBAgentConfigService) SaveWorkspaceConfig(workspaceID string, req SaveWorkspaceConfigRequest) (agent.WorkspaceAgentConfig, error) {
+func (s *DBAgentConfigService) SaveWorkspaceConfig(workspaceID string, req object.SaveWorkspaceConfigRequest) (agent.WorkspaceAgentConfig, error) {
 	if workspaceID == "" {
 		return agent.WorkspaceAgentConfig{}, errors.New("workspace id is required")
 	}
@@ -512,7 +516,7 @@ func scanWorkspaceAgentConfig(workspaceID string, row scanner) (agent.WorkspaceA
 		&createdAt, &updatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return agent.WorkspaceAgentConfig{}, errors.New("workspace agent config not found")
+		return agent.WorkspaceAgentConfig{}, common.NotFoundErrorf("workspace agent config not found")
 	}
 	if err != nil {
 		return agent.WorkspaceAgentConfig{}, fmt.Errorf("scan workspace agent config failed: %w", err)

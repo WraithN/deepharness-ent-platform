@@ -16,10 +16,10 @@ import (
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"golang.org/x/crypto/ssh"
-)
 
-// DEFAULT_WORKSPACE_ROOT 是所有仓库本地克隆的根目录。
-const DEFAULT_WORKSPACE_ROOT = "/var/deepharness/workspace"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/safego"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/workspacepath"
+)
 
 // SanitizePathSegment 移除路径段中的穿越和分隔符，避免路径穿越。
 func SanitizePathSegment(s string) string {
@@ -30,7 +30,7 @@ func SanitizePathSegment(s string) string {
 }
 
 // buildLocalPath 在 root 下生成安全的本地路径，并校验不逃出 root。
-// 路径结构：{root}/{userID}/{workspaceID}/{repoName}，与 resolveWorkspacePath 保持一致。
+// 路径结构：{root}/{userID}/{workspaceID}/dev-jobs/{repoName}，与 resolveWorkspacePath 保持一致。
 func buildLocalPath(root, userID, workspaceID, repoName string) (string, error) {
 	safeUser := SanitizePathSegment(userID)
 	safeWS := SanitizePathSegment(workspaceID)
@@ -44,20 +44,11 @@ func buildLocalPath(root, userID, workspaceID, repoName string) (string, error) 
 		return "", fmt.Errorf("resolve root path failed: %w", err)
 	}
 
-	p := filepath.Join(absRoot, safeUser, safeWS, safeName)
+	p := filepath.Join(absRoot, safeUser, safeWS, workspacepath.DirDevJobs, safeName)
 	if !strings.HasPrefix(p, absRoot+string(filepath.Separator)) {
 		return "", fmt.Errorf("invalid local path: %s", p)
 	}
 	return p, nil
-}
-
-// DefaultLocalPath 使用默认根目录生成仓库本地路径。
-func DefaultLocalPath(userID, workspaceID, repoName string) string {
-	p, err := buildLocalPath(DEFAULT_WORKSPACE_ROOT, userID, workspaceID, repoName)
-	if err != nil {
-		return ""
-	}
-	return p
 }
 
 // GitClient 封装基于 go-git 的克隆/拉取能力。
@@ -65,16 +56,17 @@ type GitClient struct {
 	root string
 }
 
-// NewGitClient 创建 GitClient，root 为空时使用 DEFAULT_WORKSPACE_ROOT。
-func NewGitClient(root string) *GitClient {
+// NewGitClient 创建 GitClient，root 为空时返回错误（fail-fast），
+// 避免静默使用错误的默认路径。
+func NewGitClient(root string) (*GitClient, error) {
 	if root == "" {
-		root = DEFAULT_WORKSPACE_ROOT
+		return nil, fmt.Errorf("workspace root must not be empty")
 	}
-	return &GitClient{root: root}
+	return &GitClient{root: root}, nil
 }
 
 // DefaultLocalPath 生成仓库默认本地路径。
-// 路径结构：{root}/{userID}/{workspaceID}/{repoName}，与 resolveWorkspacePath 保持一致。
+// 路径结构：{root}/{userID}/{workspaceID}/dev-jobs/{repoName}，与 resolveWorkspacePath 保持一致。
 func (c *GitClient) DefaultLocalPath(userID, workspaceID, repoName string) string {
 	p, err := buildLocalPath(c.root, userID, workspaceID, repoName)
 	if err != nil {
@@ -293,7 +285,7 @@ func (c *GitClient) cloneWithExec(rawURL, dest, sshKey, branch string, progressF
 
 	scannerDone := make(chan struct{})
 	var stderrLines []string
-	go func() {
+	safego.Go("git-stderr-scanner", func() {
 		defer close(scannerDone)
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
@@ -301,7 +293,7 @@ func (c *GitClient) cloneWithExec(rawURL, dest, sshKey, branch string, progressF
 			parseProgress(line, progressFn)
 			stderrLines = append(stderrLines, line)
 		}
-	}()
+	})
 
 	err = cmd.Wait()
 	<-scannerDone

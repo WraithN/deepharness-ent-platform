@@ -9,11 +9,12 @@ import (
 	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/pathutil"
 )
 
 const (
 	// materializeDirName 是 agent 工作目录下产品文档落盘的根目录名。
-	materializeDirName = "products"
+	materializeDirName = "pm-jobs"
 	// defaultDocRelativeDir 是历史文档（relative_path 为空）的默认落盘子目录。
 	defaultDocRelativeDir = "docs"
 	// materializeDocFileExt 默认落盘文件扩展名。
@@ -78,7 +79,11 @@ func (s *DBProductDocService) resolveMaterializeRelativePath(docID string) (stri
 // filepath.Clean 后的目标必须仍以 {workspaceRoot}/{userID}/{workspaceID}/products/ 为前缀，
 // 防止恶意 relative_path（如 ../../etc/passwd）写穿工作区。
 func (s *DBProductDocService) resolveMaterializeTarget(workspaceID, userID, relativePath string) (string, error) {
-	base := filepath.Join(s.workspaceRoot, userID, workspaceID, materializeDirName)
+	baseRoot, err := pathutil.ResolveWorkspaceRoot(s.workspaceRoot, userID, workspaceID)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root failed: %w", err)
+	}
+	base := filepath.Join(baseRoot, materializeDirName)
 	target := filepath.Clean(filepath.Join(base, relativePath))
 	if !strings.HasPrefix(target, base+string(filepath.Separator)) {
 		return "", errors.New("文档落盘路径非法")
@@ -90,7 +95,7 @@ func (s *DBProductDocService) resolveMaterializeTarget(workspaceID, userID, rela
 // 架构合规：dh-backend 不直接写共享目录，委托 personal-stub 执行文件写入。
 // personal-stub 的 FileWrite 会自动创建父目录并进行路径安全校验。
 func writeMaterializedDoc(target, content string) error {
-	sc := stubclient.Default()
+	sc := stubclient.FromContext(context.Background())
 	if sc == nil {
 		return errors.New("personal-stub client not initialized")
 	}

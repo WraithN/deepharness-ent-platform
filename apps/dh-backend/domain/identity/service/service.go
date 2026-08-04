@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
 
 // TenantPolicy 表示超管为租户设置的智能体策略。
@@ -99,7 +101,7 @@ func (s *DBUserService) GetByID(userID string) (object.User, error) {
 		FROM users WHERE id = $1
 	`, userID).Scan(&u.ID, &u.TenantID, &u.Email, &u.Name, &u.PlatformRole, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return object.User{}, errors.New("user not found")
+		return object.User{}, common.NotFoundErrorf("user not found")
 	}
 	if err != nil {
 		return object.User{}, fmt.Errorf("get user by id failed: %w", err)
@@ -114,7 +116,7 @@ func (s *DBUserService) GetByEmail(email string) (object.User, error) {
 		FROM users WHERE email = $1
 	`, email).Scan(&u.ID, &u.TenantID, &u.Email, &u.Name, &u.PlatformRole, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return object.User{}, errors.New("user not found")
+		return object.User{}, common.NotFoundErrorf("user not found")
 	}
 	if err != nil {
 		return object.User{}, fmt.Errorf("get user by email failed: %w", err)
@@ -242,7 +244,7 @@ func (s *DBUserService) GetTenant(id string) (identity.Tenant, error) {
 		FROM tenants WHERE id = $1
 	`, id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return identity.Tenant{}, errors.New("tenant not found")
+		return identity.Tenant{}, common.NotFoundErrorf("tenant not found")
 	}
 	if err != nil {
 		return identity.Tenant{}, fmt.Errorf("get tenant failed: %w", err)
@@ -382,7 +384,7 @@ func (s *DBUserService) SetTenantAdmin(tenantID, userID string, isAdmin bool) er
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return errors.New("user not found in this tenant")
+		return common.NotFoundErrorf("user not found in this tenant")
 	}
 	return nil
 }

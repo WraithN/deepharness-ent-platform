@@ -9,8 +9,10 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 )
 
@@ -94,7 +96,7 @@ func AgentTypes(w http.ResponseWriter, r *http.Request) {
 		handler.SetJSONHeader(w)
 		json.NewEncoder(w).Encode(types)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -119,7 +121,7 @@ func AgentTypeByKey(w http.ResponseWriter, r *http.Request) {
 		handler.SetJSONHeader(w)
 		json.NewEncoder(w).Encode(at)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -140,7 +142,7 @@ func WorkspaceAgentConfigs(w http.ResponseWriter, r *http.Request) {
 		handler.SetJSONHeader(w)
 		json.NewEncoder(w).Encode(configs)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -157,13 +159,13 @@ func WorkspaceAgentConfigByKey(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodPut:
-		var req service.SaveWorkspaceConfigRequest
+		var req object.SaveWorkspaceConfigRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
 		req.AgentKey = agentKey
 		if err := defaultService.CanModifyWorkspaceConfig(workspaceID, req.AgentKey); err != nil {
-			handler.WriteJSONError(w, http.StatusForbidden, 3, err.Error())
+			handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, err.Error())
 			return
 		}
 		cfg, err := defaultService.SaveWorkspaceConfig(workspaceID, req)
@@ -173,18 +175,20 @@ func WorkspaceAgentConfigByKey(w http.ResponseWriter, r *http.Request) {
 		}
 		// 异步将新配置同步到 gatewayd，不阻塞 HTTP 响应。
 		// 使用独立上下文，避免 HTTP 请求结束后上下文被取消导致同步中断。
-		go syncAgentConfigToGateway(context.Background(), workspaceID, cfg)
+		safego.Go("agentconfig-sync-gateway", func() {
+			syncAgentConfigToGateway(context.Background(), workspaceID, cfg)
+		})
 		handler.SetJSONHeader(w)
 		json.NewEncoder(w).Encode(cfg)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
 // AgentModels 处理 GET /api/v1/agent-models，返回按厂商分组的全局模型池。
 func AgentModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 	groups := defaultService.ListGlobalModelGroups()
@@ -200,7 +204,7 @@ func AvailableAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodGet {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 

@@ -49,7 +49,7 @@ func Templates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if defaultPrototypeTemplateService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "prototype template service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "prototype template service not initialized")
 		return
 	}
 
@@ -65,7 +65,7 @@ func Templates(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		t, err := parseUpload(r)
 		if err != nil {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, err.Error())
 			return
 		}
 		created, err := defaultPrototypeTemplateService.CreateWithZip(t.name, t.description, t.tags, t.zipData)
@@ -77,7 +77,7 @@ func Templates(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(created)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -87,7 +87,7 @@ func TemplateByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if defaultPrototypeTemplateService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "prototype template service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "prototype template service not initialized")
 		return
 	}
 	id, ok := parseID(w, r)
@@ -123,7 +123,7 @@ func TemplateByID(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -134,11 +134,11 @@ func TemplateInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if defaultPrototypeTemplateService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "prototype template service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "prototype template service not initialized")
 		return
 	}
 	if r.Method != http.MethodPost {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 	id, ok := parseID(w, r)
@@ -205,7 +205,7 @@ func parseID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	}
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || id <= 0 {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid id")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid id")
 		return 0, false
 	}
 	return id, true
@@ -215,7 +215,7 @@ func parseID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 func handleTemplateError(w http.ResponseWriter, err error) {
 	msg := err.Error()
 	if strings.Contains(msg, "required") || strings.Contains(msg, "already exists") {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, msg)
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, msg)
 		return
 	}
 	handler.HandleServiceError(w, err, "prototype template not found", "failed to operate prototype template")

@@ -19,7 +19,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/feishu/object"
@@ -31,9 +30,6 @@ const cardThrottleInterval = 500 * time.Millisecond
 
 // cardHTTPTimeout 是调用飞书 API 的单次请求超时。
 const cardHTTPTimeout = 10 * time.Second
-
-// cardTokenRefreshLeadTime 是提前刷新 token 的时间。
-const cardTokenRefreshLeadTime = 5 * time.Minute
 
 // CardKitManager 管理流式卡片的生命周期。
 type CardKitManager interface {
@@ -52,15 +48,15 @@ type StreamingCardHandle interface {
 }
 
 // NewCardKitManager 根据是否 mock 模式选择实现。
-func NewCardKitManager(mockMode bool, appID, appSecret, apiBaseURL string) CardKitManager {
+// mock 模式下 tokenManager 可为 nil（不会被调用）。
+func NewCardKitManager(mockMode bool, tokenManager *FeishuTokenManager, apiBaseURL string) CardKitManager {
 	if mockMode {
 		return &MockCardKitManager{}
 	}
 	return &FeishuCardKitManager{
-		appID:      appID,
-		appSecret:  appSecret,
-		apiBaseURL: apiBaseURL,
-		httpClient: &http.Client{Timeout: cardHTTPTimeout},
+		tokenManager: tokenManager,
+		apiBaseURL:   apiBaseURL,
+		httpClient:   &http.Client{Timeout: cardHTTPTimeout},
 	}
 }
 
@@ -114,19 +110,18 @@ func (c *mockStreamingCard) Finalize(_ context.Context, content string, buttons 
 // ---- 飞书 API 实现 ----
 
 // FeishuCardKitManager 通过飞书 Open API 管理流式卡片。
+// token 管理委托给共享的 FeishuTokenManager，避免并发数据竞争。
 type FeishuCardKitManager struct {
-	appID       string
-	appSecret   string
-	apiBaseURL  string
-	httpClient  *http.Client
-	tokenMu     sync.Mutex
-	token       string
-	tokenExpiry time.Time
+	tokenManager *FeishuTokenManager
+	apiBaseURL   string
+	httpClient   *http.Client
 }
 
 // CreateStreamingCard 在飞书会话中创建一条交互式卡片消息，返回句柄。
 func (m *FeishuCardKitManager) CreateStreamingCard(ctx context.Context, chatID, placeholder string) (StreamingCardHandle, error) {
-	if err := m.ensureToken(); err != nil {
+	// 获取 token 快照（线程安全），后续在锁外使用不可变字符串
+	token, err := m.tokenManager.GetToken(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("ensure token: %w", err)
 	}
 
@@ -138,7 +133,7 @@ func (m *FeishuCardKitManager) CreateStreamingCard(ctx context.Context, chatID, 
 	})
 	url := m.apiBaseURL + "/im/v1/messages?receive_id_type=chat_id"
 
-	messageID, err := m.postCard(url, payload)
+	messageID, err := m.postCard(url, payload, token)
 	if err != nil {
 		return nil, fmt.Errorf("create card: %w", err)
 	}
@@ -172,7 +167,7 @@ func (c *feishuStreamingCard) AppendAndFlush(ctx context.Context, delta string) 
 		return nil
 	}
 	c.lastUpdate = now
-	return c.patchCard()
+	return c.patchCard(ctx)
 }
 
 func (c *feishuStreamingCard) UpdateStatus(ctx context.Context, status string) error {
@@ -180,34 +175,42 @@ func (c *feishuStreamingCard) UpdateStatus(ctx context.Context, status string) e
 		return nil
 	}
 	c.status = status
-	return c.patchCard()
+	return c.patchCard(ctx)
 }
 
 func (c *feishuStreamingCard) Finalize(ctx context.Context, content string, buttons []object.CardButton) error {
 	c.finalized = true
 	c.buf.Reset()
 	c.buf.WriteString(content)
-	return c.patchCardWithButtons(buttons)
+	return c.patchCardWithButtons(ctx, buttons)
 }
 
-func (c *feishuStreamingCard) patchCard() error {
+func (c *feishuStreamingCard) patchCard(ctx context.Context) error {
+	token, err := c.manager.tokenManager.GetToken(ctx)
+	if err != nil {
+		return fmt.Errorf("ensure token: %w", err)
+	}
 	card := buildCardContent(c.status, c.buf.String(), nil)
 	payload, _ := json.Marshal(map[string]string{
 		"msg_type": "interactive",
 		"content":  string(card),
 	})
 	url := fmt.Sprintf("%s/im/v1/messages/%s", c.manager.apiBaseURL, c.messageID)
-	return c.manager.patchCard(url, payload)
+	return c.manager.patchCard(url, payload, token)
 }
 
-func (c *feishuStreamingCard) patchCardWithButtons(buttons []object.CardButton) error {
+func (c *feishuStreamingCard) patchCardWithButtons(ctx context.Context, buttons []object.CardButton) error {
+	token, err := c.manager.tokenManager.GetToken(ctx)
+	if err != nil {
+		return fmt.Errorf("ensure token: %w", err)
+	}
 	card := buildCardContent(c.status, c.buf.String(), buttons)
 	payload, _ := json.Marshal(map[string]string{
 		"msg_type": "interactive",
 		"content":  string(card),
 	})
 	url := fmt.Sprintf("%s/im/v1/messages/%s", c.manager.apiBaseURL, c.messageID)
-	return c.manager.patchCard(url, payload)
+	return c.manager.patchCard(url, payload, token)
 }
 
 // buildCardContent 构建飞书交互式卡片的 JSON 内容。
@@ -271,58 +274,15 @@ func buildCardContent(status, content string, buttons []object.CardButton) []byt
 	return data
 }
 
-// ensureToken 获取或刷新 tenant_access_token（线程安全）。
-func (m *FeishuCardKitManager) ensureToken() error {
-	m.tokenMu.Lock()
-	defer m.tokenMu.Unlock()
-
-	if m.token != "" && time.Now().Before(m.tokenExpiry) {
-		return nil
-	}
-
-	body, _ := json.Marshal(map[string]string{
-		"app_id":     m.appID,
-		"app_secret": m.appSecret,
-	})
-	url := m.apiBaseURL + "/auth/v3/tenant_access_token/internal"
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request token: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Code              int    `json:"code"`
-		Msg               string `json:"msg"`
-		TenantAccessToken string `json:"tenant_access_token"`
-		Expire            int    `json:"expire"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode token response: %w", err)
-	}
-	if result.Code != 0 {
-		return fmt.Errorf("feishu token error code=%d msg=%s", result.Code, result.Msg)
-	}
-
-	m.token = result.TenantAccessToken
-	m.tokenExpiry = time.Now().Add(time.Duration(result.Expire)*time.Second - cardTokenRefreshLeadTime)
-	return nil
-}
-
 // postCard 发送创建卡片请求，返回 message_id。
-func (m *FeishuCardKitManager) postCard(url string, payload []byte) (string, error) {
+// token 为 GetToken 返回的不可变快照，可安全在锁外使用。
+func (m *FeishuCardKitManager) postCard(url string, payload []byte, token string) (string, error) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+m.token)
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
@@ -352,13 +312,14 @@ func (m *FeishuCardKitManager) postCard(url string, payload []byte) (string, err
 }
 
 // patchCard 发送更新卡片请求。
-func (m *FeishuCardKitManager) patchCard(url string, payload []byte) error {
+// token 为 GetToken 返回的不可变快照，可安全在锁外使用。
+func (m *FeishuCardKitManager) patchCard(url string, payload []byte, token string) error {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, url, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+m.token)
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := m.httpClient.Do(req)
 	if err != nil {

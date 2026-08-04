@@ -22,8 +22,10 @@ func TestHealthCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load config failed: %v", err)
 	}
-	srv := httptest.NewServer(server.New(cfg))
+	handler, cleanup := server.New(cfg)
+	srv := httptest.NewServer(handler)
 	defer srv.Close()
+	defer cleanup()
 
 	resp, err := http.Get(srv.URL + "/health")
 	if err != nil {

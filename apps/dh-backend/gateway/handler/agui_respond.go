@@ -1,0 +1,550 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
+	"github.com/google/uuid"
+)
+
+const fallbackMsgHistoryLimit = 100
+const respondRequestTimeout = 10 * time.Second
+
+type respondToAgentResponse struct {
+	Status     string `json:"status"`
+	RunID      string `json:"runId,omitempty"`
+	ThreadID   string `json:"threadId,omitempty"`
+	InstanceID string `json:"instanceId,omitempty"`
+	Fallback   bool   `json:"fallback"`
+}
+
+// QuickComplete 将 prompt 转发给 agent 运行时做一次同步短文本补全，返回纯文本结果。
+func (h *AGUIHandler) QuickComplete(ctx context.Context, prompt string) (string, error) {
+	return h.resolveAGUIClient(ctx).QuickComplete(ctx, prompt)
+}
+
+type respondToAgentRequest struct {
+	ThreadID   string `json:"threadId"`
+	InstanceID string `json:"instanceId"`
+	Message    string `json:"message"`
+}
+
+// RespondToAgent 处理前端对 agent.question 的回复，转发给 gatewayd 继续执行。
+// 优先使用会话持久化的 GatewaydAgentID 作为实际 instance id（gatewayd 对 agent.question 事件中的
+// instance_id 字段可能是 opencode/opencode-1，而前端误用 payload.instanceId 可能拿到 UUID，导致 404）。
+// 当直接 Respond 失败后，先通过 RespondAndListen 尝试复用原实例；仍失败才回退到全新 run。
+func (h *AGUIHandler) RespondToAgent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		WriteJSONError(w, http.StatusMethodNotAllowed, ErrCodeGeneral, "method not allowed")
+		return
+	}
+	var req respondToAgentRequest
+	if !DecodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.ThreadID == "" || req.InstanceID == "" {
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeUnauthorized, "threadId and instanceId are required")
+		return
+	}
+
+	ctx := context.Background()
+
+	// 从会话记录中读取真实的 gatewayd agent instance id，覆盖前端可能错误的 UUID。
+	effectiveInstanceID := req.InstanceID
+	if oldSess, sessErr := h.sessions.Get(ctx, req.ThreadID); sessErr == nil && oldSess.GatewaydAgentID != "" {
+		if oldSess.GatewaydAgentID != req.InstanceID {
+			log.Printf("[AGUIHandler] RespondToAgent override frontend instanceId=%s with session gatewaydAgentID=%s thread=%s",
+				req.InstanceID, oldSess.GatewaydAgentID, req.ThreadID)
+		}
+		effectiveInstanceID = oldSess.GatewaydAgentID
+	}
+
+	// 直接 Respond 通常应该很快返回；如果 gatewayd 实例已死亡/卡住，不要无限等待。
+	// 超时后转为 fallback run，由后端主动启动新 run 继续对话，避免前端长时间"思考中"。
+	respondCtx, cancel := context.WithTimeout(r.Context(), respondRequestTimeout)
+	defer cancel()
+	directErr := h.resolveAGUIClient(r.Context()).Respond(respondCtx, req.ThreadID, effectiveInstanceID, req.Message)
+	if directErr == nil {
+		SetJSONHeader(w)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(respondToAgentResponse{Status: "ok"})
+		return
+	}
+	log.Printf("[AGUIHandler] RespondToAgent direct respond failed, trying RespondAndListen: thread=%s instance=%s err=%v",
+		req.ThreadID, effectiveInstanceID, directErr)
+
+	// 直接 Respond 失败后，先尝试通过 WebSocket 事件流复用原实例，避免重建 agent 重新读代码/思考。
+	h.respondAndListenFallback(w, r, req, effectiveInstanceID)
+}
+
+// respondAndListenFallback 在直接 Respond 失败后尝试复用原 gatewayd 实例：
+// 先建立 WebSocket 事件流监听，再调用 Respond，把事件捕获到 SSE buffer 供前端重放。
+// 如果仍然失败，最后回退到 fallbackRunForRespond（创建新 thread）。
+func (h *AGUIHandler) respondAndListenFallback(w http.ResponseWriter, r *http.Request, req respondToAgentRequest, effectiveInstanceID string) {
+	ctx := context.Background()
+	listenCtx, listenCancel := context.WithTimeout(ctx, respondRequestTimeout)
+	defer listenCancel()
+
+	events, closeConn, err := h.resolveAGUIClient(ctx).RespondAndListen(listenCtx, req.ThreadID, effectiveInstanceID, req.Message)
+	if err != nil {
+		log.Printf("[AGUIHandler] RespondAndListen failed, falling back to new-thread run: thread=%s instance=%s err=%v",
+			req.ThreadID, effectiveInstanceID, err)
+		h.fallbackRunForRespond(w, r, req)
+		return
+	}
+
+	runID := uuid.New().String()
+	go h.bufferRespondAndListenEvents(ctx, events, closeConn, req.ThreadID, runID, effectiveInstanceID)
+
+	SetJSONHeader(w)
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(respondToAgentResponse{
+		Status:     "ok",
+		RunID:      runID,
+		ThreadID:   req.ThreadID,
+		InstanceID: effectiveInstanceID,
+		Fallback:   true,
+	})
+	log.Printf("[AGUIHandler] RespondAndListen started: thread=%s run=%s instance=%s", req.ThreadID, runID, effectiveInstanceID)
+}
+
+// bufferRespondAndListenEvents 在后台 goroutine 中读取 RespondAndListen 事件流，
+// 将事件写入 SSE buffer 供前端重放，并在流结束时持久化 assistant 文本消息。
+func (h *AGUIHandler) bufferRespondAndListenEvents(ctx context.Context, events <-chan agui.Event, closeConn func(), threadID, runID, instanceID string) {
+	defer closeConn()
+
+	bgCtx := context.Background()
+	var textBuilder strings.Builder
+	var msgID string
+	sawRunFinished := false
+	sawRunError := false
+
+	for ev := range events {
+		if ev.ThreadID == "" {
+			ev.ThreadID = threadID
+		}
+		if ev.RunID == "" {
+			ev.RunID = runID
+		}
+		if h.buffer != nil {
+			_ = h.buffer.Append(bgCtx, threadID, ev)
+		}
+
+		switch ev.Type {
+		case agui.EventTextMessageStart:
+			msgID = ev.MessageID
+		case agui.EventTextMessageContent:
+			textBuilder.WriteString(ev.Delta)
+		case agui.EventRunFinished:
+			sawRunFinished = true
+		case agui.EventRunError:
+			sawRunError = true
+		}
+	}
+
+	if !sawRunFinished && !sawRunError {
+		if h.buffer != nil {
+			_ = h.buffer.Append(bgCtx, threadID, agui.RunFinishedEvent(threadID, runID))
+		}
+	}
+
+	text := textBuilder.String()
+	if text != "" {
+		finalMsgID := msgID
+		if finalMsgID == "" {
+			finalMsgID = uuid.New().String()
+		}
+		msg := chat.Message{
+			ID:        finalMsgID,
+			SessionID: threadID,
+			Role:      "assistant",
+			Type:      "text",
+			Content:   text,
+			Metadata:  map[string]any{},
+			Timestamp: time.Now(),
+		}
+		if err := h.messages.Append(bgCtx, threadID, msg); err != nil {
+			log.Printf("[AGUIHandler] RespondAndListen persist assistant message failed: %v", err)
+		} else {
+			log.Printf("[AGUIHandler] RespondAndListen persist assistant message ok: id=%s textLen=%d", finalMsgID, len(text))
+		}
+	}
+
+	_ = h.sessions.UpdateActivity(bgCtx, threadID)
+	log.Printf("[AGUIHandler] RespondAndListen buffering finished: thread=%s run=%s", threadID, runID)
+}
+
+// fallbackRunForRespond 在 gatewayd Respond 不可用或超时时作为回退：收集会话上下文后
+// 启动新的 agent run，将用户回答与历史消息一并下发，事件通过 SSE buffer 供前端重放。
+func (h *AGUIHandler) fallbackRunForRespond(w http.ResponseWriter, r *http.Request, req respondToAgentRequest) {
+	userID, _ := middleware.UserIDFromContext(r.Context())
+
+	// 原请求上下文可能已经超时，回退流程使用独立后台上下文，避免 DB 操作被取消。
+	ctx := context.Background()
+
+	oldSess, sessErr := h.sessions.Get(ctx, req.ThreadID)
+	workspaceID := ""
+	oldContext := map[string]any{}
+	if sessErr == nil {
+		workspaceID = oldSess.WorkspaceID
+		if oldSess.Context != nil {
+			oldContext = oldSess.Context
+		}
+	} else {
+		log.Printf("[AGUIHandler] fallback: session=%s not found, proceeding without workspace context", req.ThreadID)
+	}
+
+	workspacePath := ""
+	if workspaceID != "" && userID != "" {
+		resolved, resolveErr := resolveWorkspacePath(workspaceID, userID, h.workspaceRoot)
+		if resolveErr == nil {
+			workspacePath = resolved
+		} else {
+			log.Printf("[AGUIHandler] fallback: resolve workspace path failed: %v", resolveErr)
+		}
+	}
+
+	history, _ := h.messages.GetHistory(ctx, req.ThreadID, fallbackMsgHistoryLimit)
+
+	// 从旧会话历史中恢复上下文项（任务卡片、代码库等），确保 fallback run 与原始 run 有相同的上下文。
+	ctxItems := extractContextItemsFromHistory(history)
+
+	// 使用原始 run 的 agent 插件 key，避免 fallback run 误用默认 agent。
+	agentKey := ""
+	if v, ok := oldContext["pluginKey"].(string); ok && v != "" {
+		agentKey = v
+	}
+
+	answerMessage := agui.UserMessage("", req.Message)
+
+	messages := make([]agui.Message, 0, len(history)+2)
+	for _, hm := range history {
+		role := agui.MessageRole(hm.Role)
+		if role == "" {
+			role = agui.RoleUser
+		}
+		content := json.RawMessage(fmt.Sprintf("%q", hm.Content))
+		messages = append(messages, agui.Message{
+			Role:    role,
+			ID:      hm.ID,
+			Content: content,
+		})
+	}
+	messages = append(messages, answerMessage)
+
+	// gatewayd/opencode 的 question 工具会结束当前 run，respond 后 fallback 启动新 run。
+	// 新 run 中 agent 可能把用户回答当作最终指令而提前开始生成文档、探索代码或忘记使用 question 工具。
+	// 用最强制的 developer 提示重申当前所处阶段、输出格式和绝对禁止事项。
+	continueReminder := `【系统强制指令 - 最高优先级】
+你当前处于 /brainstorm 需求澄清流程的“继续提问”阶段。
+上一条消息是用户对上一个问题的回答， ONLY 用于澄清需求，不是新任务，不是开发指令，不是要求你立即实现或探索代码。
+你的唯一任务是：根据用户回答，继续提出下一个澄清问题。
+
+绝对禁止：
+1. 调用任何工具（read/grep/glob/bash/write/edit/apply_diff 等）。
+2. 探索代码库、查看文件、搜索文件、分析实现细节。
+3. 生成文档、设计实现方案、输出代码、输出架构分析。
+4. 输出任何英文思考过程、分析、解释、总结。
+
+输出必须严格遵循：
+1. 先用一句中文确认用户回答。
+2. 然后输出下一个问题正文（必须以 ? 或 ？ 结尾）。
+3. 然后输出 2-3 个选项，每个选项一行，格式为：A. 选项说明。
+4. 最后立即调用 question 工具，参数 questions[0].question 只填问题正文，questions[0].options 填空数组 []。
+
+示例：
+收到，核心场景已明确。
+下一个问题：请确认导出数据的时间范围？
+A. 仅导出当前筛选条件下的数据
+B. 导出过去 7 天的数据
+C. 导出过去 30 天的数据
+
+在所有维度澄清完成前，禁止任何工具调用和任何实现/探索行为。重复：不要探索代码，不要生成文档，只提问。`
+	messages = append(messages, agui.Message{
+		Role:    agui.RoleDeveloper,
+		ID:      uuid.New().String(),
+		Content: json.RawMessage(fmt.Sprintf("%q", continueReminder)),
+	})
+
+	sessionID := req.ThreadID
+
+	// 保存用户回答消息到原 session；同时把恢复出的上下文项存入 metadata，方便后续再次 fallback。
+	h.saveUserMessages(ctx, sessionID, []agui.Message{answerMessage}, ctxItems)
+
+	runID := uuid.New().String()
+	fallbackInstanceID := uuid.New().String()
+	fallbackInput := agui.RunAgentInput{
+		ThreadID:  sessionID,
+		RunID:     runID,
+		Messages:  messages,
+		Context:   ctxItems,
+		Workspace: workspacePath,
+		AgentKey:  agentKey,
+	}
+
+	log.Printf("[AGUIHandler] fallbackRunForRespond: starting fallback run=%s thread=%s msgCount=%d contextCount=%d agentKey=%s",
+		runID, sessionID, len(messages), len(ctxItems), agentKey)
+	// 优先在原 thread 上强制替换 agent 实例继续运行，避免新建 thread 导致上下文迁移与冷启动。
+	go h.runFallback(userID, fallbackInput, sessionID, fallbackInstanceID, true)
+
+	SetJSONHeader(w)
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(respondToAgentResponse{
+		Status:     "ok",
+		RunID:      runID,
+		ThreadID:   sessionID,
+		InstanceID: fallbackInstanceID,
+		Fallback:   true,
+	})
+}
+
+// createFallbackThread 在旧 session 不可复用时创建新 thread，并迁移消息与上下文。
+func (h *AGUIHandler) createFallbackThread(ctx context.Context, oldSessionID string) (newThreadID string, err error) {
+	newThreadID, err = h.resolveAGUIClient(ctx).CreateThread(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	log.Printf("[AGUIHandler] fallback run: created new thread %s -> %s", oldSessionID, newThreadID)
+
+	if err := h.messages.MigrateMessages(ctx, oldSessionID, newThreadID); err != nil {
+		log.Printf("[AGUIHandler] fallback run: migrate messages failed: %v", err)
+	}
+
+	oldSess, _ := h.sessions.Get(ctx, oldSessionID)
+	if oldSess.Title != "" {
+		_ = h.sessions.UpdateTitle(ctx, newThreadID, oldSess.Title)
+	}
+	if err := h.sessions.Create(ctx, chat.Session{
+		ID:          newThreadID,
+		WorkspaceID: oldSess.WorkspaceID,
+		AgentID:     "agent-default",
+		AgentType:   "chat",
+		Context:     oldSess.Context,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}); err != nil && !errors.Is(err, common.ErrAlreadyExists) {
+		log.Printf("[AGUIHandler] fallback run: create new session record failed: %v", err)
+	}
+	return newThreadID, nil
+}
+
+// extractContextItemsFromHistory 从历史消息 metadata 中恢复上下文项（quotedCard / selectedRepos），
+// 用于 fallback run 保持与原始 run 相同的上下文。
+func extractContextItemsFromHistory(history []chat.Message) []agui.ContextItem {
+	var items []agui.ContextItem
+	for _, m := range history {
+		if m.Role != "user" && m.Role != string(agui.RoleUser) {
+			continue
+		}
+		if m.Metadata == nil {
+			continue
+		}
+		added := false
+		if raw, ok := m.Metadata["quotedCard"]; ok {
+			data, _ := json.Marshal(raw)
+			if len(data) > 0 {
+				items = append(items, agui.ContextItem{Name: "quotedCard", Value: data})
+				added = true
+			}
+		}
+		if raw, ok := m.Metadata["selectedRepos"]; ok {
+			data, _ := json.Marshal(raw)
+			if len(data) > 0 {
+				items = append(items, agui.ContextItem{Name: "selectedRepos", Value: data})
+				added = true
+			}
+		}
+		if added {
+			break
+		}
+	}
+	return items
+}
+
+// runFallback 在独立 goroutine 中执行回退 agent run：
+// 1. 优先尝试在原 thread 上强制替换 agent 实例（trySameThread=true），避免新建 thread 导致上下文迁移；
+// 2. 若原 thread 失败，则创建新 thread 并迁移消息后重试；
+// 3. 调用 aguiClient.Run 获取事件流；
+// 4. 过滤掉思考过程，对 assistant 文本做“问题 + 选项”解析；
+// 5. 如果 agent 未发出 agent.question 自定义事件，则补发一个合成的 agent.question 事件，
+//    并把 assistant 文本裁剪为仅展示问题与选项，保证前端能渲染内联问题卡片；
+// 6. 缓冲最终事件到 SSE buffer 供前端轮询重放，并持久化简化的 assistant 消息。
+func (h *AGUIHandler) runFallback(userID string, input agui.RunAgentInput, sessionID, fallbackInstanceID string, trySameThread bool) {
+	bgCtx := context.Background()
+	log.Printf("[AGUIHandler] fallback run: starting run=%s originalThread=%s trySameThread=%v msgCount=%d",
+		input.RunID, sessionID, trySameThread, len(input.Messages))
+
+	activeSessionID := sessionID
+	activeThreadID := input.ThreadID
+
+	if trySameThread && activeThreadID != "" {
+		// 强制替换原 thread 上的 agent 实例，避免旧实例占用 session 导致新 run 被排队。
+		h.resolveAGUIClient(bgCtx).ForgetThread(activeThreadID)
+		attachCtx, cancel := context.WithTimeout(bgCtx, 2*time.Minute)
+		attachErr := h.resolveAGUIClient(attachCtx).AttachAgent(attachCtx, activeThreadID, true, input.Workspace)
+		cancel()
+		if attachErr != nil {
+			log.Printf("[AGUIHandler] fallback run: force attach on same thread failed: %v", attachErr)
+		} else {
+			log.Printf("[AGUIHandler] fallback run: force attach on same thread succeeded")
+		}
+	}
+
+	actualThreadID, events, err := h.resolveAGUIClient(bgCtx).Run(bgCtx, input)
+	if err != nil {
+		log.Printf("[AGUIHandler] fallback run: run failed on thread=%s: %v", activeThreadID, err)
+		if trySameThread && activeSessionID != "" {
+			log.Printf("[AGUIHandler] fallback run: retrying on new thread after same-thread failure")
+			newThreadID, createErr := h.createFallbackThread(bgCtx, activeSessionID)
+			if createErr != nil {
+				log.Printf("[AGUIHandler] fallback run: create new thread failed: %v", createErr)
+				if h.buffer != nil {
+					_ = h.buffer.Append(bgCtx, activeSessionID, agui.RunErrorEvent(
+						FormatGatewaydError(err), "FALLBACK_RUN_FAILED",
+					))
+				}
+				return
+			}
+			activeSessionID = newThreadID
+			activeThreadID = newThreadID
+			input.ThreadID = newThreadID
+			actualThreadID, events, err = h.resolveAGUIClient(bgCtx).Run(bgCtx, input)
+			if err != nil {
+				log.Printf("[AGUIHandler] fallback run: run failed on new thread=%s: %v", newThreadID, err)
+				if h.buffer != nil {
+					_ = h.buffer.Append(bgCtx, activeSessionID, agui.RunErrorEvent(
+						FormatGatewaydError(err), "FALLBACK_RUN_FAILED",
+					))
+				}
+				return
+			}
+			log.Printf("[AGUIHandler] fallback run: agent started on new thread run=%s actualThread=%s", input.RunID, actualThreadID)
+		} else {
+			if h.buffer != nil {
+				_ = h.buffer.Append(bgCtx, activeSessionID, agui.RunErrorEvent(
+					FormatGatewaydError(err), "FALLBACK_RUN_FAILED",
+				))
+			}
+			return
+		}
+	}
+	log.Printf("[AGUIHandler] fallback run: agent started run=%s actualThread=%s", input.RunID, actualThreadID)
+
+	if activeSessionID != "" && activeSessionID != actualThreadID {
+		h.migrateThreadIfNeeded(bgCtx, input.RunID, activeSessionID, actualThreadID)
+		activeSessionID = actualThreadID
+	}
+
+	var textBuilder strings.Builder
+	var msgID string
+	sawQuestionEvent := false
+	var collectedEvents []agui.Event
+
+	for ev := range events {
+		switch ev.Type {
+		case agui.EventTextMessageStart:
+			msgID = ev.MessageID
+		case agui.EventTextMessageContent:
+			textBuilder.WriteString(ev.Delta)
+		case agui.EventThinkingStart, agui.EventThinkingEnd,
+			agui.EventThinkingTextMessageStart, agui.EventThinkingTextMessageContent, agui.EventThinkingTextMessageEnd:
+			// 过滤思考过程：只保留用户可见的问题与选项，不展示英文推理。
+			continue
+		case agui.EventCustom:
+			if ev.Name == "agent.question" {
+				sawQuestionEvent = true
+			}
+			collectedEvents = append(collectedEvents, ev)
+		case agui.EventRunFinished, agui.EventRunError:
+			// 暂存生命周期事件，在最后统一追加，确保 synthetic 事件先发出。
+			collectedEvents = append(collectedEvents, ev)
+		default:
+			collectedEvents = append(collectedEvents, ev)
+		}
+	}
+
+	text := textBuilder.String()
+	questionPayload := parseQuestionFromText(text)
+
+	// 追加非文本、非生命周期事件（如 RUN_STARTED、工具事件、agent.question 等）。
+	for _, ev := range collectedEvents {
+		if ev.Type == agui.EventRunFinished || ev.Type == agui.EventRunError {
+			continue
+		}
+		if h.buffer != nil {
+			_ = h.buffer.Append(bgCtx, activeSessionID, ev)
+		}
+	}
+
+	finalMsgID := msgID
+	if finalMsgID == "" {
+		finalMsgID = uuid.New().String()
+	}
+	finalText := text
+
+	if questionPayload != nil && !sawQuestionEvent {
+		finalText = formatQuestionText(questionPayload)
+		qev := questionPayload.toEvent(activeSessionID, input.RunID, fallbackInstanceID)
+		if h.buffer != nil {
+			_ = h.buffer.Append(bgCtx, activeSessionID, qev)
+		}
+		log.Printf("[AGUIHandler] fallback run: emitted synthetic agent.question for run=%s question=%.50s options=%d",
+			input.RunID, questionPayload.Question, len(questionPayload.Options))
+	}
+
+	if finalText != "" {
+		if h.buffer != nil {
+			_ = h.buffer.Append(bgCtx, activeSessionID, agui.TextMessageStartEvent(finalMsgID, "assistant"))
+			_ = h.buffer.Append(bgCtx, activeSessionID, agui.TextMessageContentEvent(finalMsgID, finalText))
+			_ = h.buffer.Append(bgCtx, activeSessionID, agui.TextMessageEndEvent(finalMsgID))
+		}
+	}
+
+	// 追加 RUN_FINISHED 或 RUN_ERROR。
+	if len(collectedEvents) > 0 {
+		last := collectedEvents[len(collectedEvents)-1]
+		if last.Type == agui.EventRunFinished || last.Type == agui.EventRunError {
+			if h.buffer != nil {
+				_ = h.buffer.Append(bgCtx, activeSessionID, last)
+			}
+		} else {
+			if h.buffer != nil {
+				_ = h.buffer.Append(bgCtx, activeSessionID, agui.RunFinishedEvent(actualThreadID, input.RunID))
+			}
+		}
+	} else {
+		if h.buffer != nil {
+			_ = h.buffer.Append(bgCtx, activeSessionID, agui.RunFinishedEvent(actualThreadID, input.RunID))
+		}
+	}
+
+	if activeSessionID != "" && finalText != "" {
+		msg := chat.Message{
+			ID:        finalMsgID,
+			SessionID: activeSessionID,
+			Role:      "assistant",
+			Type:      "text",
+			Content:   finalText,
+			Metadata:  map[string]any{},
+			Timestamp: time.Now(),
+		}
+		if err := h.messages.Append(bgCtx, activeSessionID, msg); err != nil {
+			log.Printf("[AGUIHandler] fallback persist assistant message failed: %v", err)
+		} else {
+			log.Printf("[AGUIHandler] fallback persist assistant message ok: id=%s textLen=%d", finalMsgID, len(finalText))
+		}
+	}
+
+	_ = h.sessions.UpdateActivity(bgCtx, activeSessionID)
+	log.Printf("[AGUIHandler] fallback run finished: run=%s thread=%s", input.RunID, activeSessionID)
+}

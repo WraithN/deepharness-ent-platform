@@ -2,8 +2,18 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
+)
+
+// 通用错误码常量，统一 WriteJSONError 的 code 字段，避免魔法数字。
+const (
+	ErrCodeGeneral      = 1
+	ErrCodeUnauthorized = 2
+	ErrCodeForbidden    = 3
 )
 
 // Gatewayd 连接错误特征子串。
@@ -54,17 +64,17 @@ func WriteJSONError(w http.ResponseWriter, status, code int, message string) {
 
 // HandleServiceError 统一处理服务层错误，识别 not found 返回 404。
 func HandleServiceError(w http.ResponseWriter, err error, notFoundMsg, defaultMsg string) {
-	if strings.Contains(err.Error(), "not found") {
-		WriteJSONError(w, http.StatusNotFound, 1, notFoundMsg)
+	if errors.Is(err, common.ErrNotFound) {
+		WriteJSONError(w, http.StatusNotFound, ErrCodeGeneral, notFoundMsg)
 		return
 	}
-	WriteJSONError(w, http.StatusInternalServerError, 1, defaultMsg)
+	WriteJSONError(w, http.StatusInternalServerError, ErrCodeGeneral, defaultMsg)
 }
 
 // DecodeJSONBody 解码 JSON 请求体，失败时返回 400。
 func DecodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
-		WriteJSONError(w, http.StatusBadRequest, 1, "invalid request body")
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, "invalid request body")
 		return false
 	}
 	return true
@@ -74,7 +84,7 @@ func DecodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 func PathValueOr404(w http.ResponseWriter, r *http.Request, name string) (string, bool) {
 	v := r.PathValue(name)
 	if v == "" {
-		WriteJSONError(w, http.StatusBadRequest, 1, "missing "+name)
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, "missing "+name)
 		return "", false
 	}
 	return v, true

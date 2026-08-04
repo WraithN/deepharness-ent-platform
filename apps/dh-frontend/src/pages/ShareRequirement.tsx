@@ -665,7 +665,7 @@ export const ShareRequirement: React.FC = () => {
                   className="prose prose-sm dark:prose-invert max-w-none p-6"
                   onMouseUp={handleContentMouseUp}
                 >
-                  <MarkdownView content={doc.content} />
+                  <MarkdownView content={doc.content} collapsible={false} />
                 </article>
               </ScrollArea>
             </section>

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/object"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 )
 
@@ -21,22 +22,9 @@ type AgentConfigService interface {
 	// GetWorkspaceConfig 返回某空间下指定智能体的配置。
 	GetWorkspaceConfig(workspaceID, agentKey string) (agent.WorkspaceAgentConfig, error)
 	// SaveWorkspaceConfig 保存或更新空间级智能体配置。
-	SaveWorkspaceConfig(workspaceID string, req SaveWorkspaceConfigRequest) (agent.WorkspaceAgentConfig, error)
+	SaveWorkspaceConfig(workspaceID string, req object.SaveWorkspaceConfigRequest) (agent.WorkspaceAgentConfig, error)
 	// CanModifyWorkspaceConfig 判断指定空间的智能体配置是否允许修改。
 	CanModifyWorkspaceConfig(workspaceID, agentKey string) error
 	// ListAvailableAgents 返回某空间下实际可用的智能体列表（全局启用 + 空间启用）。
 	ListAvailableAgents(workspaceID string) ([]agent.AvailableAgent, error)
-}
-
-// SaveWorkspaceConfigRequest 保存空间级智能体配置的请求参数。
-type SaveWorkspaceConfigRequest struct {
-	AgentKey       string                      `json:"agentKey"`
-	Enabled        bool                        `json:"enabled"`
-	IsDefault      bool                        `json:"isDefault"`
-	Model          string                      `json:"model"`
-	ModelSource    string                      `json:"modelSource"`
-	BaseURL        string                      `json:"baseUrl"`
-	APIKey         string                      `json:"apiKey"`
-	Temperature    *float64                    `json:"temperature,omitempty"`
-	AdvancedConfig *agent.AdvancedAgentConfig  `json:"advancedConfig,omitempty"`
 }

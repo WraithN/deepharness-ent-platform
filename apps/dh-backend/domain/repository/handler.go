@@ -2,8 +2,10 @@ package repository
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
@@ -11,13 +13,25 @@ import (
 	gitrepo "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/repository"
 )
 
-const defaultErrorCode = 1
-
 var defaultService service.RepositoryService
 
 // Init 注入 RepositoryService 实现。
 func Init(svc service.RepositoryService) {
 	defaultService = svc
+}
+
+// sanitizeRepo 清除 Repository 中的敏感字段（SSHKey），防止通过 API 响应泄露私钥。
+func sanitizeRepo(r repository.Repository) repository.Repository {
+	r.SSHKey = ""
+	return r
+}
+
+// sanitizeRepos 批量清除 Repository 列表中的敏感字段。
+func sanitizeRepos(repos []repository.Repository) []repository.Repository {
+	for i := range repos {
+		repos[i].SSHKey = ""
+	}
+	return repos
 }
 
 // Repositories 处理 GET /api/v1/workspaces/{id}/repositories 与 POST /api/v1/workspaces/{id}/repositories。
@@ -35,22 +49,22 @@ func Repositories(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		handler.SetJSONHeader(w)
-		json.NewEncoder(w).Encode(repos)
+		json.NewEncoder(w).Encode(sanitizeRepos(repos))
 	case http.MethodPost:
-		var req service.CreateRepositoryRequest
+		var req object.CreateRepositoryRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
 		if req.URL == "" || req.Type == "" {
-			handler.WriteJSONError(w, http.StatusBadRequest, defaultErrorCode, "url and type are required")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "url and type are required")
 			return
 		}
 		if !gitrepo.IsValidGitURL(req.URL) {
-			handler.WriteJSONError(w, http.StatusBadRequest, defaultErrorCode, "invalid git URL format, supported: https://, ssh://, git@host:path, git://")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid git URL format, supported: https://, ssh://, git@host:path, git://")
 			return
 		}
 		if !isValidRepoType(req.Type) {
-			handler.WriteJSONError(w, http.StatusBadRequest, defaultErrorCode, "invalid repository type")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid repository type")
 			return
 		}
 		userID, _ := middleware.UserIDFromContext(r.Context())
@@ -61,9 +75,9 @@ func Repositories(w http.ResponseWriter, r *http.Request) {
 		}
 		handler.SetJSONHeader(w)
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(repo)
+		json.NewEncoder(w).Encode(sanitizeRepo(repo))
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, defaultErrorCode, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -86,14 +100,14 @@ func RepositoryByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		handler.SetJSONHeader(w)
-		json.NewEncoder(w).Encode(repo)
+		json.NewEncoder(w).Encode(sanitizeRepo(repo))
 	case http.MethodPut, http.MethodPatch:
-		var req service.UpdateRepositoryRequest
+		var req object.UpdateRepositoryRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
 		if req.Type != "" && !isValidRepoType(req.Type) {
-			handler.WriteJSONError(w, http.StatusBadRequest, defaultErrorCode, "invalid repository type")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid repository type")
 			return
 		}
 		userID, _ := middleware.UserIDFromContext(r.Context())
@@ -103,7 +117,7 @@ func RepositoryByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		handler.SetJSONHeader(w)
-		json.NewEncoder(w).Encode(repo)
+		json.NewEncoder(w).Encode(sanitizeRepo(repo))
 	case http.MethodDelete:
 		if err := defaultService.Delete(workspaceID, repoID); err != nil {
 			handler.HandleServiceError(w, err, "repository not found", "failed to delete repository")
@@ -111,7 +125,7 @@ func RepositoryByID(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, defaultErrorCode, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -127,7 +141,7 @@ func SyncRepository(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodPost {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, defaultErrorCode, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
@@ -156,10 +170,11 @@ func ScanRepositories(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	userID, _ := middleware.UserIDFromContext(r.Context())
 
-	repos, err := defaultService.Scan(workspaceID)
+	repos, err := defaultService.Scan(workspaceID, userID)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	handler.SetJSONHeader(w)
@@ -176,12 +191,15 @@ func RepositoryDetails(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	userID, _ := middleware.UserIDFromContext(r.Context())
 
-	details, err := defaultService.GetDetails(workspaceID, repoID)
+	details, err := defaultService.GetDetails(workspaceID, repoID, userID)
 	if err != nil {
 		handler.HandleServiceError(w, err, "repository not found", "failed to get repository details")
 		return
 	}
+	// 清除嵌套的 Repository 敏感字段，防止 SSH 私钥通过详情接口泄露。
+	details.Repository = sanitizeRepo(details.Repository)
 	handler.SetJSONHeader(w)
 	json.NewEncoder(w).Encode(details)
 }
@@ -196,8 +214,9 @@ func RepositoryBranches(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	userID, _ := middleware.UserIDFromContext(r.Context())
 
-	branches, err := defaultService.GetBranches(workspaceID, repoID)
+	branches, err := defaultService.GetBranches(workspaceID, repoID, userID)
 	if err != nil {
 		handler.HandleServiceError(w, err, "repository not found", "failed to get branches")
 		return
@@ -216,8 +235,9 @@ func RefreshBranches(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	userID, _ := middleware.UserIDFromContext(r.Context())
 
-	branches, err := defaultService.RefreshBranches(workspaceID, repoID)
+	branches, err := defaultService.RefreshBranches(workspaceID, repoID, userID)
 	if err != nil {
 		handler.HandleServiceError(w, err, "repository not found", "failed to refresh branches")
 		return
@@ -238,8 +258,9 @@ func RepositoryFileTree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	branch := r.URL.Query().Get("branch")
+	userID, _ := middleware.UserIDFromContext(r.Context())
 
-	tree, err := defaultService.GetFileTree(workspaceID, repoID, branch)
+	tree, err := defaultService.GetFileTree(workspaceID, repoID, branch, userID)
 	if err != nil {
 		handler.HandleServiceError(w, err, "repository not found", "failed to get file tree")
 		return
@@ -263,11 +284,12 @@ func RepositoryFileContent(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 
 	if path == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "path is required")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "path is required")
 		return
 	}
+	userID, _ := middleware.UserIDFromContext(r.Context())
 
-	content, err := defaultService.GetFileContent(workspaceID, repoID, branch, path)
+	content, err := defaultService.GetFileContent(workspaceID, repoID, branch, path, userID)
 	if err != nil {
 		handler.HandleServiceError(w, err, "file not found", "failed to get file content")
 		return
@@ -295,11 +317,12 @@ func SwitchBranch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Branch == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "branch name is required")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "branch name is required")
 		return
 	}
+	userID, _ := middleware.UserIDFromContext(r.Context())
 
-	if err := defaultService.SwitchBranch(workspaceID, repoID, req.Branch); err != nil {
+	if err := defaultService.SwitchBranch(workspaceID, repoID, req.Branch, userID); err != nil {
 		handler.HandleServiceError(w, err, "branch switch failed", err.Error())
 		return
 	}
@@ -329,11 +352,12 @@ func SaveFileContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Path == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "path is required")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "path is required")
 		return
 	}
+	userID, _ := middleware.UserIDFromContext(r.Context())
 
-	if err := defaultService.SaveFileContent(workspaceID, repoID, req.Path, req.Content); err != nil {
+	if err := defaultService.SaveFileContent(workspaceID, repoID, req.Path, req.Content, userID); err != nil {
 		handler.HandleServiceError(w, err, "failed to save file", err.Error())
 		return
 	}
@@ -361,8 +385,15 @@ func GitCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash, err := defaultService.GitCommit(workspaceID, repoID, req.Message)
+	userID, _ := middleware.UserIDFromContext(r.Context())
+
+	hash, err := defaultService.GitCommit(workspaceID, repoID, req.Message, userID)
 	if err != nil {
+		// 无变更时返回 400 并透传原因，便于前端提示；其它错误统一走服务错误处理。
+		if errors.Is(err, service.ErrNoChangesToCommit) {
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, err.Error())
+			return
+		}
 		handler.HandleServiceError(w, err, "commit failed", err.Error())
 		return
 	}
@@ -383,7 +414,9 @@ func GitStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, err := defaultService.GitStatus(workspaceID, repoID)
+	userID, _ := middleware.UserIDFromContext(r.Context())
+
+	status, err := defaultService.GitStatus(workspaceID, repoID, userID)
 	if err != nil {
 		handler.HandleServiceError(w, err, "failed to get status", err.Error())
 		return
@@ -403,7 +436,7 @@ func UserRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 
@@ -430,12 +463,12 @@ func SyncUserRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 
 	if err := defaultService.SyncUserRepo(workspaceID, repoID, userID); err != nil {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 

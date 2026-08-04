@@ -1,8 +1,10 @@
 // Package object defines domain types and constants for the product-space module.
 package object
 
+import "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/workspacepath"
+
 const (
-	ProductSpaceRoot          = "products"
+	ProductSpaceRoot          = workspacepath.DirPMJobs
 	ProductSpaceDocsDir       = "docs"
 	ProductSpacePrototypesDir = "prototypes"
 	ProductSpaceVersionsDir   = "versions"

@@ -23,13 +23,21 @@ func NewDBNotificationService(db *sql.DB) *DBNotificationService {
 // notificationColumns 是统一的 SELECT 列列表
 const notificationColumns = `id, user_id, tenant_id, workspace_id, type, title, body, data, read, action_type, action_status, action_url, created_at, updated_at`
 
+// 分页与查询限制常量
+const (
+	defaultNotificationListLimit = 50
+	notificationLookupLimit      = 10
+)
+
 // scanNotification 扫描单行通知数据
 func scanNotification(scanner interface{ Scan(dest ...any) error }, n *object.Notification) error {
 	var dataJSON string
-	err := scanner.Scan(&n.ID, &n.UserID, &n.TenantID, &n.WorkspaceID, &n.Type, &n.Title, &n.Body, &dataJSON, &n.Read, &n.ActionType, &n.ActionStatus, &n.ActionURL, &n.CreatedAt, &n.UpdatedAt)
+	var actionURL sql.NullString
+	err := scanner.Scan(&n.ID, &n.UserID, &n.TenantID, &n.WorkspaceID, &n.Type, &n.Title, &n.Body, &dataJSON, &n.Read, &n.ActionType, &n.ActionStatus, &actionURL, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		return err
 	}
+	n.ActionURL = actionURL.String
 	if dataJSON != "" && dataJSON != "null" {
 		_ = json.Unmarshal([]byte(dataJSON), &n.Data)
 	}
@@ -62,12 +70,15 @@ func (s *DBNotificationService) Create(req object.CreateNotificationRequest) (ob
 
 // ListByTenantAndUser 按租户和用户查询通知（跨空间展示全部待办）
 func (s *DBNotificationService) ListByTenantAndUser(tenantID string, userID string, unreadOnly bool) ([]object.Notification, error) {
+	// 清除 7 日以上未读通知
+	s.db.Exec(`DELETE FROM notifications WHERE tenant_id = $1 AND user_id = $2 AND read = FALSE AND created_at < NOW() - INTERVAL '7 days'`, tenantID, userID)
+
 	query := fmt.Sprintf(`SELECT %s FROM notifications WHERE tenant_id = $1 AND user_id = $2`, notificationColumns)
 	args := []any{tenantID, userID}
 	if unreadOnly {
 		query += ` AND read = FALSE`
 	}
-	query += ` ORDER BY created_at DESC LIMIT 50`
+	query += fmt.Sprintf(` ORDER BY created_at DESC LIMIT %d`, defaultNotificationListLimit)
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list notifications: %w", err)
@@ -91,16 +102,9 @@ func (s *DBNotificationService) MarkAllAsRead(tenantID string, userID string) er
 // GetByID 根据 ID 查询通知
 func (s *DBNotificationService) GetByID(id string) (object.Notification, error) {
 	var n object.Notification
-	err := s.db.QueryRow(fmt.Sprintf(`SELECT %s FROM notifications WHERE id = $1`, notificationColumns), id).Scan(
-		&n.ID, &n.UserID, &n.TenantID, &n.WorkspaceID, &n.Type, &n.Title, &n.Body, &sql.NullString{}, &n.Read, &n.ActionType, &n.ActionStatus, &n.ActionURL, &n.CreatedAt, &n.UpdatedAt,
-	)
-	if err != nil {
-		return object.Notification{}, fmt.Errorf("get notification: %w", err)
-	}
-	// 重新查询以正确解析 data JSON
 	row := s.db.QueryRow(fmt.Sprintf(`SELECT %s FROM notifications WHERE id = $1`, notificationColumns), id)
 	if err := scanNotification(row, &n); err != nil {
-		return object.Notification{}, fmt.Errorf("get notification rescan: %w", err)
+		return object.Notification{}, fmt.Errorf("get notification: %w", err)
 	}
 	return n, nil
 }
@@ -113,11 +117,11 @@ func (s *DBNotificationService) UpdateActionStatus(id string, status string) (ob
 		WHERE id = $1
 		RETURNING `+notificationColumns,
 		id, status,
-	).Scan(&n.ID, &n.UserID, &n.TenantID, &n.WorkspaceID, &n.Type, &n.Title, &n.Body, &sql.NullString{}, &n.Read, &n.ActionType, &n.ActionStatus, &n.ActionURL, &n.CreatedAt, &n.UpdatedAt)
+	).Scan(&n.ID, &n.UserID, &n.TenantID, &n.WorkspaceID, &n.Type, &n.Title, &n.Body, &sql.NullString{}, &n.Read, &n.ActionType, &n.ActionStatus, &sql.NullString{}, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		return object.Notification{}, fmt.Errorf("update action status: %w", err)
 	}
-	// 重新查询以正确解析 data JSON
+	// 重新查询以正确解析 data JSON 和 action_url
 	row := s.db.QueryRow(fmt.Sprintf(`SELECT %s FROM notifications WHERE id = $1`, notificationColumns), id)
 	if err := scanNotification(row, &n); err != nil {
 		return object.Notification{}, fmt.Errorf("update action status rescan: %w", err)
@@ -127,7 +131,7 @@ func (s *DBNotificationService) UpdateActionStatus(id string, status string) (ob
 
 // ListByTypeAndData 按租户、类型和 data 字段查询通知（编排层用于查重）
 func (s *DBNotificationService) ListByTypeAndData(ctx context.Context, tenantID string, notifType string, dataKey string, dataValue string) ([]object.Notification, error) {
-	query := fmt.Sprintf(`SELECT %s FROM notifications WHERE tenant_id = $1 AND type = $2 AND data->>$3 = $4 ORDER BY created_at DESC LIMIT 10`, notificationColumns)
+	query := fmt.Sprintf(`SELECT %s FROM notifications WHERE tenant_id = $1 AND type = $2 AND data->>$3 = $4 ORDER BY created_at DESC LIMIT %d`, notificationColumns, notificationLookupLimit)
 	rows, err := s.db.QueryContext(ctx, query, tenantID, notifType, dataKey, dataValue)
 	if err != nil {
 		return nil, fmt.Errorf("list by type and data: %w", err)

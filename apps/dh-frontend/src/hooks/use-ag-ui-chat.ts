@@ -22,6 +22,14 @@ const PHASE_THINKING = 'thinking' as const;
 
 type RunPhase = typeof PHASE_CONNECTING | typeof PHASE_THINKING | null;
 
+interface RespondResponse {
+  status: string;
+  runId?: string;
+  threadId?: string;
+  instanceId?: string;
+  fallback?: boolean;
+}
+
 interface UseAgUiChatReturn {
   runtime: AssistantRuntime;
   sessionId: string | null;
@@ -38,19 +46,24 @@ interface UseAgUiChatReturn {
   /** 当前等待用户回复的 agent.question 事件；null 表示没有待处理问题。 */
   pendingQuestion: AgentQuestionEvent | null;
   /** 回复当前 agent.question 事件。 */
-  respondToQuestion: (message: string) => Promise<void>;
+  respondToQuestion: (message: string, displayText?: string) => Promise<void>;
+  /** 关闭待处理问题卡片并取消当前运行。 */
+  dismissQuestion: () => void;
 }
 
 /** agent.question 工具中的单个选项。 */
 export interface AgentQuestionOption {
   label: string;
-  value: string;
+  description?: string;
+  value?: string;
 }
 
 /** agent.question 工具中的单条问题。 */
 export interface AgentQuestionItem {
-  id: string;
+  id?: string;
   header?: string;
+  /** 问题正文；兼容 question 和 text 两种字段名。 */
+  question?: string;
   text?: string;
   options?: AgentQuestionOption[];
 }
@@ -81,8 +94,11 @@ const SESSION_ID_KEY_PREFIX = 'dh_chat_session_id';
 const IN_PROGRESS_MSG_KEY_PREFIX = 'dh_chat_in_progress_msg';
 const ACTIVE_RUN_KEY_PREFIX = 'dh_chat_active_run';
 
-// 会话 ID 按工作区隔离存储，避免切换工作区后恢复其他工作区的会话
-const getSessionIdKey = (workspaceId: string) => `${SESSION_ID_KEY_PREFIX}:${workspaceId}`;
+// 获取当前登录用户 ID（token 即 userId），用于按用户隔离 localStorage
+const getCurrentUserId = (): string => localStorage.getItem('token') ?? '';
+
+// 会话 ID 按工作区 + 用户隔离存储，避免切换用户后恢复其他用户的会话
+const getSessionIdKey = (workspaceId: string) => `${SESSION_ID_KEY_PREFIX}:${workspaceId}:${getCurrentUserId()}`;
 
 // 进行中的 AI 回复按会话 ID 隔离存储，用于页面刷新/关闭后恢复未完成的输出
 const getInProgressMsgKey = (sessionId: string) => `${IN_PROGRESS_MSG_KEY_PREFIX}:${sessionId}`;
@@ -501,6 +517,28 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
   const [isRunning, setIsRunning] = useState(false);
   const [runPhase, setRunPhase] = useState<RunPhase>(null);
   const [pendingQuestion, setPendingQuestion] = useState<AgentQuestionEvent | null>(null);
+
+  // 持久化 pendingQuestion 到 localStorage，刷新或切换页面后恢复。
+  const PENDING_QUESTION_STORAGE_KEY = 'dh_pending_question';
+  useEffect(() => {
+    if (pendingQuestion) {
+      localStorage.setItem(PENDING_QUESTION_STORAGE_KEY, JSON.stringify(pendingQuestion));
+    } else {
+      localStorage.removeItem(PENDING_QUESTION_STORAGE_KEY);
+    }
+  }, [pendingQuestion]);
+  // 挂载时从 localStorage 恢复。
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(PENDING_QUESTION_STORAGE_KEY);
+      if (saved) {
+        const restored = JSON.parse(saved) as AgentQuestionEvent;
+        if (restored.threadId && restored.instanceId) {
+          setPendingQuestion(restored);
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
 
   const sessionIdRef = useRef(sessionId);
   useEffect(() => {
@@ -962,10 +1000,22 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       case 'CUSTOM': {
         if (ev.name !== 'agent.question') break;
         const payload = parseQuestionValue(ev.value);
+        // gatewayd 发送的字段名为 snake_case 且 questions 嵌套在 interaction 下，
+        // 需要兼容两种格式：gatewayd (instance_id/interaction.questions) 和标准 (instanceId/questions)。
+        // 优先使用 gatewayd 实际返回的 instance_id（如 opencode/opencode-1），避免误用 payload.instanceId 的 UUID 导致 404。
+        const instanceId = payload.instance_id ?? payload.instanceId ?? instanceIdRef.current ?? '';
+        const rawQuestions = payload.questions ?? payload.interaction?.questions ?? [];
+        const questions: AgentQuestionItem[] = Array.isArray(rawQuestions) ? rawQuestions.map((q: Record<string, unknown>) => ({
+          id: (q.id as string) ?? undefined,
+          header: (q.header as string) ?? (q.id as string) ?? undefined,
+          question: (q.question as string) ?? (q.text as string) ?? undefined,
+          text: (q.text as string) ?? undefined,
+          options: Array.isArray(q.options) ? q.options as AgentQuestionOption[] : undefined,
+        })) : [];
         const questionEvent: AgentQuestionEvent = {
-          threadId: payload.threadId ?? ctx.sessionId,
-          instanceId: payload.instanceId ?? instanceIdRef.current ?? '',
-          questions: Array.isArray(payload.questions) ? payload.questions : [],
+          threadId: payload.threadId ?? payload.conversation_id ?? ctx.sessionId,
+          instanceId,
+          questions,
         };
         if (!questionEvent.instanceId) {
           console.warn('[useAgUiChat] agent.question event without instanceId, cannot respond', ev);
@@ -1091,10 +1141,16 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       maybeRestoreActiveRun(targetSessionId);
     } catch (err) {
       console.error('[useAgUiChat] load messages failed:', err);
-      // 会话不属于当前工作区时，不需要弹窗报错；上层会感知到消息为空并自动创建新会话。
+      // 会话不属于当前工作区或当前用户时，静默清除旧 session 并创建新会话，不弹窗报错
       const isWorkspaceMismatch = err instanceof Error && err.message.includes('session not in this workspace');
-      if (!isWorkspaceMismatch) {
+      const isAccessDenied = err instanceof Error && err.message.includes('not allowed to access this session');
+      if (!isWorkspaceMismatch && !isAccessDenied) {
         toast.error('加载会话历史失败');
+      }
+      if (isAccessDenied) {
+        // 清除属于其他用户的旧 session，避免后续重复触发 403
+        const wsId = getCurrentWorkspaceId();
+        localStorage.removeItem(getSessionIdKey(wsId));
       }
       setMessages([]);
     }
@@ -1228,7 +1284,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
    * 解析 agent.question 自定义事件的 value 负载。
    * 兼容 value 为 JSON 字符串或直接对象的情况。
    */
-  const parseQuestionValue = (raw: unknown): Partial<AgentQuestionEvent> => {
+  const parseQuestionValue = (raw: unknown): Record<string, any> => {
     if (!raw) return {};
     let payload: any = raw;
     if (typeof raw === 'string') {
@@ -1243,31 +1299,67 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
 
   /**
    * 回复当前 agent.question 事件，继续 gatewayd 侧被中断的 agent 运行。
+   * 同时将用户回答作为消息追加到会话流中，保持对话上下文可见。
    */
   const respondToQuestion = useCallback(
-    async (message: string) => {
+    async (message: string, displayText?: string) => {
       const question = pendingQuestion;
       if (!question) {
         console.warn('[useAgUiChat] respondToQuestion called without pending question');
         return;
       }
+      // 立即关闭提问弹窗，避免用户重复点击或等待接口响应。
+      setPendingQuestion(null);
+      // 将用户回答作为 user 消息追加到会话流，使对话上下文可见。
+      // displayText 用于展示层（如“用户回答：C，选项描述”），实际发送给 agent 的仍是 message。
+      const answerMessage: ThreadMessageLike = {
+        id: generateId(),
+        role: 'user',
+        content: [{ type: 'text', text: displayText?.trim() || message }],
+        createdAt: new Date(),
+      };
+      setMessages((prev) => [...prev, answerMessage]);
+      setIsRunning(true);
+      setRunPhase(PHASE_THINKING);
+      // question 事件中的 threadId 可能仍是 gatewayd 原始 threadId；如果此前 fallback 已切换过 sessionId，
+      // 必须响应到当前活跃 session（sessionIdRef.current），否则 respond 会发到旧 thread，导致上下文断裂。
+      const targetThreadId = sessionIdRef.current || question.threadId;
+      const targetInstanceId = question.instanceId;
+      console.log('[useAgUiChat] respondToQuestion sending:', { threadId: targetThreadId, instanceId: targetInstanceId, message, currentSessionId: sessionIdRef.current });
       try {
-        const res = await api.post<{ code: number; message?: string }>('/v1/agent/respond', {
-          threadId: question.threadId,
-          instanceId: question.instanceId,
+        const res = await api.post<RespondResponse>('/v1/agent/respond', {
+          threadId: targetThreadId,
+          instanceId: targetInstanceId,
           message,
         });
-        if (res.code !== 0) {
-          throw new Error(res.message || '回复失败');
+        console.log('[useAgUiChat] respondToQuestion response:', res);
+        if (res.fallback && res.runId) {
+          const fallbackSessionId = res.threadId || targetThreadId;
+          console.log('[useAgUiChat] respondToQuestion fallback, starting reattach:', res.runId, 'session:', fallbackSessionId);
+          if (fallbackSessionId !== sessionIdRef.current) {
+            // 后端创建了全新的 thread 以绕过旧 agent 实例阻塞，前端切换到新 session。
+            setSessionId(fallbackSessionId);
+          }
+          saveActiveRun({ runId: res.runId, sessionId: fallbackSessionId, startedAt: Date.now(), phase: PHASE_THINKING });
+          startRunReattach(fallbackSessionId, res.runId, null);
+        } else {
+          console.log('[useAgUiChat] respondToQuestion direct ok, waiting for gatewayd continuation');
         }
-        setPendingQuestion(null);
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : '回复 agent 失败';
         console.error('[useAgUiChat] respond to question failed:', err);
-        toast.error(err instanceof Error ? err.message : '回复 agent 失败');
+        toast.error(errMsg);
+        cancelRun();
       }
     },
-    [pendingQuestion]
+    [pendingQuestion, cancelRun, startRunReattach]
   );
+
+  /** 关闭待处理问题卡片并取消当前运行。 */
+  const dismissQuestion = useCallback(() => {
+    setPendingQuestion(null);
+    cancelRun();
+  }, [cancelRun]);
 
   const handleSend = useCallback(
     async (text: string, context: SendContext = {}) => {
@@ -1549,5 +1641,6 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
     tryRestoreSession,
     pendingQuestion,
     respondToQuestion,
+    dismissQuestion,
   };
 }

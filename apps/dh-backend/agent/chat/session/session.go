@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
 )
 
 const (
@@ -24,6 +25,7 @@ type SessionStore struct {
 	sessions    map[string]chat.Session
 	maxSessions int
 	ttl         time.Duration
+	done        chan struct{}
 }
 
 func NewSessionStore() *SessionStore {
@@ -31,9 +33,15 @@ func NewSessionStore() *SessionStore {
 		sessions:    make(map[string]chat.Session),
 		maxSessions: defaultMaxSessions,
 		ttl:         defaultSessionTTL,
+		done:        make(chan struct{}),
 	}
-	go s.reaper()
+	safego.Go("session-reaper", s.reaper)
 	return s
+}
+
+// Stop 停止 session 回收 goroutine，释放资源。
+func (s *SessionStore) Stop() {
+	close(s.done)
 }
 
 // reaper 定期清理长时间未更新的 session，避免内存无限增长。
@@ -41,15 +49,19 @@ func (s *SessionStore) reaper() {
 	ticker := time.NewTicker(reaperInterval)
 	defer ticker.Stop()
 	for {
-		<-ticker.C
-		s.mu.Lock()
-		cutoff := time.Now().Add(-s.ttl)
-		for id, sess := range s.sessions {
-			if sess.UpdatedAt.Before(cutoff) {
-				delete(s.sessions, id)
+		select {
+		case <-ticker.C:
+			s.mu.Lock()
+			cutoff := time.Now().Add(-s.ttl)
+			for id, sess := range s.sessions {
+				if sess.UpdatedAt.Before(cutoff) {
+					delete(s.sessions, id)
+				}
 			}
+			s.mu.Unlock()
+		case <-s.done:
+			return
 		}
-		s.mu.Unlock()
 	}
 }
 

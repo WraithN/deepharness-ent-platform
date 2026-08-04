@@ -82,12 +82,12 @@ func (h *SessionHandler) Sessions(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		userID, ok := middleware.UserIDFromContext(r.Context())
 		if !ok {
-			WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+			WriteJSONError(w, http.StatusUnauthorized, ErrCodeUnauthorized, "unauthorized")
 			return
 		}
 		workspaceID := r.URL.Query().Get("workspaceId")
 		if workspaceID == "" {
-			WriteJSONError(w, http.StatusBadRequest, 1, "workspaceId is required")
+			WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, "workspaceId is required")
 			return
 		}
 		sessions, err := h.sessions.ListSessions(r.Context(), workspaceID, userID)
@@ -128,21 +128,21 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 
 	workspaceID := req.WorkspaceID
 	if workspaceID == "" {
-		WriteJSONError(w, http.StatusBadRequest, 1, "workspaceId is required")
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, "workspaceId is required")
 		return
 	}
 
 	// 从请求上下文中取出当前登录用户 ID，workspace 路径必须以当前用户为目录所有者。
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		WriteJSONError(w, http.StatusUnauthorized, ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 
 	// 根据当前登录用户、workspaceID 与配置根目录计算 gatewayd 工作目录，并确保目录存在。
 	workspacePath, err := resolveWorkspacePath(workspaceID, userID, h.cfg.WorkspaceRoot)
 	if err != nil {
-		WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		WriteJSONError(w, http.StatusInternalServerError, ErrCodeGeneral, err.Error())
 		return
 	}
 
@@ -162,7 +162,7 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		if availErr != nil {
 			log.Printf("[CreateSession] failed to list available agents: %v", availErr)
 		} else if !isAgentAvailable(pluginKey, available) {
-			WriteJSONError(w, http.StatusForbidden, 1, "agent not available in this workspace")
+			WriteJSONError(w, http.StatusForbidden, ErrCodeGeneral, "agent not available in this workspace")
 			return
 		}
 	}
@@ -295,7 +295,7 @@ func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		WriteJSONError(w, http.StatusUnauthorized, ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 
@@ -312,7 +312,7 @@ func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sess.UserID != "" && sess.UserID != userID {
-		WriteJSONError(w, http.StatusForbidden, 1, "not allowed to delete this session")
+		WriteJSONError(w, http.StatusForbidden, ErrCodeGeneral, "not allowed to delete this session")
 		return
 	}
 
@@ -336,7 +336,7 @@ func (h *SessionHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		WriteJSONError(w, http.StatusUnauthorized, ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 
@@ -353,16 +353,16 @@ func (h *SessionHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sess.UserID != "" && sess.UserID != userID {
-		WriteJSONError(w, http.StatusForbidden, 1, "not allowed to access this session")
+		WriteJSONError(w, http.StatusForbidden, ErrCodeGeneral, "not allowed to access this session")
 		return
 	}
 	workspaceID := r.URL.Query().Get("workspaceId")
 	if workspaceID == "" {
-		WriteJSONError(w, http.StatusBadRequest, 1, "workspaceId is required")
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, "workspaceId is required")
 		return
 	}
 	if sess.WorkspaceID != "" && sess.WorkspaceID != workspaceID {
-		WriteJSONError(w, http.StatusForbidden, 1, "session not in this workspace")
+		WriteJSONError(w, http.StatusForbidden, ErrCodeGeneral, "session not in this workspace")
 		return
 	}
 

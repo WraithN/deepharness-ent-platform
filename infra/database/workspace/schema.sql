@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS repositories (
     config JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT repositories_workspace_id_name_key UNIQUE (workspace_id, name)
+    CONSTRAINT repositories_workspace_id_local_path_key UNIQUE (workspace_id, local_path)
 );
 
 COMMENT ON TABLE repositories IS '代码仓库';

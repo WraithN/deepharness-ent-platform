@@ -4,10 +4,28 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
+	"github.com/lib/pq"
 )
+
+// isDuplicateKeyError 判断 err 是否为 PostgreSQL 唯一约束冲突（SQLSTATE 23505）。
+// 兼容 pq / pgx 等不同驱动：先尝试类型断言，再按错误文本和 SQLSTATE 兜底。
+func isDuplicateKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "SQLSTATE 23505") || strings.Contains(msg, "unique constraint")
+}
 
 // PostgresStore 是基于 PostgreSQL 的 SessionStore + MessageStore 实现。
 type PostgresStore struct {
@@ -31,6 +49,10 @@ func (s *PostgresStore) Create(ctx context.Context, sess chat.Session) error {
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`, sess.ID, sess.WorkspaceID, sess.WorkspacePath, sess.UserID, sess.AgentID, sess.AgentType, sess.Model, sess.ProjectID, sess.Title, ctxJSON, sess.CreatedAt, sess.UpdatedAt)
 	if err != nil {
+		// 唯一冲突（session id 已存在）使用类型化错误，便于调用方用 errors.Is 识别。
+		if isDuplicateKeyError(err) {
+			return fmt.Errorf("%w: insert session failed: %v", common.ErrAlreadyExists, err)
+		}
 		return fmt.Errorf("insert session failed: %w", err)
 	}
 	return nil
@@ -44,7 +66,7 @@ func (s *PostgresStore) Get(ctx context.Context, id string) (chat.Session, error
 		FROM agent_sessions WHERE id = $1
 	`, id).Scan(&sess.ID, &sess.WorkspaceID, &sess.WorkspacePath, &sess.UserID, &sess.AgentID, &sess.AgentType, &sess.Model, &sess.ProjectID, &sess.Title, &ctxJSON, &sess.CreatedAt, &sess.UpdatedAt)
 	if err == sql.ErrNoRows {
-		return chat.Session{}, fmt.Errorf("session not found: %s", id)
+		return chat.Session{}, common.NotFoundErrorf("session not found: %s", id)
 	}
 	if err != nil {
 		return chat.Session{}, fmt.Errorf("get session failed: %w", err)

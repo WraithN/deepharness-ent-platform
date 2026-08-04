@@ -6,7 +6,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -37,22 +36,19 @@ type GroupMessage struct {
 }
 
 // GroupHistoryFetcher 拉取飞书群历史消息。
+// token 管理委托给共享的 FeishuTokenManager，避免并发数据竞争。
 type GroupHistoryFetcher struct {
-	appID      string
-	appSecret  string
-	apiBaseURL string
-	httpClient *http.Client
-	token      string
-	tokenExp   time.Time
+	tokenManager *FeishuTokenManager
+	apiBaseURL   string
+	httpClient   *http.Client
 }
 
-// NewGroupHistoryFetcher 创建群历史拉取器。mock 模式下传空字符串即可（不会被调用）。
-func NewGroupHistoryFetcher(appID, appSecret, apiBaseURL string) *GroupHistoryFetcher {
+// NewGroupHistoryFetcher 创建群历史拉取器。mock 模式下不会构造此对象。
+func NewGroupHistoryFetcher(tokenManager *FeishuTokenManager, apiBaseURL string) *GroupHistoryFetcher {
 	return &GroupHistoryFetcher{
-		appID:      appID,
-		appSecret:  appSecret,
-		apiBaseURL: apiBaseURL,
-		httpClient: &http.Client{Timeout: groupHistoryHTTPTimeout},
+		tokenManager: tokenManager,
+		apiBaseURL:   apiBaseURL,
+		httpClient:   &http.Client{Timeout: groupHistoryHTTPTimeout},
 	}
 }
 
@@ -66,7 +62,9 @@ func (f *GroupHistoryFetcher) FetchMessages(ctx context.Context, chatID string, 
 		duration = GroupHistoryDefaultDuration
 	}
 
-	if err := f.ensureToken(); err != nil {
+	// 获取 token 快照（线程安全），后续在锁外使用不可变字符串
+	token, err := f.tokenManager.GetToken(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("ensure token: %w", err)
 	}
 
@@ -79,7 +77,7 @@ func (f *GroupHistoryFetcher) FetchMessages(ctx context.Context, chatID string, 
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+f.token)
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := f.httpClient.Do(req)
 	if err != nil {
@@ -180,46 +178,6 @@ func BuildSummaryPrompt(messages []GroupMessage, intent object.Intent, userReque
 	}
 
 	return sb.String()
-}
-
-// ensureToken 获取或刷新 tenant_access_token。
-func (f *GroupHistoryFetcher) ensureToken() error {
-	if f.token != "" && time.Now().Before(f.tokenExp) {
-		return nil
-	}
-
-	body, _ := json.Marshal(map[string]string{
-		"app_id":     f.appID,
-		"app_secret": f.appSecret,
-	})
-	url := f.apiBaseURL + "/auth/v3/tenant_access_token/internal"
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := f.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request token: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Code              int    `json:"code"`
-		TenantAccessToken string `json:"tenant_access_token"`
-		Expire            int    `json:"expire"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode token response: %w", err)
-	}
-	if result.Code != 0 {
-		return fmt.Errorf("feishu token error code=%d", result.Code)
-	}
-
-	f.token = result.TenantAccessToken
-	f.tokenExp = time.Now().Add(time.Duration(result.Expire)*time.Second - cardTokenRefreshLeadTime)
-	return nil
 }
 
 // parseFeishuTimestamp 将飞书时间戳（秒或毫秒字符串）解析为 time.Time。

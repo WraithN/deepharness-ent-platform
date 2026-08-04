@@ -36,12 +36,12 @@ func Init(svc service.AgentRuntimeService) {
 // 该接口使用固定 Bearer Token 认证，不依赖用户登录态。
 func ReportStatus(w http.ResponseWriter, r *http.Request) {
 	if defaultAgentRuntimeService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "agent runtime service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "agent runtime service not initialized")
 		return
 	}
 
 	if r.Method != http.MethodPost {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
@@ -57,7 +57,7 @@ func ReportStatus(w http.ResponseWriter, r *http.Request) {
 
 	rt, err := defaultAgentRuntimeService.ReportStatus(runtimeID, req)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 
@@ -70,17 +70,17 @@ func ReportStatus(w http.ResponseWriter, r *http.Request) {
 // 超级管理员可查看全部；普通用户只能查看自己上报的运行时。
 func ListRuntimes(w http.ResponseWriter, r *http.Request) {
 	if defaultAgentRuntimeService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "agent runtime service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "agent runtime service not initialized")
 		return
 	}
 	if r.Method != http.MethodGet {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 
@@ -100,7 +100,7 @@ func ListRuntimes(w http.ResponseWriter, r *http.Request) {
 
 	result, err := defaultAgentRuntimeService.List(filter)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 
@@ -112,17 +112,17 @@ func ListRuntimes(w http.ResponseWriter, r *http.Request) {
 // 超级管理员可查看任意运行时；普通用户只能查看自己的运行时。
 func GetRuntime(w http.ResponseWriter, r *http.Request) {
 	if defaultAgentRuntimeService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "agent runtime service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "agent runtime service not initialized")
 		return
 	}
 	if r.Method != http.MethodGet {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 
@@ -138,7 +138,7 @@ func GetRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !identity.IsSuperAdmin(r) && rt.UserID != userID {
-		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden")
+		handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden")
 		return
 	}
 

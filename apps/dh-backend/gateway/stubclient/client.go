@@ -52,11 +52,21 @@ func Default() *Client {
 	return defaultClient
 }
 
-// DefaultOrPanic 返回全局默认客户端，未初始化时 panic。
-// 仅供确定已初始化的场景使用。
-func DefaultOrPanic() *Client {
-	if defaultClient == nil {
-		panic("stubclient: default client not initialized, call SetDefault first")
+// clientContextKey 是 context 中 per-user stubclient 的键类型。
+type clientContextKey struct{}
+
+// WithClient 将 stubclient 注入 context，供下游 service 层通过 FromContext 取用。
+func WithClient(ctx context.Context, c *Client) context.Context {
+	return context.WithValue(ctx, clientContextKey{}, c)
+}
+
+// FromContext 从 context 中取出 per-user stubclient。
+// 若 context 中无客户端（非 HTTP 请求路径，如后台任务），降级到 Default()。
+// 这是 stubclient.Default() 的上下文感知替代：
+// 所有 service 层调用应使用 stubclient.FromContext(ctx) 替代 stubclient.Default()。
+func FromContext(ctx context.Context) *Client {
+	if c, ok := ctx.Value(clientContextKey{}).(*Client); ok && c != nil {
+		return c
 	}
 	return defaultClient
 }
@@ -172,6 +182,81 @@ func (c *Client) FileExists(ctx context.Context, path string) (bool, error) {
 	return result.Exists, nil
 }
 
+// WalkEntry 是 WalkDir 返回的单个条目。
+type WalkEntry struct {
+	Path  string `json:"path"`
+	Name  string `json:"name"`
+	IsDir bool   `json:"isDir"`
+	Size  int64  `json:"size"`
+}
+
+// WalkDir 通过 personal-stub 递归遍历目录，返回所有文件/子目录的扁平列表。
+// 等价于 GET /api/v1/files/walk?path=...
+func (c *Client) WalkDir(ctx context.Context, path string) ([]WalkEntry, error) {
+	u := fmt.Sprintf("/api/v1/files/walk?path=%s", url.QueryEscape(path))
+	resp, err := c.do(ctx, http.MethodGet, u)
+	if err != nil {
+		return nil, fmt.Errorf("stubclient WalkDir: %w", err)
+	}
+	if err := checkResponseError(resp); err != nil {
+		return nil, err
+	}
+	var result struct {
+		Entries []WalkEntry `json:"entries"`
+	}
+	if err := json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("stubclient WalkDir: decode response: %w", err)
+	}
+	return result.Entries, nil
+}
+
+// Glob 通过 personal-stub 执行 glob 模式匹配。
+// 等价于 GET /api/v1/files/glob?pattern=...
+func (c *Client) Glob(ctx context.Context, pattern string) ([]string, error) {
+	u := fmt.Sprintf("/api/v1/files/glob?pattern=%s", url.QueryEscape(pattern))
+	resp, err := c.do(ctx, http.MethodGet, u)
+	if err != nil {
+		return nil, fmt.Errorf("stubclient Glob: %w", err)
+	}
+	if err := checkResponseError(resp); err != nil {
+		return nil, err
+	}
+	var result struct {
+		Matches []string `json:"matches"`
+	}
+	if err := json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("stubclient Glob: decode response: %w", err)
+	}
+	return result.Matches, nil
+}
+
+// FileInfoResult 是 FileInfo 的返回结果。
+type FileInfoResult struct {
+	Exists   bool   `json:"exists"`
+	IsDir    bool   `json:"isDir"`
+	Size     int64  `json:"size"`
+	ModTime  string `json:"modTime"`
+	BaseName string `json:"baseName"`
+}
+
+// FileInfo 通过 personal-stub 获取文件/目录详细信息。
+// 等价于 GET /api/v1/files/info?path=...
+func (c *Client) FileInfo(ctx context.Context, path string) (*FileInfoResult, error) {
+	u := fmt.Sprintf("/api/v1/files/info?path=%s", url.QueryEscape(path))
+	resp, err := c.do(ctx, http.MethodGet, u)
+	if err != nil {
+		return nil, fmt.Errorf("stubclient FileInfo: %w", err)
+	}
+	if err := checkResponseError(resp); err != nil {
+		return nil, err
+	}
+	var result FileInfoResult
+	if err := json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("stubclient FileInfo: decode response: %w", err)
+	}
+	return &result, nil
+}
+
 // GitExecResult 是 git 命令执行结果。
 type GitExecResult struct {
 	Output string
@@ -201,6 +286,31 @@ func (c *Client) GitExec(ctx context.Context, dir string, args ...string) (strin
 		return result.Output, fmt.Errorf("git %s: %s", strings.Join(args, " "), result.Error)
 	}
 	return result.Output, nil
+}
+
+// NpmInstallResult 是 npm install 的返回结果。
+type NpmInstallResult struct {
+	Success bool   `json:"success"`
+	Output  string `json:"output"`
+}
+
+// NpmInstall 通过 personal-stub 在指定目录执行 npm install。
+// 等价于 POST /api/v1/projects/npm-install  body: {"path": "..."}
+// 架构合规：dh-backend 不直接 exec npm，委托 personal-stub 执行。
+func (c *Client) NpmInstall(ctx context.Context, dir string) (*NpmInstallResult, error) {
+	body, _ := json.Marshal(map[string]string{"path": dir})
+	resp, err := c.doWithBody(ctx, http.MethodPost, "/api/v1/projects/npm-install", body)
+	if err != nil {
+		return nil, fmt.Errorf("stubclient NpmInstall: %w", err)
+	}
+	var result NpmInstallResult
+	if err := json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("stubclient NpmInstall: decode response: %w", err)
+	}
+	if !result.Success {
+		return &result, fmt.Errorf("npm install failed: %s", result.Output)
+	}
+	return &result, nil
 }
 
 // CloneRequest 是 git clone 请求参数。

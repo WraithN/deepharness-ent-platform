@@ -1,12 +1,13 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"path/filepath"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/repository"
 )
 
@@ -38,7 +39,7 @@ func StandardFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodGet {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, defaultErrorCode, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 	repo, err := defaultService.Get(workspaceID, repoID)
@@ -59,7 +60,7 @@ func StandardFilesInit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPost {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, defaultErrorCode, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 	repo, err := defaultService.Get(workspaceID, repoID)
@@ -90,12 +91,18 @@ func parseWorkspaceAndRepo(w http.ResponseWriter, r *http.Request) (string, stri
 }
 
 // buildStandardFilesResponse 读取仓库本地目录中的规范文件，组装状态响应。
+// 架构合规：通过 stubclient 委托 personal-stub 读取文件，不直接访问文件系统。
 func buildStandardFilesResponse(repo repository.Repository) *standardFilesResponse {
 	resp := &standardFilesResponse{}
 	if repo.LocalPath == "" || repo.CloneStatus != repository.CloneStatusCloned {
 		return resp
 	}
-	if info, err := os.Stat(repo.LocalPath); err != nil || !info.IsDir() {
+	sc := stubclient.FromContext(context.Background())
+	if sc == nil {
+		return resp
+	}
+	fi, err := sc.FileInfo(context.Background(), repo.LocalPath)
+	if err != nil || !fi.Exists || !fi.IsDir {
 		return resp
 	}
 	resp.Cloned = true
@@ -109,11 +116,15 @@ func buildStandardFilesResponse(repo repository.Repository) *standardFilesRespon
 
 // readStandardFile 读取仓库根目录下的规范文件，不存在时返回空字符串。
 func readStandardFile(repoPath, name string) string {
-	data, err := os.ReadFile(filepath.Join(repoPath, name))
+	sc := stubclient.FromContext(context.Background())
+	if sc == nil {
+		return ""
+	}
+	data, err := sc.ReadFile(context.Background(), filepath.Join(repoPath, name))
 	if err != nil {
 		return ""
 	}
-	return string(data)
+	return data
 }
 
 // detectFrontend 启发式判定项目是否包含前端代码：
@@ -122,15 +133,21 @@ func detectFrontend(repoPath string) bool {
 	if hasFrontendDeps(repoPath) {
 		return true
 	}
-	if _, err := os.Stat(filepath.Join(repoPath, "index.html")); err == nil {
-		return true
+	sc := stubclient.FromContext(context.Background())
+	if sc == nil {
+		return false
 	}
-	return false
+	ok, err := sc.FileExists(context.Background(), filepath.Join(repoPath, "index.html"))
+	return err == nil && ok
 }
 
 // hasFrontendDeps 解析根目录 package.json，检查 dependencies/devDependencies 是否命中前端白名单。
 func hasFrontendDeps(repoPath string) bool {
-	data, err := os.ReadFile(filepath.Join(repoPath, "package.json"))
+	sc := stubclient.FromContext(context.Background())
+	if sc == nil {
+		return false
+	}
+	data, err := sc.ReadFile(context.Background(), filepath.Join(repoPath, "package.json"))
 	if err != nil {
 		return false
 	}
@@ -138,7 +155,7 @@ func hasFrontendDeps(repoPath string) bool {
 		Dependencies    map[string]string `json:"dependencies"`
 		DevDependencies map[string]string `json:"devDependencies"`
 	}
-	if err := json.Unmarshal(data, &pkg); err != nil {
+	if err := json.Unmarshal([]byte(data), &pkg); err != nil {
 		return false
 	}
 	for _, dep := range frontendDeps {

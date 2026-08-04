@@ -31,6 +31,14 @@ type Config struct {
 	// personal-stub 部署在 WORKSPACE_ROOT 所在的服务器上，直接操作文件系统和 git。
 	PersonalStubURL string
 
+	// CrawlerServiceURL 是 crawler-service 服务地址，用于 /prd-analysis 等网站爬取场景。
+	CrawlerServiceURL string
+	// CrawlerServiceTimeout 是调用 crawler-service 的最大超时时间。
+	CrawlerServiceTimeout time.Duration
+	// CrawlerMCPName 是 crawler-service 在 gatewayd MCP 聚合层中注册的 server 名称。
+	// 为空时禁用 MCP 调用通道，回退到直接 HTTP 调用 crawler-service。
+	CrawlerMCPName string
+
 	// Redis（Buffer 存储后端，可选）
 	RedisAddrs    []string
 	RedisPassword string
@@ -83,6 +91,14 @@ type Config struct {
 	FeishuMockMode        bool
 	FeishuDispatchTimeout time.Duration
 	FeishuAdminUserIDs    []string
+
+	// Security 安全相关配置。
+	// SSHKeyEncryptionKey 为 32 字节 AES-256 密钥的 hex 编码（64 个 hex 字符）。
+	// 为空时 SSH 私钥以明文存储（仅限开发环境）。
+	SSHKeyEncryptionKey string
+
+	// AgentProvisioner Agent 实例供给器配置。
+	AgentProvisioner ProvisionerConfig
 }
 
 // CodingAgentDefinition 表示全局配置中一个 coding agent 的定义。
@@ -97,6 +113,44 @@ type ModelVendorGroup struct {
 	Key    string
 	Name   string
 	Models []string
+}
+
+// ProvisionerType 指定 Agent 实例供给方式。
+type ProvisionerType string
+
+const (
+	ProvisionerTypeMock ProvisionerType = "mock"
+	ProvisionerTypeK8s  ProvisionerType = "k8s"
+)
+
+// ProvisionerResourceSpec 描述 CPU/内存资源配额。
+type ProvisionerResourceSpec struct {
+	CPURequest    string `json:"cpuRequest"    yaml:"cpu_request"`
+	CPULimit      string `json:"cpuLimit"      yaml:"cpu_limit"`
+	MemoryRequest string `json:"memoryRequest" yaml:"memory_request"`
+	MemoryLimit   string `json:"memoryLimit"   yaml:"memory_limit"`
+}
+
+// ProvisionerConfig Agent 实例供给器配置，集中所有 K8s / Mock 相关参数。
+type ProvisionerConfig struct {
+	Type               ProvisionerType         `yaml:"type"`
+	Namespace          string                  `yaml:"namespace"`
+	Image              string                  `yaml:"image"`
+	WarmPoolMin        int                     `yaml:"warm_pool_min"`
+	WarmPoolMax        int                     `yaml:"warm_pool_max"`
+	IdleTimeout        time.Duration           `yaml:"idle_timeout"`
+	SleepEvictTimeout  time.Duration           `yaml:"sleep_evict_timeout"`
+	MaxActivePerUser   int                     `yaml:"max_active_per_user"`
+	AgentPort          int                     `yaml:"agent_port"`
+	AdminPort          int                     `yaml:"admin_port"`
+	StubPort           int                     `yaml:"stub_port"`
+	SharedPVCName      string                  `yaml:"shared_pvc_name"`
+	WorkspaceMountPath string                  `yaml:"workspace_mount_path"`
+	KubeconfigPath     string                  `yaml:"kubeconfig_path"`
+	MockHosts          []string                `yaml:"mock_hosts"`
+	ResourceActive     ProvisionerResourceSpec `yaml:"resource_active"`
+	ResourceSleeping   ProvisionerResourceSpec `yaml:"resource_sleeping"`
+	SupportsBind       bool                    `yaml:"supports_bind"`
 }
 
 // yamlConfig 与 config.yaml 的分层结构对应。
@@ -137,6 +191,11 @@ type yamlConfig struct {
 	PersonalStub struct {
 		URL string `yaml:"url"`
 	} `yaml:"personal_stub"`
+	CrawlerService struct {
+		URL     string `yaml:"url"`
+		Timeout string `yaml:"timeout"`
+		MCPName string `yaml:"mcp_name"`
+	} `yaml:"crawler_service"`
 	ProductSpace struct {
 		DocAdoptionCleanup struct {
 			Enabled        bool   `yaml:"enabled"`
@@ -188,6 +247,39 @@ type yamlConfig struct {
 		DispatchTimeout  string   `yaml:"dispatch_timeout"`
 		AdminUserIDs     []string `yaml:"admin_user_ids"`
 	} `yaml:"feishu"`
+	Security struct {
+		SSHKeyEncryptionKey string `yaml:"ssh_key_encryption_key"`
+	} `yaml:"security"`
+	AgentProvisioner struct {
+		Type               string `yaml:"type"`
+		Namespace          string `yaml:"namespace"`
+		Image              string `yaml:"image"`
+		WarmPoolMin        int    `yaml:"warm_pool_min"`
+		WarmPoolMax        int    `yaml:"warm_pool_max"`
+		IdleTimeout        string `yaml:"idle_timeout"`
+		SleepEvictTimeout  string `yaml:"sleep_evict_timeout"`
+		MaxActivePerUser   int    `yaml:"max_active_per_user"`
+		AgentPort          int    `yaml:"agent_port"`
+		AdminPort          int    `yaml:"admin_port"`
+		StubPort           int    `yaml:"stub_port"`
+		SharedPVCName      string `yaml:"shared_pvc_name"`
+		WorkspaceMountPath string `yaml:"workspace_mount_path"`
+		KubeconfigPath     string `yaml:"kubeconfig_path"`
+		MockHosts          []string `yaml:"mock_hosts"`
+		ResourceActive     struct {
+			CPURequest    string `yaml:"cpu_request"`
+			CPULimit      string `yaml:"cpu_limit"`
+			MemoryRequest string `yaml:"memory_request"`
+			MemoryLimit   string `yaml:"memory_limit"`
+		} `yaml:"resource_active"`
+		ResourceSleeping struct {
+			CPURequest    string `yaml:"cpu_request"`
+			CPULimit      string `yaml:"cpu_limit"`
+			MemoryRequest string `yaml:"memory_request"`
+			MemoryLimit   string `yaml:"memory_limit"`
+		} `yaml:"resource_sleeping"`
+		SupportsBind bool `yaml:"supports_bind"`
+	} `yaml:"agent_provisioner"`
 }
 
 // Load 从 config.yaml 加载配置，并以环境变量为最高优先级覆盖。
@@ -229,6 +321,9 @@ func Load() (Config, error) {
 	cfg.DBConnMaxLifetime = parseDurationOrZero(yc.Database.ConnMaxLifetime)
 	cfg.WorkspaceRoot = yc.Workspace.Root
 	cfg.PersonalStubURL = yc.PersonalStub.URL
+	cfg.CrawlerServiceURL = yc.CrawlerService.URL
+	cfg.CrawlerServiceTimeout = parseDurationOrZero(yc.CrawlerService.Timeout)
+	cfg.CrawlerMCPName = yc.CrawlerService.MCPName
 	cfg.DocAdoptionCleanupEnabled = yc.ProductSpace.DocAdoptionCleanup.Enabled
 	cfg.DocAdoptionCleanupRetentionDays = yc.ProductSpace.DocAdoptionCleanup.RetentionDays
 	cfg.DocAdoptionCleanupInterval = parseDurationOrZero(yc.ProductSpace.DocAdoptionCleanup.Interval)
@@ -277,6 +372,39 @@ func Load() (Config, error) {
 	cfg.FeishuMockMode = yc.Feishu.MockMode
 	cfg.FeishuDispatchTimeout = parseDurationOrZero(yc.Feishu.DispatchTimeout)
 	cfg.FeishuAdminUserIDs = yc.Feishu.AdminUserIDs
+	cfg.SSHKeyEncryptionKey = yc.Security.SSHKeyEncryptionKey
+
+	// AgentProvisioner
+	cfg.AgentProvisioner = ProvisionerConfig{
+		Type:              ProvisionerType(yc.AgentProvisioner.Type),
+		Namespace:         yc.AgentProvisioner.Namespace,
+		Image:             yc.AgentProvisioner.Image,
+		WarmPoolMin:       yc.AgentProvisioner.WarmPoolMin,
+		WarmPoolMax:       yc.AgentProvisioner.WarmPoolMax,
+		IdleTimeout:       parseDurationOrZero(yc.AgentProvisioner.IdleTimeout),
+		SleepEvictTimeout: parseDurationOrZero(yc.AgentProvisioner.SleepEvictTimeout),
+		MaxActivePerUser:  yc.AgentProvisioner.MaxActivePerUser,
+		AgentPort:         yc.AgentProvisioner.AgentPort,
+		AdminPort:         yc.AgentProvisioner.AdminPort,
+		StubPort:          yc.AgentProvisioner.StubPort,
+		SharedPVCName:     yc.AgentProvisioner.SharedPVCName,
+		WorkspaceMountPath: yc.AgentProvisioner.WorkspaceMountPath,
+		KubeconfigPath:    yc.AgentProvisioner.KubeconfigPath,
+		MockHosts:         yc.AgentProvisioner.MockHosts,
+		ResourceActive: ProvisionerResourceSpec{
+			CPURequest:    yc.AgentProvisioner.ResourceActive.CPURequest,
+			CPULimit:      yc.AgentProvisioner.ResourceActive.CPULimit,
+			MemoryRequest: yc.AgentProvisioner.ResourceActive.MemoryRequest,
+			MemoryLimit:   yc.AgentProvisioner.ResourceActive.MemoryLimit,
+		},
+		ResourceSleeping: ProvisionerResourceSpec{
+			CPURequest:    yc.AgentProvisioner.ResourceSleeping.CPURequest,
+			CPULimit:      yc.AgentProvisioner.ResourceSleeping.CPULimit,
+			MemoryRequest: yc.AgentProvisioner.ResourceSleeping.MemoryRequest,
+			MemoryLimit:   yc.AgentProvisioner.ResourceSleeping.MemoryLimit,
+		},
+		SupportsBind: yc.AgentProvisioner.SupportsBind,
+	}
 
 	// 环境变量覆盖
 	cfg.Port = getEnv("PORT", cfg.Port)
@@ -293,6 +421,9 @@ func Load() (Config, error) {
 	cfg.DBName = getEnv("DB_NAME", cfg.DBName)
 	cfg.WorkspaceRoot = getEnv("WORKSPACE_ROOT", cfg.WorkspaceRoot)
 	cfg.PersonalStubURL = getEnv("PERSONAL_STUB_URL", cfg.PersonalStubURL)
+	cfg.CrawlerServiceURL = getEnv("CRAWLER_SERVICE_URL", cfg.CrawlerServiceURL)
+	cfg.CrawlerServiceTimeout = getDurationEnv("CRAWLER_SERVICE_TIMEOUT", cfg.CrawlerServiceTimeout)
+	cfg.CrawlerMCPName = getEnv("CRAWLER_MCP_NAME", cfg.CrawlerMCPName)
 	cfg.DocAdoptionCleanupEnabled = getBoolEnv("DOC_ADOPTION_CLEANUP_ENABLED", cfg.DocAdoptionCleanupEnabled)
 	cfg.DocAdoptionCleanupRetentionDays = getIntEnv("DOC_ADOPTION_CLEANUP_RETENTION_DAYS", cfg.DocAdoptionCleanupRetentionDays)
 	cfg.DocAdoptionCleanupInterval = getDurationEnv("DOC_ADOPTION_CLEANUP_INTERVAL", cfg.DocAdoptionCleanupInterval)
@@ -328,6 +459,26 @@ func Load() (Config, error) {
 	if adminIDs := getEnv("FEISHU_ADMIN_USER_IDS", ""); adminIDs != "" {
 		cfg.FeishuAdminUserIDs = strings.Split(adminIDs, ",")
 	}
+	cfg.SSHKeyEncryptionKey = getEnv("SSH_KEY_ENCRYPTION_KEY", cfg.SSHKeyEncryptionKey)
+
+	cfg.AgentProvisioner.Type = ProvisionerType(getEnv("AGENT_PROVISIONER_TYPE", string(cfg.AgentProvisioner.Type)))
+	cfg.AgentProvisioner.Namespace = getEnv("AGENT_PROVISIONER_NAMESPACE", cfg.AgentProvisioner.Namespace)
+	cfg.AgentProvisioner.Image = getEnv("AGENT_PROVISIONER_IMAGE", cfg.AgentProvisioner.Image)
+	cfg.AgentProvisioner.WarmPoolMin = getIntEnv("AGENT_PROVISIONER_WARM_POOL_MIN", cfg.AgentProvisioner.WarmPoolMin)
+	cfg.AgentProvisioner.WarmPoolMax = getIntEnv("AGENT_PROVISIONER_WARM_POOL_MAX", cfg.AgentProvisioner.WarmPoolMax)
+	cfg.AgentProvisioner.IdleTimeout = getDurationEnv("AGENT_PROVISIONER_IDLE_TIMEOUT", cfg.AgentProvisioner.IdleTimeout)
+	cfg.AgentProvisioner.SleepEvictTimeout = getDurationEnv("AGENT_PROVISIONER_SLEEP_EVICT_TIMEOUT", cfg.AgentProvisioner.SleepEvictTimeout)
+	cfg.AgentProvisioner.MaxActivePerUser = getIntEnv("AGENT_PROVISIONER_MAX_ACTIVE_PER_USER", cfg.AgentProvisioner.MaxActivePerUser)
+	cfg.AgentProvisioner.AgentPort = getIntEnv("AGENT_PROVISIONER_AGENT_PORT", cfg.AgentProvisioner.AgentPort)
+	cfg.AgentProvisioner.AdminPort = getIntEnv("AGENT_PROVISIONER_ADMIN_PORT", cfg.AgentProvisioner.AdminPort)
+	cfg.AgentProvisioner.StubPort = getIntEnv("AGENT_PROVISIONER_STUB_PORT", cfg.AgentProvisioner.StubPort)
+	cfg.AgentProvisioner.SharedPVCName = getEnv("AGENT_PROVISIONER_SHARED_PVC_NAME", cfg.AgentProvisioner.SharedPVCName)
+	cfg.AgentProvisioner.WorkspaceMountPath = getEnv("AGENT_PROVISIONER_WORKSPACE_MOUNT_PATH", cfg.AgentProvisioner.WorkspaceMountPath)
+	if mockHosts := getEnv("AGENT_PROVISIONER_MOCK_HOSTS", ""); mockHosts != "" {
+		cfg.AgentProvisioner.MockHosts = strings.Split(mockHosts, ",")
+	}
+	cfg.AgentProvisioner.KubeconfigPath = getEnv("AGENT_PROVISIONER_KUBECONFIG_PATH", cfg.AgentProvisioner.KubeconfigPath)
+	cfg.AgentProvisioner.SupportsBind = getBoolEnv("AGENT_PROVISIONER_SUPPORTS_BIND", cfg.AgentProvisioner.SupportsBind)
 
 	if err := cfg.validate(); err != nil {
 		return cfg, err

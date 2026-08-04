@@ -55,16 +55,16 @@ func StandardGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPost {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 	// 规范属于空间级管理配置，复用提示词的管理权限判定（租户/超管或 space_admin）。
 	if !canManageSpacePrompts(r, workspaceID) {
-		handler.WriteJSONError(w, http.StatusForbidden, 3, "permission denied")
+		handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "permission denied")
 		return
 	}
 	if defaultStandardCompleter == nil {
-		handler.WriteJSONError(w, http.StatusServiceUnavailable, 3, "智能生成服务未启用")
+		handler.WriteJSONError(w, http.StatusServiceUnavailable, handler.ErrCodeForbidden, "智能生成服务未启用")
 		return
 	}
 	var req standardGenerateRequest
@@ -73,23 +73,23 @@ func StandardGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 	systemPrompt, ok := standardGenerateSystemPrompts[req.Kind]
 	if !ok {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "kind must be coding or design")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "kind must be coding or design")
 		return
 	}
 	userPrompt := strings.TrimSpace(req.Prompt)
 	if userPrompt == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "prompt is required")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "prompt is required")
 		return
 	}
 	if len(userPrompt) > standardGenerateMaxPromptLen {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, fmt.Sprintf("prompt exceeds %d characters", standardGenerateMaxPromptLen))
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, fmt.Sprintf("prompt exceeds %d characters", standardGenerateMaxPromptLen))
 		return
 	}
 	// QuickComplete 只接受单条 prompt，将系统角色约束拼接到用户描述之前。
 	fullPrompt := systemPrompt + "\n\n用户描述：\n" + userPrompt
 	content, err := defaultStandardCompleter(r.Context(), fullPrompt)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusServiceUnavailable, 3, "智能生成服务暂不可用: "+err.Error())
+		handler.WriteJSONError(w, http.StatusServiceUnavailable, handler.ErrCodeForbidden, "智能生成服务暂不可用: "+err.Error())
 		return
 	}
 	handler.SetJSONHeader(w)

@@ -22,10 +22,30 @@ func Init(svc service.ProductDocService) {
 	defaultProductDocService = svc
 }
 
+// Handler 是 productdoc 模块的 HTTP 处理器。
+type Handler struct {
+	crudSvc       service.ProductDocCRUDService
+	versionSvc    service.ProductDocVersionService
+	folderSvc     service.ProductDocFolderService
+	materializeSvc service.ProductDocMaterializeService
+	shareSvc      service.ProductDocShareService
+}
+
+// NewHandler 创建 productdoc HTTP 处理器。
+func NewHandler(svc service.ProductDocService) *Handler {
+	return &Handler{
+		crudSvc:        svc,
+		versionSvc:     svc,
+		folderSvc:      svc,
+		materializeSvc: svc,
+		shareSvc:       svc,
+	}
+}
+
 // ProductDocs 处理产品文档集合请求：GET 列表、POST 创建。
-func ProductDocs(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ProductDocs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.crudSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -43,7 +63,7 @@ func ProductDocs(w http.ResponseWriter, r *http.Request) {
 			Status:      object.DocStatus(r.URL.Query().Get("status")),
 			Category:    r.URL.Query().Get("category"),
 		}
-		docs, err := defaultProductDocService.ListDocs(filter)
+		docs, err := h.crudSvc.ListDocs(filter)
 		if err != nil {
 			log.Printf("[ProductDoc] ListDocs failed: %v", err)
 			http.Error(w, `{"code":1,"message":"failed to list product docs"}`, http.StatusInternalServerError)
@@ -63,7 +83,7 @@ func ProductDocs(w http.ResponseWriter, r *http.Request) {
 				req.CreatedBy = userID
 			}
 		}
-		doc, err := defaultProductDocService.CreateDoc(req)
+		doc, err := h.crudSvc.CreateDoc(req)
 		if err != nil {
 			log.Printf("[ProductDoc] CreateDoc failed: %v", err)
 			http.Error(w, `{"code":1,"message":"创建文档失败"}`, http.StatusInternalServerError)
@@ -76,9 +96,9 @@ func ProductDocs(w http.ResponseWriter, r *http.Request) {
 }
 
 // ProductDocByID 处理单个产品文档请求：GET 详情、PATCH 更新、DELETE 删除。
-func ProductDocByID(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ProductDocByID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.crudSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -91,7 +111,7 @@ func ProductDocByID(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		doc, err := defaultProductDocService.GetDoc(docID)
+		doc, err := h.crudSvc.GetDoc(docID)
 		if err != nil {
 			http.Error(w, `{"code":1,"message":"product doc not found"}`, http.StatusNotFound)
 			return
@@ -103,14 +123,14 @@ func ProductDocByID(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"code":1,"message":"invalid request body"}`, http.StatusBadRequest)
 			return
 		}
-		doc, err := defaultProductDocService.UpdateDoc(docID, req)
+		doc, err := h.crudSvc.UpdateDoc(docID, req)
 		if err != nil {
 			http.Error(w, `{"code":1,"message":"更新文档失败"}`, http.StatusInternalServerError)
 			return
 		}
 		json.NewEncoder(w).Encode(doc)
 	case http.MethodDelete:
-		if err := defaultProductDocService.DeleteDoc(docID); err != nil {
+		if err := h.crudSvc.DeleteDoc(docID); err != nil {
 			http.Error(w, `{"code":1,"message":"删除文档失败"}`, http.StatusInternalServerError)
 			return
 		}
@@ -121,9 +141,9 @@ func ProductDocByID(w http.ResponseWriter, r *http.Request) {
 }
 
 // ProductDocVersions 处理 GET /api/v1/workspaces/{id}/product-docs/{docId}/versions。
-func ProductDocVersions(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ProductDocVersions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.versionSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -139,7 +159,7 @@ func ProductDocVersions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	versions, err := defaultProductDocService.ListVersions(docID)
+	versions, err := h.versionSvc.ListVersions(docID)
 	if err != nil {
 		log.Printf("[ProductDoc] ListVersions failed: %v", err)
 		http.Error(w, `{"code":1,"message":"failed to list versions"}`, http.StatusInternalServerError)
@@ -149,9 +169,9 @@ func ProductDocVersions(w http.ResponseWriter, r *http.Request) {
 }
 
 // ProductDocFolders 处理目录集合请求：GET 列表、POST 创建。
-func ProductDocFolders(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ProductDocFolders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.folderSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -164,7 +184,7 @@ func ProductDocFolders(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		folders, err := defaultProductDocService.ListFolders(workspaceID)
+		folders, err := h.folderSvc.ListFolders(workspaceID)
 		if err != nil {
 			log.Printf("[ProductDoc] ListFolders failed: %v", err)
 			http.Error(w, `{"code":1,"message":"failed to list folders"}`, http.StatusInternalServerError)
@@ -178,7 +198,7 @@ func ProductDocFolders(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.WorkspaceID = workspaceID
-		folder, err := defaultProductDocService.CreateFolder(req)
+		folder, err := h.folderSvc.CreateFolder(req)
 		if err != nil {
 			log.Printf("[ProductDoc] CreateFolder failed: %v", err)
 			http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)
@@ -191,9 +211,9 @@ func ProductDocFolders(w http.ResponseWriter, r *http.Request) {
 }
 
 // ProductDocFolderByID 处理单个目录请求：PATCH 更新（重命名/置顶）、DELETE 删除。
-func ProductDocFolderByID(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ProductDocFolderByID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.folderSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -211,7 +231,7 @@ func ProductDocFolderByID(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"code":1,"message":"invalid request body"}`, http.StatusBadRequest)
 			return
 		}
-		folder, err := defaultProductDocService.UpdateFolder(folderID, req)
+		folder, err := h.folderSvc.UpdateFolder(folderID, req)
 		if err != nil {
 			log.Printf("[ProductDoc] UpdateFolder failed: %v", err)
 			http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)
@@ -219,7 +239,7 @@ func ProductDocFolderByID(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(folder)
 	case http.MethodDelete:
-		if err := defaultProductDocService.DeleteFolder(folderID); err != nil {
+		if err := h.folderSvc.DeleteFolder(folderID); err != nil {
 			http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)
 			return
 		}
@@ -230,9 +250,9 @@ func ProductDocFolderByID(w http.ResponseWriter, r *http.Request) {
 }
 
 // PublishProductDoc 处理 POST /api/v1/workspaces/{id}/product-docs/{docId}/publish。
-func PublishProductDoc(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) PublishProductDoc(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.versionSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -259,7 +279,7 @@ func PublishProductDoc(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	version, err := defaultProductDocService.PublishVersion(docID, req)
+	version, err := h.versionSvc.PublishVersion(docID, req)
 	if err != nil {
 		log.Printf("[ProductDoc] PublishVersion failed: %v", err)
 		http.Error(w, `{"code":1,"message":"发布版本失败"}`, http.StatusInternalServerError)
@@ -270,9 +290,9 @@ func PublishProductDoc(w http.ResponseWriter, r *http.Request) {
 
 // ShareProductDoc 处理 POST /api/v1/workspaces/{id}/product-docs/{docId}/share：
 // 为已发布文档生成（或返回已有）分享短链 token。
-func ShareProductDoc(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ShareProductDoc(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.shareSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -281,7 +301,7 @@ func ShareProductDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	share, err := defaultProductDocService.CreateShare(r.PathValue("id"), r.PathValue("docId"))
+	share, err := h.shareSvc.CreateShare(r.PathValue("id"), r.PathValue("docId"))
 	if err != nil {
 		log.Printf("[ProductDoc] CreateShare failed: %v", err)
 		http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)
@@ -292,9 +312,9 @@ func ShareProductDoc(w http.ResponseWriter, r *http.Request) {
 
 // MaterializeProductDoc 处理 POST /api/v1/workspaces/{id}/product-docs/{docId}/materialize：
 // 将文档内容按需写入 agent 工作目录 products/ 下，返回相对路径供 agent 读取。需登录。
-func MaterializeProductDoc(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) MaterializeProductDoc(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.materializeSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -309,7 +329,7 @@ func MaterializeProductDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path, err := defaultProductDocService.MaterializeDoc(r.PathValue("id"), userID, r.PathValue("docId"))
+	path, err := h.materializeSvc.MaterializeDoc(r.PathValue("id"), userID, r.PathValue("docId"))
 	if err != nil {
 		log.Printf("[ProductDoc] MaterializeDoc failed: %v", err)
 		http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)
@@ -325,9 +345,9 @@ const queryTimeLayoutDate = "2006-01-02"
 const handlerHoursPerDay = 24
 
 // SharedDoc 处理 GET /api/v1/shares/{token}：免登录查看分享文档（最新已发布版本）。
-func SharedDoc(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) SharedDoc(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.shareSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -336,7 +356,7 @@ func SharedDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	view, err := defaultProductDocService.GetSharedDoc(r.PathValue("token"))
+	view, err := h.shareSvc.GetSharedDoc(r.PathValue("token"))
 	if err != nil {
 		http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusNotFound)
 		return
@@ -346,9 +366,9 @@ func SharedDoc(w http.ResponseWriter, r *http.Request) {
 
 // ShareDocComments 处理分享页批注集合请求：GET 列表、POST 新增。
 // 免登录接口：访客填写昵称即可批注，token 有效性由 service 层校验。
-func ShareDocComments(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ShareDocComments(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.shareSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -360,7 +380,7 @@ func ShareDocComments(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		comments, err := defaultProductDocService.ListShareCommentsByToken(token)
+		comments, err := h.shareSvc.ListShareCommentsByToken(token)
 		if err != nil {
 			http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusNotFound)
 			return
@@ -372,7 +392,7 @@ func ShareDocComments(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"code":1,"message":"invalid request body"}`, http.StatusBadRequest)
 			return
 		}
-		comment, err := defaultProductDocService.AddShareComment(token, req)
+		comment, err := h.shareSvc.AddShareComment(token, req)
 		if err != nil {
 			log.Printf("[ProductDoc] AddShareComment failed: %v", err)
 			http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)
@@ -387,16 +407,16 @@ func ShareDocComments(w http.ResponseWriter, r *http.Request) {
 
 // ProductDocShareComments 处理 /api/v1/workspaces/{id}/product-docs/{docId}/share-comments：
 // GET 登录用户查看全部分享批注；POST 登录用户新增批注。
-func ProductDocShareComments(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ProductDocShareComments(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.shareSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
 
 	switch r.Method {
 	case http.MethodGet:
-		comments, err := defaultProductDocService.ListDocShareComments(r.PathValue("id"), r.PathValue("docId"))
+		comments, err := h.shareSvc.ListDocShareComments(r.PathValue("id"), r.PathValue("docId"))
 		if err != nil {
 			log.Printf("[ProductDoc] ListDocShareComments failed: %v", err)
 			http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)
@@ -414,7 +434,7 @@ func ProductDocShareComments(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"code":1,"message":"invalid request body"}`, http.StatusBadRequest)
 			return
 		}
-		comment, err := defaultProductDocService.AddDocShareComment(
+		comment, err := h.shareSvc.AddDocShareComment(
 			r.PathValue("id"), r.PathValue("docId"), userID, req,
 		)
 		if err != nil {
@@ -431,9 +451,9 @@ func ProductDocShareComments(w http.ResponseWriter, r *http.Request) {
 
 // ProductDocShareCommentResolve 处理 POST /api/v1/workspaces/{id}/product-docs/{docId}/share-comments/{commentId}/resolve：
 // 将批注标记为已解决，操作人 userID 由 auth 中间件注入。
-func ProductDocShareCommentResolve(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ProductDocShareCommentResolve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.shareSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -448,7 +468,7 @@ func ProductDocShareCommentResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	comment, err := defaultProductDocService.ResolveShareComment(
+	comment, err := h.shareSvc.ResolveShareComment(
 		r.PathValue("id"), r.PathValue("docId"), r.PathValue("commentId"), userID,
 	)
 	if err != nil {
@@ -461,9 +481,9 @@ func ProductDocShareCommentResolve(w http.ResponseWriter, r *http.Request) {
 
 // ProductDocWorkspaceVersions 处理 GET /api/v1/workspaces/{id}/product-doc-versions：
 // 按工作空间维度分页查询文档版本历史，支持时间区间、文档、状态、创建人、关键字过滤。
-func ProductDocWorkspaceVersions(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ProductDocWorkspaceVersions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.versionSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -484,7 +504,7 @@ func ProductDocWorkspaceVersions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	list, err := defaultProductDocService.ListWorkspaceVersions(workspaceID, filter)
+	list, err := h.versionSvc.ListWorkspaceVersions(workspaceID, filter)
 	if err != nil {
 		log.Printf("[ProductDoc] ListWorkspaceVersions failed: %v", err)
 		http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)
@@ -495,9 +515,9 @@ func ProductDocWorkspaceVersions(w http.ResponseWriter, r *http.Request) {
 
 // ProductDocVersionByVersion 处理单个版本请求：
 // PATCH 更新版本说明、DELETE 删除版本，均需登录。
-func ProductDocVersionByVersion(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ProductDocVersionByVersion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.versionSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -519,7 +539,7 @@ func ProductDocVersionByVersion(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"code":1,"message":"invalid request body"}`, http.StatusBadRequest)
 			return
 		}
-		if err := defaultProductDocService.UpdateVersionSummary(workspaceID, docID, version, req.ChangeSummary, userID); err != nil {
+		if err := h.versionSvc.UpdateVersionSummary(workspaceID, docID, version, req.ChangeSummary, userID); err != nil {
 			log.Printf("[ProductDoc] UpdateVersionSummary failed: %v", err)
 			http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)
 			return
@@ -531,7 +551,7 @@ func ProductDocVersionByVersion(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"code":2,"message":"未登录或登录已过期"}`, http.StatusUnauthorized)
 			return
 		}
-		if err := defaultProductDocService.DeleteVersion(workspaceID, docID, version, userID); err != nil {
+		if err := h.versionSvc.DeleteVersion(workspaceID, docID, version, userID); err != nil {
 			log.Printf("[ProductDoc] DeleteVersion failed: %v", err)
 			http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)
 			return
@@ -544,9 +564,9 @@ func ProductDocVersionByVersion(w http.ResponseWriter, r *http.Request) {
 
 // ProductDocVersionRestore 处理 POST /api/v1/workspaces/{id}/product-docs/{docId}/versions/{version}/restore：
 // 将文档回滚到指定历史版本（生成新版本，不覆盖历史），需登录。
-func ProductDocVersionRestore(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ProductDocVersionRestore(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if defaultProductDocService == nil {
+	if h.versionSvc == nil {
 		http.Error(w, `{"code":1,"message":"product doc service not initialized"}`, http.StatusInternalServerError)
 		return
 	}
@@ -566,7 +586,7 @@ func ProductDocVersionRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newVersion, err := defaultProductDocService.RestoreVersion(workspaceID, docID, version, userID)
+	newVersion, err := h.versionSvc.RestoreVersion(workspaceID, docID, version, userID)
 	if err != nil {
 		log.Printf("[ProductDoc] RestoreVersion failed: %v", err)
 		http.Error(w, `{"code":1,"message":"`+err.Error()+`"}`, http.StatusBadRequest)

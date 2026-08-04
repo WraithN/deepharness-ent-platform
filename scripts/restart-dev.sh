@@ -12,7 +12,7 @@ NC='\033[0m'
 echo -e "${GREEN}  Stopping existing services...${NC}"
 
 # 按端口杀掉旧进程
-for port in 8888 8080 8090 2345 2346; do
+for port in 8888 8080 8090 8091 2345 2346; do
     pids=$(lsof -t -i :"$port" 2>/dev/null || true)
     if [ -n "$pids" ]; then
         echo "  Killing port $port (PID: $pids)"

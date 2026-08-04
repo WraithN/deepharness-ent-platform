@@ -2,8 +2,8 @@ package service
 
 import (
 	"strings"
-	"time"
 
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/object"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/repository"
 )
 
@@ -18,40 +18,26 @@ type SSHKeyResolver interface {
 type RepositoryService interface {
 	List(workspaceID string) ([]repository.Repository, error)
 	Get(workspaceID, repoID string) (repository.Repository, error)
-	Create(workspaceID, userID string, req CreateRepositoryRequest) (repository.Repository, error)
-	Update(workspaceID, repoID, userID string, req UpdateRepositoryRequest) (repository.Repository, error)
+	Create(workspaceID, userID string, req object.CreateRepositoryRequest) (repository.Repository, error)
+	Update(workspaceID, repoID, userID string, req object.UpdateRepositoryRequest) (repository.Repository, error)
 	Delete(workspaceID, repoID string) error
 	Sync(workspaceID, repoID, userID string) error
-	Scan(workspaceID string) ([]ScannedRepository, error)
-	GetDetails(workspaceID, repoID string) (*RepositoryDetails, error)
-	GetFileTree(workspaceID, repoID, branch string) ([]FileNode, error)
-	GetFileContent(workspaceID, repoID, branch, path string) (*FileContent, error)
-	SaveFileContent(workspaceID, repoID, path, content string) error
-	GitCommit(workspaceID, repoID, message string) (string, error)
-	GitStatus(workspaceID, repoID string) (string, error)
-	GetBranches(workspaceID, repoID string) ([]BranchInfo, error)
-	RefreshBranches(workspaceID, repoID string) ([]BranchInfo, error)
-	SwitchBranch(workspaceID, repoID, branchName string) error
+	Scan(workspaceID, userID string) ([]object.ScannedRepository, error)
+	GetDetails(workspaceID, repoID, userID string) (*object.RepositoryDetails, error)
+	GetFileTree(workspaceID, repoID, branch, userID string) ([]object.FileNode, error)
+	GetFileContent(workspaceID, repoID, branch, path, userID string) (*object.FileContent, error)
+	SaveFileContent(workspaceID, repoID, path, content, userID string) error
+	GitCommit(workspaceID, repoID, message, userID string) (string, error)
+	GitStatus(workspaceID, repoID, userID string) (string, error)
+	GetBranches(workspaceID, repoID, userID string) ([]object.BranchInfo, error)
+	RefreshBranches(workspaceID, repoID, userID string) ([]object.BranchInfo, error)
+	SwitchBranch(workspaceID, repoID, branchName, userID string) error
 
 	// 用户级仓库操作 —— 将工作空间配置的仓库同步到用户自己的 projects 目录下。
 	// ListUserRepos 返回工作空间下所有配置仓库在用户 projects 目录中的同步状态。
-	ListUserRepos(workspaceID, userID string) ([]UserRepoStatus, error)
+	ListUserRepos(workspaceID, userID string) ([]object.UserRepoStatus, error)
 	// SyncUserRepo 将指定仓库克隆到用户 projects 目录，异步执行。
 	SyncUserRepo(workspaceID, repoID, userID string) error
-}
-
-// CreateRepositoryRequest 创建仓库请求。仓库名称由 URL 解析，SSH Key 由用户 Profile 提供。
-type CreateRepositoryRequest struct {
-	URL           string `json:"url"`
-	Type          string `json:"type"`
-	DefaultBranch string `json:"defaultBranch"`
-}
-
-// UpdateRepositoryRequest 更新仓库请求。
-type UpdateRepositoryRequest struct {
-	URL           string `json:"url,omitempty"`
-	Type          string `json:"type,omitempty"`
-	DefaultBranch string `json:"defaultBranch,omitempty"`
 }
 
 // ParseRepoName 从仓库 URL 解析仓库名称（取最后一段路径并去除 .git 后缀）。
@@ -72,110 +58,3 @@ func ParseRepoName(rawURL string) string {
 	}
 	return u
 }
-
-// ScannedRepository 扫描发现的本地仓库。
-type ScannedRepository struct {
-	Name         string `json:"name"`
-	Path         string `json:"path"`
-	URL          string `json:"url"`
-	CurrentBranch string `json:"currentBranch"`
-	LastCommit   string `json:"lastCommit"`
-	LastCommitMessage string `json:"lastCommitMessage"`
-	LastCommitTime *time.Time `json:"lastCommitTime,omitempty"`
-	IsCloned     bool   `json:"isCloned"`
-}
-
-// CommitStats 提交统计信息。
-type CommitStats struct {
-	TotalCommits int       `json:"totalCommits"`
-	LastWeek     int       `json:"lastWeek"`
-	LastMonth    int       `json:"lastMonth"`
-	LastCommit   *time.Time `json:"lastCommit,omitempty"`
-	FirstCommit  *time.Time `json:"firstCommit,omitempty"`
-}
-
-// BranchInfo 分支信息。
-type BranchInfo struct {
-	Name         string    `json:"name"`
-	IsCurrent    bool      `json:"isCurrent"`
-	IsRemote     bool      `json:"isRemote"`
-	LastCommit   string    `json:"lastCommit"`
-	LastCommitTime *time.Time `json:"lastCommitTime,omitempty"`
-	Ahead        int       `json:"ahead"`
-	Behind       int       `json:"behind"`
-}
-
-// CommitterStat 贡献者提交统计。
-type CommitterStat struct {
-	Name    string `json:"name"`
-	Email   string `json:"email"`
-	Commits int    `json:"commits"`
-}
-
-// DailyCommit 单日提交数量。
-type DailyCommit struct {
-	Date  string `json:"date"`
-	Count int    `json:"count"`
-}
-
-// LanguageStat 语言统计信息。
-type LanguageStat struct {
-	Name       string  `json:"name"`
-	Files      int     `json:"files"`
-	Bytes      int64   `json:"bytes"`
-	Percentage float64 `json:"percentage"`
-	Color      string  `json:"color"`
-}
-
-// RepositoryDetails 仓库详细信息。
-type RepositoryDetails struct {
-	Repository           repository.Repository `json:"repository"`
-	CommitStats          CommitStats           `json:"commitStats"`
-	Branches             []BranchInfo          `json:"branches"`
-	Contributors         []string              `json:"contributors"`
-	FileCount            int                   `json:"fileCount"`
-	SizeBytes            int64                 `json:"sizeBytes"`
-	Language             string                `json:"language"`
-	EffectiveLinesOfCode int                   `json:"effectiveLinesOfCode"`
-	CommitterStats       []CommitterStat       `json:"committerStats"`
-	WeeklyCommits        []DailyCommit         `json:"weeklyCommits"`
-	LanguageStats        []LanguageStat        `json:"languageStats"`
-}
-
-// FileNode 文件树节点。
-type FileNode struct {
-	Name     string     `json:"name"`
-	Path     string     `json:"path"`
-	Type     string     `json:"type"` // "file" or "folder"
-	Children []FileNode `json:"children,omitempty"`
-}
-
-// FileContent 文件内容。
-type FileContent struct {
-	Path     string `json:"path"`
-	Name     string `json:"name"`
-	Content  string `json:"content"`
-	Language string `json:"language"`
-	Encoding string `json:"encoding"`
-	Size     int64  `json:"size"`
-}
-
-// UserRepoStatus 表示一个配置仓库在用户 projects 目录中的同步状态。
-type UserRepoStatus struct {
-	RepositoryID  string `json:"repositoryId"`
-	Name          string `json:"name"`
-	URL           string `json:"url"`
-	Type          string `json:"type"`
-	DefaultBranch string `json:"defaultBranch"`
-	Synced        bool   `json:"synced"`
-	SyncStatus    string `json:"syncStatus"`
-	Progress      int    `json:"progress"`
-	ErrorMessage  string `json:"errorMessage,omitempty"`
-}
-
-// STATE_SYNCING / STATE_SYNCED / STATE_FAILED 为用户仓库同步状态常量。
-const (
-	STATE_SYNCING = "syncing"
-	STATE_SYNCED  = "synced"
-	STATE_FAILED  = "failed"
-)

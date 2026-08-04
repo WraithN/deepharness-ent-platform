@@ -17,7 +17,7 @@ func Init(svc service.AgentReviewService) {
 }
 
 func notifyNotInitialized(w http.ResponseWriter) {
-	handler.WriteJSONError(w, http.StatusInternalServerError, 1, "agent_review service not initialized")
+	handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "agent_review service not initialized")
 }
 
 func Adopt(w http.ResponseWriter, r *http.Request) {
@@ -27,17 +27,17 @@ func Adopt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPost {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 	var req object.AdoptReviewReportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid request body")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid request body")
 		return
 	}
 	report, err := defaultAgentReviewService.AdoptReviewReport(req)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	json.NewEncoder(w).Encode(report)
@@ -51,12 +51,12 @@ func ListReports(w http.ResponseWriter, r *http.Request) {
 	}
 	workspaceID := r.URL.Query().Get("workspaceId")
 	if workspaceID == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "workspaceId is required")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "workspaceId is required")
 		return
 	}
 	reports, err := defaultAgentReviewService.ListAgentReviewReports(workspaceID)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	json.NewEncoder(w).Encode(reports)
@@ -70,12 +70,12 @@ func GetReport(w http.ResponseWriter, r *http.Request) {
 	}
 	reportID := extractIDFromPath(r.URL.Path, "reports")
 	if reportID == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "report id not found in path")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "report id not found in path")
 		return
 	}
 	report, err := defaultAgentReviewService.GetAgentReviewReport(reportID)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	json.NewEncoder(w).Encode(report)
@@ -88,22 +88,22 @@ func UpdateIssueStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPatch && r.Method != http.MethodPost {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 	reportID := extractIDFromPath(r.URL.Path, "reports")
 	if reportID == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "report id not found in path")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "report id not found in path")
 		return
 	}
 	var req object.UpdateIssueStatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid request body")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid request body")
 		return
 	}
 	report, err := defaultAgentReviewService.UpdateIssueStatus(reportID, req)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	json.NewEncoder(w).Encode(report)

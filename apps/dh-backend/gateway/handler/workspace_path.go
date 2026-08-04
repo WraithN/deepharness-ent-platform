@@ -4,10 +4,16 @@ import (
 	"context"
 	"errors"
 	"log"
-	"path/filepath"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/pathutil"
 )
+
+// validateWorkspaceID 校验 ID 不含路径遍历字符（/、\、..），防止路径逃逸。
+// 已抽取到 pkg/pathutil，保留此别名以兼容既有调用方。
+func validateWorkspaceID(id string) error {
+	return pathutil.ValidateID(id)
+}
 
 // ensureWorkspaceDir 保证 gatewayd 工作目录存在；创建失败返回错误。
 // 架构合规：通过 stubclient 在共享目录创建目录，不直接操作文件系统。
@@ -15,7 +21,7 @@ func ensureWorkspaceDir(path string) error {
 	if path == "" {
 		return nil
 	}
-	sc := stubclient.Default()
+	sc := stubclient.FromContext(context.Background())
 	if sc == nil {
 		return errors.New("personal-stub client not initialized")
 	}
@@ -31,11 +37,10 @@ func ensureWorkspaceDir(path string) error {
 // workspaceRoot 由 config.yaml 的 workspace.root 提供，为空时返回错误。
 // 目录结构：{workspaceRoot}/{userID}/{workspaceID}
 func resolveWorkspacePath(workspaceID, userID, workspaceRoot string) (string, error) {
-	if workspaceID == "" || userID == "" || workspaceRoot == "" {
-		return "", errors.New("workspaceID, userID and workspaceRoot are required")
+	p, err := pathutil.ResolveWorkspaceRoot(workspaceRoot, userID, workspaceID)
+	if err != nil {
+		return "", err
 	}
-
-	p := filepath.Join(workspaceRoot, userID, workspaceID)
 	if err := ensureWorkspaceDir(p); err != nil {
 		return "", err
 	}

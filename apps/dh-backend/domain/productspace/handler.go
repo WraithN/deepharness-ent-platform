@@ -2,23 +2,41 @@ package productspace
 
 import (
 	"bytes"
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
-	"strconv"
 	"strings"
 
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
+	processobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/service"
-	workitemobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/object"
-	workitemservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workitem"
 
 	gatewayhandler "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 )
+
+// WorkItemDocLinker 抽象了 import_handler 对 workitem 服务的最小依赖。
+type WorkItemDocLinker interface {
+	GetWorkItem(ctx context.Context, workspaceID, workitemID string) (workitem.WorkItem, error)
+	CreateDocLink(ctx context.Context, req CreateDocLinkRequest) error
+	CreateDesignVersion(ctx context.Context, workspaceID, workitemID, docID string) (workitem.WorkItem, error)
+}
+
+// ProcessService 是 productspace handler 对流程服务的最小依赖，
+// 用于在流程交付物分享接口中解析流程对应的工作项负责人。
+type ProcessService interface {
+	GetByID(ctx context.Context, id string) (processobject.Process, error)
+}
+
+// CreateDocLinkRequest 是 productspace 内部使用的文档关联请求，避免依赖 workitem/object。
+type CreateDocLinkRequest struct {
+	WorkspaceID        string
+	WorkitemID         string
+	ProductSpaceItemID string
+	ItemType           string
+}
 
 const (
 	// maxRequestBodySize 限制请求体大小为 70MB，足以覆盖 50MB 原型文件的 base64 编码。
@@ -195,13 +213,32 @@ func injectPrototypeAnnotationScript(html []byte) []byte {
 
 // Handler 是 product-space 模块的 HTTP 处理器。
 type Handler struct {
-	svc         service.ProductSpaceService
-	workItemSvc workitemservice.WorkItemService
+	itemSvc       service.ProductSpaceItemService
+	folderSvc     service.ProductSpaceFolderService
+	commentSvc    service.ProductSpaceCommentService
+	fileSvc       service.ProductSpaceFileService
+	protoShareSvc service.ProductSpacePrototypeShareService
+	reqShareSvc   service.ProductSpaceRequirementShareService
+	importSvc     service.ProductSpaceImportService
+	cleanupSvc    service.ProductSpaceCleanupTaskService
+	workItemSvc   WorkItemDocLinker
+	processSvc    ProcessService
 }
 
 // NewHandler 创建 product-space HTTP 处理器。
-func NewHandler(svc service.ProductSpaceService, workItemSvc workitemservice.WorkItemService) *Handler {
-	return &Handler{svc: svc, workItemSvc: workItemSvc}
+func NewHandler(svc service.ProductSpaceService, processSvc ProcessService, workItemSvc WorkItemDocLinker) *Handler {
+	return &Handler{
+		itemSvc:       svc,
+		folderSvc:     svc,
+		commentSvc:    svc,
+		fileSvc:       svc,
+		protoShareSvc: svc,
+		reqShareSvc:   svc,
+		importSvc:     svc,
+		cleanupSvc:    svc,
+		workItemSvc:   workItemSvc,
+		processSvc:    processSvc,
+	}
 }
 
 // decodeJSONBody 解析请求 JSON 体，遇到请求体过大时返回 413，其他解析错误返回 400。
@@ -276,750 +313,6 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, message string) 
 	})
 }
 
-// GetTree 处理 GET /api/v1/workspaces/{id}/product-space/tree，返回产品空间目录树。
-func (h *Handler) GetTree(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	tree, err := h.svc.GetTree(r.Context(), h.workspaceID(r), userID)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to get product space tree")
-		return
-	}
-
-	h.writeJSON(w, http.StatusOK, tree)
-}
-
-// CreateItem 处理 POST /api/v1/workspaces/{id}/product-space/items，创建文档或原型。
-func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodPost) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-
-	var req object.CreateItemRequest
-	if !h.decodeJSONBody(w, r, &req) {
-		return
-	}
-
-	if req.Type == "" || req.Title == "" {
-		h.writeError(w, http.StatusBadRequest, errMsgTypeTitleRequired)
-		return
-	}
-
-	item, err := h.svc.CreateItem(r.Context(), h.workspaceID(r), userID, req)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to create product space item")
-		return
-	}
-
-	h.writeJSON(w, http.StatusCreated, item)
-}
-
-// ItemByID 处理 GET / DELETE /api/v1/workspaces/{id}/product-space/items/{itemId}。
-func (h *Handler) ItemByID(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet, http.MethodDelete) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	workspaceID := h.workspaceID(r)
-	itemID := h.itemID(r)
-
-	switch r.Method {
-	case http.MethodGet:
-		item, data, err := h.svc.GetItem(r.Context(), workspaceID, userID, itemID)
-		if err != nil {
-			h.handleServiceError(w, err, "failed to get product space item")
-			return
-		}
-
-		resp := itemResponse{ProductSpaceItem: item}
-		if item.Type == object.ItemTypePrototype {
-			resp.Content = base64.StdEncoding.EncodeToString(data)
-		} else {
-			resp.Content = string(data)
-		}
-		h.writeJSON(w, http.StatusOK, resp)
-	case http.MethodDelete:
-		if err := h.svc.DeleteItem(r.Context(), workspaceID, userID, itemID); err != nil {
-			h.handleServiceError(w, err, "failed to delete product space item")
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}
-}
-
-// UpdateContent 处理 PUT /api/v1/workspaces/{id}/product-space/items/{itemId}/content。
-func (h *Handler) UpdateContent(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodPut) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-
-	var req object.UpdateContentRequest
-	if !h.decodeJSONBody(w, r, &req) {
-		return
-	}
-
-	item, err := h.svc.UpdateContent(r.Context(), h.workspaceID(r), userID, h.itemID(r), req)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to update product space content")
-		return
-	}
-
-	h.writeJSON(w, http.StatusOK, item)
-}
-
-// ListVersions 处理 GET /api/v1/workspaces/{id}/product-space/items/{itemId}/versions。
-func (h *Handler) ListVersions(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	versions, err := h.svc.ListVersions(r.Context(), h.workspaceID(r), userID, h.itemID(r))
-	if err != nil {
-		h.handleServiceError(w, err, "failed to list product space versions")
-		return
-	}
-
-	h.writeJSON(w, http.StatusOK, versions)
-}
-
-// RestoreVersion 处理 POST /api/v1/workspaces/{id}/product-space/items/{itemId}/versions/{version}/restore。
-func (h *Handler) RestoreVersion(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodPost) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	version, err := strconv.Atoi(r.PathValue("version"))
-	if err != nil {
-		h.writeError(w, http.StatusBadRequest, errMsgInvalidVersion)
-		return
-	}
-
-	item, err := h.svc.RestoreVersion(r.Context(), h.workspaceID(r), userID, h.itemID(r), version)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to restore product space version")
-		return
-	}
-
-	h.writeJSON(w, http.StatusOK, item)
-}
-
-// DownloadVersion 处理 GET /api/v1/workspaces/{id}/product-space/items/{itemId}/download。
-// 通过 query 参数 version 指定版本，必须提供有效的版本号。
-func (h *Handler) DownloadVersion(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	version := -1
-	if v := r.URL.Query().Get("version"); v != "" {
-		version, err = strconv.Atoi(v)
-		if err != nil {
-			h.writeError(w, http.StatusBadRequest, errMsgInvalidVersion)
-			return
-		}
-	}
-
-	filename, data, err := h.svc.DownloadVersion(r.Context(), h.workspaceID(r), userID, h.itemID(r), version)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to download product space version")
-		return
-	}
-
-	contentType := http.DetectContentType(data)
-	encoded := rfc5987Encode(filename)
-	w.Header().Set("Content-Disposition", "attachment; filename*=utf-8''"+encoded)
-	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
-}
-
-// Folders 处理 POST / DELETE /api/v1/workspaces/{id}/product-space/folders。
-func (h *Handler) Folders(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodPost, http.MethodDelete) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	workspaceID := h.workspaceID(r)
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-
-	switch r.Method {
-	case http.MethodPost:
-		var req object.CreateFolderRequest
-		if !h.decodeJSONBody(w, r, &req) {
-			return
-		}
-		if req.Category == "" || req.Name == "" {
-			h.writeError(w, http.StatusBadRequest, errMsgCategoryNameRequired)
-			return
-		}
-		if err := h.svc.CreateFolder(r.Context(), workspaceID, userID, req); err != nil {
-			h.handleServiceError(w, err, "failed to create product space folder")
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-	case http.MethodDelete:
-		// DELETE 请求使用 query 参数而非请求体，避免部分代理/客户端不支持 DELETE body。
-		q := r.URL.Query()
-		req := object.DeleteFolderRequest{
-			Category: q.Get("category"),
-			Name:     q.Get("name"),
-		}
-		if req.Category == "" || req.Name == "" {
-			h.writeError(w, http.StatusBadRequest, errMsgCategoryNameRequired)
-			return
-		}
-		if err := h.svc.DeleteFolder(r.Context(), workspaceID, userID, req); err != nil {
-			h.handleServiceError(w, err, "failed to delete product space folder")
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}
-}
-
-// ImportPrototype 处理 POST /api/v1/workspaces/{id}/product-space/import-prototype。
-// 将磁盘上 /proto-make 生成的原型工程目录正式采纳到产品空间；
-// 若请求携带 workitemId，还会将导入的原型页面关联到该需求，并生成一次产品设计版本。
-func (h *Handler) ImportPrototype(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodPost) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-
-	var req object.ImportPrototypeRequest
-	if !h.decodeJSONBody(w, r, &req) {
-		return
-	}
-	if req.Folder == "" {
-		h.writeError(w, http.StatusBadRequest, "folder is required")
-		return
-	}
-
-	workspaceID := h.workspaceID(r)
-	importedIDs, err := h.svc.ImportPrototype(r.Context(), workspaceID, userID, req.Folder)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to import prototype")
-		return
-	}
-
-	// 关联需求并生成设计版本：在 handler 层编排，避免 productspace service 与 workitem service 循环依赖。
-	// 只要提供了 workitemId，每次采纳都会生成一次产品设计版本快照。
-	if req.WorkitemID != "" && h.workItemSvc != nil {
-		for _, itemID := range importedIDs {
-			_, linkErr := h.workItemSvc.CreateDocLink(req.WorkitemID, workitemobject.CreateDocLinkRequest{
-				ProductSpaceItemID: itemID,
-				WorkspaceID:        workspaceID,
-				ItemType:           workitemservice.DocLinkTypePrototype,
-			})
-			if linkErr != nil {
-				log.Printf("[ProductSpace] create doc link failed for workitem %s item %s: %v", req.WorkitemID, itemID, linkErr)
-			}
-		}
-
-		_, dvErr := h.workItemSvc.CreateDesignVersion(req.WorkitemID, workspaceID, userID, "采纳原型")
-		if dvErr != nil {
-			log.Printf("[ProductSpace] create design version failed for workitem %s: %v", req.WorkitemID, dvErr)
-		}
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// ImportDoc 处理 POST /api/v1/workspaces/{id}/product-space/import-doc。
-// 将用户个人工作目录中的文档文件采纳到产品空间 docs 目录；
-// 若请求携带 workitemId，还会将文档关联到该需求并生成一次产品设计版本。
-// 需求标题会作为 docs 下的子目录，便于在产品空间中对齐"对应的需求文档"。
-func (h *Handler) ImportDoc(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodPost) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-
-	var req object.ImportDocRequest
-	if !h.decodeJSONBody(w, r, &req) {
-		return
-	}
-	if req.Path == "" {
-		h.writeError(w, http.StatusBadRequest, "path is required")
-		return
-	}
-
-	workspaceID := h.workspaceID(r)
-
-	// 若关联需求，使用需求标题作为 docs 下的子目录，形成"对应需求文档"的目录结构。
-	if req.WorkitemID != "" && h.workItemSvc != nil {
-		wi, err := h.workItemSvc.GetWorkItem(req.WorkitemID)
-		if err != nil {
-			h.handleServiceError(w, err, "failed to get workitem")
-			return
-		}
-		if req.Folder == "" {
-			req.Folder = wi.Title
-		}
-	}
-
-	item, err := h.svc.ImportDoc(r.Context(), workspaceID, userID, req)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to import doc")
-		return
-	}
-
-	// 关联需求并生成设计版本：在 handler 层编排，避免 productspace service 与 workitem service 循环依赖。
-	if req.WorkitemID != "" && h.workItemSvc != nil {
-		_, linkErr := h.workItemSvc.CreateDocLink(req.WorkitemID, workitemobject.CreateDocLinkRequest{
-			ProductSpaceItemID: item.ID,
-			WorkspaceID:        workspaceID,
-			ItemType:           workitemservice.DocLinkTypeDoc,
-		})
-		if linkErr != nil {
-			log.Printf("[ProductSpace] create doc link failed for workitem %s item %s: %v", req.WorkitemID, item.ID, linkErr)
-		}
-
-		_, dvErr := h.workItemSvc.CreateDesignVersion(req.WorkitemID, workspaceID, userID, "采纳文档")
-		if dvErr != nil {
-			log.Printf("[ProductSpace] create design version failed for workitem %s: %v", req.WorkitemID, dvErr)
-		}
-	}
-
-	h.writeJSON(w, http.StatusOK, item)
-}
-
-// ImportDocStatus 处理 GET /api/v1/workspaces/{id}/product-space/import-doc/status。
-// 按源文件路径查询该文档是否已被采纳到产品空间，供前端持久化展示"已采纳"状态。
-func (h *Handler) ImportDocStatus(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	workspaceID := h.workspaceID(r)
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		h.writeError(w, http.StatusBadRequest, "path is required")
-		return
-	}
-
-	item, err := h.svc.GetDocImportStatus(r.Context(), workspaceID, userID, path)
-	if err != nil {
-		if errors.Is(err, service.ErrNotFound) {
-			h.writeJSON(w, http.StatusOK, map[string]interface{}{
-				"adopted": false,
-				"item":    nil,
-			})
-			return
-		}
-		h.handleServiceError(w, err, "failed to get doc import status")
-		return
-	}
-
-	h.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"adopted": true,
-		"item":    item,
-	})
-}
-
-// Comments 处理 GET / POST /api/v1/workspaces/{id}/product-space/items/{itemId}/comments。
-// GET 返回批注列表，POST 新增批注并返回包含用户名的完整对象。
-func (h *Handler) Comments(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet, http.MethodPost) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	workspaceID := h.workspaceID(r)
-	itemID := h.itemID(r)
-
-	switch r.Method {
-	case http.MethodGet:
-		comments, err := h.svc.ListComments(r.Context(), workspaceID, userID, itemID)
-		if err != nil {
-			h.handleServiceError(w, err, "failed to list prototype comments")
-			return
-		}
-		h.writeJSON(w, http.StatusOK, comments)
-	case http.MethodPost:
-		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-		var req object.AddCommentRequest
-		if !h.decodeJSONBody(w, r, &req) {
-			return
-		}
-		comment, err := h.svc.AddComment(r.Context(), workspaceID, userID, itemID, req)
-		if err != nil {
-			h.handleServiceError(w, err, "failed to add prototype comment")
-			return
-		}
-		h.writeJSON(w, http.StatusCreated, comment)
-	}
-}
-
-// ServePrototype 处理 GET /api/v1/workspaces/{id}/product-space/serve/{path...}。
-// 静态服务原型页面及其资源；返回 HTML 时自动注入标注脚本与样式。
-func (h *Handler) ServePrototype(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	workspaceID := h.workspaceID(r)
-	path := r.PathValue("path")
-	if path == "" {
-		h.writeError(w, http.StatusBadRequest, "serve path is required")
-		return
-	}
-
-	data, contentType, err := h.svc.ServeFile(r.Context(), workspaceID, userID, path)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to serve prototype file")
-		return
-	}
-
-	if strings.Contains(contentType, "text/html") {
-		data = injectPrototypeAnnotationScript(data)
-	}
-
-	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
-}
-
-// CreateShare 处理 POST /api/v1/workspaces/{id}/product-space/share：
-// 为指定产品（prototypes 一级目录）创建免登录分享链接，需 PM 权限，幂等。
-func (h *Handler) CreateShare(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodPost) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-	var req object.CreatePrototypeShareRequest
-	if !h.decodeJSONBody(w, r, &req) {
-		return
-	}
-	if req.ProductFolder == "" {
-		h.writeError(w, http.StatusBadRequest, "product_folder is required")
-		return
-	}
-
-	share, err := h.svc.CreatePrototypeShare(r.Context(), h.workspaceID(r), userID, req.ProductFolder)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to create prototype share")
-		return
-	}
-	h.writeJSON(w, http.StatusCreated, share)
-}
-
-// SharedPrototype 处理 GET /api/v1/shares/proto/{token}：免登录获取分享产品信息与页面列表。
-func (h *Handler) SharedPrototype(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet) {
-		return
-	}
-
-	token := r.PathValue("token")
-	if token == "" {
-		h.writeError(w, http.StatusBadRequest, "missing share token")
-		return
-	}
-
-	view, err := h.svc.GetSharedPrototype(token)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to get shared prototype")
-		return
-	}
-	h.writeJSON(w, http.StatusOK, view)
-}
-
-// ServeSharedPrototype 处理 GET /api/v1/shares/proto/{token}/files/{path...}：
-// 免登录 serve 产品目录下文件，HTML 自动注入标注脚本与样式。
-func (h *Handler) ServeSharedPrototype(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet) {
-		return
-	}
-
-	token := r.PathValue("token")
-	path := r.PathValue("path")
-	if token == "" || path == "" {
-		h.writeError(w, http.StatusBadRequest, "token and path are required")
-		return
-	}
-
-	data, contentType, err := h.svc.ServeSharedFile(token, path)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to serve shared prototype file")
-		return
-	}
-
-	if strings.Contains(contentType, "text/html") {
-		data = injectPrototypeAnnotationScript(data)
-	}
-
-	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
-}
-
-// SharedPrototypeComments 处理 GET /api/v1/shares/proto/{token}/pages/{itemId}/comments：
-// 免登录查看指定页面的批注列表。
-func (h *Handler) SharedPrototypeComments(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet) {
-		return
-	}
-
-	token := r.PathValue("token")
-	itemID := r.PathValue("itemId")
-	if token == "" || itemID == "" {
-		h.writeError(w, http.StatusBadRequest, "token and itemId are required")
-		return
-	}
-
-	comments, err := h.svc.ListSharedComments(token, itemID)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to list shared prototype comments")
-		return
-	}
-	h.writeJSON(w, http.StatusOK, comments)
-}
-
-// CreateRequirementShare 处理 POST /api/v1/workspaces/{id}/requirement-shares：
-// 创建需求级统一分享链接（文档+原型），需 PM 权限，幂等。
-func (h *Handler) CreateRequirementShare(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodPost) {
-		return
-	}
-
-	userID, err := h.userID(r)
-	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, errMsgUnauthorized)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-	var req object.CreateRequirementShareRequest
-	if !h.decodeJSONBody(w, r, &req) {
-		return
-	}
-	if req.DocID == "" && req.ProductFolder == "" {
-		h.writeError(w, http.StatusBadRequest, "doc_id 或 product_folder 至少提供一个")
-		return
-	}
-
-	share, err := h.svc.CreateRequirementShare(r.Context(), h.workspaceID(r), userID, req)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to create requirement share")
-		return
-	}
-	h.writeJSON(w, http.StatusCreated, share)
-}
-
-// SharedRequirement 处理 GET /api/v1/requirement-shares/{token}：
-// 免登录获取需求级统一分享视图（文档+原型）。
-func (h *Handler) SharedRequirement(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet) {
-		return
-	}
-
-	token := r.PathValue("token")
-	if token == "" {
-		h.writeError(w, http.StatusBadRequest, "missing share token")
-		return
-	}
-
-	view, err := h.svc.GetSharedRequirement(token)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to get shared requirement")
-		return
-	}
-	h.writeJSON(w, http.StatusOK, view)
-}
-
-// ServeSharedRequirementFile 处理 GET /api/v1/requirement-shares/{token}/files/{path...}：
-// 免登录 serve 需求分享中的原型文件，HTML 自动注入标注脚本与样式。
-func (h *Handler) ServeSharedRequirementFile(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet) {
-		return
-	}
-
-	token := r.PathValue("token")
-	path := r.PathValue("path")
-	if token == "" || path == "" {
-		h.writeError(w, http.StatusBadRequest, "token and path are required")
-		return
-	}
-
-	data, contentType, err := h.svc.ServeSharedRequirementFile(token, path)
-	if err != nil {
-		h.handleServiceError(w, err, "failed to serve shared requirement file")
-		return
-	}
-
-	if strings.Contains(contentType, "text/html") {
-		data = injectPrototypeAnnotationScript(data)
-	}
-
-	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
-}
-
-// RequirementShareComments 处理 GET / POST /api/v1/requirement-shares/{token}/pages/{itemId}/comments：
-// 免登录查看/新增需求分享中指定原型页面的批注。
-func (h *Handler) RequirementShareComments(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet, http.MethodPost) {
-		return
-	}
-
-	token := r.PathValue("token")
-	itemID := r.PathValue("itemId")
-	if token == "" || itemID == "" {
-		h.writeError(w, http.StatusBadRequest, "token and itemId are required")
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		comments, err := h.svc.ListRequirementShareComments(token, itemID)
-		if err != nil {
-			h.handleServiceError(w, err, "failed to list requirement share comments")
-			return
-		}
-		h.writeJSON(w, http.StatusOK, comments)
-	case http.MethodPost:
-		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-		var req object.AddCommentRequest
-		if !h.decodeJSONBody(w, r, &req) {
-			return
-		}
-		comment, err := h.svc.AddRequirementSharePrototypeComment(token, itemID, req)
-		if err != nil {
-			h.handleServiceError(w, err, "failed to add requirement share prototype comment")
-			return
-		}
-		h.writeJSON(w, http.StatusCreated, comment)
-	}
-}
-
-// RequirementShareDocComments 处理 GET / POST /api/v1/requirement-shares/{token}/doc-comments：
-// 免登录查看/新增需求分享中文档的文本批注。
-func (h *Handler) RequirementShareDocComments(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMethod(w, r, http.MethodGet, http.MethodPost) {
-		return
-	}
-
-	token := r.PathValue("token")
-	if token == "" {
-		h.writeError(w, http.StatusBadRequest, "token is required")
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		comments, err := h.svc.ListRequirementShareDocComments(token)
-		if err != nil {
-			h.handleServiceError(w, err, "failed to list requirement share doc comments")
-			return
-		}
-		h.writeJSON(w, http.StatusOK, comments)
-	case http.MethodPost:
-		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-		var req object.AddRequirementShareDocCommentRequest
-		if !h.decodeJSONBody(w, r, &req) {
-			return
-		}
-		comment, err := h.svc.AddRequirementShareDocComment(token, req)
-		if err != nil {
-			h.handleServiceError(w, err, "failed to add requirement share doc comment")
-			return
-		}
-		h.writeJSON(w, http.StatusCreated, comment)
-	}
-}
-
 // handleServiceError 统一处理服务层错误，按错误类型映射为对应的 HTTP 状态码。
 func (h *Handler) handleServiceError(w http.ResponseWriter, err error, defaultMsg string) {
 	switch {
@@ -1038,10 +331,4 @@ func (h *Handler) handleServiceError(w http.ResponseWriter, err error, defaultMs
 	default:
 		h.writeError(w, http.StatusInternalServerError, defaultMsg)
 	}
-}
-
-// itemResponse 是 GetItem 的响应结构，包含条目元数据及其内容。
-type itemResponse struct {
-	*object.ProductSpaceItem
-	Content string `json:"content"`
 }

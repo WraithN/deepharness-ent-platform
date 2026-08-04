@@ -8,6 +8,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/notification/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
 )
 
 var defaultNotificationService service.NotificationService
@@ -33,7 +34,7 @@ func GetService() service.NotificationService {
 }
 
 func notifyNotInitialized(w http.ResponseWriter) {
-	handler.WriteJSONError(w, http.StatusInternalServerError, 1, "notification service not initialized")
+	handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "notification service not initialized")
 }
 
 // List 列出当前用户的通知（按租户维度，跨空间展示全部待办）
@@ -48,12 +49,12 @@ func List(w http.ResponseWriter, r *http.Request) {
 	// 从 users 表查询用户所属租户，按租户+用户维度展示通知
 	tenantID, err := defaultNotificationService.GetUserTenantID(userID)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to resolve tenant")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to resolve tenant")
 		return
 	}
 	list, err := defaultNotificationService.ListByTenantAndUser(tenantID, userID, unreadOnly)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	if list == nil {
@@ -71,11 +72,11 @@ func MarkAsRead(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if id == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "missing notification id")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "missing notification id")
 		return
 	}
 	if err := defaultNotificationService.MarkAsRead(id); err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -91,11 +92,11 @@ func MarkAllAsRead(w http.ResponseWriter, r *http.Request) {
 	userID, _ := middleware.UserIDFromContext(r.Context())
 	tenantID, err := defaultNotificationService.GetUserTenantID(userID)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to resolve tenant")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to resolve tenant")
 		return
 	}
 	if err := defaultNotificationService.MarkAllAsRead(tenantID, userID); err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -110,12 +111,12 @@ func Action(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if id == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "missing notification id")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "missing notification id")
 		return
 	}
 	var req object.ActionNotificationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid request body")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid request body")
 		return
 	}
 
@@ -126,20 +127,29 @@ func Action(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := defaultNotificationService.UpdateActionStatus(id, status)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
-	// 将研发选择的仓库/工程名注入 data，供编排层使用
-	if req.Action == "approve" && (req.RepositoryID != "" || req.ProjectName != "") {
+	// 将研发选择的仓库/工程名/目标空间注入 data，供编排层使用
+	if req.Action == "approve" {
 		if updated.Data == nil {
 			updated.Data = map[string]any{}
 		}
 		updated.Data["repositoryId"] = req.RepositoryID
 		updated.Data["projectName"] = req.ProjectName
+		if req.WorkspaceID != "" {
+			updated.Data["targetWorkspaceId"] = req.WorkspaceID
+		}
+		if req.Prompt != "" {
+			updated.Data["developerPrompt"] = req.Prompt
+		}
+		if req.Approved != nil {
+			updated.Data["approved"] = *req.Approved
+		}
 	}
 	if onAction != nil && req.Action == "approve" {
 		userID, _ := middleware.UserIDFromContext(r.Context())
-		go onAction(id, userID, req.Action, updated.Data)
+		safego.Go("notification-action", func() { onAction(id, userID, req.Action, updated.Data) })
 	}
 	json.NewEncoder(w).Encode(updated)
 }

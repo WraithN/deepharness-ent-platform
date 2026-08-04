@@ -193,6 +193,156 @@ func resolveAllowedPath(path string) string {
 	return absPath
 }
 
+// WalkDirEntry 是文件树遍历中的一个节点。
+type WalkDirEntry struct {
+	Path  string `json:"path"`
+	Name  string `json:"name"`
+	IsDir bool   `json:"isDir"`
+	Size  int64  `json:"size"`
+}
+
+// FileWalkDir 递归遍历目录，返回所有文件/子目录的扁平列表。
+// GET /api/v1/files/walk?path=...
+func FileWalkDir(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+	root := r.URL.Query().Get("path")
+	if root == "" {
+		WriteJSONError(w, http.StatusBadRequest, 1, "path is required")
+		return
+	}
+
+	absRoot := resolveAllowedPath(root)
+	if absRoot == "" {
+		WriteJSONError(w, http.StatusForbidden, 1, "path outside allowed root")
+		return
+	}
+
+	var entries []WalkDirEntry
+	err := filepath.Walk(absRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // 跳过无法访问的条目
+		}
+		entries = append(entries, WalkDirEntry{
+			Path:  path,
+			Name:  info.Name(),
+			IsDir: info.IsDir(),
+			Size:  info.Size(),
+		})
+		return nil
+	})
+	if err != nil {
+		log.Printf("[Files] walk failed for %s: %v", absRoot, err)
+		WriteJSONError(w, http.StatusInternalServerError, 1, "遍历目录失败")
+		return
+	}
+
+	SetJSONHeader(w)
+	json.NewEncoder(w).Encode(map[string]any{
+		"path":    absRoot,
+		"entries": entries,
+	})
+}
+
+// FileGlob 返回匹配指定 pattern 的文件路径列表。
+// GET /api/v1/files/glob?pattern=...
+func FileGlob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+	pattern := r.URL.Query().Get("pattern")
+	if pattern == "" {
+		WriteJSONError(w, http.StatusBadRequest, 1, "pattern is required")
+		return
+	}
+
+	// 将 pattern 解析为绝对路径形式（若为相对路径则基于 filesRoot）
+	var absPattern string
+	if filepath.IsAbs(pattern) {
+		absPattern = filepath.Clean(pattern)
+	} else {
+		rootAbs, err := filepath.Abs(filesRoot)
+		if err != nil {
+			WriteJSONError(w, http.StatusInternalServerError, 1, "server root not configured")
+			return
+		}
+		absPattern = filepath.Join(rootAbs, pattern)
+	}
+
+	matches, err := filepath.Glob(absPattern)
+	// filepath.Glob 的唯一可能错误是 pattern 语法错误
+	if err != nil {
+		WriteJSONError(w, http.StatusBadRequest, 1, "invalid glob pattern: "+err.Error())
+		return
+	}
+
+	// 只返回允许路径范围内的结果
+	var allowed []string
+	for _, m := range matches {
+		if isPathAllowed(m) {
+			allowed = append(allowed, m)
+		}
+	}
+	if allowed == nil {
+		allowed = []string{}
+	}
+
+	SetJSONHeader(w)
+	json.NewEncoder(w).Encode(map[string]any{
+		"pattern": absPattern,
+		"matches": allowed,
+	})
+}
+
+// FileInfoResp 是文件/目录的详细信息。
+type FileInfoResp struct {
+	Exists   bool   `json:"exists"`
+	IsDir    bool   `json:"isDir"`
+	Size     int64  `json:"size"`
+	ModTime  string `json:"modTime"`
+	BaseName string `json:"baseName"`
+}
+
+// FileInfo 返回指定路径的文件/目录详细信息。
+// GET /api/v1/files/info?path=...
+func FileInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		WriteJSONError(w, http.StatusBadRequest, 1, "path is required")
+		return
+	}
+
+	absPath := resolveAllowedPath(path)
+	if absPath == "" {
+		SetJSONHeader(w)
+		json.NewEncoder(w).Encode(FileInfoResp{Exists: false})
+		return
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		SetJSONHeader(w)
+		json.NewEncoder(w).Encode(FileInfoResp{Exists: false})
+		return
+	}
+
+	SetJSONHeader(w)
+	json.NewEncoder(w).Encode(FileInfoResp{
+		Exists:   true,
+		IsDir:    info.IsDir(),
+		Size:     info.Size(),
+		ModTime:  info.ModTime().UTC().Format("2006-01-02T15:04:05Z"),
+		BaseName: info.Name(),
+	})
+}
+
 // FileExists 检查文件或目录是否存在。
 // GET /api/v1/files/exists?path=...
 func FileExists(w http.ResponseWriter, r *http.Request) {

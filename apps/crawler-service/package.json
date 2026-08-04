@@ -1,0 +1,31 @@
+{
+  "name": "@repo/crawler-service",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "独立网站抓取服务：Playwright 登录 + Firecrawl 爬取，为 /prd-analysis 提供内容",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "mcp": "node dist/mcp-server.js",
+    "lint": "npx biome check src",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.1",
+    "@mendable/firecrawl-js": "^1.5.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "fastify": "^4.28.1",
+    "playwright": "^1.45.3",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.11",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

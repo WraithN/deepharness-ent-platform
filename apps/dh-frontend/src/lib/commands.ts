@@ -12,6 +12,7 @@ export interface CommandConfig {
   allowTask: boolean;
   allowRepos: boolean;
   requireRepos: boolean;
+  requireTask: boolean;
   maxRepos: number;
   /** 指令是否启用；禁用指令在会话页中展示为灰色且不可点击。 */
   enabled: boolean;
@@ -19,8 +20,8 @@ export interface CommandConfig {
   template?: string;
 }
 
-/** 指令分类（用于按角色分组展示）。 */
-export type CommandCategory = 'product' | 'design' | 'dev' | 'test';
+/** 指令分类（用于按角色分组展示）；other 为未配置分类的兜底。 */
+export type CommandCategory = 'product' | 'design' | 'dev' | 'test' | 'other';
 
 /** 分类 -> 中文标签。 */
 export const COMMAND_CATEGORY_LABELS: Record<CommandCategory, string> = {
@@ -28,10 +29,11 @@ export const COMMAND_CATEGORY_LABELS: Record<CommandCategory, string> = {
   design: 'UI',
   dev: '研发',
   test: '测试',
+  other: '其他',
 };
 
 /** 分类展示顺序。 */
-export const COMMAND_CATEGORY_ORDER: CommandCategory[] = ['product', 'design', 'dev', 'test'];
+export const COMMAND_CATEGORY_ORDER: CommandCategory[] = ['product', 'design', 'dev', 'test', 'other'];
 
 /** 指令 -> 分类 的映射；未列出的指令归为「其他」。 */
 export const COMMAND_CATEGORIES: Record<string, CommandCategory> = {
@@ -54,6 +56,8 @@ export const COMMAND_CATEGORIES: Record<string, CommandCategory> = {
   '/design-token': 'design',
   '/prd-write': 'product',
   '/prd-research': 'product',
+  '/prd-analysis': 'product',
+  '/brainstorm': 'product',
   '/req-breakdown': 'product',
   '/data-analysis': 'product',
 };
@@ -61,8 +65,12 @@ export const COMMAND_CATEGORIES: Record<string, CommandCategory> = {
 /** 其他/未分类指令的标签。 */
 export const COMMAND_CATEGORY_OTHER_LABEL = '其他';
 
+/** 返回指令所属分类；未配置分类的指令归为 other。 */
+export function getCommandCategory(cmd: string): CommandCategory {
+  return COMMAND_CATEGORIES[cmd] ?? 'other';
+}
+
 /** 返回指令所属分类标签；未配置分类的指令返回「其他」。 */
 export function getCommandCategoryLabel(cmd: string): string {
-  const cat = COMMAND_CATEGORIES[cmd];
-  return cat ? COMMAND_CATEGORY_LABELS[cat] : COMMAND_CATEGORY_OTHER_LABEL;
+  return COMMAND_CATEGORY_LABELS[getCommandCategory(cmd)];
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workitem"
 )
 
@@ -133,7 +134,9 @@ func UpdateWorkItemAssignee(w http.ResponseWriter, r *http.Request) {
 	}
 	// 触发需求分配回调（通知编排层创建通知），使用 workspaceID 和 tenantID
 	if onAssigneeAssigned != nil && req.AssigneeID != "" {
-		go onAssigneeAssigned(id, item.WorkspaceID, item.TenantID, req.AssigneeID, item.AssigneeName, item.Title, item.Description)
+		safego.Go("workitem-assignee-assigned", func() {
+			onAssigneeAssigned(id, item.WorkspaceID, item.TenantID, req.AssigneeID, item.AssigneeName, item.Title, item.Description)
+		})
 	}
 	json.NewEncoder(w).Encode(item)
 }

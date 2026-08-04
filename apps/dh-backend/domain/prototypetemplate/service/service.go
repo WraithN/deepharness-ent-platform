@@ -11,7 +11,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -19,7 +18,10 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/prototypetemplate/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/lib/pq"
+
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
 
 // 模版依赖安装相关常量。
@@ -210,7 +212,7 @@ func (s *DBPrototypeTemplateService) UpdateMeta(id int64, req object.UpdateMetaR
 		return object.PrototypeTemplate{}, fmt.Errorf("update prototype template failed: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return object.PrototypeTemplate{}, errors.New("prototype template not found")
+		return object.PrototypeTemplate{}, common.NotFoundErrorf("prototype template not found")
 	}
 	return s.Get(id)
 }
@@ -234,7 +236,7 @@ func (s *DBPrototypeTemplateService) hardDelete(id int64) error {
 		return fmt.Errorf("delete prototype template failed: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return errors.New("prototype template not found")
+		return common.NotFoundErrorf("prototype template not found")
 	}
 	return nil
 }
@@ -260,21 +262,16 @@ func (s *DBPrototypeTemplateService) InstallDeps(id int64) (object.PrototypeTemp
 		return object.PrototypeTemplate{}, fmt.Errorf("mark installing failed: %w", err)
 	}
 
-	pkgMgr, lookErr := resolvePkgManager()
-	if lookErr != nil {
-		return s.updateInstallResult(id, object.StatusError, false, lookErr.Error())
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), installTimeout)
 	defer cancel()
-	// 架构例外说明：此处 npm install 运行在 shares/prototypes-templates/ 目录下，
-	// 属于 dh-backend 管理的共享资源（AGENTS.md §5 允许 dh-backend 写 shares/ 目录）。
-	// 这是模版上传后的依赖安装（build-time 操作），非用户运行时操作。
-	// TODO: 生产环境可考虑将此操作委托 personal-stub 执行，进一步隔离 build 环境。
-	cmd := exec.CommandContext(ctx, pkgMgr, "install")
-	cmd.Dir = t.DirPath
-	out, runErr := cmd.CombinedOutput()
-	logText := truncateLog(string(out))
+	// 架构合规：通过 stubclient 委托 personal-stub 执行 npm install，
+	// personal-stub 自动检测包管理器（pnpm/yarn/npm），不直接 exec npm。
+	sc := stubclient.FromContext(ctx)
+	if sc == nil {
+		return s.updateInstallResult(id, object.StatusError, false, "personal-stub client not initialized")
+	}
+	result, runErr := sc.NpmInstall(ctx, t.DirPath)
+	logText := truncateLog(result.Output)
 	if runErr != nil {
 		logText = truncateLog(logText + "\n" + runErr.Error())
 		return s.updateInstallResult(id, object.StatusError, false, logText)
@@ -369,22 +366,11 @@ func scanTemplate(scan func(...any) error) (object.PrototypeTemplate, error) {
 	err := scan(&t.ID, &t.Name, &t.Description, &t.Tags, &t.DirPath, &t.Status, &t.HasNodeModules, &t.InstallLog, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return object.PrototypeTemplate{}, errors.New("prototype template not found")
+			return object.PrototypeTemplate{}, common.NotFoundErrorf("prototype template not found")
 		}
 		return object.PrototypeTemplate{}, fmt.Errorf("scan prototype template failed: %w", err)
 	}
 	return t, nil
-}
-
-// resolvePkgManager 优先返回 pnpm，不可用时回退 npm，二者都缺失则报错。
-func resolvePkgManager() (string, error) {
-	if _, err := exec.LookPath("pnpm"); err == nil {
-		return "pnpm", nil
-	}
-	if _, err := exec.LookPath("npm"); err == nil {
-		return "npm", nil
-	}
-	return "", errors.New("neither pnpm nor npm is installed on the server")
 }
 
 // truncateLog 截断日志到最大长度，尾部保留最近的内容。

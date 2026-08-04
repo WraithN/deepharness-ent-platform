@@ -6,9 +6,10 @@ package agui
 import (
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // MessageRole 表示 AG-UI 消息角色。
@@ -303,6 +304,5 @@ func TextMessageEndEvent(messageID string) Event {
 }
 
 func generateID() string {
-	// 简单时间戳+随机数，避免引入 uuid 依赖。
-	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), rand.Int())
+	return uuid.New().String()
 }

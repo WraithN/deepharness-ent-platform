@@ -12,11 +12,13 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentruntime/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentruntime/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/wsutil"
 	"github.com/gorilla/websocket"
 )
 
 var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: wsutil.SameHostnameCheckOrigin(),
 }
 
 const (
@@ -68,33 +70,33 @@ func isWebSocketUpgrade(r *http.Request) bool {
 func (p *GatewaydProxy) serveChat(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
 	if sessionID == "" {
-		WriteJSONError(w, http.StatusBadRequest, 1, "missing session id")
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, "missing session id")
 		return
 	}
 
 	sess, err := p.sessions.Get(r.Context(), sessionID)
 	if err != nil {
-		WriteJSONError(w, http.StatusNotFound, 1, "session not found")
+		WriteJSONError(w, http.StatusNotFound, ErrCodeGeneral, "session not found")
 		return
 	}
 
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if ok && sess.UserID != "" && sess.UserID != userID {
-		WriteJSONError(w, http.StatusForbidden, 1, "not allowed to access this session")
+		WriteJSONError(w, http.StatusForbidden, ErrCodeGeneral, "not allowed to access this session")
 		return
 	}
 
 	targetURL, err := p.resolveGatewaydURL(r.Context(), sessionID)
 	if err != nil {
 		log.Printf("[GatewaydProxy] resolve gatewayd url failed: %v", err)
-		WriteJSONError(w, http.StatusServiceUnavailable, 1, "agent runtime unavailable")
+		WriteJSONError(w, http.StatusServiceUnavailable, ErrCodeGeneral, "agent runtime unavailable")
 		return
 	}
 
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL+"/sessions/"+sessionID+"/chat", r.Body)
 	if err != nil {
 		log.Printf("[GatewaydProxy] create proxy request failed: %v", err)
-		WriteJSONError(w, http.StatusInternalServerError, 1, "proxy request failed")
+		WriteJSONError(w, http.StatusInternalServerError, ErrCodeGeneral, "proxy request failed")
 		return
 	}
 	copyHeaders(proxyReq.Header, r.Header)
@@ -102,7 +104,7 @@ func (p *GatewaydProxy) serveChat(w http.ResponseWriter, r *http.Request) {
 	resp, err := http.DefaultClient.Do(proxyReq)
 	if err != nil {
 		log.Printf("[GatewaydProxy] proxy request to gatewayd failed: %v", err)
-		WriteJSONError(w, http.StatusBadGateway, 1, "gateway unreachable")
+		WriteJSONError(w, http.StatusBadGateway, ErrCodeGeneral, "gateway unreachable")
 		return
 	}
 	defer resp.Body.Close()
@@ -117,26 +119,26 @@ func (p *GatewaydProxy) serveChat(w http.ResponseWriter, r *http.Request) {
 func (p *GatewaydProxy) serveWS(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
 	if sessionID == "" {
-		WriteJSONError(w, http.StatusBadRequest, 1, "missing session id")
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, "missing session id")
 		return
 	}
 
 	sess, err := p.sessions.Get(r.Context(), sessionID)
 	if err != nil {
-		WriteJSONError(w, http.StatusNotFound, 1, "session not found")
+		WriteJSONError(w, http.StatusNotFound, ErrCodeGeneral, "session not found")
 		return
 	}
 
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if ok && sess.UserID != "" && sess.UserID != userID {
-		WriteJSONError(w, http.StatusForbidden, 1, "not allowed to access this session")
+		WriteJSONError(w, http.StatusForbidden, ErrCodeGeneral, "not allowed to access this session")
 		return
 	}
 
 	targetURL, err := p.resolveGatewaydURL(r.Context(), sessionID)
 	if err != nil {
 		log.Printf("[GatewaydProxy] resolve gatewayd url for WS failed: %v", err)
-		WriteJSONError(w, http.StatusServiceUnavailable, 1, "agent runtime unavailable")
+		WriteJSONError(w, http.StatusServiceUnavailable, ErrCodeGeneral, "agent runtime unavailable")
 		return
 	}
 
@@ -146,6 +148,9 @@ func (p *GatewaydProxy) serveWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer clientConn.Close()
+	// 为客户端连接启用心跳，防止半开连接导致读操作永久阻塞。
+	clientHB := wsutil.NewHeartbeat(clientConn, "proxy-client")
+	defer clientHB.Stop()
 
 	gatewaydWsURL := buildWsURL(targetURL, "/sessions/"+sessionID+"/events")
 	gatewaydConn, _, err := websocket.DefaultDialer.Dial(gatewaydWsURL, nil)
@@ -154,10 +159,13 @@ func (p *GatewaydProxy) serveWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer gatewaydConn.Close()
+	// 同样为 gatewayd 连接启用心跳，双向检测半开连接。
+	gatewaydHB := wsutil.NewHeartbeat(gatewaydConn, "proxy-gatewayd")
+	defer gatewaydHB.Stop()
 
 	done := make(chan struct{})
 
-	go func() {
+	safego.Go("ws-proxy-client-to-gatewayd", func() {
 		defer close(done)
 		defer clientConn.Close()
 		for {
@@ -171,9 +179,9 @@ func (p *GatewaydProxy) serveWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-	}()
+	})
 
-	go func() {
+	safego.Go("ws-proxy-gatewayd-to-client", func() {
 		defer gatewaydConn.Close()
 		for {
 			msgType, msg, err := gatewaydConn.ReadMessage()
@@ -186,7 +194,7 @@ func (p *GatewaydProxy) serveWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-	}()
+	})
 
 	<-done
 }

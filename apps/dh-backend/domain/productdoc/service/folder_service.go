@@ -8,6 +8,8 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/object"
 	"github.com/google/uuid"
+
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
 
 const (
@@ -120,7 +122,7 @@ func (s *DBProductDocService) ensureParentDepthAllowed(workspaceID, parentID str
 		SELECT MAX(lvl) FROM ancestors
 	`, parentID, workspaceID).Scan(&depth)
 	if err != nil || depth == 0 {
-		return errors.New("parent folder not found")
+		return common.NotFoundErrorf("parent folder not found")
 	}
 	if depth >= MaxFolderDepth {
 		return fmt.Errorf("最多支持 %d 层目录", MaxFolderDepth)
@@ -131,7 +133,7 @@ func (s *DBProductDocService) ensureParentDepthAllowed(workspaceID, parentID str
 		`SELECT is_default FROM product_doc_folders WHERE id = $1 AND workspace_id = $2`,
 		parentID, workspaceID,
 	).Scan(&isDefault); err != nil {
-		return errors.New("parent folder not found")
+		return common.NotFoundErrorf("parent folder not found")
 	}
 	if isDefault {
 		return errors.New("默认目录不可创建子目录")
@@ -165,7 +167,7 @@ func (s *DBProductDocService) UpdateFolder(id string, req object.UpdateFolderReq
 		&f.ID, &f.WorkspaceID, &f.ParentID, &f.Name, &f.Pinned, &f.IsDefault, &f.SortOrder, &f.CreatedAt, &f.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return object.ProductDocFolder{}, errors.New("folder not found")
+		return object.ProductDocFolder{}, common.NotFoundErrorf("folder not found")
 	}
 	if err != nil {
 		return object.ProductDocFolder{}, fmt.Errorf("update product doc folder failed: %w", err)
@@ -181,7 +183,7 @@ func (s *DBProductDocService) getFolder(id string) (object.ProductDocFolder, err
 		FROM product_doc_folders WHERE id = $1
 	`, folderSelectCols), id).Scan(&f.ID, &f.WorkspaceID, &f.ParentID, &f.Name, &f.Pinned, &f.IsDefault, &f.SortOrder, &f.CreatedAt, &f.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return object.ProductDocFolder{}, errors.New("folder not found")
+		return object.ProductDocFolder{}, common.NotFoundErrorf("folder not found")
 	}
 	if err != nil {
 		return object.ProductDocFolder{}, fmt.Errorf("get product doc folder failed: %w", err)

@@ -10,6 +10,8 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/platformtemplate/object"
 	"github.com/lib/pq"
+
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
 
 // PlatformTemplateService 定义平台模板模块的服务接口。
@@ -200,7 +202,7 @@ func (s *DBPlatformTemplateService) Update(key, category string, tmpl object.Pla
 		&updated.ID, &updated.Category, &updated.Key, &updated.Label, &updated.Content, &updated.SortOrder, &updated.Published, &updated.CreatedAt, &updated.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return object.PlatformTemplate{}, errors.New("template not found")
+		return object.PlatformTemplate{}, common.NotFoundErrorf("template not found")
 	}
 	if err != nil {
 		return object.PlatformTemplate{}, fmt.Errorf("update template failed: %w", err)
@@ -223,7 +225,7 @@ func (s *DBPlatformTemplateService) Delete(key, category string) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return errors.New("template not found")
+		return common.NotFoundErrorf("template not found")
 	}
 	return nil
 }
@@ -309,7 +311,7 @@ func (s *DBPlatformTemplateService) Publish(key, category string, published bool
 		}
 		n, _ := res.RowsAffected()
 		if n == 0 {
-			return errors.New("template not found")
+			return common.NotFoundErrorf("template not found")
 		}
 		return nil
 	}
@@ -324,7 +326,7 @@ func (s *DBPlatformTemplateService) Publish(key, category string, published bool
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return errors.New("template not found")
+		return common.NotFoundErrorf("template not found")
 	}
 	return nil
 }

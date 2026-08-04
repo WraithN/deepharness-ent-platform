@@ -18,6 +18,7 @@ type CommandConfig struct {
 	AllowTask     bool   `json:"allowTask" yaml:"allowTask"`
 	AllowRepos    bool   `json:"allowRepos" yaml:"allowRepos"`
 	RequireRepos  bool   `json:"requireRepos" yaml:"requireRepos"`
+	RequireTask   bool   `json:"requireTask" yaml:"requireTask"`
 	MaxRepos      int    `json:"maxRepos" yaml:"maxRepos"`
 	Enabled       bool   `json:"enabled" yaml:"enabled"`
 	Template      string `json:"template" yaml:"template"`

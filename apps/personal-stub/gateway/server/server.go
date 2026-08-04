@@ -40,6 +40,9 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/files/mkdir", handler.FileMkdir)
 	mux.HandleFunc("/api/v1/files/dir", handler.FileRemoveDir)
 	mux.HandleFunc("/api/v1/files/list", handler.FileListDir)
+	mux.HandleFunc("/api/v1/files/walk", handler.FileWalkDir)
+	mux.HandleFunc("/api/v1/files/glob", handler.FileGlob)
+	mux.HandleFunc("/api/v1/files/info", handler.FileInfo)
 	mux.HandleFunc("/api/v1/files/exists", handler.FileExists)
 
 	// 工程项目管理（AI 创建/修改的工程预览与同步）
@@ -49,6 +52,7 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/projects/sync", handler.ProjectSync)
 	mux.HandleFunc("/api/v1/projects/git-exec", handler.ProjectGitExec)
 	mux.HandleFunc("/api/v1/projects/clone", handler.ProjectClone)
+	mux.HandleFunc("/api/v1/projects/npm-install", handler.NpmInstall)
 
 	// 项目预览（dev server 管理 + 反向代理）
 	mux.HandleFunc("/api/v1/preview/start", handler.PreviewStart)

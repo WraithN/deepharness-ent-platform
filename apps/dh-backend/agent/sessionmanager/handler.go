@@ -1,10 +1,10 @@
-package orchestrator
+package sessionmanager
 
 import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/orchestrator/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/sessionmanager/service"
 )
 
 var defaultSessionService service.SessionService

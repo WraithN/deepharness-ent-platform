@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useId } from 'react';
+import { useTheme } from 'next-themes';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 interface MermaidBlockProps {
@@ -8,17 +9,25 @@ interface MermaidBlockProps {
 // mermaid 库动态导入缓存，避免重复加载。
 let mermaidLoader: Promise<typeof import('mermaid')> | null = null;
 
-function loadMermaid() {
+function initializeMermaid(theme: 'default' | 'dark') {
   if (!mermaidLoader) {
     mermaidLoader = import('mermaid').then(mod => {
       mod.default.initialize({
         startOnLoad: false,
-        theme: 'default',
+        theme,
         securityLevel: 'loose',
       });
       return mod;
     });
+    return mermaidLoader;
   }
+  mermaidLoader.then(mod => {
+    mod.default.initialize({
+      startOnLoad: false,
+      theme,
+      securityLevel: 'loose',
+    });
+  });
   return mermaidLoader;
 }
 
@@ -51,13 +60,15 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({ code }) => {
   const rawId = useId();
   // mermaid 要求 id 以字母开头且不含特殊字符。
   const diagramId = `mermaid-${rawId.replace(/[^a-zA-Z0-9]/g, '')}`;
+  const { resolvedTheme } = useTheme();
+  const mermaidTheme = resolvedTheme === 'dark' ? 'dark' : 'default';
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
 
-    loadMermaid()
+    initializeMermaid(mermaidTheme)
       .then(mod => {
         if (cancelled) return;
         return mod.default.render(diagramId, preprocessMermaidCode(code.trim()));
@@ -79,7 +90,7 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({ code }) => {
     return () => {
       cancelled = true;
     };
-  }, [code, diagramId]);
+  }, [code, diagramId, mermaidTheme]);
 
   if (loading) {
     return (

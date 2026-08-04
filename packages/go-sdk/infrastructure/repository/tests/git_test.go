@@ -5,20 +5,27 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/workspacepath"
 	repository "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/repository"
 )
 
 func TestDefaultLocalPath(t *testing.T) {
-	c := repository.NewGitClient("")
+	c, err := repository.NewGitClient(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewGitClient failed: %v", err)
+	}
 	got := c.DefaultLocalPath("user-1", "ws-1", "backend/api")
-	want := filepath.Join(repository.DEFAULT_WORKSPACE_ROOT, "user-1", "ws-1", "backend-api")
+	want := filepath.Join(c.Root(), "user-1", "ws-1", workspacepath.DirDevJobs, "backend-api")
 	if got != want {
 		t.Errorf("DefaultLocalPath = %q, want %q", got, want)
 	}
 }
 
 func TestDefaultLocalPathPreventsTraversal(t *testing.T) {
-	c := repository.NewGitClient("")
+	c, err := repository.NewGitClient(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewGitClient failed: %v", err)
+	}
 
 	cases := []struct {
 		user string
@@ -36,16 +43,19 @@ func TestDefaultLocalPathPreventsTraversal(t *testing.T) {
 		if strings.Contains(got, "..") {
 			t.Errorf("DefaultLocalPath(%q,%q,%q) should not contain traversal: %q", tc.user, tc.ws, tc.name, got)
 		}
-		if got != "" && !strings.HasPrefix(got, repository.DEFAULT_WORKSPACE_ROOT+string(filepath.Separator)) {
+		if got != "" && !strings.HasPrefix(got, c.Root()+string(filepath.Separator)) {
 			t.Errorf("DefaultLocalPath(%q,%q,%q) escaped root: %q", tc.user, tc.ws, tc.name, got)
 		}
 	}
 }
 
 func TestCloneWithInvalidSSHKey(t *testing.T) {
-	c := repository.NewGitClient("")
+	c, err := repository.NewGitClient(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewGitClient failed: %v", err)
+	}
 	tmp := t.TempDir()
-	err := c.Clone("git@example.com:foo/bar.git", filepath.Join(tmp, "bar"), "not-a-key", "", nil)
+	err = c.Clone("git@example.com:foo/bar.git", filepath.Join(tmp, "bar"), "not-a-key", "", nil)
 	if err == nil {
 		t.Fatal("expected error for invalid ssh key")
 	}

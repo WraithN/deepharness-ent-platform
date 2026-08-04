@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/orchestrator/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/sessionmanager/object"
 )
 
 // DBSessionService 是基于 PostgreSQL 的 SessionService 实现。

@@ -1,12 +1,12 @@
 module github.com/deepharness/deepharness-ent-platform/apps/dh-backend
 
-go 1.22
+go 1.26.0
 
 require (
 	github.com/deepharness/deepharness-ent-platform/packages/go-sdk v0.0.0
 	github.com/go-enry/go-enry/v2 v2.9.6
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.3
+	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/lib/pq v1.12.3
 	github.com/redis/go-redis/v9 v9.21.0
 	golang.org/x/crypto v0.50.0
@@ -38,11 +38,15 @@ require (
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
+	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
 	golang.org/x/net v0.53.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
+	k8s.io/api v0.36.3 // indirect
+	k8s.io/apimachinery v0.36.3 // indirect
+	k8s.io/client-go v0.36.3 // indirect
 )
 
 replace github.com/deepharness/deepharness-ent-platform/packages/go-sdk => ../../packages/go-sdk

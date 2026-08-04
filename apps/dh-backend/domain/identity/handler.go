@@ -155,16 +155,16 @@ func RequireSuperAdmin(w http.ResponseWriter, r *http.Request) bool {
 func requireTenantOrSuperAdmin(w http.ResponseWriter, r *http.Request, tenantID string) bool {
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return false
 	}
 	if defaultUserService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "user service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "user service not initialized")
 		return false
 	}
 	currentUser, err := defaultUserService.GetByID(userID)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "failed to authenticate user")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "failed to authenticate user")
 		return false
 	}
 	if currentUser.PlatformRole == identity.PlatformRoleSuperAdmin {
@@ -173,7 +173,7 @@ func requireTenantOrSuperAdmin(w http.ResponseWriter, r *http.Request, tenantID 
 	if currentUser.PlatformRole == identity.PlatformRoleTenantAdmin && currentUser.TenantID == tenantID {
 		return true
 	}
-	handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or super admin required")
+	handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: tenant admin or super admin required")
 	return false
 }
 
@@ -197,20 +197,20 @@ func IsSuperAdmin(r *http.Request) bool {
 func requireSuperAdmin(w http.ResponseWriter, r *http.Request) bool {
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return false
 	}
 	if defaultUserService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "user service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "user service not initialized")
 		return false
 	}
 	user, err := defaultUserService.GetByID(userID)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "failed to authenticate user")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "failed to authenticate user")
 		return false
 	}
 	if user.PlatformRole != identity.PlatformRoleSuperAdmin {
-		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: super admin required")
 		return false
 	}
 	return true
@@ -239,7 +239,7 @@ func Tenants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.Name == "" {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "name is required")
 			return
 		}
 		t, err := defaultUserService.CreateTenant(req.Name, req.AgentPolicy)
@@ -251,7 +251,7 @@ func Tenants(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(t)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -282,7 +282,7 @@ func TenantByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.Name == "" {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "name is required")
 			return
 		}
 		t, err := defaultUserService.UpdateTenant(id, req.Name, req.AgentPolicy)
@@ -299,7 +299,7 @@ func TenantByID(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -330,11 +330,11 @@ func TenantMembers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.Email == "" {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, "email is required")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "email is required")
 			return
 		}
 		if req.Name == "" {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "name is required")
 			return
 		}
 		member, err := defaultUserService.AddTenantMember(id, req.Email, req.Name)
@@ -346,7 +346,7 @@ func TenantMembers(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(member)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -364,7 +364,7 @@ func TenantMemberByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPut {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 	var req struct {

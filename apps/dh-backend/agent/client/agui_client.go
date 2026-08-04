@@ -8,13 +8,17 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -164,6 +168,12 @@ func (c *AGUIClient) Respond(ctx context.Context, threadID, instanceID, message 
 		return fmt.Errorf("respond to agent status %d: %s", resp.StatusCode, string(respBody))
 	}
 	return nil
+}
+
+// ForgetThread 清除已缓存的 thread 附加状态，使下一次 Run 调用走完整的 attach 流程。
+// 用于 gatewayd 实例已死亡需要重建 session 的回退场景。
+func (c *AGUIClient) ForgetThread(threadID string) {
+	c.attachedThreads.Delete(threadID)
 }
 
 // Run 向 gatewayd 发送 RunAgentInput 并返回 AG-UI 事件流。
@@ -330,7 +340,7 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 	}
 
 	out := make(chan agui.Event, sseEventBufferSize)
-	go c.readSSE(resp.Body, out, input.ThreadID, input.RunID, runStart)
+	safego.Go("agui-read-sse", func() { c.readSSE(resp.Body, out, input.ThreadID, input.RunID, runStart) })
 	log.Printf("[AGUIClient] run=%s <<< RETURN event channel after %v totalElapsed", input.RunID, time.Since(runStart))
 	return input.ThreadID, out, nil
 }
@@ -425,6 +435,8 @@ func (c *AGUIClient) readSSE(body io.ReadCloser, out chan<- agui.Event, threadID
 	firstContentSeen := false
 	eventCount := 0
 	var pendingData strings.Builder
+	// 收到 RUN_FINISHED / RUN_ERROR 后主动关闭 body，避免 gatewayd 长期不关闭 SSE 流导致下游 goroutine 泄漏。
+	finished := false
 
 	// send 带超时保护，防止下游阻塞导致事件无限堆积。
 	send := func(ev agui.Event) {
@@ -464,6 +476,10 @@ func (c *AGUIClient) readSSE(body io.ReadCloser, out chan<- agui.Event, threadID
 			eventCount++
 			logEvent(ev, runID, eventCount, runStart, &firstContentSeen)
 			send(ev)
+			if ev.Type == agui.EventRunFinished || ev.Type == agui.EventRunError {
+				finished = true
+				break
+			}
 			continue
 		}
 		if !strings.HasPrefix(line, "data:") {
@@ -480,7 +496,7 @@ func (c *AGUIClient) readSSE(body io.ReadCloser, out chan<- agui.Event, threadID
 		pendingData.WriteString(data)
 	}
 
-	if err := scanner.Err(); err != nil {
+	if err := scanner.Err(); err != nil && !finished {
 		log.Printf("[AGUIClient] run=%s sse scanner error: %v", runID, err)
 		send(agui.RunErrorEvent(fmt.Sprintf("sse scanner error: %v", err), "SSE_SCANNER_ERROR"))
 	}
@@ -488,6 +504,10 @@ func (c *AGUIClient) readSSE(body io.ReadCloser, out chan<- agui.Event, threadID
 	if pendingData.Len() > 0 {
 		log.Printf("[AGUIClient] run=%s emitting final pending SSE data without trailing blank line", runID)
 		emitPendingEvent(pendingData.String(), threadID, runID, runStart, &firstEventSeen, &firstContentSeen, &eventCount, send)
+	}
+	if finished {
+		// 主动关闭底层连接，让 deferred body.Close() 和 close(out) 尽快释放资源。
+		_ = body.Close()
 	}
 	log.Printf("[AGUIClient] run=%s SSE stream ended, total elapsed=%v", runID, time.Since(runStart))
 }
@@ -542,6 +562,8 @@ func logEvent(ev agui.Event, runID string, eventCount int, runStart time.Time, f
 		log.Printf("[AGUIClient] run=%s SSE#%d RUN_FINISHED threadId=%s after %v", runID, eventCount, ev.ThreadID, time.Since(runStart))
 	case agui.EventRunError:
 		log.Printf("[AGUIClient] run=%s SSE#%d RUN_ERROR threadId=%s after %v", runID, eventCount, ev.ThreadID, time.Since(runStart))
+	case agui.EventCustom:
+		log.Printf("[AGUIClient] run=%s SSE#%d CUSTOM name=%s after %v", runID, eventCount, ev.Name, time.Since(runStart))
 	}
 }
 
@@ -565,7 +587,7 @@ func newInactivityReadCloser(rc io.ReadCloser, timeout time.Duration) *inactivit
 		heartbeat: make(chan struct{}, 1),
 		done:      make(chan struct{}),
 	}
-	go w.monitor()
+	safego.Go("agui-inactivity-monitor", w.monitor)
 	return w
 }
 
@@ -629,4 +651,97 @@ func (r *inactivityReadCloser) Close() error {
 		_ = r.rc.Close()
 	})
 	return nil
+}
+
+// RespondAndListen 通过 gatewayd 的 WebSocket 事件流继续被 question 工具中断的 agent 运行。
+// 它先建立 WS /sessions/{threadId}/events 连接，然后调用 Respond，最后把事件流返回给调用方。
+// 这样可以在不重建 agent 实例的情况下继续原实例，避免新实例重新读取代码/重新思考。
+func (c *AGUIClient) RespondAndListen(ctx context.Context, threadID, instanceID, message string) (<-chan agui.Event, func(), error) {
+	wsURL, err := c.eventsWsURL(threadID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build events websocket url: %w", err)
+	}
+
+	wsConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("dial events websocket: %w", err)
+	}
+
+	out := make(chan agui.Event, sseEventBufferSize)
+	stop := make(chan struct{})
+	closeOnce := sync.Once{}
+	closeConn := func() {
+		closeOnce.Do(func() {
+			close(stop)
+			_ = wsConn.Close()
+		})
+	}
+
+	// 先启动 goroutine 读取事件，避免 Respond 后事件立即到达而丢失。
+	safego.Go("agui-respond-listen", func() {
+		defer close(out)
+		defer wsConn.Close()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+
+			_ = wsConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			msgType, msg, err := wsConn.ReadMessage()
+			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) || websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+					log.Printf("[AGUIClient] respond listen websocket closed: thread=%s err=%v", threadID, err)
+				} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					// 5 秒读超时，继续循环，检查 stop 信号。
+					continue
+				} else {
+					log.Printf("[AGUIClient] respond listen websocket read error: thread=%s err=%v", threadID, err)
+				}
+				return
+			}
+			if msgType != websocket.TextMessage {
+				continue
+			}
+
+			var ev agui.Event
+			if err := json.Unmarshal(msg, &ev); err != nil {
+				log.Printf("[AGUIClient] respond listen failed to parse event: thread=%s err=%v msg=%.200s", threadID, err, string(msg))
+				continue
+			}
+			if ev.ThreadID == "" {
+				ev.ThreadID = threadID
+			}
+			select {
+			case out <- ev:
+			case <-stop:
+				return
+			}
+		}
+	})
+
+	// 短暂等待 WebSocket 连接就绪，避免 Respond 立即发出后事件未开始监听。
+	time.Sleep(200 * time.Millisecond)
+
+	if err := c.Respond(ctx, threadID, instanceID, message); err != nil {
+		closeConn()
+		return nil, nil, fmt.Errorf("respond to agent: %w", err)
+	}
+
+	log.Printf("[AGUIClient] RespondAndListen: respond sent thread=%s instance=%s, listening events", threadID, instanceID)
+	return out, closeConn, nil
+}
+
+// eventsWsURL 把 gatewayd admin HTTP URL 转换为该 session 的事件 WebSocket URL。
+func (c *AGUIClient) eventsWsURL(threadID string) (string, error) {
+	u, err := url.Parse(c.adminURL)
+	if err != nil {
+		return "", err
+	}
+	scheme := "ws"
+	if u.Scheme == "https" {
+		scheme = "wss"
+	}
+	return fmt.Sprintf("%s://%s/sessions/%s/events", scheme, u.Host, threadID), nil
 }

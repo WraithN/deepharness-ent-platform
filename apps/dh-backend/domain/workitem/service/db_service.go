@@ -11,6 +11,8 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/object"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workitem"
 	"github.com/google/uuid"
+
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
 
 // DBWorkItemService 是基于 PostgreSQL 的 WorkItemService 实现。
@@ -128,7 +130,7 @@ func (s *DBWorkItemService) GetWorkItem(id string) (object.WorkItem, error) {
 	`, workItemSelectColumns), id)
 	if err := scanWorkItem(row, &it); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return object.WorkItem{}, errors.New("workitem not found")
+			return object.WorkItem{}, common.NotFoundErrorf("workitem not found")
 		}
 		return object.WorkItem{}, fmt.Errorf("get workitem failed: %w", err)
 	}
@@ -204,7 +206,7 @@ func (s *DBWorkItemService) ValidateAssigneeTenant(assigneeID string, tenantID s
 	var userTenantID string
 	err := s.db.QueryRow(`SELECT tenant_id FROM users WHERE id = $1`, assigneeID).Scan(&userTenantID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return errors.New("assignee user not found")
+		return common.NotFoundErrorf("assignee user not found")
 	}
 	if err != nil {
 		return fmt.Errorf("validate assignee tenant failed: %w", err)
@@ -223,7 +225,7 @@ func (s *DBWorkItemService) reloadWorkItem(id string) (object.WorkItem, error) {
 	`, workItemSelectColumns), id)
 	if err := scanWorkItem(row, &it); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return object.WorkItem{}, errors.New("workitem not found")
+			return object.WorkItem{}, common.NotFoundErrorf("workitem not found")
 		}
 		return object.WorkItem{}, fmt.Errorf("reload workitem failed: %w", err)
 	}

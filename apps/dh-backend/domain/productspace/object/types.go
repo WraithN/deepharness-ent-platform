@@ -156,6 +156,7 @@ type CreateRequirementShareRequest struct {
 	Title         string `json:"title"`
 	DocID         string `json:"docId"`
 	ProductFolder string `json:"productFolder"`
+	ProtoItemID   string `json:"protoItemId"`
 	AllowComments bool   `json:"allowComments"`
 }
 
@@ -181,4 +182,21 @@ type SharedRequirementView struct {
 	AllowComments bool                 `json:"allowComments"`
 	Doc           *SharedDocInfo       `json:"doc,omitempty"`
 	Prototype     *SharedPrototypeView `json:"prototype,omitempty"`
+}
+
+// DocShareComment 是需求分享中文文档的访客批注。
+// 与 domain/productdoc/object.ShareComment 字段一致，但属于 productspace 自己的领域类型，
+// 避免 productspace 反向依赖 productdoc。
+type DocShareComment struct {
+	ID          string     `json:"id"`
+	ShareToken  string     `json:"shareToken"`
+	DocID       string     `json:"docId"`
+	WorkspaceID string     `json:"workspaceId"`
+	AuthorName  string     `json:"authorName"`
+	QuoteText   string     `json:"quoteText"`
+	Content     string     `json:"content"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	ResolvedAt  *time.Time `json:"resolvedAt,omitempty"`
+	ResolvedBy  string     `json:"resolvedBy,omitempty"`
 }

@@ -2,13 +2,15 @@ package workspace
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
-	"strings"
 
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/identity"
 )
 
@@ -49,7 +51,7 @@ func canManageSpacePrompts(r *http.Request, workspaceID string) bool {
 		return false
 	}
 	for _, m := range members {
-		if m.UserID == userID && m.Role == service.MemberRoleSpaceAdmin {
+		if m.UserID == userID && m.Role == object.MemberRoleSpaceAdmin {
 			return true
 		}
 	}
@@ -65,7 +67,7 @@ func Prompts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, authOk := middleware.UserIDFromContext(r.Context()); !authOk {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 
@@ -73,17 +75,17 @@ func Prompts(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		prompts, err := defaultPromptService.List(workspaceID)
 		if err != nil {
-			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list workspace prompts")
+			handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to list workspace prompts")
 			return
 		}
 		json.NewEncoder(w).Encode(prompts)
 	case http.MethodPost:
 		if !canManageSpacePrompts(r, workspaceID) {
-			handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or space admin required")
+			handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: tenant admin or space admin required")
 			return
 		}
 		userID, _ := middleware.UserIDFromContext(r.Context())
-		var req service.AddWorkspacePromptRequest
+		var req object.AddWorkspacePromptRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
@@ -95,7 +97,7 @@ func Prompts(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(p)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -114,16 +116,16 @@ func PromptByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPatch:
 		if !canManageSpacePrompts(r, workspaceID) {
-			handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or space admin required")
+			handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: tenant admin or space admin required")
 			return
 		}
 		// 根据请求体字段分发：存在 enabled 字段时更新启用状态，否则更新分类。
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid request body")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid request body")
 			return
 		}
-		var enabledReq service.UpdateWorkspacePromptEnabledRequest
+		var enabledReq object.UpdateWorkspacePromptEnabledRequest
 		if err := json.Unmarshal(body, &enabledReq); err == nil && enabledReq.Enabled != nil {
 			p, err := defaultPromptService.UpdateEnabled(workspaceID, promptID, enabledReq)
 			if err != nil {
@@ -134,7 +136,7 @@ func PromptByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 存在 content 字段时更新自定义提示词内容（市场来源快照不可改，服务层会拒绝）。
-		var contentReq service.UpdateWorkspacePromptContentRequest
+		var contentReq object.UpdateWorkspacePromptContentRequest
 		if err := json.Unmarshal(body, &contentReq); err == nil && contentReq.Content != "" {
 			p, err := defaultPromptService.UpdateContent(workspaceID, promptID, contentReq)
 			if err != nil {
@@ -144,25 +146,25 @@ func PromptByID(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(p)
 			return
 		}
-		var req service.UpdateWorkspacePromptCategoryRequest
+		var req object.UpdateWorkspacePromptCategoryRequest
 		if err := json.Unmarshal(body, &req); err != nil {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid request body")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid request body")
 			return
 		}
 		p, err := defaultPromptService.UpdateCategories(workspaceID, promptID, req)
 		if err != nil {
-			// 市场来源提示词分类锁定等业务校验错误直接透传原因。
-			if !strings.Contains(err.Error(), "not found") {
-				handler.WriteJSONError(w, http.StatusBadRequest, 3, err.Error())
+			// 资源不存在时返回 404；其它业务校验错误（如市场来源提示词分类锁定）透传原因返回 400。
+			if errors.Is(err, common.ErrNotFound) {
+				handler.HandleServiceError(w, err, "prompt not found", "failed to update prompt categories")
 				return
 			}
-			handler.HandleServiceError(w, err, "prompt not found", "failed to update prompt categories")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeForbidden, err.Error())
 			return
 		}
 		json.NewEncoder(w).Encode(p)
 	case http.MethodDelete:
 		if !canManageSpacePrompts(r, workspaceID) {
-			handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or space admin required")
+			handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: tenant admin or space admin required")
 			return
 		}
 		if err := defaultPromptService.Remove(workspaceID, promptID); err != nil {
@@ -171,7 +173,7 @@ func PromptByID(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -194,12 +196,12 @@ func PromptAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodPost {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 	userID, authOk := middleware.UserIDFromContext(r.Context())
 	if !authOk {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 
@@ -221,22 +223,22 @@ func PromptAction(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(p)
 	case "share":
 		if !canManageSpacePrompts(r, workspaceID) {
-			handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or space admin required")
+			handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: tenant admin or space admin required")
 			return
 		}
 		p, err := defaultPromptService.Share(workspaceID, promptID, userID)
 		if err != nil {
-			// 业务校验错误（市场来源不可分享/已分享）直接透传原因，便于前端提示。
-			if !strings.Contains(err.Error(), "not found") {
-				handler.WriteJSONError(w, http.StatusBadRequest, 3, err.Error())
+			// 资源不存在时返回 404；其它业务校验错误（市场来源不可分享/已分享）透传原因返回 400。
+			if errors.Is(err, common.ErrNotFound) {
+				handler.HandleServiceError(w, err, "prompt not found", "failed to share prompt")
 				return
 			}
-			handler.HandleServiceError(w, err, "prompt not found", "failed to share prompt")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeForbidden, err.Error())
 			return
 		}
 		json.NewEncoder(w).Encode(p)
 	default:
-		handler.WriteJSONError(w, http.StatusNotFound, 1, "unknown action")
+		handler.WriteJSONError(w, http.StatusNotFound, handler.ErrCodeGeneral, "unknown action")
 	}
 }
 
@@ -249,7 +251,7 @@ func PromptCategories(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, authOk := middleware.UserIDFromContext(r.Context()); !authOk {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 
@@ -257,13 +259,13 @@ func PromptCategories(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		categories, err := defaultPromptService.ListCategories(workspaceID)
 		if err != nil {
-			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list prompt categories")
+			handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to list prompt categories")
 			return
 		}
 		json.NewEncoder(w).Encode(categories)
 	case http.MethodPost:
 		if !canManageSpacePrompts(r, workspaceID) {
-			handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or space admin required")
+			handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: tenant admin or space admin required")
 			return
 		}
 		var req createPromptCategoryRequest
@@ -271,7 +273,7 @@ func PromptCategories(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.Name == "" {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "name is required")
 			return
 		}
 		c, err := defaultPromptService.CreateCategory(workspaceID, req.Name)
@@ -282,7 +284,7 @@ func PromptCategories(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(c)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -299,17 +301,18 @@ func PromptCategoryByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodDelete {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
 	if !canManageSpacePrompts(r, workspaceID) {
-		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or space admin required")
+		handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: tenant admin or space admin required")
 		return
 	}
 	if err := defaultPromptService.DeleteCategory(workspaceID, categoryID); err != nil {
-		if strings.Contains(err.Error(), "builtin category") {
-			handler.WriteJSONError(w, http.StatusBadRequest, 3, err.Error())
+		// 内置分类禁止删除返回 400；资源不存在时由 HandleServiceError 返回 404。
+		if errors.Is(err, common.ErrForbidden) {
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeForbidden, err.Error())
 			return
 		}
 		handler.HandleServiceError(w, err, "category not found", "failed to delete category")

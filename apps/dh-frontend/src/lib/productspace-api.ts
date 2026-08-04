@@ -192,6 +192,10 @@ export const productSpaceApi = {
     api.get<{ adopted: boolean; item: ProductSpaceItem | null }>(
       `/v1/workspaces/${workspaceId}/product-space/import-doc/status?path=${encodeURIComponent(path)}`
     ),
+
+  /** 按流程所有者身份导入流程交付物并创建需求级分享链接，无需 PM 权限。 */
+  shareProcessDeliverable: (processId: string, req: { type: 'file' | 'project'; path: string }) =>
+    api.post<RequirementShare>(`/v1/processes/${processId}/deliverables/share`, req),
 };
 
 /** 原型产品分享记录。 */
@@ -283,9 +287,20 @@ export interface SharedRequirementView {
 
 /** 需求级统一分享 API。 */
 export const requirementShareApi = {
-  /** 创建需求级统一分享链接（文档+原型）。 */
+  /** 创建需求级统一分享链接（文档+原型，需 PM 权限）。 */
   create: (workspaceId: string, req: { title: string; docId?: string; productFolder?: string; allowComments?: boolean }) =>
     api.post<RequirementShare>(`/v1/workspaces/${workspaceId}/requirement-shares`, req),
+
+  /** 获取或创建需求级统一分享链接（无需 PM 权限，任意成员可用）。 */
+  getOrCreateView: (workspaceId: string, params: { docId?: string; productFolder?: string; protoItemId?: string; title?: string; allowComments?: boolean }) => {
+    const query = new URLSearchParams();
+    if (params.docId) query.set('doc_id', params.docId);
+    if (params.productFolder) query.set('product_folder', params.productFolder);
+    if (params.protoItemId) query.set('proto_item_id', params.protoItemId);
+    if (params.title) query.set('title', params.title);
+    if (params.allowComments) query.set('allow_comments', 'true');
+    return api.get<RequirementShare>(`/v1/workspaces/${workspaceId}/requirement-shares/view?${query.toString()}`);
+  },
 
   /** 免登录获取需求级统一分享视图。 */
   getView: (token: string) =>

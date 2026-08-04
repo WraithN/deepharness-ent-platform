@@ -6,12 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentruntime/object"
-	"github.com/lib/pq"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/pathutil"
+	_ "github.com/lib/pq" // PostgreSQL driver，通过 database/sql 隐式注册
+
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
+
+// defaultPageSize 是 List 接口未指定分页大小时的默认值。
+const defaultPageSize = 10
 
 // AgentRuntimeService 定义 Agent 运行时模块的服务接口。
 type AgentRuntimeService interface {
@@ -137,7 +142,11 @@ func (s *DBAgentRuntimeService) ReportStatus(runtimeID string, req object.Report
 	// 若 gatewayd 未上报工作目录，则按 ${workspace_root}/${user_id}/${workspace_id} 计算默认路径。
 	workspacePath := req.WorkspacePath
 	if workspacePath == "" && s.workspaceRoot != "" && req.WorkspaceID != "" && req.UserID != "" {
-		workspacePath = filepath.Join(s.workspaceRoot, req.UserID, req.WorkspaceID)
+		var err error
+		workspacePath, err = pathutil.ResolveWorkspaceRoot(s.workspaceRoot, req.UserID, req.WorkspaceID)
+		if err != nil {
+			return object.AgentRuntime{}, fmt.Errorf("resolve workspace path failed: %w", err)
+		}
 	}
 
 	var rt object.AgentRuntime
@@ -211,7 +220,7 @@ func (s *DBAgentRuntimeService) List(filter object.ListRuntimesFilter) (object.L
 	}
 	pageSize := filter.PageSize
 	if pageSize <= 0 {
-		pageSize = 10
+		pageSize = defaultPageSize
 	}
 
 	whereSQL, args := buildListWhereSQL(filter)
@@ -276,7 +285,9 @@ func buildListWhereSQL(filter object.ListRuntimesFilter) (string, []any) {
 	}
 	if filter.AgentType != "" {
 		whereSQL += fmt.Sprintf(" AND agents @> $%d::jsonb", argIdx)
-		args = append(args, fmt.Sprintf(`[{"type":"%s"}]`, filter.AgentType))
+		// json.Marshal 对简单字符串 map 不会失败，忽略 error 以保持与原始行为一致。
+		agentFilter, _ := json.Marshal([]map[string]string{{"type": filter.AgentType}})
+		args = append(args, string(agentFilter))
 	}
 
 	return whereSQL, args
@@ -298,7 +309,7 @@ func (s *DBAgentRuntimeService) Get(runtimeID string) (object.AgentRuntime, erro
 		&rt.CreatedAt, &rt.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return object.AgentRuntime{}, errors.New("runtime not found")
+			return object.AgentRuntime{}, common.NotFoundErrorf("runtime not found")
 		}
 		return object.AgentRuntime{}, fmt.Errorf("get runtime failed: %w", err)
 	}
@@ -330,5 +341,4 @@ func scanRuntimes(rows *sql.Rows) ([]object.AgentRuntime, error) {
 	return result, nil
 }
 
-// unused imports guard（pq 在 SQL 执行中通过 driver 名隐式使用，保留导入以避免误删）
-var _ = pq.FormatTimestamp
+

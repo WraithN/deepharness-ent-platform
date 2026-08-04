@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
 	"github.com/gorilla/websocket"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
@@ -67,7 +68,7 @@ func (c *GatewaydClient) ensureRunning() {
 		return
 	}
 	c.running = true
-	go c.run()
+	safego.Go("gatewayd-client-run", c.run)
 }
 
 func (c *GatewaydClient) run() {
@@ -109,6 +110,32 @@ func (c *GatewaydClient) run() {
 			}
 		}
 	}
+}
+
+// Close 优雅关闭 GatewaydClient：停止后台 WebSocket 重连 goroutine 并关闭当前连接。
+// 该方法幂等，可安全多次调用；通过 sync.Once 防止重复 close channel 导致 panic。
+//
+// 关闭顺序说明：
+//  1. 先 close(c.done)：通知 run() goroutine 退出重连循环；
+//  2. 再置 running=false：避免 Close 之后 ensureRunning 误判为已在运行；
+//  3. 最后关闭 WebSocket 连接：打断 connect() 中阻塞的 ReadMessage，使其尽快返回，
+//     随后 run() 循环回到顶部 select 检测到 c.done 已关闭而退出。
+//
+// 注意：c.done 只会被 close 一次。即使 Close 之后再次调用 ensureRunning 启动新 goroutine，
+// 新 goroutine 首个 select 也会立即检测到 c.done 已关闭而返回，不会造成新的泄漏。
+func (c *GatewaydClient) Close() {
+	c.once.Do(func() {
+		close(c.done)
+		c.runMu.Lock()
+		c.running = false
+		c.runMu.Unlock()
+		c.connMu.Lock()
+		if c.conn != nil {
+			c.conn.Close()
+			c.conn = nil
+		}
+		c.connMu.Unlock()
+	})
 }
 
 // connect 尝试建立 WebSocket 连接并读取消息。

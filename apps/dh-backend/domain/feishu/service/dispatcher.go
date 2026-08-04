@@ -13,13 +13,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/feishu/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/pathutil"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 	"github.com/google/uuid"
 )
 
@@ -77,7 +78,10 @@ func (s *DBFeishuService) processEvent(ev object.InboundEvent) (string, error) {
 	}
 
 	// 5. 计算工作目录
-	workspacePath := buildWorkspacePath(s.workspaceRoot, identity.UserID, identity.WorkspaceID)
+	workspacePath, err := buildWorkspacePath(s.workspaceRoot, identity.UserID, identity.WorkspaceID)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace path failed: %w", err)
+	}
 
 	log.Printf("[Feishu] dispatching chatId=%s openId=%s userID=%s intent=%s perm=%s workspace=%s contentPreview=%s",
 		ev.ChatID, ev.OpenID, identity.UserID, intent, identity.Permission, workspacePath, truncateForLog(ev.Content))
@@ -267,8 +271,8 @@ func (s *DBFeishuService) persistAndMapSession(threadID string, ev object.Inboun
 }
 
 // buildWorkspacePath 按 ${workspace_root}/${user_id}/${workspace_id} 计算工作目录。
-func buildWorkspacePath(workspaceRoot, userID, workspaceID string) string {
-	return filepath.Join(workspaceRoot, userID, workspaceID)
+func buildWorkspacePath(workspaceRoot, userID, workspaceID string) (string, error) {
+	return pathutil.ResolveWorkspaceRoot(workspaceRoot, userID, workspaceID)
 }
 
 // dispatchOneShot 一次性问答模式（batch 降级路径）：使用 QuickComplete 同步获取回复。
@@ -398,7 +402,8 @@ func (s *DBFeishuService) persistRun(threadID string, ev object.InboundEvent, us
 		UpdatedAt: now,
 	}
 	if err := s.sessions.Create(context.Background(), sess); err != nil {
-		if !strings.Contains(err.Error(), "already exist") {
+		// session 已存在属于幂等场景，允许继续；其它错误才返回。
+		if !errors.Is(err, common.ErrAlreadyExists) {
 			return fmt.Errorf("create session: %w", err)
 		}
 	}

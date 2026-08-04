@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
@@ -78,7 +77,7 @@ func (h *StatsHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	// 取 14 天趋势数据，前 7 天为上周，后 7 天为本周。
 	workspaceID, err := workspaceIDFromQuery(r)
 	if err != nil {
-		WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, err.Error())
 		return
 	}
 	trend, err := h.sessions.GetSessionTrend(r.Context(), workspaceID, statsTrendDays*2)
@@ -103,7 +102,7 @@ func (h *StatsHandler) Summary(w http.ResponseWriter, r *http.Request) {
 func (h *StatsHandler) Trend(w http.ResponseWriter, r *http.Request) {
 	workspaceID, err := workspaceIDFromQuery(r)
 	if err != nil {
-		WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, err.Error())
 		return
 	}
 	data, err := h.sessions.GetSessionTrend(r.Context(), workspaceID, statsTrendDays)
@@ -120,7 +119,7 @@ func (h *StatsHandler) Trend(w http.ResponseWriter, r *http.Request) {
 func (h *StatsHandler) CodeCommits(w http.ResponseWriter, r *http.Request) {
 	workspaceID, err := workspaceIDFromQuery(r)
 	if err != nil {
-		WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, err.Error())
 		return
 	}
 	data, err := h.getCodeCommitTrend(r.Context(), workspaceID, statsTrendDays)
@@ -137,7 +136,7 @@ func (h *StatsHandler) CodeCommits(w http.ResponseWriter, r *http.Request) {
 func (h *StatsHandler) Trails(w http.ResponseWriter, r *http.Request) {
 	workspaceID, err := workspaceIDFromQuery(r)
 	if err != nil {
-		WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, err.Error())
 		return
 	}
 	data, err := h.sessions.GetSessionTrails(r.Context(), workspaceID, statsTrailLimit)
@@ -155,19 +154,19 @@ func (h *StatsHandler) Trails(w http.ResponseWriter, r *http.Request) {
 // 但严格按 workspaceId 隔离，确保只能读取当前工作空间内的会话。
 func (h *StatsHandler) TrailMessages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		WriteJSONError(w, http.StatusMethodNotAllowed, ErrCodeGeneral, "method not allowed")
 		return
 	}
 
 	workspaceID, err := workspaceIDFromQuery(r)
 	if err != nil {
-		WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, err.Error())
 		return
 	}
 
 	sessionID := r.PathValue("sessionId")
 	if sessionID == "" {
-		WriteJSONError(w, http.StatusBadRequest, 1, "missing sessionId")
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, "missing sessionId")
 		return
 	}
 
@@ -179,11 +178,11 @@ func (h *StatsHandler) TrailMessages(w http.ResponseWriter, r *http.Request) {
 	// 校验会话存在且属于当前工作空间，防止跨空间读取。
 	sess, err := h.sessions.Get(r.Context(), sessionID)
 	if err != nil {
-		WriteJSONError(w, http.StatusNotFound, 1, "session not found")
+		WriteJSONError(w, http.StatusNotFound, ErrCodeGeneral, "session not found")
 		return
 	}
 	if sess.WorkspaceID != "" && sess.WorkspaceID != workspaceID {
-		WriteJSONError(w, http.StatusForbidden, 1, "session not in this workspace")
+		WriteJSONError(w, http.StatusForbidden, ErrCodeGeneral, "session not in this workspace")
 		return
 	}
 
@@ -243,28 +242,51 @@ func computeDeltaPercent(thisWeek, lastWeek int) int {
 // getCodeCommitTrend 扫描指定工作空间目录下的 git 仓库，返回最近 days 天每天的提交数量。
 // 通过 git log --all --no-merges --since 统计每个仓库的提交日期，汇总后按天聚合。
 // 目录结构：WORKSPACE_ROOT/{userID}/{workspaceID}/...，需遍历所有用户目录下的 workspaceID 子目录。
+// 架构合规：通过 stubclient 委托 personal-stub 遍历目录和检查文件，不直接访问文件系统。
 func (h *StatsHandler) getCodeCommitTrend(ctx context.Context, workspaceID string, days int) ([]chat.DateCount, error) {
 	counts := make(map[string]int)
 
 	if h.workspaceRoot != "" {
 		since := fmt.Sprintf("%d days ago", days)
+		sc := stubclient.FromContext(ctx)
+		if sc == nil {
+			return buildDateTrend(days, counts), nil
+		}
 		// 新目录结构下 workspaceID 在各用户目录下，通过 glob 匹配所有 {workspaceRoot}/{userID}/{workspaceID}
 		wsPattern := filepath.Join(h.workspaceRoot, "*", workspaceID)
-		wsDirs, _ := filepath.Glob(wsPattern)
+		wsDirs, _ := sc.Glob(ctx, wsPattern)
 		for _, workspaceDir := range wsDirs {
-			err := filepath.WalkDir(workspaceDir, func(path string, d fs.DirEntry, err error) error {
-				if err != nil || !d.IsDir() {
-					return nil
+			walkEntries, walkErr := sc.WalkDir(ctx, workspaceDir)
+			if walkErr != nil {
+				continue
+			}
+			// skipPrefixes 记录已处理的 git 仓库前缀，模拟 filepath.SkipDir 行为。
+			skipPrefixes := []string{}
+			for _, we := range walkEntries {
+				if !we.IsDir {
+					continue
 				}
-				gitDir := filepath.Join(path, ".git")
-				if _, statErr := os.Stat(gitDir); statErr != nil {
-					return nil
+				skipped := false
+				for _, prefix := range skipPrefixes {
+					if strings.HasPrefix(we.Path, prefix) {
+						skipped = true
+						break
+					}
+				}
+				if skipped {
+					continue
+				}
+				gitDir := filepath.Join(we.Path, ".git")
+				ok, _ := sc.FileExists(ctx, gitDir)
+				if !ok {
+					continue
 				}
 
-				out, execErr := execGitLogDates(ctx, path, since)
+				out, execErr := execGitLogDates(ctx, we.Path, since)
 				if execErr != nil {
-					log.Printf("[Stats] git log failed for %s: %v", path, execErr)
-					return filepath.SkipDir
+					log.Printf("[Stats] git log failed for %s: %v", we.Path, execErr)
+					skipPrefixes = append(skipPrefixes, we.Path+string(filepath.Separator))
+					continue
 				}
 				for _, line := range strings.Split(out, "\n") {
 					line = strings.TrimSpace(line)
@@ -273,10 +295,8 @@ func (h *StatsHandler) getCodeCommitTrend(ctx context.Context, workspaceID strin
 					}
 					counts[line]++
 				}
-				return filepath.SkipDir
-			})
-			if err != nil {
-				return nil, err
+				// 找到 git 仓库后跳过其子目录
+				skipPrefixes = append(skipPrefixes, we.Path+string(filepath.Separator))
 			}
 		}
 	}
@@ -287,7 +307,7 @@ func (h *StatsHandler) getCodeCommitTrend(ctx context.Context, workspaceID strin
 // execGitLogDates 在指定 git 仓库中执行 log 命令，返回最近 since 天内每条提交的短日期（YYYY-MM-DD）。
 // 架构合规：通过 stubclient 委托 personal-stub 执行 git 命令，不直接 exec git。
 func execGitLogDates(ctx context.Context, dir, since string) (string, error) {
-	sc := stubclient.Default()
+	sc := stubclient.FromContext(ctx)
 	if sc == nil {
 		return "", errors.New("personal-stub client not initialized")
 	}
@@ -315,7 +335,9 @@ func emptyDateTrend(days int) []chat.DateCount {
 }
 
 // requirementsSummaryCache 缓存最近一次工作项统计结果以避免重复查询。
+// 使用 sync.RWMutex 保护，防止并发 HTTP 请求导致数据竞争。
 var requirementsSummaryCache struct {
+	mu         sync.RWMutex
 	workspaceID string
 	result      SummaryResponse
 	expiresAt   time.Time
@@ -328,7 +350,7 @@ var requirementsCacheTTL = 30 * time.Second
 func (h *StatsHandler) WorkItemSummary(w http.ResponseWriter, r *http.Request) {
 	workspaceID, err := workspaceIDFromQuery(r)
 	if err != nil {
-		WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		WriteJSONError(w, http.StatusBadRequest, ErrCodeGeneral, err.Error())
 		return
 	}
 
@@ -337,8 +359,13 @@ func (h *StatsHandler) WorkItemSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if requirementsSummaryCache.workspaceID == workspaceID && time.Now().Before(requirementsSummaryCache.expiresAt) {
-		writeJSON(w, requirementsSummaryCache.result)
+	// 读缓存（读锁）
+	requirementsSummaryCache.mu.RLock()
+	cached := requirementsSummaryCache.workspaceID == workspaceID && time.Now().Before(requirementsSummaryCache.expiresAt)
+	cachedResult := requirementsSummaryCache.result
+	requirementsSummaryCache.mu.RUnlock()
+	if cached {
+		writeJSON(w, cachedResult)
 		return
 	}
 
@@ -363,9 +390,12 @@ func (h *StatsHandler) WorkItemSummary(w http.ResponseWriter, r *http.Request) {
 	delta := computeDeltaPercent(thisWeek, lastWeek)
 	resp := SummaryResponse{ThisWeek: thisWeek, LastWeek: lastWeek, DeltaPercent: delta}
 
+	// 写缓存（写锁）
+	requirementsSummaryCache.mu.Lock()
 	requirementsSummaryCache.workspaceID = workspaceID
 	requirementsSummaryCache.result = resp
 	requirementsSummaryCache.expiresAt = time.Now().Add(requirementsCacheTTL)
+	requirementsSummaryCache.mu.Unlock()
 
 	writeJSON(w, resp)
 }

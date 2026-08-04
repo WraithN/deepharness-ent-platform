@@ -5,9 +5,10 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Folder, File, ChevronRight, ChevronDown, GitBranch, Code2, Book, Search, X, Share2, FileText, Activity, FileCode, Eye, ShieldCheck, Sparkles, RefreshCw, Loader2, Braces, Globe, Palette, Terminal, Settings, Image, FileJson, FileType, FileCode2, Database, Users, AlertCircle, CheckCircle, BarChart3, Code, Zap, Wrench, Bug } from 'lucide-react';
+import { Folder, File, ChevronRight, ChevronDown, GitBranch, Code2, Book, Search, X, Share2, FileText, Activity, FileCode, Eye, ShieldCheck, Sparkles, RefreshCw, Loader2, Braces, Globe, Palette, Terminal, Settings, Image, FileJson, FileType, FileCode2, Database, Users, AlertCircle, CheckCircle, BarChart3, Code, Zap, Wrench, Bug, ExternalLink, GitCommit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
@@ -21,7 +22,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from 'next-themes';
 import { projectApi } from '@/lib/project-api';
 import { fileApi } from '@/lib/file-api';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 const SYNC_POLL_INTERVAL_MS = 2000;
 
@@ -1285,6 +1286,12 @@ export const ProjectCode: React.FC = () => {
   const [refreshingBranches, setRefreshingBranches] = useState(false);
   const [switchingBranch, setSwitchingBranch] = useState(false);
 
+  // 远程同步弹窗
+  const [showSyncDialog, setShowSyncDialog] = useState(false);
+  const [remoteUrl, setRemoteUrl] = useState('');
+  const [syncBranch, setSyncBranch] = useState('main');
+  const [syncingRemote, setSyncingRemote] = useState(false);
+
   // Tabs management
   const [openFiles, setOpenFiles] = useState<FileNode[]>([]);
   const [activeFile, setActiveFile] = useState<FileNode | null>(null);
@@ -1370,11 +1377,9 @@ export const ProjectCode: React.FC = () => {
     }
   };
 
-  // 加载仓库列表（仅在同步检测完成且有已同步仓库时执行）
+  // 加载仓库列表
   useEffect(() => {
     if (syncChecking || userRepoStatuses.length === 0) return;
-    const hasSynced = userRepoStatuses.some(s => s.synced);
-    if (!hasSynced) return;
 
     const loadRepos = async () => {
       setLoadingRepos(true);
@@ -1699,6 +1704,56 @@ export const ProjectCode: React.FC = () => {
     }
   };
 
+  const isSSHURL = (url: string) => /^(ssh:\/\/|git@)/.test(url);
+
+  const hasRemoteUrl = !!(currentRepo?.url && currentRepo.url.trim() !== '');
+  const displayRemoteUrl = hasRemoteUrl ? currentRepo!.url : '';
+
+  const handleSyncToRemote = () => {
+    setRemoteUrl('');
+    setSyncBranch(currentRepo?.defaultBranch || 'main');
+    setShowSyncDialog(true);
+  };
+
+  const handleConfirmSync = async () => {
+    const trimmedUrl = remoteUrl.trim();
+    if (!trimmedUrl) {
+      toast.error('请输入远程仓库地址');
+      return;
+    }
+    if (isSSHURL(trimmedUrl) && !currentRepo?.sshKey) {
+      toast.error('SSH 仓库需要配置 SSH Key，请在仓库设置中配置');
+      return;
+    }
+
+    setShowSyncDialog(false);
+    setSyncingRemote(true);
+    try {
+      const syncReq: Parameters<typeof projectApi.sync>[0] = {
+        path: currentRepo?.localPath || '',
+        workspaceId,
+        remoteUrl: trimmedUrl,
+        remoteBranch: syncBranch.trim() || 'main',
+      };
+      if (isSSHURL(trimmedUrl) && currentRepo?.sshKey) {
+        syncReq.sshKey = currentRepo.sshKey;
+      }
+
+      await projectApi.sync(syncReq);
+      toast.success('同步完成');
+
+      await repositoryApi.update(workspaceId, selectedRepoId, { url: trimmedUrl, defaultBranch: syncBranch.trim() || 'main' });
+      setRepositories((prev) =>
+        prev.map((r) => (r.id === selectedRepoId ? { ...r, url: trimmedUrl, defaultBranch: syncBranch.trim() || 'main' } : r))
+      );
+    } catch (err) {
+      console.error('[ProjectCode] sync to remote failed:', err);
+      toast.error('同步失败，请重试');
+    } finally {
+      setSyncingRemote(false);
+    }
+  };
+
   const tabs = [
     { key: 'code' as const, label: '代码模式', icon: FileCode },
     { key: 'review' as const, label: '评审模式', icon: ShieldCheck },
@@ -1726,45 +1781,7 @@ export const ProjectCode: React.FC = () => {
     );
   }
 
-  // 有配置仓库但未同步
-  const hasSyncedRepo = userRepoStatuses.some(s => s.synced);
-  if (!hasSyncedRepo) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[calc(100vh-8rem)] gap-4">
-        <AlertCircle className="h-8 w-8 text-amber-500" />
-        <div className="text-center space-y-2">
-          <p className="text-sm font-medium">检测到以下仓库尚未同步到您的工程目录</p>
-          <p className="text-xs text-muted-foreground">同步后即可浏览代码</p>
-        </div>
-        <div className="space-y-2 w-full max-w-md">
-          {userRepoStatuses.map(repo => {
-            const isSyncing = syncingRepoId === repo.repositoryId || repo.syncStatus === 'syncing';
-            const progress = repo.progress ?? 0;
-            return (
-            <div key={repo.repositoryId} className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-muted/10">
-              <div className="flex items-center gap-2 min-w-0">
-                <GitBranch className="h-4 w-4 text-muted-foreground shrink-0" />
-                <span className="text-sm truncate">{repo.name}</span>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => handleSyncRepo(repo.repositoryId)}
-                disabled={isSyncing}
-              >
-                {isSyncing ? (
-                  <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />{progress > 0 ? `同步中 ${progress}%` : '同步中'}</>
-                ) : (
-                  <><RefreshCw className="h-3.5 w-3.5 mr-1.5" />同步</>
-                )}
-              </Button>
-            </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
+
 
   return (
     <div className="flex flex-col h-[calc(100vh-6rem)] md:h-[calc(100vh-8rem)] min-h-[500px] gap-4 w-full pb-8">
@@ -1802,18 +1819,26 @@ export const ProjectCode: React.FC = () => {
         <div className="aurora-tab-divider" />
 
         <Select value={selectedRepoId} onValueChange={handleRepoChange} disabled={filteredRepos.length === 0}>
-          <SelectTrigger className="aurora-tab-select-trigger aurora-tab-item level-1 !w-[220px] shrink-0">
+          <SelectTrigger className="aurora-tab-select-trigger aurora-tab-item level-1 min-w-[120px] max-w-[280px] shrink-0" title={currentRepo?.name}>
             <Book className="h-4 w-4 text-primary shrink-0" />
-            <SelectValue placeholder="选择仓库" className="flex-1 min-w-0">
-              {currentRepo ? <span className="truncate">{currentRepo.name}</span> : <span className="text-muted-foreground">选择仓库</span>}
+            <SelectValue placeholder="选择仓库" className="flex-1 min-w-0 whitespace-nowrap">
+              {currentRepo ? (
+                <span className="flex items-center gap-1.5 whitespace-nowrap">
+                  {currentRepo.name}
+                  {currentRepo.url?.trim() && <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />}
+                </span>
+              ) : <span className="text-muted-foreground">选择仓库</span>}
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
             {filteredRepos.map(repo => (
               <SelectItem key={repo.id} value={repo.id} textValue={repo.name}>
-                <div className="flex items-center">
-                  <Book className="h-4 w-4 mr-2 text-muted-foreground" />
+                <div className="flex items-center gap-2">
+                  <Book className="h-4 w-4 text-muted-foreground" />
                   <span className="truncate">{repo.name}</span>
+                  {repo.url?.trim() && (
+                    <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />
+                  )}
                 </div>
               </SelectItem>
             ))}
@@ -1823,9 +1848,9 @@ export const ProjectCode: React.FC = () => {
         <div className="aurora-tab-divider" />
 
         <Select value={selectedBranch} onValueChange={handleBranchChange} disabled={switchingBranch || branches.length === 0 || !selectedRepoId}>
-          <SelectTrigger className="aurora-tab-select-trigger aurora-tab-item level-1 !w-[200px] shrink-0">
+          <SelectTrigger className="aurora-tab-select-trigger aurora-tab-item level-1 !w-[160px] shrink-0" title={selectedBranch}>
             <GitBranch className="h-4 w-4 text-success shrink-0" />
-            <SelectValue placeholder="选择分支" className="flex-1 min-w-0">
+            <SelectValue placeholder="选择分支" className="flex-1 min-w-0 [&_span]:truncate [&_span]:max-w-[100px] [&_span]:inline-block">
               {selectedBranch ? <span className="truncate">{selectedBranch}</span> : <span className="text-muted-foreground">选择分支</span>}
             </SelectValue>
             {branches.find(b => b.name === selectedBranch)?.isCurrent && (
@@ -1851,7 +1876,57 @@ export const ProjectCode: React.FC = () => {
         </Select>
         {switchingBranch && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground shrink-0" />}
 
+        {/* 最新 commit 号 */}
+        {(() => {
+          const currentBranchInfo = branches.find(b => b.name === selectedBranch);
+          const commitHash = currentBranchInfo?.lastCommit;
+          if (!commitHash) return null;
+          const shortHash = commitHash.slice(0, 7);
+          return (
+            <span
+              className="text-xs text-muted-foreground font-mono shrink-0 px-2 py-0.5 rounded bg-muted/50"
+              title={commitHash}
+            >
+              {shortHash}
+            </span>
+          );
+        })()}
+
         <div className="flex-1" />
+
+        {/* 远程仓库标识 / 同步按钮 */}
+        {selectedRepoId && currentRepo && (
+          <>
+            {hasRemoteUrl ? (
+              <a
+                href={displayRemoteUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md shrink-0"
+                title={displayRemoteUrl}
+              >
+                <GitCommit className="h-3.5 w-3.5" />
+                <ExternalLink className="h-3 w-3" />
+                <span className="max-w-[160px] truncate">{displayRemoteUrl}</span>
+              </a>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs text-muted-foreground gap-1 shrink-0"
+                onClick={handleSyncToRemote}
+                disabled={syncingRemote}
+              >
+                {syncingRemote ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <GitCommit className="h-3.5 w-3.5" />
+                )}
+                同步远程
+              </Button>
+            )}
+          </>
+        )}
 
         <button
           type="button"
@@ -2286,7 +2361,7 @@ export const ProjectCode: React.FC = () => {
                           分支信息
                         </h3>
                         <div className="space-y-3">
-                          {repoDetails.branches.map((branch, idx) => (
+                          {(repoDetails.branches ?? []).map((branch, idx) => (
                             <div key={idx} className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
                                 <span className="text-sm font-medium">{branch.name}</span>
@@ -2346,7 +2421,7 @@ export const ProjectCode: React.FC = () => {
                               <YAxis allowDecimals={false} />
                               <Tooltip />
                               <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                                {repoDetails.weeklyCommits.map((_, idx) => (
+                                {(repoDetails.weeklyCommits ?? []).map((_, idx) => (
                                   <Cell key={idx} fill="hsl(var(--primary))" />
                                 ))}
                               </Bar>
@@ -2366,6 +2441,46 @@ export const ProjectCode: React.FC = () => {
           </div>
         )}
         <TerminalDrawer />
+
+        {/* 远程同步弹窗 */}
+        <Dialog open={showSyncDialog} onOpenChange={setShowSyncDialog}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>关联远程仓库</DialogTitle>
+              <DialogDescription>
+                将 <span className="font-medium">{currentRepo?.name}</span> 代码同步到远程仓库
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label htmlFor="remote-url">远程仓库地址</Label>
+                <Input
+                  id="remote-url"
+                  placeholder="https://github.com/user/repo.git 或 git@github.com:user/repo.git"
+                  value={remoteUrl}
+                  onChange={(e) => setRemoteUrl(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleConfirmSync(); }}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="remote-branch">远程分支</Label>
+                <Input
+                  id="remote-branch"
+                  placeholder="main"
+                  value={syncBranch}
+                  onChange={(e) => setSyncBranch(e.target.value)}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowSyncDialog(false)}>取消</Button>
+              <Button onClick={handleConfirmSync} disabled={!remoteUrl.trim()}>
+                <GitCommit className="h-4 w-4 mr-1.5" />
+                同步
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

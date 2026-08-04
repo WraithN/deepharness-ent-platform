@@ -18,12 +18,15 @@ import {
   Eye,
   FileBarChart,
   FileText,
+  Flame,
   FlaskConical,
   GitBranch,
+  Globe,
   Info,
   Layers,
   Layout,
   LayoutTemplate,
+  Lightbulb,
   ListChecks,
   ListTodo,
   Loader2,
@@ -77,9 +80,9 @@ import type { AgentSessionDTO, WorkItemDTO } from '@/lib/api-types';
 import {
   type CommandCategory,
   type CommandConfig,
-  COMMAND_CATEGORIES,
   COMMAND_CATEGORY_LABELS,
   COMMAND_CATEGORY_ORDER,
+  getCommandCategory,
 } from '@/lib/commands';
 import { PROTO_MAKE_PENDING_KEY } from '@/lib/constants';
 import { fileApi } from '@/lib/file-api';
@@ -152,6 +155,57 @@ function clampSplitPriority(itemPriority: string | undefined, parentPriority: st
   return child;
 }
 
+/**
+ * 从 question 字段文本中解析备选选项。
+ * gatewayd 不转发 options 字段，agent 将选项内嵌在 question 正文中，格式：
+ *   问题正文
+ *   A. 选项标签 - 选项说明
+ *   B. 选项标签 - 选项说明
+ *
+ * 只保留最终的问题文本，过滤掉前面的推理过程：
+ * 从选项之前的文本中，找到最后一个以问号/全角问号结尾的行，并向上追溯到最近空行，
+ * 中间的内容作为真正的问题展示。
+ */
+function parseInlineOptions(rawText: string): { questionText: string; options: { label: string; description?: string }[] } {
+  const lines = rawText.split('\n');
+  const questionLines: string[] = [];
+  const options: { label: string; description?: string }[] = [];
+  for (const line of lines) {
+    const match = line.match(/^([A-Z])\.\s*(.+?)(?:\s*-\s*(.+))?$/);
+    if (match) {
+      options.push({ label: match[2].trim(), description: match[3]?.trim() });
+    } else {
+      questionLines.push(line);
+    }
+  }
+
+  while (questionLines.length > 0 && questionLines[questionLines.length - 1].trim() === '') {
+    questionLines.pop();
+  }
+
+  let lastQuestionIndex = -1;
+  for (let i = questionLines.length - 1; i >= 0; i--) {
+    if (/[?？]\s*$/.test(questionLines[i].trim())) {
+      lastQuestionIndex = i;
+      break;
+    }
+  }
+
+  let questionText = questionLines.join('\n').trim();
+  if (lastQuestionIndex >= 0) {
+    let start = 0;
+    for (let i = lastQuestionIndex - 1; i >= 0; i--) {
+      if (questionLines[i].trim() === '') {
+        start = i + 1;
+        break;
+      }
+    }
+    questionText = questionLines.slice(start, lastQuestionIndex + 1).join('\n').trim();
+  }
+
+  return { questionText, options };
+}
+
 /** 后端指令配置（从 /v1/commands 加载）。 */
 // CommandConfig / 指令分类映射已抽取至 @/lib/commands 共享。
 
@@ -159,6 +213,7 @@ function clampSplitPriority(itemPriority: string | undefined, parentPriority: st
 const COMMAND_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   '/prd-write': FileText,
   '/prd-research': Compass,
+  '/prd-analysis': Globe,
   '/proto-make': LayoutTemplate,
   '/code': Code2,
   '/debug': Bug,
@@ -178,6 +233,8 @@ const COMMAND_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   '/design-token': Palette,
   '/req-breakdown': ListChecks,
   '/data-analysis': BarChart3,
+  '/brainstorm': Lightbulb,
+  '/grill-me': Flame,
 };
 
 /** 欢迎页快捷指令卡片定义。 */
@@ -200,7 +257,7 @@ const WELCOME_CARDS_BY_ROLE: Partial<Record<SubRole, WelcomeCard[]>> = {
   [SUB_ROLE.DEVELOPER]: [
     { cmd: '/code', title: '编写代码', desc: '基于需求和代码库编写实现代码' },
     { cmd: '/debug', title: '修复 BUG', desc: '定位并修复代码中的缺陷' },
-    { cmd: '/review', title: '代码评审', desc: '对变更代码进行智能评审' },
+    { cmd: '/review', title: '智能评审', desc: '对变更代码进行智能评审' },
     { cmd: '/unit-test', title: '生成单测', desc: '为代码生成单元测试' },
     { cmd: '/refactor', title: '重构代码', desc: '对指定功能或模块进行重构' },
     { cmd: '/dev-doc', title: '工程文档', desc: '基于工程代码生成完整工程文档' },
@@ -221,6 +278,7 @@ const WELCOME_CARDS_BY_ROLE: Partial<Record<SubRole, WelcomeCard[]>> = {
   [SUB_ROLE.PM]: [
     { cmd: '/prd-write', title: '撰写 PRD', desc: '根据需求生成产品需求文档' },
     { cmd: '/req-breakdown', title: '需求拆分', desc: '将需求拆分为结构化需求项与验收标准' },
+    { cmd: '/brainstorm', title: '头脑风暴', desc: '基于任务卡片逐步澄清需求并生成文档' },
     { cmd: '/proto-make', title: '制作原型', desc: '根据文档生成可预览的原型工程' },
     { cmd: '/prd-research', title: '需求调研', desc: '对需求主题进行深度调研分析' },
   ],
@@ -371,8 +429,10 @@ function getHistoryAgentLabel(item: { pluginKey?: string; instanceId?: string },
 // 当前工作空间 ID 从 workspace-utils 读取，避免多处重复兜底。
 const CHAT_TABS_STORAGE_KEY = 'dh-chat-tabs';
 const CHAT_ACTIVE_TAB_STORAGE_KEY = 'dh-chat-active-tab';
-const getChatTabsStorageKey = (workspaceId: string) => `${CHAT_TABS_STORAGE_KEY}:${workspaceId}`;
-const getChatActiveTabStorageKey = (workspaceId: string) => `${CHAT_ACTIVE_TAB_STORAGE_KEY}:${workspaceId}`;
+// 按工作区 + 用户隔离存储，避免切换用户后恢复其他用户的 tab 配置
+const getChatStorageUserId = (): string => localStorage.getItem('token') ?? '';
+const getChatTabsStorageKey = (workspaceId: string) => `${CHAT_TABS_STORAGE_KEY}:${workspaceId}:${getChatStorageUserId()}`;
+const getChatActiveTabStorageKey = (workspaceId: string) => `${CHAT_ACTIVE_TAB_STORAGE_KEY}:${workspaceId}:${getChatStorageUserId()}`;
 
 /** 为无标题的历史会话生成友好占位标题，避免展示 session ID。 */
 const formatSessionTitle = (
@@ -586,7 +646,7 @@ export const Chat: React.FC = () => {
   const activePluginKey = activeTab?.pluginKey ?? defaultPluginKey ?? 'claude-code';
   const chatEnabled = enabledAgentOptions.length > 0;
 
-  const { runtime, sessionId, wsConnected, messages, isRunning, runPhase, sendMessage, switchSession, createSession, cancelRun, tryRestoreSession, pendingQuestion, respondToQuestion } = useAgUiChat({ agentPluginKey: activePluginKey });
+  const { runtime, sessionId, wsConnected, messages, isRunning, runPhase, sendMessage, switchSession, createSession, cancelRun, tryRestoreSession, pendingQuestion, respondToQuestion, dismissQuestion } = useAgUiChat({ agentPluginKey: activePluginKey });
 
   // Auto-scroll state
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -596,14 +656,6 @@ export const Chat: React.FC = () => {
 
   // Code jump dialog
   const [codeJumpOpen, setCodeJumpOpen] = useState(false);
-
-  // agent.question 技术文档确认弹窗：选择/新建工程目录。
-  const [questionOpen, setQuestionOpen] = useState(false);
-  const [questionProjectName, setQuestionProjectName] = useState('');
-  useEffect(() => {
-    setQuestionOpen(pendingQuestion !== null);
-    if (pendingQuestion === null) setQuestionProjectName('');
-  }, [pendingQuestion]);
 
   // 运行中切换/新建会话确认对话框。
   const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
@@ -624,6 +676,12 @@ export const Chat: React.FC = () => {
   // 最近一次触发 /proto-make 时关联的需求标题，用于原型卡片展示。
   const [protoMakeRequirementTitle, setProtoMakeRequirementTitle] = useState<string>('');
   const showPreview = previewPath !== null || projectPreview !== null || userStoryPreview !== null || reqBreakdownPreview !== null || prototypePreviewPath !== null;
+
+  // agent.question 内联提问卡片：显示在输入框上方，用户选择选项或自定义输入后回答。
+  const [questionCustomInput, setQuestionCustomInput] = useState('');
+  useEffect(() => {
+    if (pendingQuestion === null) setQuestionCustomInput('');
+  }, [pendingQuestion]);
 
   // 预览历史栈：支持前/后退导航。
   const [previewHistory, setPreviewHistory] = useState<PreviewHistoryEntry[]>([]);
@@ -1777,6 +1835,21 @@ export const Chat: React.FC = () => {
       return;
     }
 
+    // 指令必须选择任务卡片时，拦截发送。
+    if (cmdCfg && cmdCfg.requireTask && !quotedCard) {
+      toast.error(`指令 ${activeCmd} 需要选择任务卡片`);
+      return;
+    }
+
+    // 指令需要任务卡片或非空提示词：若无任务卡片，指令后的文本不得为空。
+    if (cmdCfg && !quotedCard && !cmdCfg.requireTask) {
+      const textAfterCmd = trimmedInput.slice(activeCmd.length).trim();
+      if (!textAfterCmd && !effectiveRepos) {
+        toast.error(`指令 ${activeCmd} 需要输入提示词或选择任务卡片`);
+        return;
+      }
+    }
+
     // 记录 /req-breakdown 关联的父需求，供后续提交时作为子需求 parentId，避免引用卡片被移除后丢失。
     if (activeCmd === '/req-breakdown' && quotedCard?.type === 'req') {
       lastReqBreakdownRootId.current = quotedCard.id;
@@ -2686,7 +2759,7 @@ export const Chat: React.FC = () => {
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto p-1">
           {commandConfigs
-            .filter(item => COMMAND_CATEGORIES[item.cmd] === activeCommandTab)
+            .filter(item => getCommandCategory(item.cmd) === activeCommandTab)
             .map(item => {
               const Icon = COMMAND_ICON_MAP[item.cmd] ?? Terminal;
               const disabled = !item.enabled;
@@ -2733,6 +2806,11 @@ export const Chat: React.FC = () => {
     <AssistantRuntimeProvider runtime={runtime}>
       <div className="h-[calc(100vh-6rem)] md:h-[calc(100vh-4rem)] flex flex-row rounded-none md:rounded-2xl overflow-hidden glass-panel max-w-full mx-auto w-full relative">
 
+        {/* agent.question 模态遮罩：半透明背景 + 禁止会话区域交互 */}
+        {pendingQuestion && (
+          <div className="absolute inset-0 z-30 bg-black/50 pointer-events-none" />
+        )}
+
         <ResizablePanelGroup direction="horizontal" className="h-full w-full">
           {/* ── Inline Preview Area ── */}
           <ResizablePanel
@@ -2743,7 +2821,8 @@ export const Chat: React.FC = () => {
             collapsedSize={0}
             className={cn(
               'h-full flex flex-col glass-panel overflow-hidden',
-              !showPreview && 'pointer-events-none'
+              !showPreview && 'pointer-events-none',
+              pendingQuestion && 'pointer-events-none'
             )}
           >
             {showPreview && (
@@ -3025,7 +3104,7 @@ export const Chat: React.FC = () => {
             会导致内容超长时 ScrollArea 撑高而非滚动，把底部输入框挤出可见区被
             overflow-hidden 裁掉。min-h-0 允许其收缩到剩余空间并启用内部滚动。
             overflow-x-hidden 覆盖 ScrollArea 默认 overflow-x-visible，防止长内容把面板横向撑出会话窗口。 */}
-        <ScrollArea id="chat-scroll-area" className={cn('flex-1 min-h-0 min-w-0 max-w-full overflow-x-hidden', showPreview ? 'p-2' : 'p-4 pr-8')}
+        <ScrollArea id="chat-scroll-area" className={cn('flex-1 min-h-0 min-w-0 max-w-full overflow-x-hidden', showPreview ? 'p-2' : 'p-4 pr-8', pendingQuestion && 'pointer-events-none select-none')}
 >
           <div className="space-y-6">
             {isInitializingChat ? (
@@ -3156,8 +3235,8 @@ export const Chat: React.FC = () => {
         )}
 
         {/* Chat Input */}
-        <div className={cn('shrink-0 flex justify-center z-10 bg-gradient-to-t from-background via-background/95 to-background/50', showPreview ? 'p-2' : 'p-3 md:p-5')}>
-          <div className="w-full relative flex flex-col rounded-3xl border bg-panel/80 backdrop-blur-xl soft-shadow overflow-visible">
+        <div className={cn('shrink-0 flex justify-center bg-gradient-to-t from-background via-background/95 to-background/50', showPreview ? 'p-2' : 'p-3 md:p-5', pendingQuestion ? 'z-40' : 'z-10')}>
+          <div className={cn('w-full relative flex flex-col rounded-3xl border bg-panel/80 backdrop-blur-xl soft-shadow overflow-visible', pendingQuestion && 'pointer-events-none')}>
             {(quotedCard || selectedRepos.length > 0) && (
               <div className={cn('flex flex-wrap gap-2 border-b border-border/10', showPreview ? 'px-3 pt-2 pb-1.5' : 'px-5 pt-3 pb-2')}>
                 {quotedCard && (
@@ -3196,6 +3275,87 @@ export const Chat: React.FC = () => {
                 ))}
               </div>
             )}
+            {/* agent.question 内联提问卡片：显示在输入框上方，限制高度，只展示问题与选项。 */}
+            {pendingQuestion && pendingQuestion.questions[0] && (() => {
+              const q = pendingQuestion.questions[0];
+              // gatewayd 不转发 options 字段，从最近的 assistant 消息文本中解析选项。
+              const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
+              let assistantText = '';
+              if (lastAssistantMsg?.content) {
+                for (const part of lastAssistantMsg.content) {
+                  if (typeof part === 'object' && part.type === 'text') assistantText += (part as { text: string }).text;
+                }
+              }
+              const { questionText: parsedQuestionText, options: parsedOptions } = parseInlineOptions(assistantText);
+              const allOptions = q.options?.length ? q.options : parsedOptions;
+              const displayQuestionText = parsedQuestionText || q.question || q.text || '需要你的输入';
+              return (
+              <div className={cn('border-b-2 border-primary/20 bg-amber-50/50 dark:bg-amber-950/20 pointer-events-auto max-h-[400px] overflow-y-auto', showPreview ? 'px-3 py-2.5' : 'px-5 py-3')}>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="h-5 w-5 rounded-full bg-amber-500/20 flex items-center justify-center shrink-0">
+                    <Lightbulb className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <span className="text-sm font-medium text-foreground flex-1 whitespace-pre-line">{displayQuestionText}</span>
+                  <button
+                    type="button"
+                    onClick={dismissQuestion}
+                    title="关闭"
+                    className="h-6 w-6 flex items-center justify-center rounded-full hover:bg-muted text-muted-foreground transition-colors shrink-0"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                {/* 选项按钮（A/B/C...） */}
+                {allOptions.length > 0 && (
+                  <div className="space-y-1.5 mb-2 pl-7">
+                    {allOptions.map((opt, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        className="w-full text-left px-3 py-2 rounded-lg bg-background border border-border hover:border-primary hover:bg-accent transition-colors cursor-pointer text-sm flex items-start gap-2"
+                        onClick={() => respondToQuestion(opt.label, `用户回答：${opt.label}${opt.description ? `，${opt.description}` : ''}`)}
+                      >
+                        <span className="font-bold text-primary shrink-0">{String.fromCharCode(65 + idx)}.</span>
+                        <div className="flex-1 min-w-0">
+                          <span className="font-medium text-foreground">{opt.label}</span>
+                          {opt.description && (
+                            <span className="text-xs text-muted-foreground block mt-0.5">{opt.description}</span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {/* 自定义输入（始终可用） */}
+                <div className="flex gap-2 items-center pl-7">
+                  <Input
+                    value={questionCustomInput}
+                    onChange={(e) => setQuestionCustomInput(e.target.value)}
+                    placeholder="输入自定义回答..."
+                    className="h-8 text-sm bg-background"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && questionCustomInput.trim()) {
+                        const val = questionCustomInput.trim();
+                        respondToQuestion(val, `用户回答：${val}`);
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-8 shrink-0"
+                    disabled={!questionCustomInput.trim()}
+                    onClick={() => {
+                      const val = questionCustomInput.trim();
+                      if (val) respondToQuestion(val, `用户回答：${val}`);
+                    }}
+                  >
+                    <Send className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+              );
+            })()}
             <div className="relative">
             {/* @提及 高亮层：与 textarea 同字体/内边距叠放；textarea 文字透明仅显示光标与选区 */}
             <div
@@ -3254,6 +3414,9 @@ export const Chat: React.FC = () => {
                       </div>
                       {!disabled && item.requireRepos && (
                         <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400 shrink-0">需代码库</span>
+                      )}
+                      {!disabled && item.requireTask && (
+                        <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-400 shrink-0">需任务卡</span>
                       )}
                     </div>
                   );
@@ -3953,50 +4116,6 @@ export const Chat: React.FC = () => {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-
-        {/* agent.question 工程确认弹窗 */}
-        <Dialog open={questionOpen} onOpenChange={(open) => {
-          setQuestionOpen(open);
-          if (!open) {
-            // 关闭弹窗视为取消当前运行：中止 SSE 并清理状态。
-            cancelRun();
-          }
-        }}>
-          <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-md">
-            <DialogHeader>
-              <DialogTitle>技术文档已生成</DialogTitle>
-              <DialogDescription>
-                请指定一个工程目录名称。若目录不存在，将自动创建新工程。
-              </DialogDescription>
-            </DialogHeader>
-            <div className="py-2">
-              <Label htmlFor="question-project-name">工程名称</Label>
-              <Input
-                id="question-project-name"
-                value={questionProjectName}
-                onChange={(e) => setQuestionProjectName(e.target.value)}
-                placeholder="例如：campaign-manager"
-                className="mt-1"
-              />
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => { setQuestionOpen(false); cancelRun(); }}>
-                取消
-              </Button>
-              <Button
-                disabled={!questionProjectName.trim()}
-                onClick={() => {
-                  const name = questionProjectName.trim();
-                  if (!name) return;
-                  respondToQuestion(name);
-                  setQuestionOpen(false);
-                }}
-              >
-                确认
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
 
         {/* 运行中切换/新建会话确认对话框 */}
         <AlertDialog open={switchConfirmOpen} onOpenChange={setSwitchConfirmOpen}>

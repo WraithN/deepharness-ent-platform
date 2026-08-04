@@ -17,28 +17,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { api } from '@/lib/api';
 import {
   type CommandConfig,
-  COMMAND_CATEGORIES,
   COMMAND_CATEGORY_LABELS,
   COMMAND_CATEGORY_ORDER,
-  COMMAND_CATEGORY_OTHER_LABEL,
+  getCommandCategory,
 } from '@/lib/commands';
 
 const COMMAND_MANAGEMENT_DESC = '查看系统指令、所属分类及对应的提示词模板';
 const FILTER_ALL = 'all';
 const FILTER_ALL_LABEL = '全部';
-const OTHER_CATEGORY_KEY = 'other';
-
-/** 返回指令所属分类 key（未配置分类归为 other）。 */
-function getCommandCategoryKey(cmd: string): string {
-  return COMMAND_CATEGORIES[cmd] ?? OTHER_CATEGORY_KEY;
-}
-
-/** 返回指令所属分类展示标签。 */
-function getCommandCategoryLabelByKey(key: string): string {
-  if (key === OTHER_CATEGORY_KEY) return COMMAND_CATEGORY_OTHER_LABEL;
-  const cat = key as keyof typeof COMMAND_CATEGORY_LABELS;
-  return COMMAND_CATEGORY_LABELS[cat] ?? COMMAND_CATEGORY_OTHER_LABEL;
-}
 
 /** 指令约束徽章：代码库/任务相关约束的可视化展示。 */
 const ConstraintBadges: React.FC<{ cmd: CommandConfig }> = ({ cmd }) => {
@@ -51,7 +37,9 @@ const ConstraintBadges: React.FC<{ cmd: CommandConfig }> = ({ cmd }) => {
   } else if (cmd.allowRepos) {
     badges.push({ label: '支持代码库', variant: 'outline' });
   }
-  if (cmd.allowTask) {
+  if (cmd.requireTask) {
+    badges.push({ label: '需任务卡', variant: 'default' });
+  } else if (cmd.allowTask) {
     badges.push({ label: '支持任务', variant: 'outline' });
   }
   if (cmd.maxRepos > 0) {
@@ -89,22 +77,19 @@ export const CommandManagement: React.FC = () => {
 
   // 仅展示实际存在指令的分类筛选项（始终包含「全部」）。
   const filterOptions = useMemo(() => {
-    const usedKeys = new Set(commands.map(c => getCommandCategoryKey(c.cmd)));
+    const usedKeys = new Set(commands.map(c => getCommandCategory(c.cmd)));
     const options: { key: string; label: string }[] = [{ key: FILTER_ALL, label: FILTER_ALL_LABEL }];
     for (const cat of COMMAND_CATEGORY_ORDER) {
       if (usedKeys.has(cat)) {
         options.push({ key: cat, label: COMMAND_CATEGORY_LABELS[cat] });
       }
     }
-    if (usedKeys.has(OTHER_CATEGORY_KEY)) {
-      options.push({ key: OTHER_CATEGORY_KEY, label: COMMAND_CATEGORY_OTHER_LABEL });
-    }
     return options;
   }, [commands]);
 
   const filteredCommands = useMemo(() => {
     if (activeCategory === FILTER_ALL) return commands;
-    return commands.filter(c => getCommandCategoryKey(c.cmd) === activeCategory);
+    return commands.filter(c => getCommandCategory(c.cmd) === activeCategory);
   }, [commands, activeCategory]);
 
   // 分类筛选变化时重置到第 1 页。
@@ -170,7 +155,7 @@ export const CommandManagement: React.FC = () => {
                       </TableRow>
                     ) : (
                       paginatedCommands.map(cmd => {
-                        const catKey = getCommandCategoryKey(cmd.cmd);
+                        const catKey = getCommandCategory(cmd.cmd);
                         return (
                           <TableRow key={cmd.cmd} className="transition-colors hover:bg-primary/5">
                             <TableCell
@@ -184,7 +169,7 @@ export const CommandManagement: React.FC = () => {
                             </TableCell>
                             <TableCell className="px-4 py-5 whitespace-nowrap">
                               <Badge variant="outline" className="rounded-md px-3 py-1 text-xs">
-                                {getCommandCategoryLabelByKey(catKey)}
+                                {COMMAND_CATEGORY_LABELS[catKey]}
                               </Badge>
                             </TableCell>
                             <TableCell className="px-4 py-5 max-w-xs">

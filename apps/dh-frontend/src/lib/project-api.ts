@@ -12,6 +12,9 @@ export interface ProjectFileNode {
 export interface ProjectCheckResponse {
   isNew: boolean;
   hasDiff: boolean;
+  hasGit: boolean;
+  hasRemote: boolean;
+  remoteUrl?: string;
   fileCount: number;
   htmlCount: number;
   dirSize: number;

@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/wsutil"
 	"github.com/gorilla/websocket"
 )
 
 var paUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: wsutil.SameHostnameCheckOrigin(),
 }
 
 // WebSocket 处理 /ws/v1/personal-assistant/{assistantId}/sessions/{sessionId}。
@@ -52,6 +53,9 @@ func WebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	// 启用心跳：设置读超时与 ping/pong，防止半开连接导致 ReadMessage 永久阻塞。
+	hb := wsutil.NewHeartbeat(conn, "pa-session")
+	defer hb.Stop()
 
 	// 重放历史消息。
 	history, _ := defaultService.GetMessages(sessionID)

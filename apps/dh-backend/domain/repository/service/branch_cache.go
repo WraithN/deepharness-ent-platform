@@ -7,18 +7,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/object"
 	"github.com/redis/go-redis/v9"
 )
 
 // BranchCache 缓存仓库分支列表，避免每次页面加载都触发 git fetch。
 // 缓存 key 为 repoID（同一仓库的分支信息对所有用户相同）。
 type BranchCache interface {
-	Get(ctx context.Context, repoID string) ([]BranchInfo, bool)
-	Set(ctx context.Context, repoID string, branches []BranchInfo) error
+	Get(ctx context.Context, repoID string) ([]object.BranchInfo, bool)
+	Set(ctx context.Context, repoID string, branches []object.BranchInfo) error
 }
 
 const (
-	branchCacheTTL      = 5 * time.Minute
+	branchCacheTTL       = 5 * time.Minute
 	branchCacheKeyPrefix = "dh:branches"
 )
 
@@ -39,19 +40,19 @@ func NewRedisBranchCache(client redis.UniversalClient) *RedisBranchCache {
 	return &RedisBranchCache{client: client, ttl: branchCacheTTL}
 }
 
-func (c *RedisBranchCache) Get(ctx context.Context, repoID string) ([]BranchInfo, bool) {
+func (c *RedisBranchCache) Get(ctx context.Context, repoID string) ([]object.BranchInfo, bool) {
 	val, err := c.client.Get(ctx, branchCacheKey(repoID)).Result()
 	if err != nil {
 		return nil, false
 	}
-	var branches []BranchInfo
+	var branches []object.BranchInfo
 	if err := json.Unmarshal([]byte(val), &branches); err != nil {
 		return nil, false
 	}
 	return branches, true
 }
 
-func (c *RedisBranchCache) Set(ctx context.Context, repoID string, branches []BranchInfo) error {
+func (c *RedisBranchCache) Set(ctx context.Context, repoID string, branches []object.BranchInfo) error {
 	data, err := json.Marshal(branches)
 	if err != nil {
 		return err
@@ -62,7 +63,7 @@ func (c *RedisBranchCache) Set(ctx context.Context, repoID string, branches []Br
 // ── 内存实现（开发环境，单实例缓存） ──
 
 type memCacheEntry struct {
-	branches []BranchInfo
+	branches []object.BranchInfo
 	expireAt time.Time
 }
 
@@ -81,7 +82,7 @@ func NewMemoryBranchCache() *MemoryBranchCache {
 	}
 }
 
-func (c *MemoryBranchCache) Get(_ context.Context, repoID string) ([]BranchInfo, bool) {
+func (c *MemoryBranchCache) Get(_ context.Context, repoID string) ([]object.BranchInfo, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	entry, ok := c.entries[repoID]
@@ -91,7 +92,7 @@ func (c *MemoryBranchCache) Get(_ context.Context, repoID string) ([]BranchInfo,
 	return entry.branches, true
 }
 
-func (c *MemoryBranchCache) Set(_ context.Context, repoID string, branches []BranchInfo) error {
+func (c *MemoryBranchCache) Set(_ context.Context, repoID string, branches []object.BranchInfo) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries[repoID] = &memCacheEntry{

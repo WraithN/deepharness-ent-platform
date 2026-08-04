@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { FolderGit2, GitCompareArrows, Eye, Code2, GitCommit, Loader2 } from 'lucide-react';
+import { FolderGit2, GitCompareArrows, Eye, Code2, GitCommit, Loader2, ExternalLink } from 'lucide-react';
 import { projectApi, type ProjectCheckResponse } from '@/lib/project-api';
 import { repositoryApi } from '@/lib/repository-api';
 import { profileApi } from '@/lib/profile-api';
@@ -8,6 +8,17 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { PreviewMode } from '@/components/chat/LivePreview';
 import type { WorkspaceRepository } from '@/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
 
 interface ProjectCardProps {
   /** 工程根目录的绝对路径 */
@@ -24,7 +35,7 @@ const THEME_TEXT_CLASS: Record<CardTheme, string> = {
   amber: 'text-amber-700 dark:text-amber-300',
 };
 
-const SYNC_TEXT_CLASS = 'text-blue-600 dark:text-blue-400';
+
 
 /**
  * 工程卡片组件。
@@ -46,6 +57,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
   const [syncing, setSyncing] = useState(false);
   const [workspaceRepos, setWorkspaceRepos] = useState<WorkspaceRepository[]>([]);
   const [profileSSHKey, setProfileSSHKey] = useState<string>('');
+
+  const [showSyncDialog, setShowSyncDialog] = useState(false);
+  const [remoteUrl, setRemoteUrl] = useState('');
+  const [branch, setBranch] = useState('main');
+  const [registeredRepoId, setRegisteredRepoId] = useState<string | null>(null);
 
   const { membership } = useAuth();
   const workspaceId = membership?.workspaceId ?? '';
@@ -73,7 +89,6 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
     };
   }, [path]);
 
-  // 预加载当前工作空间的仓库配置与用户 SSH Key，用于同步时匹配远程仓库。
   useEffect(() => {
     if (!workspaceId) return;
     let cancelled = false;
@@ -98,25 +113,100 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
     };
   }, [workspaceId]);
 
+  const isSSHURL = (url: string) => /^(ssh:\/\/|git@)/.test(url);
+
+  const doSync = async (url: string, remoteBranch: string) => {
+    const projectName = checkResult?.projectName || path.split('/').pop() || path;
+    const matchedRepo = workspaceRepos.find((repo) => repo.name === projectName);
+
+    const syncReq: Parameters<typeof projectApi.sync>[0] = {
+      path,
+      workspaceId,
+      remoteUrl: url,
+      remoteBranch,
+    };
+
+    if (isSSHURL(url)) {
+      syncReq.sshKey = matchedRepo?.sshKey || profileSSHKey;
+    }
+
+    const result = await projectApi.sync(syncReq);
+
+    if (result.pushed && !matchedRepo && !registeredRepoId) {
+      try {
+        const repoType = (checkResult?.htmlCount ?? 0) > 0 ? 'dev' as const : 'dev' as const;
+        const created = await repositoryApi.create(workspaceId, {
+          url,
+          type: repoType,
+          defaultBranch: remoteBranch,
+        });
+        setRegisteredRepoId(created.id);
+        setWorkspaceRepos((prev) => [...prev, created]);
+        toast.success(`仓库已自动关联到工作空间: ${created.name}`);
+      } catch (err) {
+        console.error('[ProjectCard] failed to register repo:', err);
+      }
+    }
+
+    return result;
+  };
+
   const handleSync = async () => {
     if (!workspaceId) {
       toast.error('未选择工作空间，无法同步到远程仓库');
       return;
     }
 
+    const projectName = checkResult?.projectName || path.split('/').pop() || path;
+    const matchedRepo = workspaceRepos.find((repo) => repo.name === projectName);
+
+    if (matchedRepo) {
+      setSyncing(true);
+      try {
+        await doSync(matchedRepo.url, matchedRepo.defaultBranch || 'main');
+      } catch (err) {
+        console.error('[ProjectCard] sync failed:', err);
+        toast.error('同步失败，请重试');
+      } finally {
+        setSyncing(false);
+      }
+      return;
+    }
+
+    if (checkResult?.hasRemote && checkResult.remoteUrl) {
+      setSyncing(true);
+      try {
+        await doSync(checkResult.remoteUrl, 'main');
+      } catch (err) {
+        console.error('[ProjectCard] sync failed:', err);
+        toast.error('同步失败，请重试');
+      } finally {
+        setSyncing(false);
+      }
+      return;
+    }
+
+    setRemoteUrl('');
+    setBranch('main');
+    setShowSyncDialog(true);
+  };
+
+  const handleConfirmSync = async () => {
+    const trimmedUrl = remoteUrl.trim();
+    if (!trimmedUrl) {
+      toast.error('请输入远程仓库地址');
+      return;
+    }
+    if (isSSHURL(trimmedUrl) && !profileSSHKey) {
+      toast.error('SSH 仓库需要配置 SSH Key，请在个人设置中配置');
+      return;
+    }
+
+    setShowSyncDialog(false);
     setSyncing(true);
     try {
-      const projectName = checkResult?.projectName || path.split('/').pop() || path;
-      const matchedRepo = workspaceRepos.find((repo) => repo.name === projectName);
-
-      const syncReq: Parameters<typeof projectApi.sync>[0] = { path, workspaceId };
-      if (matchedRepo) {
-        syncReq.remoteUrl = matchedRepo.url;
-        syncReq.remoteBranch = matchedRepo.defaultBranch || 'main';
-        syncReq.sshKey = matchedRepo.sshKey || profileSSHKey;
-      }
-
-      const result = await projectApi.sync(syncReq);
+      await doSync(trimmedUrl, branch.trim() || 'main');
+      toast.success('同步完成');
     } catch (err) {
       console.error('[ProjectCard] sync failed:', err);
       toast.error('同步失败，请重试');
@@ -128,6 +218,24 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
   const handleDiff = () => onPreview?.(path, 'diff');
   const handlePreview = () => onPreview?.(path, 'preview');
   const handleCode = () => onPreview?.(path, 'code');
+
+  const getGitStatusBadge = () => {
+    if (checkFailed) return null;
+    if (!checkResult) return null;
+    if (!checkResult.hasGit) {
+      return { label: '非 Git 工程', cls: 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-300' };
+    }
+    if (!checkResult.hasRemote) {
+      return { label: '未关联远程仓库', cls: 'bg-orange-500/20 text-orange-700 dark:text-orange-300' };
+    }
+    return { label: '已关联远程', cls: 'bg-blue-500/20 text-blue-700 dark:text-blue-300' };
+  };
+
+  const formatSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   if (loading) {
     return (
@@ -146,63 +254,91 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
   const hasDiff = checkResult?.hasDiff ?? false;
   const fileCount = checkResult?.fileCount ?? 0;
   const theme: CardTheme = isNew || checkFailed ? 'green' : 'amber';
+  const gitStatus = getGitStatusBadge();
 
-  // check 失败时作为新建工程展示，仍允许查看 Diff 和预览。
-  if (isNew || checkFailed) {
-    return (
-      <div className="w-full p-4 rounded-2xl border border-green-500/30 bg-green-50/50 dark:bg-green-900/10 shadow-sm hover:shadow-md transition-all duration-300 hover:-translate-y-0.5 animate-in fade-in slide-in-from-bottom-2 duration-500">
-        <div className="flex items-start gap-4">
-          <div className="h-12 w-12 rounded-xl bg-green-500/15 flex items-center justify-center shrink-0">
-            <FolderGit2 className="h-6 w-6 text-green-600 dark:text-green-400" />
+  const syncDialogNode = (
+    <Dialog open={showSyncDialog} onOpenChange={setShowSyncDialog}>
+      <DialogContent className="sm:max-w-md" onClick={(e) => e.stopPropagation()}>
+        <DialogHeader>
+          <DialogTitle>关联远程仓库</DialogTitle>
+          <DialogDescription>
+            输入远程仓库地址和分支，将工程同步到远程仓库。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-4">
+          <div className="grid gap-2">
+            <Label htmlFor="remoteUrl">远程仓库地址</Label>
+            <Input
+              id="remoteUrl"
+              placeholder="https://github.com/user/repo.git 或 git@github.com:user/repo.git"
+              value={remoteUrl}
+              onChange={(e) => setRemoteUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleConfirmSync(); }}
+            />
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-semibold text-foreground truncate">{projectName}</p>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-700 dark:text-green-300 font-medium">
-                新建工程
-              </span>
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {fileCount > 0 ? `${fileCount} 个文件` : '空工程'}
-              {checkResult && checkResult.dirSize > 0 && (
-                <span className="ml-2">{formatSize(checkResult.dirSize)}</span>
-              )}
-            </p>
-            <ActionBar
-              theme={theme}
-              syncing={syncing}
-              onDiff={handleDiff}
-              onPreview={handlePreview}
-              onCode={handleCode}
-              onSync={handleSync}
+          <div className="grid gap-2">
+            <Label htmlFor="branch">分支名称</Label>
+            <Input
+              id="branch"
+              placeholder="main"
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleConfirmSync(); }}
             />
           </div>
         </div>
-      </div>
-    );
-  }
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setShowSyncDialog(false)}>
+            取消
+          </Button>
+          <Button onClick={handleConfirmSync}>
+            确认同步
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 
-  // 已有工程修改：琥珀色主题
-  return (
-    <div className="w-full p-4 rounded-2xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-900/10 shadow-sm hover:shadow-md transition-all duration-300 hover:-translate-y-0.5 animate-in fade-in slide-in-from-bottom-2 duration-500">
+  const cardWrapper = (
+    wrapperCls: string,
+    bgCls: string,
+    Icon: React.ComponentType<{ className?: string }>,
+    tagLabel: string,
+    tagCls: string,
+  ) => (
+    <div className={cn('w-full p-4 rounded-2xl border shadow-sm hover:shadow-md transition-all duration-300 hover:-translate-y-0.5 animate-in fade-in slide-in-from-bottom-2 duration-500', wrapperCls)}>
       <div className="flex items-start gap-4">
-        <div className="h-12 w-12 rounded-xl bg-amber-500/15 flex items-center justify-center shrink-0">
-          <GitCompareArrows className="h-6 w-6 text-amber-600 dark:text-amber-400" />
+        <div className={cn('h-12 w-12 rounded-xl flex items-center justify-center shrink-0', bgCls)}>
+          <Icon className="h-6 w-6" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <p className="text-sm font-semibold text-foreground truncate">{projectName}</p>
-            <span className={cn(
-              'text-[10px] px-1.5 py-0.5 rounded-full font-medium',
-              hasDiff
-                ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
-                : 'bg-muted text-muted-foreground'
-            )}>
-              {hasDiff ? '修改完成' : '无变更'}
+            <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium', tagCls)}>
+              {tagLabel}
             </span>
+            {gitStatus && (
+              <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium', gitStatus.cls)}>
+                {gitStatus.label}
+              </span>
+            )}
+            {checkResult?.hasRemote && checkResult.remoteUrl && (
+              <a
+                href={checkResult.remoteUrl.replace(/\.git$/, '')}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] text-muted-foreground hover:text-foreground inline-flex items-center gap-0.5"
+              >
+                <ExternalLink className="h-3 w-3" />
+                仓库
+              </a>
+            )}
           </div>
           <p className="text-xs text-muted-foreground mt-1">
-            {fileCount > 0 ? `${fileCount} 个文件` : ''}
+            {fileCount > 0 ? `${fileCount} 个文件` : '空工程'}
+            {checkResult && checkResult.dirSize > 0 && (
+              <span className="ml-2">{formatSize(checkResult.dirSize)}</span>
+            )}
           </p>
           <ActionBar
             theme={theme}
@@ -215,6 +351,38 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
         </div>
       </div>
     </div>
+  );
+
+  const newCard = cardWrapper(
+    'border-green-500/30 bg-green-50/50 dark:bg-green-900/10',
+    'bg-green-500/15 text-green-600 dark:text-green-400',
+    FolderGit2,
+    '新建工程',
+    'bg-green-500/20 text-green-700 dark:text-green-300',
+  );
+
+  // check 失败时作为新建工程展示，仍允许查看 Diff 和预览。
+  if (isNew || checkFailed) {
+    return (
+      <>
+        {newCard}
+        {syncDialogNode}
+      </>
+    );
+  }
+
+  // 已有工程修改：琥珀色主题
+  return (
+    <>
+      {cardWrapper(
+        'border-amber-500/30 bg-amber-50/50 dark:bg-amber-900/10',
+        'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+        GitCompareArrows,
+        hasDiff ? '修改完成' : '无变更',
+        hasDiff ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300' : 'bg-muted text-muted-foreground',
+      )}
+      {syncDialogNode}
+    </>
   );
 };
 
@@ -271,8 +439,4 @@ const ActionLink: React.FC<ActionLinkProps> = ({ icon: Icon, label, themeClass, 
   </button>
 );
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+

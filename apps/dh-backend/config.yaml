@@ -46,6 +46,15 @@ workspace:
 personal_stub:
   url: "http://127.0.0.1:8090"
 
+# crawler-service 服务地址，用于 /prd-analysis 等网站爬取场景
+crawler_service:
+  url: "http://127.0.0.1:8091"
+  timeout: "60s"
+  # 在 gatewayd MCP 聚合层中注册的 crawler server 名称。
+  # 配置后 dh-backend 会优先通过 gatewayd /mcp/tools/{mcp_name}:scrape 调用抓取能力；
+  # 为空或调用失败时回退到上方 url 的直接 HTTP 调用。
+  mcp_name: "crawler"
+
 # 产品空间文档采纳配置
 # doc_adoption_cleanup: 文档采纳到产品空间后，自动清理个人工作区中的源草稿文件。
 #   enabled: 是否启用自动清理。
@@ -160,3 +169,44 @@ workitem:
     enabled: true
     workers: 2
     retry: 3
+
+# 安全配置
+# ssh_key_encryption_key: 用于加密存储在 repositories.ssh_key 列的 SSH 私钥。
+#   格式为 32 字节 AES-256 密钥的 hex 编码（64 个 hex 字符）。
+#   为空时 SSH 私钥以明文存储（仅限开发环境）。
+#   生成方法：openssl rand -hex 32
+#   生产环境请通过环境变量 SSH_KEY_ENCRYPTION_KEY 注入。
+security:
+  ssh_key_encryption_key: ""
+
+# Agent 实例供给器配置。
+#   type: 供给器类型，mock（内存模拟）或 k8s（Kubernetes 原生管理）。
+# mock 模式下仅需 type: mock，其余字段可留空；k8s 模式下需填写 namespace / image 等字段。
+agent_provisioner:
+  type: "mock"
+  namespace: "dh-agents"
+  image: "deepharness/gatewayd:latest"
+  warm_pool_min: 2
+  warm_pool_max: 10
+  idle_timeout: "15m"
+  sleep_evict_timeout: "30m"
+  max_active_per_user: 3
+  agent_port: 2345
+  admin_port: 2346
+  shared_pvc_name: "dh-workspace"
+  workspace_mount_path: "/workspace"
+  kubeconfig_path: ""         # 空则用 in-cluster config，非空时加载指定 kubeconfig 文件
+  mock_hosts:                 # mock 模式下容器池使用的固定 IP 列表
+    - "127.0.0.1"
+  stub_port: 8090             # personal-stub 端口（与 gatewayd 共部署于同一容器）
+  resource_active:
+    cpu_request: "2000m"
+    cpu_limit: "4000m"
+    memory_request: "4Gi"
+    memory_limit: "8Gi"
+  resource_sleeping:
+    cpu_request: "100m"
+    cpu_limit: "200m"
+    memory_request: "128Mi"
+    memory_limit: "256Mi"
+  supports_bind: false

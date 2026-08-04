@@ -16,6 +16,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/feishu/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/feishu/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
 )
 
 var defaultFeishuService service.FeishuService
@@ -43,11 +44,11 @@ const feishuMentionKeyPrefix = "@_user_"
 // 实际的 agent 分发与回复发送在独立 goroutine 中异步进行。
 func Webhook(w http.ResponseWriter, r *http.Request) {
 	if defaultFeishuService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "feishu service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "feishu service not initialized")
 		return
 	}
 	if r.Method != http.MethodPost {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
@@ -69,7 +70,7 @@ func Webhook(w http.ResponseWriter, r *http.Request) {
 	ev, err := parseEvent(body)
 	if err != nil {
 		log.Printf("[Feishu] parse event failed: %v", err)
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "invalid event payload")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid event payload")
 		return
 	}
 
@@ -82,17 +83,17 @@ func Webhook(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// 异步处理事件：agent 执行可能耗时数分钟，不能阻塞 webhook 响应。
-	go defaultFeishuService.HandleEvent(ev)
+	safego.Go("feishu-handle-event", func() { defaultFeishuService.HandleEvent(ev) })
 }
 
 // BindUser 处理 POST /api/v1/feishu/bindings，绑定飞书用户与平台用户。
 func BindUser(w http.ResponseWriter, r *http.Request) {
 	if defaultFeishuService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "feishu service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "feishu service not initialized")
 		return
 	}
 	if r.Method != http.MethodPost {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
@@ -103,7 +104,7 @@ func BindUser(w http.ResponseWriter, r *http.Request) {
 
 	result, err := defaultFeishuService.BindUser(req)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	handler.SetJSONHeader(w)
@@ -113,17 +114,17 @@ func BindUser(w http.ResponseWriter, r *http.Request) {
 // ListBindings 处理 GET /api/v1/feishu/bindings，列出全部飞书用户绑定。
 func ListBindings(w http.ResponseWriter, r *http.Request) {
 	if defaultFeishuService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "feishu service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "feishu service not initialized")
 		return
 	}
 	if r.Method != http.MethodGet {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
 	list, err := defaultFeishuService.ListBindings()
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	handler.SetJSONHeader(w)
@@ -133,17 +134,17 @@ func ListBindings(w http.ResponseWriter, r *http.Request) {
 // ListChatSessions 处理 GET /api/v1/feishu/chat-sessions，列出飞书会话映射。
 func ListChatSessions(w http.ResponseWriter, r *http.Request) {
 	if defaultFeishuService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "feishu service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "feishu service not initialized")
 		return
 	}
 	if r.Method != http.MethodGet {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
 	list, err := defaultFeishuService.ListChatSessions()
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	handler.SetJSONHeader(w)
@@ -154,7 +155,7 @@ func ListChatSessions(w http.ResponseWriter, r *http.Request) {
 func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "read body failed")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "read body failed")
 		return nil, false
 	}
 	return body, true

@@ -30,12 +30,14 @@ ENT_DESKTOP_ROOT="${PLATFORM_ROOT}/../deepharness-ent-desktop"
 GATEWAYD_API_PORT="${GATEWAYD_API_PORT:-2345}"
 GATEWAYD_ADMIN_PORT="${GATEWAYD_ADMIN_PORT:-2346}"
 PERSONAL_STUB_PORT="${PERSONAL_STUB_PORT:-8090}"
+CRAWLER_SERVICE_PORT="${CRAWLER_SERVICE_PORT:-8091}"
 DH_BACKEND_PORT="${DH_BACKEND_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-8888}"
 
 # 基础 URL
 GATEWAYD_ADMIN_URL="http://localhost:${GATEWAYD_ADMIN_PORT}"
 PERSONAL_STUB_URL="http://localhost:${PERSONAL_STUB_PORT}"
+CRAWLER_SERVICE_URL="http://localhost:${CRAWLER_SERVICE_PORT}"
 API_BASE_URL="http://localhost:${DH_BACKEND_PORT}"
 
 # 服务二进制路径
@@ -61,6 +63,7 @@ cleanup() {
     # 兜底：按名称清理可能残留的子进程
     pkill -f "dh-gatewayd" 2>/dev/null || true
     pkill -f "personal-stub" 2>/dev/null || true
+    pkill -f "crawler-service" 2>/dev/null || true
     pkill -f "dh-backend" 2>/dev/null || true
     echo -e "${GREEN}All services stopped${NC}"
     exit 0
@@ -209,6 +212,11 @@ start_gatewayd() {
         return 1
     fi
 
+    # 构建 crawler-service 并注册其 MCP server 到 gatewayd.db，使 gatewayd 启动时即可加载。
+    log_info "Building crawler-service for MCP server..."
+    (cd "${PLATFORM_ROOT}" && pnpm --filter @repo/crawler-service build)
+    bash "${PLATFORM_ROOT}/scripts/init-crawler-mcp.sh"
+
     if [ "$DETACH_MODE" = true ]; then
         setsid nohup "$GATEWAYD_BIN" \
             --port "$GATEWAYD_API_PORT" \
@@ -262,6 +270,36 @@ start_personal_stub() {
     else
         log_error "Personal Stub failed to start"
         cat /tmp/personal-stub.log
+        exit 1
+    fi
+}
+
+# ── Start Crawler Service ─────────────────────────────────────────
+start_crawler_service() {
+    log_info "Starting Crawler Service on port ${CRAWLER_SERVICE_PORT}..."
+
+    if check_port "$CRAWLER_SERVICE_PORT"; then
+        log_warn "Port ${CRAWLER_SERVICE_PORT} in use, killing existing..."
+        kill_port "$CRAWLER_SERVICE_PORT"
+    fi
+
+    cd apps/crawler-service
+    if [ "$DETACH_MODE" = true ]; then
+        setsid nohup env PORT=$CRAWLER_SERVICE_PORT pnpm dev > /tmp/crawler-service.log 2>&1 &
+        disown
+        local pid=$!
+    else
+        PORT=$CRAWLER_SERVICE_PORT pnpm dev > /tmp/crawler-service.log 2>&1 &
+        local pid=$!
+        PIDS+=("$pid")
+    fi
+    cd ../..
+
+    if wait_for_service "${CRAWLER_SERVICE_URL}/health" "Crawler Service"; then
+        log_success "Crawler Service running (PID: $pid, log: /tmp/crawler-service.log)"
+    else
+        log_error "Crawler Service failed to start"
+        cat /tmp/crawler-service.log
         exit 1
     fi
 }
@@ -362,6 +400,7 @@ main() {
     # 按依赖顺序启动
     start_gatewayd
     start_personal_stub
+    start_crawler_service
     start_dh_backend
     start_frontend
 
@@ -369,17 +408,19 @@ main() {
     echo -e "${GREEN}  All services started!${NC}"
     echo ""
     echo -e "  ${BLUE}Service URLs:${NC}"
-    echo -e "    Gatewayd:     ${GREEN}http://localhost:${GATEWAYD_API_PORT}${NC} (API)"
-    echo -e "    Gatewayd:     ${GREEN}http://localhost:${GATEWAYD_ADMIN_PORT}${NC} (Admin/Health)"
-    echo -e "    Personal Stub:   ${GREEN}http://localhost:${PERSONAL_STUB_PORT}${NC}"
-    echo -e "    DH Backend:   ${GREEN}http://localhost:${DH_BACKEND_PORT}${NC}"
-    echo -e "    Frontend:     ${GREEN}http://localhost:${FRONTEND_PORT}${NC}"
+    echo -e "    Gatewayd:      ${GREEN}http://localhost:${GATEWAYD_API_PORT}${NC} (API)"
+    echo -e "    Gatewayd:      ${GREEN}http://localhost:${GATEWAYD_ADMIN_PORT}${NC} (Admin/Health)"
+    echo -e "    Personal Stub: ${GREEN}http://localhost:${PERSONAL_STUB_PORT}${NC}"
+    echo -e "    Crawler Svc:   ${GREEN}http://localhost:${CRAWLER_SERVICE_PORT}${NC}"
+    echo -e "    DH Backend:    ${GREEN}http://localhost:${DH_BACKEND_PORT}${NC}"
+    echo -e "    Frontend:      ${GREEN}http://localhost:${FRONTEND_PORT}${NC}"
     echo ""
     echo -e "  ${BLUE}Logs:${NC}"
-    echo -e "    Gatewayd:     /tmp/gatewayd.log"
-    echo -e "    Personal Stub:   /tmp/personal-stub.log"
-    echo -e "    DH Backend:   /tmp/dh-backend.log"
-    echo -e "    Frontend:     /tmp/frontend.log"
+    echo -e "    Gatewayd:      /tmp/gatewayd.log"
+    echo -e "    Personal Stub: /tmp/personal-stub.log"
+    echo -e "    Crawler Svc:   /tmp/crawler-service.log"
+    echo -e "    DH Backend:    /tmp/dh-backend.log"
+    echo -e "    Frontend:      /tmp/frontend.log"
     echo ""
 
     if [ "$DETACH_MODE" = true ]; then

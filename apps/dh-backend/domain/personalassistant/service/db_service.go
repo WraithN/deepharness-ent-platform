@@ -8,6 +8,8 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/object"
 	"github.com/google/uuid"
+
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
 
 // DBPersonalAssistantService 是基于 MySQL 的 PersonalAssistantService 实现。
@@ -84,7 +86,7 @@ func (s *DBPersonalAssistantService) GetAssistant(id string) (object.PersonalAss
 		WHERE id = $1
 	`, id).Scan(&a.ID, &a.Name, &a.Role, &a.Description, &a.CreatorID, &a.CreatorName, &avatarURL, &a.CreatedAt, &a.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return object.PersonalAssistant{}, errors.New("assistant not found")
+		return object.PersonalAssistant{}, common.NotFoundErrorf("assistant not found")
 	}
 	if err != nil {
 		return object.PersonalAssistant{}, fmt.Errorf("get assistant failed: %w", err)
@@ -178,7 +180,7 @@ func (s *DBPersonalAssistantService) DeleteSession(assistantID, sessionID string
 	var id string
 	if err := tx.QueryRow(`SELECT id FROM personal_assistant_sessions WHERE id = $1 AND assistant_id = $2`, sessionID, assistantID).Scan(&id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return errors.New("session not found")
+			return common.NotFoundErrorf("session not found")
 		}
 		return fmt.Errorf("validate session failed: %w", err)
 	}
@@ -236,7 +238,7 @@ func (s *DBPersonalAssistantService) ProcessMessage(assistantID, sessionID, cont
 		SELECT title, message_count FROM personal_assistant_sessions WHERE id = $1 AND assistant_id = $2
 	`, sessionID, assistantID).Scan(&title, &msgCount); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return object.Message{}, errors.New("session not found")
+			return object.Message{}, common.NotFoundErrorf("session not found")
 		}
 		return object.Message{}, fmt.Errorf("validate session failed: %w", err)
 	}

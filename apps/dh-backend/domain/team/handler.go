@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
@@ -56,7 +57,7 @@ func currentUserWithRole(r *http.Request) (userID string, role identity.Platform
 func requireAuth(w http.ResponseWriter, r *http.Request) (string, bool) {
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return "", false
 	}
 	return userID, true
@@ -73,29 +74,29 @@ func Skills(w http.ResponseWriter, r *http.Request) {
 		workspaceID := r.URL.Query().Get("workspaceId")
 		skills, err := defaultService.ListSkills(workspaceID, page, pageSize)
 		if err != nil {
-			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list skills")
+			handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to list skills")
 			return
 		}
 		json.NewEncoder(w).Encode(skills)
 	case http.MethodPost:
-		var req service.CreateSkillRequest
+		var req object.CreateSkillRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
 		if req.Name == "" {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "name is required")
 			return
 		}
 		workspaceID := r.URL.Query().Get("workspaceId")
 		skill, err := defaultService.CreateSkill(req, workspaceID)
 		if err != nil {
-			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to create skill")
+			handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to create skill")
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(skill)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -109,26 +110,26 @@ func SkillByID(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodPatch:
-		var req service.UpdateSkillRequest
+		var req object.UpdateSkillRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
 		workspaceID := r.URL.Query().Get("workspaceId")
 		skill, err := defaultService.UpdateSkill(id, req, workspaceID)
 		if err != nil {
-			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to update skill")
+			handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to update skill")
 			return
 		}
 		json.NewEncoder(w).Encode(skill)
 	case http.MethodDelete:
 		workspaceID := r.URL.Query().Get("workspaceId")
 		if err := defaultService.DeleteSkill(id, workspaceID); err != nil {
-			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to delete skill")
+			handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to delete skill")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -140,14 +141,14 @@ func Prompts(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		userID, isSuperAdmin, ok := currentUser(r)
 		if !ok {
-			handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+			handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 			return
 		}
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
 		prompts, err := defaultService.ListPromptsVisibleTo(userID, isSuperAdmin, page, pageSize)
 		if err != nil {
-			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list prompts")
+			handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to list prompts")
 			return
 		}
 		json.NewEncoder(w).Encode(prompts)
@@ -156,23 +157,23 @@ func Prompts(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		var req service.CreatePromptRequest
+		var req object.CreatePromptRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
 		if req.Name == "" || req.Content == "" {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name and content are required")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "name and content are required")
 			return
 		}
 		prompt, err := defaultService.CreatePrompt(req, userID)
 		if err != nil {
-			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to create prompt")
+			handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to create prompt")
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(prompt)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -188,10 +189,10 @@ func PromptByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPatch:
 		userID, isSuperAdmin, authOk := currentUser(r)
 		if !authOk {
-			handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+			handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 			return
 		}
-		var req service.UpdatePromptRequest
+		var req object.UpdatePromptRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
@@ -204,7 +205,7 @@ func PromptByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		userID, isSuperAdmin, authOk := currentUser(r)
 		if !authOk {
-			handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+			handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 			return
 		}
 		if err := defaultService.DeletePrompt(id, userID, isSuperAdmin); err != nil {
@@ -213,7 +214,7 @@ func PromptByID(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -226,21 +227,21 @@ func ReviewPrompt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodPost {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
 	_, isSuperAdmin, authOk := currentUser(r)
 	if !authOk {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 	if !isSuperAdmin {
-		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: super admin required")
 		return
 	}
 
-	var req service.ReviewPromptRequest
+	var req object.ReviewPromptRequest
 	if !handler.DecodeJSONBody(w, r, &req) {
 		return
 	}
@@ -262,21 +263,21 @@ func ReviewSkill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodPost {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
 	_, isSuperAdmin, authOk := currentUser(r)
 	if !authOk {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 	if !isSuperAdmin {
-		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: super admin required")
 		return
 	}
 
-	var req service.ReviewPromptRequest
+	var req object.ReviewPromptRequest
 	if !handler.DecodeJSONBody(w, r, &req) {
 		return
 	}
@@ -299,7 +300,7 @@ func SkillCategoriesUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodPut {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
@@ -307,7 +308,7 @@ func SkillCategoriesUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req service.UpdateCategoriesRequest
+	var req object.UpdateCategoriesRequest
 	if !handler.DecodeJSONBody(w, r, &req) {
 		return
 	}
@@ -329,7 +330,7 @@ func PromptCategoriesUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodPut {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
@@ -337,7 +338,7 @@ func PromptCategoriesUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req service.UpdateCategoriesRequest
+	var req object.UpdateCategoriesRequest
 	if !handler.DecodeJSONBody(w, r, &req) {
 		return
 	}
@@ -353,11 +354,11 @@ func PromptCategoriesUpdate(w http.ResponseWriter, r *http.Request) {
 func requireSuperAdmin(w http.ResponseWriter, r *http.Request) bool {
 	_, isSuperAdmin, authOk := currentUser(r)
 	if !authOk {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return false
 	}
 	if !isSuperAdmin {
-		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: super admin required")
 		return false
 	}
 	return true
@@ -373,7 +374,7 @@ func PromptUsage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodPost {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 	userID, authOk := requireAuth(w, r)
@@ -398,38 +399,38 @@ func SkillCategories(w http.ResponseWriter, r *http.Request) {
 		workspaceID := r.URL.Query().Get("workspaceId")
 		categories, err := defaultService.ListSkillCategories(workspaceID)
 		if err != nil {
-			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list skill categories")
+			handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to list skill categories")
 			return
 		}
 		json.NewEncoder(w).Encode(categories)
 	case http.MethodPost:
 		_, role, ok := currentUserWithRole(r)
 		if !ok {
-			handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+			handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 			return
 		}
 		if role != identity.PlatformRoleSuperAdmin && role != identity.PlatformRoleTenantAdmin {
-			handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or super admin required")
+			handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: tenant admin or super admin required")
 			return
 		}
-		var req service.CreateSkillCategoryRequest
+		var req object.CreateSkillCategoryRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
 		if req.Name == "" {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "name is required")
 			return
 		}
 		workspaceID := r.URL.Query().Get("workspaceId")
 		category, err := defaultService.CreateSkillCategory(req, workspaceID)
 		if err != nil {
-			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to create skill category")
+			handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to create skill category")
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(category)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -442,17 +443,17 @@ func SkillCategoryByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodDelete {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
 	_, role, authOk := currentUserWithRole(r)
 	if !authOk {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 	if role != identity.PlatformRoleSuperAdmin && role != identity.PlatformRoleTenantAdmin {
-		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: tenant admin or super admin required")
+		handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: tenant admin or super admin required")
 		return
 	}
 
@@ -472,37 +473,37 @@ func PromptCategories(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		categories, err := defaultService.ListPromptCategories()
 		if err != nil {
-			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to list prompt categories")
+			handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to list prompt categories")
 			return
 		}
 		json.NewEncoder(w).Encode(categories)
 	case http.MethodPost:
 		_, isSuperAdmin, ok := currentUser(r)
 		if !ok {
-			handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+			handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 			return
 		}
 		if !isSuperAdmin {
-			handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+			handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: super admin required")
 			return
 		}
-		var req service.CreatePromptCategoryRequest
+		var req object.CreatePromptCategoryRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
 		if req.Name == "" {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, "name is required")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "name is required")
 			return
 		}
 		category, err := defaultService.CreatePromptCategory(req)
 		if err != nil {
-			handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to create prompt category")
+			handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to create prompt category")
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(category)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -515,17 +516,17 @@ func PromptCategoryByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodDelete {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
 	_, isSuperAdmin, authOk := currentUser(r)
 	if !authOk {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 	if !isSuperAdmin {
-		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: super admin required")
 		return
 	}
 
@@ -540,24 +541,24 @@ func PromptCategoryByID(w http.ResponseWriter, r *http.Request) {
 func SkillStats(w http.ResponseWriter, r *http.Request) {
 	handler.SetJSONHeader(w)
 	if r.Method != http.MethodGet {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
 	_, isSuperAdmin, ok := currentUser(r)
 	if !ok {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 	if !isSuperAdmin {
-		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: super admin required")
 		return
 	}
 
 	workspaceID := r.URL.Query().Get("workspaceId")
 	stats, err := defaultService.GetSkillStats(workspaceID)
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to get skill stats")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to get skill stats")
 		return
 	}
 	json.NewEncoder(w).Encode(stats)
@@ -567,23 +568,23 @@ func SkillStats(w http.ResponseWriter, r *http.Request) {
 func PromptStats(w http.ResponseWriter, r *http.Request) {
 	handler.SetJSONHeader(w)
 	if r.Method != http.MethodGet {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
 	_, isSuperAdmin, ok := currentUser(r)
 	if !ok {
-		handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+		handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 		return
 	}
 	if !isSuperAdmin {
-		handler.WriteJSONError(w, http.StatusForbidden, 3, "forbidden: super admin required")
+		handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: super admin required")
 		return
 	}
 
 	stats, err := defaultService.GetPromptStats()
 	if err != nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "failed to get prompt stats")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "failed to get prompt stats")
 		return
 	}
 	json.NewEncoder(w).Encode(stats)

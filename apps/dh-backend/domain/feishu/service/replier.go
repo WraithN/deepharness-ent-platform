@@ -13,7 +13,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/feishu/object"
@@ -27,11 +26,12 @@ type Replier interface {
 }
 
 // NewReplier 根据是否 mock 模式选择回复发送器实现。
-func NewReplier(mockMode bool, appID, appSecret, apiBaseURL string) Replier {
+// mock 模式下 tokenManager 可为 nil（不会被调用）。
+func NewReplier(mockMode bool, tokenManager *FeishuTokenManager, apiBaseURL string) Replier {
 	if mockMode {
 		return &MockReplier{}
 	}
-	return NewFeishuReplier(appID, appSecret, apiBaseURL)
+	return NewFeishuReplier(tokenManager, apiBaseURL)
 }
 
 // MockReplier 将回复输出到日志，不调用任何外部 API。
@@ -44,110 +44,58 @@ func (m *MockReplier) Send(ev object.InboundEvent, reply string) {
 }
 
 // FeishuReplier 通过飞书 Open API 发送回复。
-// 需要先用 app_id/app_secret 换取 tenant_access_token，再调用发消息接口。
+// token 管理委托给共享的 FeishuTokenManager，避免并发数据竞争。
 type FeishuReplier struct {
-	appID     string
-	appSecret string
-	apiBaseURL string
-	httpClient *http.Client
-
-	mu          sync.Mutex
-	accessToken string
-	tokenExpiry time.Time
+	tokenManager *FeishuTokenManager
+	apiBaseURL   string
+	httpClient   *http.Client
 }
-
-// tokenRefreshLeadTime 是 token 过期前的提前刷新时间，避免边界过期。
-const tokenRefreshLeadTime = 5 * time.Minute
 
 // apiTimeout 飞书 API 调用超时。
 const apiTimeout = 15 * time.Second
 
 // NewFeishuReplier 创建真实飞书回复发送器。
-func NewFeishuReplier(appID, appSecret, apiBaseURL string) *FeishuReplier {
+func NewFeishuReplier(tokenManager *FeishuTokenManager, apiBaseURL string) *FeishuReplier {
 	return &FeishuReplier{
-		appID:      appID,
-		appSecret:  appSecret,
-		apiBaseURL: apiBaseURL,
-		httpClient: &http.Client{Timeout: apiTimeout},
+		tokenManager: tokenManager,
+		apiBaseURL:   apiBaseURL,
+		httpClient:   &http.Client{Timeout: apiTimeout},
 	}
 }
 
 // Send 通过飞书 Open API 发送回复消息。
 // 优先使用 reply 接口（回复指定消息），失败时回退到按 chat_id 发送。
 func (r *FeishuReplier) Send(ev object.InboundEvent, reply string) {
-	if err := r.ensureToken(); err != nil {
+	// 获取 token 快照（线程安全），后续在锁外使用不可变字符串
+	token, err := r.tokenManager.GetToken(context.Background())
+	if err != nil {
 		log.Printf("[Feishu] ensure token failed: %v", err)
 		return
 	}
-	if ev.MessageID != "" && r.replyToMessage(ev.MessageID, reply) == nil {
+	if ev.MessageID != "" && r.replyToMessage(ev.MessageID, reply, token) == nil {
 		return
 	}
 	if ev.MessageID != "" {
 		log.Printf("[Feishu] reply to message failed, fallback to chat send")
 	}
-	if err := r.sendToChat(ev.ChatID, reply); err != nil {
+	if err := r.sendToChat(ev.ChatID, reply, token); err != nil {
 		log.Printf("[Feishu] send to chat failed chatId=%s: %v", ev.ChatID, err)
 	}
 }
 
-// ensureToken 获取或刷新 tenant_access_token（线程安全）。
-// token 有效期约 2 小时，提前 tokenRefreshLeadTime 刷新。
-func (r *FeishuReplier) ensureToken() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.accessToken != "" && time.Now().Before(r.tokenExpiry) {
-		return nil
-	}
-
-	body, _ := json.Marshal(map[string]string{
-		"app_id":     r.appID,
-		"app_secret": r.appSecret,
-	})
-	url := r.apiBaseURL + "/auth/v3/tenant_access_token/internal"
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := r.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request token: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Code              int    `json:"code"`
-		Msg               string `json:"msg"`
-		TenantAccessToken string `json:"tenant_access_token"`
-		Expire            int    `json:"expire"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode token response: %w", err)
-	}
-	if result.Code != 0 {
-		return fmt.Errorf("feishu token error code=%d msg=%s", result.Code, result.Msg)
-	}
-
-	r.accessToken = result.TenantAccessToken
-	r.tokenExpiry = time.Now().Add(time.Duration(result.Expire)*time.Second - tokenRefreshLeadTime)
-	return nil
-}
-
 // replyToMessage 回复指定消息（飞书 POST /im/v1/messages/{message_id}/reply）。
-func (r *FeishuReplier) replyToMessage(messageID, text string) error {
+func (r *FeishuReplier) replyToMessage(messageID, text, token string) error {
 	content, _ := json.Marshal(map[string]string{"text": text})
 	payload, _ := json.Marshal(map[string]string{
 		"msg_type": "text",
 		"content":  string(content),
 	})
 	url := fmt.Sprintf("%s/im/v1/messages/%s/reply", r.apiBaseURL, messageID)
-	return r.postFeishu(url, payload)
+	return r.postFeishu(url, payload, token)
 }
 
 // sendToChat 向指定会话发送消息（飞书 POST /im/v1/messages?receive_id_type=chat_id）。
-func (r *FeishuReplier) sendToChat(chatID, text string) error {
+func (r *FeishuReplier) sendToChat(chatID, text, token string) error {
 	content, _ := json.Marshal(map[string]string{"text": text})
 	payload, _ := json.Marshal(map[string]any{
 		"receive_id": chatID,
@@ -155,17 +103,18 @@ func (r *FeishuReplier) sendToChat(chatID, text string) error {
 		"content":    string(content),
 	})
 	url := r.apiBaseURL + "/im/v1/messages?receive_id_type=chat_id"
-	return r.postFeishu(url, payload)
+	return r.postFeishu(url, payload, token)
 }
 
 // postFeishu 向飞书 API 发送 POST 请求并校验响应码。
-func (r *FeishuReplier) postFeishu(url string, payload []byte) error {
+// token 为 GetToken 返回的不可变快照，可安全在锁外使用。
+func (r *FeishuReplier) postFeishu(url string, payload []byte, token string) error {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.accessToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {

@@ -1,7 +1,7 @@
-go 1.22
+go 1.26.0
 
 use (
-	./apps/personal-stub
 	./apps/dh-backend
+	./apps/personal-stub
 	./packages/go-sdk
 )

@@ -47,6 +47,9 @@ type ProjectFileNode struct {
 type ProjectCheckResponse struct {
 	IsNew       bool   `json:"isNew"`
 	HasDiff     bool   `json:"hasDiff"`
+	HasGit      bool   `json:"hasGit"`
+	HasRemote   bool   `json:"hasRemote"`
+	RemoteURL   string `json:"remoteUrl,omitempty"`
 	FileCount   int    `json:"fileCount"`
 	HTMLCount   int    `json:"htmlCount"`
 	DirSize     int64  `json:"dirSize"`
@@ -143,6 +146,16 @@ func hasGitRepo(dir string) bool {
 	gitDir := filepath.Join(dir, ".git")
 	info, err := os.Stat(gitDir)
 	return err == nil && info.IsDir()
+}
+
+// hasGitRemote 检查 git 仓库是否已配置远程仓库。
+func hasGitRemote(dir string) (bool, string) {
+	out, err := projectGitExec(dir, "remote", "get-url", "origin")
+	if err != nil {
+		return false, ""
+	}
+	url := strings.TrimSpace(out)
+	return url != "", url
 }
 
 // hasUncommittedChanges 检查 git 仓库是否有未提交的更改。
@@ -644,16 +657,21 @@ func ProjectCheck(w http.ResponseWriter, r *http.Request) {
 	projectName := filepath.Base(absPath)
 	fileCount, htmlCount, dirSize := countProjectFiles(absPath)
 
-	isNew := !hasGitRepo(absPath)
+	hasGit := hasGitRepo(absPath)
+	isNew := !hasGit
 	hasDiff := false
+	hasRemote := false
+	remoteURL := ""
+
+	if hasGit {
+		hasRemote, remoteURL = hasGitRemote(absPath)
+	}
 
 	if isNew {
-		// 新工程：初始化 git 仓库，提交所有文件作为基线
 		if err := initGitRepo(absPath); err != nil {
 			log.Printf("[Projects] failed to init git for %s: %v", absPath, err)
 		}
 	} else {
-		// 已有工程：检查是否有未提交的更改
 		changed, err := hasUncommittedChanges(absPath)
 		if err != nil {
 			log.Printf("[Projects] failed to check git status for %s: %v", absPath, err)
@@ -665,6 +683,9 @@ func ProjectCheck(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(ProjectCheckResponse{
 		IsNew:       isNew,
 		HasDiff:     hasDiff,
+		HasGit:      hasGit,
+		HasRemote:   hasRemote,
+		RemoteURL:   remoteURL,
 		FileCount:   fileCount,
 		HTMLCount:   htmlCount,
 		DirSize:     dirSize,

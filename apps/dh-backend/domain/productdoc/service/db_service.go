@@ -9,6 +9,8 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/object"
 	"github.com/google/uuid"
+
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
 
 // DBProductDocService 是基于 PostgreSQL 的 ProductDocService 实现。
@@ -97,7 +99,7 @@ func (s *DBProductDocService) GetDoc(id string) (object.ProductDoc, error) {
 		&doc.CreatedAt, &doc.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return object.ProductDoc{}, errors.New("product doc not found")
+		return object.ProductDoc{}, common.NotFoundErrorf("product doc not found")
 	}
 	if err != nil {
 		return object.ProductDoc{}, fmt.Errorf("get product doc failed: %w", err)
@@ -216,7 +218,7 @@ func (s *DBProductDocService) UpdateDoc(id string, req object.UpdateProductDocRe
 		&doc.CreatedAt, &doc.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return object.ProductDoc{}, errors.New("product doc not found")
+		return object.ProductDoc{}, common.NotFoundErrorf("product doc not found")
 	}
 	if err != nil {
 		return object.ProductDoc{}, fmt.Errorf("update product doc failed: %w", err)
@@ -241,7 +243,7 @@ func (s *DBProductDocService) DeleteDoc(id string) error {
 	}
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
-		return errors.New("product doc not found")
+		return common.NotFoundErrorf("product doc not found")
 	}
 	return nil
 }

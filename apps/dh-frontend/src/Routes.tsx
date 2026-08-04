@@ -13,6 +13,8 @@ import { Settings } from "@/pages/Settings";
 import { Requirements } from "@/pages/Requirements";
 import { PersonalSpace } from "@/pages/PersonalSpace";
 import { FlowTracking } from "@/components/workspace/FlowTracking";
+import { ProcessDetail } from "@/pages/ProcessDetail";
+import { ReviewReportPage } from "@/pages/ReviewReportPage";
 import { PersonalAssistantPage } from "@/pages/PersonalAssistantPage";
 import { PersonalAssistantChat } from "@/pages/PersonalAssistantChat";
 import { FileView } from "@/pages/FileView";
@@ -70,6 +72,8 @@ export const routes: RouteObject[] = [
       { path: "requirements", element: <Requirements /> },
       { path: "personal-space", element: <PermissionRoute perm="canViewCode"><PersonalSpace /></PermissionRoute> },
       { path: "personal/flow", element: <FlowTracking /> },
+      { path: "personal/flow/:id", element: <ProcessDetail /> },
+      { path: "personal/flow/:id/review-report", element: <ReviewReportPage /> },
       { path: "code", element: <Navigate to="/personal-space" replace /> },
       { path: "prd", element: <PrdView /> },
       { path: "dashboard", element: <PermissionRoute perm="canViewDashboard"><Dashboard /></PermissionRoute> },

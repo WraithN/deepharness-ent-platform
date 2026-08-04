@@ -24,7 +24,7 @@ func Init(svc service.PlatformTemplateService) {
 // GET 允许已登录用户访问：超级管理员返回全部模板，其他用户仅返回已发布模板。
 func Templates(w http.ResponseWriter, r *http.Request) {
 	if defaultPlatformTemplateService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "platform template service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "platform template service not initialized")
 		return
 	}
 
@@ -32,12 +32,12 @@ func Templates(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		category := r.URL.Query().Get("category")
 		if category == "" {
-			handler.WriteJSONError(w, http.StatusBadRequest, 1, "category is required")
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "category is required")
 			return
 		}
 		// 已登录即可查看；具体可见范围由 super admin 身份决定
 		if _, ok := middleware.UserIDFromContext(r.Context()); !ok {
-			handler.WriteJSONError(w, http.StatusUnauthorized, 2, "unauthorized")
+			handler.WriteJSONError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, "unauthorized")
 			return
 		}
 		publishedOnly := !identity.IsSuperAdmin(r)
@@ -68,7 +68,7 @@ func Templates(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(created)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -78,7 +78,7 @@ func TemplateByKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if defaultPlatformTemplateService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "platform template service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "platform template service not initialized")
 		return
 	}
 
@@ -88,7 +88,7 @@ func TemplateByKey(w http.ResponseWriter, r *http.Request) {
 	}
 	category := r.URL.Query().Get("category")
 	if category == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "category is required")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "category is required")
 		return
 	}
 
@@ -112,7 +112,7 @@ func TemplateByKey(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}
 }
 
@@ -122,11 +122,11 @@ func TemplatePublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if defaultPlatformTemplateService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "platform template service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "platform template service not initialized")
 		return
 	}
 	if r.Method != http.MethodPut {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
@@ -136,7 +136,7 @@ func TemplatePublish(w http.ResponseWriter, r *http.Request) {
 	}
 	category := r.URL.Query().Get("category")
 	if category == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "category is required")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "category is required")
 		return
 	}
 
@@ -165,17 +165,17 @@ func TemplatesOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if defaultPlatformTemplateService == nil {
-		handler.WriteJSONError(w, http.StatusInternalServerError, 1, "platform template service not initialized")
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, "platform template service not initialized")
 		return
 	}
 	if r.Method != http.MethodPut {
-		handler.WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 		return
 	}
 
 	category := r.URL.Query().Get("category")
 	if category == "" {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, "category is required")
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "category is required")
 		return
 	}
 
@@ -208,7 +208,7 @@ func isValidationError(err error) bool {
 // handleTemplateError 统一处理模板服务错误：校验错误返回 400，not found 返回 404，其余返回 500。
 func handleTemplateError(w http.ResponseWriter, err error, notFoundMsg, defaultMsg string) {
 	if isValidationError(err) {
-		handler.WriteJSONError(w, http.StatusBadRequest, 1, err.Error())
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, err.Error())
 		return
 	}
 	handler.HandleServiceError(w, err, notFoundMsg, defaultMsg)
