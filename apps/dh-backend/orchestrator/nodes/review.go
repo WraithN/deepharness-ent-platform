@@ -147,6 +147,7 @@ func (n *HumanReviewNode) Processor(fc *core.FlowContext) error {
 		Title:       fmt.Sprintf("代码复审待审批: %s", fc.WorkitemTitle),
 		Body:        fmt.Sprintf("需求「%s」的代码评审已完成，请查看评审报告。审批通过则完成开发，审批不通过将进行代码优化后重新评审。", fc.WorkitemTitle),
 		ActionType:  notificationobject.ActionApproveCodeOptimize,
+		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
 		Data: map[string]any{
 			"notificationType": notificationobject.TypeHumanReviewRequired,
 			"workitemId":       fc.WorkitemID,

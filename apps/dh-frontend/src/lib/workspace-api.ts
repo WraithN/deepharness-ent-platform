@@ -60,8 +60,6 @@ export const workspaceApi = {
     api.post<{ content: string }>(`/v1/workspaces/${workspaceId}/standards/generate`, req),
 
   getCICD: (workspaceId: string) => api.get<WorkspaceCICD>(`/v1/workspaces/${workspaceId}/cicd`),
-  saveCICD: (workspaceId: string, req: Partial<WorkspaceCICD>) =>
-    api.post<WorkspaceCICD>(`/v1/workspaces/${workspaceId}/cicd`, req),
 
   listPrompts: (workspaceId: string) => api.get<WorkspacePrompt[]>(`/v1/workspaces/${workspaceId}/prompts`),
   addPrompt: (workspaceId: string, libraryPromptId: string) =>

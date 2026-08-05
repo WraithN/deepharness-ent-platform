@@ -75,6 +75,10 @@ func syncAgentConfigToGateway(ctx context.Context, workspaceID string, cfg agent
 		if cfg.AdvancedConfig != nil && cfg.AdvancedConfig.MaxTokens != nil {
 			req.MaxTokens = cfg.AdvancedConfig.MaxTokens
 		}
+		if cfg.Timeout != nil {
+			secs := uint64(*cfg.Timeout)
+			req.WatchdogTimeoutSecs = &secs
+		}
 		if syncErr := defaultGatewayClient.UpdateAgentConfig(ctx, sess.ID, instanceID, req); syncErr != nil {
 			log.Printf("[AgentConfig] sync config to gatewayd session=%s instance=%s failed: %v", sess.ID, instanceID, syncErr)
 		} else {

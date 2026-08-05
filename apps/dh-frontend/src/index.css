@@ -866,4 +866,57 @@ html {
   .chat-bubble-text-open {
     max-height: 9999px;
   }
+
+  /* ── Mermaid 图表容器 ──
+     使用深色背景 + 白色文字，确保在任意主题下都能看清节点和连线。 */
+  .mermaid-diagram-wrapper {
+    background: #0f172a;
+    border: 1px solid hsl(var(--border) / 0.5);
+  }
+
+  .mermaid-diagram-wrapper svg {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    min-height: 80px;
+  }
+
+  /* Mermaid dark 主题兜底：强制白色文字 + 可见连线，防止默认主题色偏离。 */
+  .mermaid-diagram-wrapper svg text,
+  .mermaid-diagram-wrapper svg .nodeLabel,
+  .mermaid-diagram-wrapper svg .node label,
+  .mermaid-diagram-wrapper svg .edgeLabel text,
+  .mermaid-diagram-wrapper svg .label text,
+  .mermaid-diagram-wrapper svg .label {
+    fill: #ffffff !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+  }
+
+  .mermaid-diagram-wrapper svg .node rect,
+  .mermaid-diagram-wrapper svg .node circle,
+  .mermaid-diagram-wrapper svg .node polygon,
+  .mermaid-diagram-wrapper svg .node ellipse {
+    stroke: #cbd5e1 !important;
+    stroke-width: 1.5px !important;
+  }
+
+  .mermaid-diagram-wrapper svg .edgePath .path,
+  .mermaid-diagram-wrapper svg .flowchart-link,
+  .mermaid-diagram-wrapper svg line,
+  .mermaid-diagram-wrapper svg path:not(.node rect ~ path) {
+    stroke: #e2e8f0 !important;
+    stroke-width: 2px !important;
+  }
+
+  .mermaid-diagram-wrapper svg .marker {
+    fill: #e2e8f0 !important;
+    stroke: #e2e8f0 !important;
+  }
+
+  /* 确保节点底色为深色，避免被父容器背景色干扰。 */
+  .mermaid-diagram-wrapper svg .node .label-container,
+  .mermaid-diagram-wrapper svg .cluster rect {
+    fill: #1e293b !important;
+  }
 }

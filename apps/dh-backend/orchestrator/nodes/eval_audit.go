@@ -121,6 +121,7 @@ func (n *HumanAuditNode) Processor(fc *core.FlowContext) error {
 		Title:       fmt.Sprintf("架构设计审核: %s", fc.WorkitemTitle),
 		Body:        body,
 		ActionType:  notificationobject.ActionApproveCodeOptimize,
+		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
 		Data: map[string]any{
 			"notificationType":  notificationobject.TypeHumanAuditRequired,
 			"workitemId":        fc.WorkitemID,

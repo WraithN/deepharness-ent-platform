@@ -75,6 +75,9 @@ type WorkspaceAgentConfig struct {
 	BaseURL         string              `json:"baseUrl"`
 	APIKey          string              `json:"apiKey"`
 	Temperature     *float64            `json:"temperature,omitempty"`
+	// Timeout 为 SSE 看门狗无事件超时阈值（秒），默认 120 秒。
+	// 保存后会通过 /sessions/{sessionId}/agents/{instanceId}/config 同步到 gatewayd。
+	Timeout         *int                `json:"timeout,omitempty"`
 	AdvancedConfig  *AdvancedAgentConfig `json:"advancedConfig,omitempty"`
 	CreatedAt       time.Time           `json:"createdAt"`
 	UpdatedAt       time.Time           `json:"updatedAt"`

@@ -34,5 +34,6 @@ type Tenant struct {
 	LockedAgentKeys     []string  `json:"lockedAgentKeys"`
 	AllowedAgentKeys    []string  `json:"allowedAgentKeys"`
 	DefaultAgentConfigs any       `json:"defaultAgentConfigs,omitempty"`
+	CICDConfigID        string    `json:"cicdConfigId"`
 	CreatedAt           time.Time `json:"createdAt"`
 }

@@ -1,53 +1,55 @@
-package provisioner
+package directhost
 
 import (
 	"context"
 	"sync"
 
+	agent "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
+
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
 )
 
-// MockContainerPool 基于 configured 固定 IP 列表的容器池。
-// 用于本地开发/测试环境，无需 K8s。
+// ContainerPool 基于 configured 固定 IP 列表的容器池。
+// 用于 direct-host 模式（本地开发/测试环境），无需 K8s。
 // 每个 host 代表一个容器实例，包含 gatewayd + personal-stub。
-type MockContainerPool struct {
+type ContainerPool struct {
 	mu        sync.Mutex
-	hosts     []string          // configured 固定 IP 列表
-	assigned  map[string]int    // userID -> hosts 索引
-	available []int             // 可用 hosts 索引
-	ports     mockPorts         // 端口配置
+	hosts     []string        // configured 固定 IP 列表
+	assigned  map[string]int  // userID -> hosts 索引
+	available []int           // 可用 hosts 索引
+	ports     poolPorts       // 端口配置
 	max       int
 	min       int
 }
 
-type mockPorts struct {
+type poolPorts struct {
 	agentPort int
 	adminPort int
 	stubPort  int
 }
 
-// NewMockContainerPool 根据 provisioner config 创建 mock 容器池。
-func NewMockContainerPool(cfg config.ProvisionerConfig) *MockContainerPool {
-	hosts := cfg.MockHosts
+// NewContainerPool 根据 direct_host 配置创建容器池。
+func NewContainerPool(cfg config.DirectHostConfig, warmPoolMin, warmPoolMax int) *ContainerPool {
+	hosts := cfg.Hosts
 	if len(hosts) == 0 {
 		// 本地开发默认 localhost
 		hosts = []string{"127.0.0.1"}
 	}
 
-	max := cfg.WarmPoolMax
+	max := warmPoolMax
 	if max <= 0 || max > len(hosts) {
 		max = len(hosts)
 	}
 
-	min := cfg.WarmPoolMin
+	min := warmPoolMin
 	if min > len(hosts) {
 		min = len(hosts)
 	}
 
-	pool := &MockContainerPool{
+	pool := &ContainerPool{
 		hosts:    hosts,
 		assigned: make(map[string]int),
-		ports: mockPorts{
+		ports: poolPorts{
 			agentPort: cfg.AgentPort,
 			adminPort: cfg.AdminPort,
 			stubPort:  cfg.StubPort,
@@ -66,7 +68,7 @@ func NewMockContainerPool(cfg config.ProvisionerConfig) *MockContainerPool {
 
 // Acquire 为用户分配容器。
 // 已分配 -> 直接返回；未分配 -> 从可用池取；池空 -> ErrPoolExhausted。
-func (p *MockContainerPool) Acquire(_ context.Context, userID string) (*ContainerInfo, error) {
+func (p *ContainerPool) Acquire(_ context.Context, userID string) (*agent.ContainerInfo, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -77,7 +79,7 @@ func (p *MockContainerPool) Acquire(_ context.Context, userID string) (*Containe
 
 	// 从可用池取
 	if len(p.available) == 0 {
-		return nil, ErrPoolExhausted
+		return nil, agent.ErrPoolExhausted
 	}
 
 	idx := p.available[0]
@@ -87,7 +89,7 @@ func (p *MockContainerPool) Acquire(_ context.Context, userID string) (*Containe
 }
 
 // GetByUser 查找用户已分配的容器。
-func (p *MockContainerPool) GetByUser(_ context.Context, userID string) (*ContainerInfo, error) {
+func (p *ContainerPool) GetByUser(_ context.Context, userID string) (*agent.ContainerInfo, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -99,7 +101,7 @@ func (p *MockContainerPool) GetByUser(_ context.Context, userID string) (*Contai
 }
 
 // Release 释放用户的容器回池。
-func (p *MockContainerPool) Release(_ context.Context, userID string) error {
+func (p *ContainerPool) Release(_ context.Context, userID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -113,11 +115,11 @@ func (p *MockContainerPool) Release(_ context.Context, userID string) error {
 }
 
 // Status 返回池状态。
-func (p *MockContainerPool) Status(_ context.Context) (PoolStatus, error) {
+func (p *ContainerPool) Status(_ context.Context) (agent.PoolStatus, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	return PoolStatus{
+	return agent.PoolStatus{
 		Available: len(p.available),
 		Assigned:  len(p.assigned),
 		Total:     len(p.hosts),
@@ -126,8 +128,8 @@ func (p *MockContainerPool) Status(_ context.Context) (PoolStatus, error) {
 	}, nil
 }
 
-func (p *MockContainerPool) containerAt(idx int, userID string) *ContainerInfo {
-	return &ContainerInfo{
+func (p *ContainerPool) containerAt(idx int, userID string) *agent.ContainerInfo {
+	return &agent.ContainerInfo{
 		Host:      p.hosts[idx],
 		AgentPort: p.ports.agentPort,
 		AdminPort: p.ports.adminPort,

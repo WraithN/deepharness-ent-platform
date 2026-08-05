@@ -43,27 +43,29 @@ func SetAllowedAgentKeys(keys []string) {
 
 // Handler 是 workspace 模块的 HTTP 处理器。
 type Handler struct {
-	crudSvc     service.WorkspaceCRUDService
-	dirSvc      service.WorkspaceDirectoryService
-	memberSvc   service.WorkspaceMemberService
-	agentSvc    service.WorkspaceAgentService
-	standardSvc service.WorkspaceStandardService
-	cicdSvc     service.WorkspaceCICDService
-	wiProjSvc   service.WorkspaceWorkitemProjectService
-	userSvc     identityservice.UserService
+	crudSvc      service.WorkspaceCRUDService
+	dirSvc       service.WorkspaceDirectoryService
+	memberSvc    service.WorkspaceMemberService
+	agentSvc     service.WorkspaceAgentService
+	standardSvc  service.WorkspaceStandardService
+	cicdSvc      service.WorkspaceCICDService
+	cicdConfigSvc service.CICDConfigService
+	wiProjSvc    service.WorkspaceWorkitemProjectService
+	userSvc      identityservice.UserService
 }
 
 // NewHandler 创建 workspace HTTP 处理器。
-func NewHandler(crudSvc service.WorkspaceCRUDService, dirSvc service.WorkspaceDirectoryService, memberSvc service.WorkspaceMemberService, agentSvc service.WorkspaceAgentService, standardSvc service.WorkspaceStandardService, cicdSvc service.WorkspaceCICDService, wiProjSvc service.WorkspaceWorkitemProjectService, userSvc identityservice.UserService) *Handler {
+func NewHandler(crudSvc service.WorkspaceCRUDService, dirSvc service.WorkspaceDirectoryService, memberSvc service.WorkspaceMemberService, agentSvc service.WorkspaceAgentService, standardSvc service.WorkspaceStandardService, cicdSvc service.WorkspaceCICDService, cicdConfigSvc service.CICDConfigService, wiProjSvc service.WorkspaceWorkitemProjectService, userSvc identityservice.UserService) *Handler {
 	return &Handler{
-		crudSvc:     crudSvc,
-		dirSvc:      dirSvc,
-		memberSvc:   memberSvc,
-		agentSvc:    agentSvc,
-		standardSvc: standardSvc,
-		cicdSvc:     cicdSvc,
-		wiProjSvc:   wiProjSvc,
-		userSvc:     userSvc,
+		crudSvc:       crudSvc,
+		dirSvc:        dirSvc,
+		memberSvc:     memberSvc,
+		agentSvc:      agentSvc,
+		standardSvc:   standardSvc,
+		cicdSvc:       cicdSvc,
+		cicdConfigSvc: cicdConfigSvc,
+		wiProjSvc:     wiProjSvc,
+		userSvc:       userSvc,
 	}
 }
 
@@ -633,38 +635,110 @@ func (h *Handler) WorkspaceStandardByID(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// WorkspaceCICD 处理 GET /api/v1/workspaces/{id}/cicd 与 POST /api/v1/workspaces/{id}/cicd。
+// WorkspaceCICD 处理 GET /api/v1/workspaces/{id}/cicd。
+// CI/CD 配置现在由超管在能力配置中维护，租户通过 cicd_config_id 关联；
+// 工作空间仅读取其所属租户关联的全局配置。
 func (h *Handler) WorkspaceCICD(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := handler.PathValueOr404(w, r, "id")
 	if !ok {
 		return
 	}
 
+	if r.Method != http.MethodGet {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
+		return
+	}
+
+	cicd, err := h.cicdSvc.GetCICD(workspaceID)
+	if err != nil {
+		handler.HandleServiceError(w, err, "cicd not found", "failed to get cicd")
+		return
+	}
+	handler.SetJSONHeader(w)
+	json.NewEncoder(w).Encode(cicd)
+}
+
+// CICDConfigs 处理 GET /api/v1/cicd-configs 与 POST /api/v1/cicd-configs。
+// 仅超级管理员可操作：列出/创建平台级 CICD 配置。
+func (h *Handler) CICDConfigs(w http.ResponseWriter, r *http.Request) {
+	if !h.requireSuperAdmin(w, r) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
-		cicd, err := h.cicdSvc.GetCICD(workspaceID)
+		configs, err := h.cicdConfigSvc.ListCICDConfigs()
 		if err != nil {
-			handler.HandleServiceError(w, err, "cicd not found", "failed to get cicd")
+			handler.HandleServiceError(w, err, "cicd config not found", "failed to list cicd configs")
 			return
 		}
 		handler.SetJSONHeader(w)
-		json.NewEncoder(w).Encode(cicd)
+		json.NewEncoder(w).Encode(configs)
 	case http.MethodPost:
-		var req object.CICDRequest
+		var req object.CICDConfigRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
 			return
 		}
-		if req.TriggerBranches == "" && req.WebhookURL == "" && req.Script == "" {
-			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "at least one cicd field is required")
+		if req.Name == "" {
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "name is required")
 			return
 		}
-		cicd, err := h.cicdSvc.SaveCICD(workspaceID, req)
+		config, err := h.cicdConfigSvc.CreateCICDConfig(req)
 		if err != nil {
-			handler.HandleServiceError(w, err, "workspace not found", "failed to save cicd")
+			handler.HandleServiceError(w, err, "cicd config not found", "failed to create cicd config")
 			return
 		}
 		handler.SetJSONHeader(w)
-		json.NewEncoder(w).Encode(cicd)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(config)
+	default:
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
+	}
+}
+
+// CICDConfigByID 处理 GET /api/v1/cicd-configs/{id}、PUT 更新与 DELETE 删除。
+// 仅超级管理员可操作。
+func (h *Handler) CICDConfigByID(w http.ResponseWriter, r *http.Request) {
+	if !h.requireSuperAdmin(w, r) {
+		return
+	}
+
+	id, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		config, err := h.cicdConfigSvc.GetCICDConfig(id)
+		if err != nil {
+			handler.HandleServiceError(w, err, "cicd config not found", "failed to get cicd config")
+			return
+		}
+		handler.SetJSONHeader(w)
+		json.NewEncoder(w).Encode(config)
+	case http.MethodPut:
+		var req object.CICDConfigRequest
+		if !handler.DecodeJSONBody(w, r, &req) {
+			return
+		}
+		if req.Name == "" {
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "name is required")
+			return
+		}
+		config, err := h.cicdConfigSvc.UpdateCICDConfig(id, req)
+		if err != nil {
+			handler.HandleServiceError(w, err, "cicd config not found", "failed to update cicd config")
+			return
+		}
+		handler.SetJSONHeader(w)
+		json.NewEncoder(w).Encode(config)
+	case http.MethodDelete:
+		if err := h.cicdConfigSvc.DeleteCICDConfig(id); err != nil {
+			handler.HandleServiceError(w, err, "cicd config not found", "failed to delete cicd config")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
 	}

@@ -31,6 +31,8 @@ const (
 	// defaultModelVendorGroupKey/Name 是未配置厂商分组时回退使用的单一分组标识与名称。
 	defaultModelVendorGroupKey  = "default"
 	defaultModelVendorGroupName = "内置模型"
+	// defaultAgentTimeoutSeconds 是 SSE 看门狗无事件超时阈值默认值（秒）。
+	defaultAgentTimeoutSeconds = 120
 )
 
 // DBAgentConfigService 是基于 PostgreSQL 的 AgentConfigService 实现。
@@ -250,6 +252,10 @@ func (p workspaceAgentPolicy) applyDefaultConfig(cfg agent.WorkspaceAgentConfig)
 		t := *defaultCfg.Temperature
 		cfg.Temperature = &t
 	}
+	if cfg.Timeout == nil && defaultCfg.Timeout != nil {
+		t := *defaultCfg.Timeout
+		cfg.Timeout = &t
+	}
 	if cfg.AdvancedConfig == nil && defaultCfg.AdvancedConfig != nil {
 		cfg.AdvancedConfig = defaultCfg.AdvancedConfig
 	}
@@ -270,7 +276,7 @@ func (s *DBAgentConfigService) ListWorkspaceConfigs(workspaceID string) ([]agent
 	rows, err := s.db.Query(`
 		SELECT t.agent_key, t.name, t.description, t.enabled,
 			c.id, c.enabled, c.is_default, c.model, c.model_source, c.base_url, c.api_key,
-			c.temperature, c.max_tokens, c.context_window, c.advanced_config,
+			c.temperature, c.max_tokens, c.context_window, c.timeout, c.advanced_config,
 			c.created_at, c.updated_at
 		FROM platform_agent_types t
 		LEFT JOIN workspace_agent_configs c
@@ -314,7 +320,7 @@ func (s *DBAgentConfigService) GetWorkspaceConfig(workspaceID, agentKey string) 
 	row := s.db.QueryRow(`
 		SELECT t.agent_key, t.name, t.description, t.enabled,
 			c.id, c.enabled, c.is_default, c.model, c.model_source, c.base_url, c.api_key,
-			c.temperature, c.max_tokens, c.context_window, c.advanced_config,
+			c.temperature, c.max_tokens, c.context_window, c.timeout, c.advanced_config,
 			c.created_at, c.updated_at
 		FROM platform_agent_types t
 		LEFT JOIN workspace_agent_configs c
@@ -367,6 +373,12 @@ func (s *DBAgentConfigService) SaveWorkspaceConfig(workspaceID string, req objec
 		return agent.WorkspaceAgentConfig{}, err
 	}
 
+	// 未指定超时阈值时写入默认值 120 秒，与 gatewayd 插件默认值保持一致。
+	if req.Timeout == nil {
+		t := defaultAgentTimeoutSeconds
+		req.Timeout = &t
+	}
+
 	now := time.Now().UTC()
 	id := uuid.New().String()
 
@@ -386,8 +398,8 @@ func (s *DBAgentConfigService) SaveWorkspaceConfig(workspaceID string, req objec
 	_, err = tx.Exec(`
 		INSERT INTO workspace_agent_configs (
 			id, workspace_id, agent_key, enabled, is_default, model, model_source, base_url, api_key,
-			temperature, max_tokens, context_window, advanced_config, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
+			temperature, max_tokens, context_window, timeout, advanced_config, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)
 		ON CONFLICT (workspace_id, agent_key) DO UPDATE SET
 			enabled = EXCLUDED.enabled,
 			is_default = EXCLUDED.is_default,
@@ -398,10 +410,11 @@ func (s *DBAgentConfigService) SaveWorkspaceConfig(workspaceID string, req objec
 			temperature = EXCLUDED.temperature,
 			max_tokens = EXCLUDED.max_tokens,
 			context_window = EXCLUDED.context_window,
+			timeout = EXCLUDED.timeout,
 			advanced_config = EXCLUDED.advanced_config,
 			updated_at = EXCLUDED.updated_at
 	`, id, workspaceID, req.AgentKey, req.Enabled, req.IsDefault, req.Model, req.ModelSource, req.BaseURL, req.APIKey,
-		req.Temperature, advancedJSON.MaxTokens, advancedJSON.ContextWindow, advancedJSON.Raw, now)
+		req.Temperature, advancedJSON.MaxTokens, advancedJSON.ContextWindow, req.Timeout, advancedJSON.Raw, now)
 	if err != nil {
 		return agent.WorkspaceAgentConfig{}, fmt.Errorf("save workspace config failed: %w", err)
 	}
@@ -505,14 +518,14 @@ func scanWorkspaceAgentConfig(workspaceID string, row scanner) (agent.WorkspaceA
 	var isDefault sql.NullBool
 	var id, model, modelSource, baseURL, apiKey sql.NullString
 	var temperature sql.NullFloat64
-	var maxTokens, contextWindow sql.NullInt32
+	var maxTokens, contextWindow, timeout sql.NullInt32
 	var advancedRaw sql.NullString
 	var createdAt, updatedAt sql.NullTime
 
 	err := row.Scan(
 		&cfg.AgentKey, &cfg.Name, &cfg.Description, &platformEnabled,
 		&id, &configEnabled, &isDefault, &model, &modelSource, &baseURL, &apiKey,
-		&temperature, &maxTokens, &contextWindow, &advancedRaw,
+		&temperature, &maxTokens, &contextWindow, &timeout, &advancedRaw,
 		&createdAt, &updatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -543,6 +556,10 @@ func scanWorkspaceAgentConfig(workspaceID string, row scanner) (agent.WorkspaceA
 	if temperature.Valid {
 		v := temperature.Float64
 		cfg.Temperature = &v
+	}
+	if timeout.Valid {
+		v := int(timeout.Int32)
+		cfg.Timeout = &v
 	}
 
 	cfg.AdvancedConfig, err = unmarshalAdvancedConfig(maxTokens, contextWindow, advancedRaw)

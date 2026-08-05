@@ -64,12 +64,13 @@ dh-backend (Go, :8080) — 用户管理后台
 
 ### Per-User 容器池架构
 
-dh-backend 通过 `ContainerPool` 为每个已认证用户按需分配 Agent 容器。容器池有两种模式：
+dh-backend 通过 `ContainerPool` 为每个已认证用户按需分配 Agent 容器。容器池有三种模式：
 
 | 模式 | 配置值 | 说明 |
 |------|--------|------|
-| **Mock** | `agent_provisioner.type: "mock"` | 使用配置的固定 IP 列表模拟容器分配，适用于本地开发 |
+| **Direct-Host** | `agent_provisioner.type: "direct-host"` | 使用配置的固定 IP 列表模拟容器分配，适用于本地开发 |
 | **K8s** | `agent_provisioner.type: "k8s"` | 使用 `client-go` 管理 gatewayd Pod 的完整生命周期（创建/绑定/休眠/唤醒/销毁），适用于生产环境 |
+| **Self-Defined** | `agent_provisioner.type: "self-defined"` | 通过 HTTP API 对接自定义外部供给器，适用于自研调度系统 |
 
 请求处理链：
 
@@ -371,31 +372,51 @@ Schema 文件位于 `infra/database/`，按领域拆分（identity / workspace /
 
 ```yaml
 agent_provisioner:
-  type: "mock"                    # mock（本地开发）或 k8s（生产）
-  namespace: "dh-agents"          # K8s 命名空间
-  image: "deepharness/gatewayd:latest"
+  type: "direct-host"             # direct-host（本地开发）| k8s（生产）| self-defined（自定义）
+
+  # 公共配置
   warm_pool_min: 2                # 暖池最小预热数
   warm_pool_max: 10               # 暖池最大数
   idle_timeout: "15m"             # 空闲超时后休眠
   sleep_evict_timeout: "30m"      # 休眠超时后销毁
   max_active_per_user: 3          # 每用户最大活跃容器数
-  agent_port: 2345                # gatewayd API 端口
-  admin_port: 2346                # gatewayd Admin 端口
-  stub_port: 8090                 # personal-stub 端口（与 gatewayd 共部署）
-  kubeconfig_path: ""             # K8s kubeconfig 路径
-  mock_hosts:                     # mock 模式固定 IP 列表
-    - "127.0.0.1"
-  resource_active:                # 活跃状态资源限额
-    cpu_request: "2000m"
-    cpu_limit: "4000m"
-    memory_request: "4Gi"
-    memory_limit: "8Gi"
-  resource_sleeping:              # 休眠状态资源限额
-    cpu_request: "100m"
-    cpu_limit: "200m"
-    memory_request: "128Mi"
-    memory_limit: "256Mi"
-  supports_bind: false            # 是否支持容器绑定（热启动）
+
+  # direct-host 模式配置
+  direct_host:
+    hosts:                        # 固定 IP 列表
+      - "127.0.0.1"
+    agent_port: 2345              # gatewayd API 端口
+    admin_port: 2346              # gatewayd Admin 端口
+    stub_port: 8090               # personal-stub 端口（与 gatewayd 共部署）
+
+  # k8s 模式配置
+  k8s:
+    namespace: "dh-agents"        # K8s 命名空间
+    image: "deepharness/gatewayd:latest"
+    agent_port: 2345
+    admin_port: 2346
+    stub_port: 8090
+    kubeconfig_path: ""           # K8s kubeconfig 路径
+    shared_pvc_name: "dh-workspace"
+    workspace_mount_path: "/workspace"
+    supports_bind: false          # 是否支持容器绑定（热启动）
+    resource_active:              # 活跃状态资源限额
+      cpu_request: "2000m"
+      cpu_limit: "4000m"
+      memory_request: "4Gi"
+      memory_limit: "8Gi"
+    resource_sleeping:            # 休眠状态资源限额
+      cpu_request: "100m"
+      cpu_limit: "200m"
+      memory_request: "128Mi"
+      memory_limit: "256Mi"
+
+  # self-defined 模式配置
+  self_defined:
+    endpoint: ""                  # 外部供给器 API 基地址
+    token: ""                     # Bearer Token 认证
+    timeout: "30s"                # HTTP 调用超时
+    stub_port: 8090               # personal-stub 端口
 ```
 
 ## Agent Runtime 状态上报接口

@@ -12,5 +12,7 @@ type SaveWorkspaceConfigRequest struct {
 	BaseURL        string                     `json:"baseUrl"`
 	APIKey         string                     `json:"apiKey"`
 	Temperature    *float64                   `json:"temperature,omitempty"`
+	// Timeout 为 SSE 看门狗无事件超时阈值（秒），默认 120 秒。
+	Timeout        *int                        `json:"timeout,omitempty"`
 	AdvancedConfig *agent.AdvancedAgentConfig `json:"advancedConfig,omitempty"`
 }

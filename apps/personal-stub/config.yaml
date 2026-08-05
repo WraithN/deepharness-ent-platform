@@ -6,3 +6,15 @@ server:
 
 workspace:
   root: "/home/nan/test"
+
+# 同容器 gatewayd admin API 地址（管理面代理用）
+# personal-stub 通过此地址代理 gatewayd 的健康/绑定/休眠/唤醒操作
+gatewayd:
+  admin_url: "http://localhost:2346"
+
+# dh-backend 地址（上报中继用）
+# personal-stub 将 gatewayd 运行时状态转发到 dh-backend
+dh_backend:
+  url: "http://localhost:8080"
+  runtime_bearer_token: ""    # 与 dh-backend 的 agent_runtime.bearer_token 一致
+  runtime_id: ""              # 当前容器对应的 agent_runtime ID

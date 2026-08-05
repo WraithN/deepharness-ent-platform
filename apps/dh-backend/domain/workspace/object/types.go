@@ -58,6 +58,15 @@ type CICDRequest struct {
 	Script          string `json:"script"`
 }
 
+// CICDConfigRequest 保存全局 CICD 配置请求。
+type CICDConfigRequest struct {
+	Name            string `json:"name"`
+	TriggerBranches string `json:"triggerBranches"`
+	WebhookURL      string `json:"webhookUrl"`
+	Script          string `json:"script"`
+	Config          any    `json:"config,omitempty"`
+}
+
 // MineWorkspace 表示当前用户加入的工作空间及其成员关系。
 type MineWorkspace struct {
 	workspace.Workspace

@@ -11,20 +11,20 @@ import (
 )
 
 const (
-	gatewaydHealthPath  = "/admin/health"
-	gatewaydBindPath    = "/admin/bind"
-	gatewaydUnbindPath  = "/admin/unbind"
-	gatewaydSleepPath   = "/admin/sleep"
-	gatewaydWakePath    = "/admin/wake"
-	gatewaydHTTPTimeout = 10 * time.Second
+	containerHealthPath  = "/api/v1/container/health"
+	containerBindPath    = "/api/v1/container/bind"
+	containerUnbindPath  = "/api/v1/container/unbind"
+	containerSleepPath   = "/api/v1/container/sleep"
+	containerWakePath    = "/api/v1/container/wake"
+	containerHTTPTimeout = 10 * time.Second
 )
 
-// HealthResponse gatewayd /admin/health 响应。
+// HealthResponse personal-stub /api/v1/container/health 响应。
 type HealthResponse struct {
 	Status string `json:"status"`
 }
 
-// BindRequest gatewayd /admin/bind 请求体。
+// BindRequest personal-stub /api/v1/container/bind 请求体。
 type BindRequest struct {
 	WorkspaceID   string   `json:"workspaceId"`
 	UserID        string   `json:"userId"`
@@ -33,23 +33,24 @@ type BindRequest struct {
 	AgentType     string   `json:"agentType"`
 }
 
-// GatewaydAdminClient 封装对 gatewayd Admin API（:2346）的 HTTP 调用。
-type GatewaydAdminClient struct {
+// ContainerAdminClient 封装对 personal-stub 容器管理 API（:8090）的 HTTP 调用。
+// personal-stub 内部代理到同容器 gatewayd admin API。
+type ContainerAdminClient struct {
 	httpClient *http.Client
 }
 
-// NewGatewaydAdminClient 创建新的 admin 客户端。
-func NewGatewaydAdminClient() *GatewaydAdminClient {
-	return &GatewaydAdminClient{
+// NewContainerAdminClient 创建新的容器管理客户端。
+func NewContainerAdminClient() *ContainerAdminClient {
+	return &ContainerAdminClient{
 		httpClient: &http.Client{
-			Timeout: gatewaydHTTPTimeout,
+			Timeout: containerHTTPTimeout,
 		},
 	}
 }
 
-// Health 检查 gatewayd 实例健康状态。
-func (c *GatewaydAdminClient) Health(ctx context.Context, adminURL string) (*HealthResponse, error) {
-	url := adminURL + gatewaydHealthPath
+// Health 检查容器健康状态（personal-stub + gatewayd 组合状态）。
+func (c *ContainerAdminClient) Health(ctx context.Context, containerURL string) (*HealthResponse, error) {
+	url := containerURL + containerHealthPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create health request failed: %w", err)
@@ -72,20 +73,20 @@ func (c *GatewaydAdminClient) Health(ctx context.Context, adminURL string) (*Hea
 	return &hr, nil
 }
 
-// Bind 通知 gatewayd 绑定用户上下文。
-func (c *GatewaydAdminClient) Bind(ctx context.Context, adminURL string, req BindRequest) error {
-	return c.postJSON(ctx, adminURL+gatewaydBindPath, req)
+// Bind 通知容器绑定用户上下文。
+func (c *ContainerAdminClient) Bind(ctx context.Context, containerURL string, req BindRequest) error {
+	return c.postJSON(ctx, containerURL+containerBindPath, req)
 }
 
-// Unbind 通知 gatewayd 解绑用户上下文。
-func (c *GatewaydAdminClient) Unbind(ctx context.Context, adminURL string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, adminURL+gatewaydUnbindPath, nil)
+// Unbind 通知容器解绑用户上下文。
+func (c *ContainerAdminClient) Unbind(ctx context.Context, containerURL string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, containerURL+containerUnbindPath, nil)
 	if err != nil {
 		return fmt.Errorf("create unbind request failed: %w", err)
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("unbind request to %s failed: %w", adminURL, err)
+		return fmt.Errorf("unbind request to %s failed: %w", containerURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
@@ -94,15 +95,15 @@ func (c *GatewaydAdminClient) Unbind(ctx context.Context, adminURL string) error
 	return nil
 }
 
-// Sleep 通知 gatewayd 进入休眠状态。
-func (c *GatewaydAdminClient) Sleep(ctx context.Context, adminURL string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, adminURL+gatewaydSleepPath, nil)
+// Sleep 通知容器进入休眠状态。
+func (c *ContainerAdminClient) Sleep(ctx context.Context, containerURL string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, containerURL+containerSleepPath, nil)
 	if err != nil {
 		return fmt.Errorf("create sleep request failed: %w", err)
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("sleep request to %s failed: %w", adminURL, err)
+		return fmt.Errorf("sleep request to %s failed: %w", containerURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
@@ -111,15 +112,15 @@ func (c *GatewaydAdminClient) Sleep(ctx context.Context, adminURL string) error 
 	return nil
 }
 
-// Wake 通知 gatewayd 从休眠中唤醒。
-func (c *GatewaydAdminClient) Wake(ctx context.Context, adminURL string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, adminURL+gatewaydWakePath, nil)
+// Wake 通知容器从休眠中唤醒。
+func (c *ContainerAdminClient) Wake(ctx context.Context, containerURL string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, containerURL+containerWakePath, nil)
 	if err != nil {
 		return fmt.Errorf("create wake request failed: %w", err)
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("wake request to %s failed: %w", adminURL, err)
+		return fmt.Errorf("wake request to %s failed: %w", containerURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
@@ -128,7 +129,7 @@ func (c *GatewaydAdminClient) Wake(ctx context.Context, adminURL string) error {
 	return nil
 }
 
-func (c *GatewaydAdminClient) postJSON(ctx context.Context, url string, body interface{}) error {
+func (c *ContainerAdminClient) postJSON(ctx context.Context, url string, body interface{}) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("marshal body failed: %w", err)

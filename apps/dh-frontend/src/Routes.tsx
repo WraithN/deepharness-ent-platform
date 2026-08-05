@@ -31,6 +31,7 @@ import { CommandManagement } from "@/pages/CommandManagement";
 import { TemplateManagement } from "@/pages/TemplateManagement";
 import { AgentRuntimePage } from "@/pages/AgentRuntimePage";
 import { PrototypeTemplateManagement } from "@/pages/PrototypeTemplateManagement";
+import { CICDConfigManagement } from "@/pages/CICDConfigManagement";
 
 export const routes: RouteObject[] = [
   { path: "/login", element: <Login /> },
@@ -59,6 +60,7 @@ export const routes: RouteObject[] = [
       { path: "skills", element: <AdminPage /> },
       { path: "prompts", element: <AdminPage /> },
       { path: "commands", element: <CommandManagement /> },
+      { path: "cicd-configs", element: <CICDConfigManagement /> },
       { path: "templates", element: <TemplateManagement /> },
       { path: "proto-templates", element: <PrototypeTemplateManagement /> },
     ],

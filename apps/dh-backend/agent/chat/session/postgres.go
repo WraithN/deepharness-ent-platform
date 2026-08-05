@@ -107,7 +107,7 @@ func (s *PostgresStore) ListSessions(ctx context.Context, workspaceID, userID st
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, workspace_id, COALESCE(workspace_path, ''), COALESCE(user_id, ''), agent_id, agent_type, model, project_id, title, context, created_at, updated_at
 		FROM agent_sessions
-		WHERE workspace_id = $1 AND (COALESCE(user_id, '') = '' OR user_id = $2)
+		WHERE workspace_id = $1 AND ($2 = '' OR COALESCE(user_id, '') = '' OR user_id = $2)
 		ORDER BY updated_at DESC
 	`, workspaceID, userID)
 	if err != nil {

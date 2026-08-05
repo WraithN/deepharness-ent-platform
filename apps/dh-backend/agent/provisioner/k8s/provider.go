@@ -29,20 +29,21 @@ const (
 	podNamePrefix        = "gw-"
 )
 
-// AdminClient gatewayd Admin API 的最小依赖接口，避免与 provisioner 包形成循环引用。
+// AdminClient 容器管理 API 的最小依赖接口，避免与 provisioner 包形成循环引用。
+// 管理面调用通过 personal-stub 代理到 gatewayd。
 type AdminClient interface {
-	Health(ctx context.Context, adminURL string) (*HealthResponse, error)
-	Bind(ctx context.Context, adminURL string, req BindRequest) error
-	Sleep(ctx context.Context, adminURL string) error
-	Wake(ctx context.Context, adminURL string) error
+	Health(ctx context.Context, containerURL string) (*HealthResponse, error)
+	Bind(ctx context.Context, containerURL string, req BindRequest) error
+	Sleep(ctx context.Context, containerURL string) error
+	Wake(ctx context.Context, containerURL string) error
 }
 
-// HealthResponse gatewayd /admin/health 响应。
+// HealthResponse personal-stub /api/v1/container/health 响应。
 type HealthResponse struct {
 	Status string `json:"status"`
 }
 
-// BindRequest gatewayd /admin/bind 请求体。
+// BindRequest personal-stub /api/v1/container/bind 请求体。
 type BindRequest struct {
 	WorkspaceID   string   `json:"workspaceId"`
 	UserID        string   `json:"userId"`
@@ -50,6 +51,9 @@ type BindRequest struct {
 	Roles         []string `json:"roles"`
 	AgentType     string   `json:"agentType"`
 }
+
+// ProviderName 供给器类型名称。
+const ProviderName = "k8s"
 
 // Provider 基于 K8s 原生 API 的 Agent 实例供给器。
 // 通过直接操作 Pod 资源实现暖池、绑定、休眠/唤醒、驱逐等生命周期管理。
@@ -66,15 +70,15 @@ func New(cfg config.ProvisionerConfig, adminClient AdminClient) (*Provider, erro
 	var restCfg *rest.Config
 	var err error
 
-	if cfg.Namespace == "" {
+	if cfg.K8s.Namespace == "" {
 		return nil, fmt.Errorf("k8s provisioner requires namespace")
 	}
-	if cfg.Image == "" {
+	if cfg.K8s.Image == "" {
 		return nil, fmt.Errorf("k8s provisioner requires image")
 	}
 
-	if cfg.KubeconfigPath != "" {
-		restCfg, err = clientcmd.BuildConfigFromFlags("", cfg.KubeconfigPath)
+	if cfg.K8s.KubeconfigPath != "" {
+		restCfg, err = clientcmd.BuildConfigFromFlags("", cfg.K8s.KubeconfigPath)
 	} else {
 		restCfg, err = rest.InClusterConfig()
 	}
@@ -92,6 +96,11 @@ func New(cfg config.ProvisionerConfig, adminClient AdminClient) (*Provider, erro
 		adminClient: adminClient,
 		cfg:         cfg,
 	}, nil
+}
+
+// Name 返回供给器类型名称。
+func (p *Provider) Name() string {
+	return ProviderName
 }
 
 // Provision 为用户分配 Agent 实例。
@@ -135,25 +144,25 @@ func (p *Provider) Provision(ctx context.Context, req agent.ProvisionRequest) (a
 	return p.createUserPod(ctx, req)
 }
 
-// Sleep 休眠实例：调用 gatewayd /admin/sleep 或降低资源配额（降级模式）。
+// Sleep 休眠实例：通过 personal-stub 管理面调用容器休眠或降低资源配额（降级模式）。
 func (p *Provider) Sleep(ctx context.Context, instanceID string) error {
 	pod, err := p.getPod(ctx, instanceID)
 	if err != nil {
 		return err
 	}
 
-	adminURL := p.podAdminURL(pod)
+	containerURL := p.podStubURL(pod)
 
-	if p.cfg.SupportsBind {
-		if err := p.adminClient.Sleep(ctx, adminURL); err != nil {
-			log.Printf("[K8sProvider] gatewayd sleep failed for %s, degrading to resource scale-down: %v", instanceID, err)
+	if p.cfg.K8s.SupportsBind {
+		if err := p.adminClient.Sleep(ctx, containerURL); err != nil {
+			log.Printf("[K8sProvider] container sleep failed for %s, degrading to resource scale-down: %v", instanceID, err)
 		}
 	} else {
 		log.Printf("[K8sProvider] SupportsBind=false, scaling down resources for %s", instanceID)
 	}
 
 	// 降低资源配额到休眠级别
-	if err := p.patchPodResources(ctx, pod, p.cfg.ResourceSleeping); err != nil {
+	if err := p.patchPodResources(ctx, pod, p.cfg.K8s.ResourceSleeping); err != nil {
 		return fmt.Errorf("patch pod resources to sleeping failed: %w", err)
 	}
 
@@ -175,16 +184,16 @@ func (p *Provider) Wake(ctx context.Context, instanceID string) (agent.AgentInst
 		return agent.AgentInstance{}, err
 	}
 
-	adminURL := p.podAdminURL(pod)
+	containerURL := p.podStubURL(pod)
 
-	if p.cfg.SupportsBind {
-		if err := p.adminClient.Wake(ctx, adminURL); err != nil {
-			log.Printf("[K8sProvider] gatewayd wake failed for %s, degrading to resource scale-up: %v", instanceID, err)
+	if p.cfg.K8s.SupportsBind {
+		if err := p.adminClient.Wake(ctx, containerURL); err != nil {
+			log.Printf("[K8sProvider] container wake failed for %s, degrading to resource scale-up: %v", instanceID, err)
 		}
 	}
 
 	// 恢复资源配额到活跃级别
-	if err := p.patchPodResources(ctx, pod, p.cfg.ResourceActive); err != nil {
+	if err := p.patchPodResources(ctx, pod, p.cfg.K8s.ResourceActive); err != nil {
 		return agent.AgentInstance{}, fmt.Errorf("patch pod resources to active failed: %w", err)
 	}
 
@@ -209,7 +218,7 @@ func (p *Provider) Wake(ctx context.Context, instanceID string) (agent.AgentInst
 
 // Destroy 销毁实例：删除 Pod（保留 PVC）。
 func (p *Provider) Destroy(ctx context.Context, instanceID string) error {
-	err := p.clientset.CoreV1().Pods(p.cfg.Namespace).Delete(ctx, instanceID, metav1.DeleteOptions{})
+	err := p.clientset.CoreV1().Pods(p.cfg.K8s.Namespace).Delete(ctx, instanceID, metav1.DeleteOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete pod %s failed: %w", instanceID, err)
 	}
@@ -227,7 +236,7 @@ func (p *Provider) Status(ctx context.Context, instanceID string) (agent.Instanc
 
 // FindByUser 按 workspaceID + userID 查找已有 Pod。
 func (p *Provider) FindByUser(ctx context.Context, workspaceID, userID string) (*agent.AgentInstance, error) {
-	pods, err := p.clientset.CoreV1().Pods(p.cfg.Namespace).List(ctx, metav1.ListOptions{
+	pods, err := p.clientset.CoreV1().Pods(p.cfg.K8s.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: SelectorByUser(workspaceID, userID),
 	})
 	if err != nil {
@@ -253,7 +262,7 @@ func (p *Provider) WarmPoolEnsure(ctx context.Context, min int) error {
 		return nil
 	}
 
-	pods, err := p.clientset.CoreV1().Pods(p.cfg.Namespace).List(ctx, metav1.ListOptions{
+	pods, err := p.clientset.CoreV1().Pods(p.cfg.K8s.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: SelectorWarmPool(),
 	})
 	if err != nil {
@@ -270,8 +279,8 @@ func (p *Provider) WarmPoolEnsure(ctx context.Context, min int) error {
 	needed := min - available
 	for i := 0; i < needed; i++ {
 		name := generatePodName()
-		pod := BuildWarmPoolPod(name, p.cfg)
-		if _, err := p.clientset.CoreV1().Pods(p.cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		pod := BuildWarmPoolPod(name, p.cfg.K8s)
+		if _, err := p.clientset.CoreV1().Pods(p.cfg.K8s.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 			log.Printf("[K8sProvider] create warm pool pod %s failed: %v", name, err)
 			continue
 		}
@@ -283,7 +292,7 @@ func (p *Provider) WarmPoolEnsure(ctx context.Context, min int) error {
 
 // WarmPoolStatus 查询暖池状态。
 func (p *Provider) WarmPoolStatus(ctx context.Context) (agent.WarmPoolStatus, error) {
-	pods, err := p.clientset.CoreV1().Pods(p.cfg.Namespace).List(ctx, metav1.ListOptions{
+	pods, err := p.clientset.CoreV1().Pods(p.cfg.K8s.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: SelectorWarmPool(),
 	})
 	if err != nil {
@@ -309,7 +318,7 @@ func (p *Provider) WarmPoolStatus(ctx context.Context) (agent.WarmPoolStatus, er
 
 // findUnboundWarmPod 查找一个可用的暖池 Pod。
 func (p *Provider) findUnboundWarmPod(ctx context.Context) (*corev1.Pod, error) {
-	pods, err := p.clientset.CoreV1().Pods(p.cfg.Namespace).List(ctx, metav1.ListOptions{
+	pods, err := p.clientset.CoreV1().Pods(p.cfg.K8s.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: SelectorWarmPool(),
 	})
 	if err != nil {
@@ -325,20 +334,20 @@ func (p *Provider) findUnboundWarmPod(ctx context.Context) (*corev1.Pod, error) 
 }
 
 // bindWarmPod 将暖池 Pod 绑定到用户。
-// SupportsBind=true 时调用 gatewayd /admin/bind；否则通过环境变量注入用户上下文后重建 Pod。
+// SupportsBind=true 时通过 personal-stub 管理面调用容器绑定；否则通过环境变量注入用户上下文后重建 Pod。
 func (p *Provider) bindWarmPod(ctx context.Context, pod *corev1.Pod, req agent.ProvisionRequest) (agent.ProvisionResult, error) {
 	instanceID := pod.Name
 
-	if p.cfg.SupportsBind {
-		adminURL := p.podAdminURL(pod)
-		err := p.adminClient.Bind(ctx, adminURL, BindRequest{
+	if p.cfg.K8s.SupportsBind {
+		containerURL := p.podStubURL(pod)
+		err := p.adminClient.Bind(ctx, containerURL, BindRequest{
 			WorkspaceID: req.WorkspaceID,
 			UserID:      req.UserID,
 			Roles:       req.Roles,
 			AgentType:   req.AgentType,
 		})
 		if err != nil {
-			return agent.ProvisionResult{}, fmt.Errorf("gatewayd bind failed for %s: %w", instanceID, err)
+			return agent.ProvisionResult{}, fmt.Errorf("container bind failed for %s: %w", instanceID, err)
 		}
 	}
 
@@ -374,16 +383,16 @@ func (p *Provider) bindWarmPod(ctx context.Context, pod *corev1.Pod, req agent.P
 // createUserPod 冷启动创建新的用户 Pod。
 func (p *Provider) createUserPod(ctx context.Context, req agent.ProvisionRequest) (agent.ProvisionResult, error) {
 	name := generatePodName()
-	pod := BuildUserPod(name, req.WorkspaceID, req.UserID, p.cfg, nil)
+	pod := BuildUserPod(name, req.WorkspaceID, req.UserID, p.cfg.K8s, nil)
 
-	if _, err := p.clientset.CoreV1().Pods(p.cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+	if _, err := p.clientset.CoreV1().Pods(p.cfg.K8s.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		return agent.ProvisionResult{}, fmt.Errorf("create user pod %s failed: %w", name, err)
 	}
 
 	log.Printf("[K8sProvider] created user pod %s for ws=%s user=%s", name, req.WorkspaceID, req.UserID)
 
-	if p.cfg.SupportsBind {
-		// 等待 Pod 就绪后调用 bind
+	if p.cfg.K8s.SupportsBind {
+		// 等待 Pod 就绪后通过 personal-stub 管理面调用 bind
 		if err := p.waitPodReady(ctx, name); err != nil {
 			return agent.ProvisionResult{}, fmt.Errorf("wait pod ready for bind failed: %w", err)
 		}
@@ -391,14 +400,14 @@ func (p *Provider) createUserPod(ctx context.Context, req agent.ProvisionRequest
 		if err != nil {
 			return agent.ProvisionResult{}, err
 		}
-		adminURL := p.podAdminURL(updated)
-		if err := p.adminClient.Bind(ctx, adminURL, BindRequest{
+		containerURL := p.podStubURL(updated)
+		if err := p.adminClient.Bind(ctx, containerURL, BindRequest{
 			WorkspaceID: req.WorkspaceID,
 			UserID:      req.UserID,
 			Roles:       req.Roles,
 			AgentType:   req.AgentType,
 		}); err != nil {
-			log.Printf("[K8sProvider] gatewayd bind failed for %s, continuing with env-based config: %v", name, err)
+			log.Printf("[K8sProvider] container bind failed for %s, continuing with env-based config: %v", name, err)
 		}
 	} else {
 		// 降级模式：等待 Pod 就绪即可
@@ -422,7 +431,7 @@ func (p *Provider) createUserPod(ctx context.Context, req agent.ProvisionRequest
 
 // getPod 获取指定 Pod。
 func (p *Provider) getPod(ctx context.Context, name string) (*corev1.Pod, error) {
-	pod, err := p.clientset.CoreV1().Pods(p.cfg.Namespace).Get(ctx, name, metav1.GetOptions{})
+	pod, err := p.clientset.CoreV1().Pods(p.cfg.K8s.Namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("pod %s not found", name)
@@ -490,7 +499,7 @@ func (p *Provider) patchPodLabels(ctx context.Context, name string, labels, anno
 		return fmt.Errorf("marshal patch failed: %w", err)
 	}
 
-	_, err = p.clientset.CoreV1().Pods(p.cfg.Namespace).Patch(ctx, name, types.MergePatchType, data, metav1.PatchOptions{})
+	_, err = p.clientset.CoreV1().Pods(p.cfg.K8s.Namespace).Patch(ctx, name, types.MergePatchType, data, metav1.PatchOptions{})
 	return err
 }
 
@@ -511,22 +520,33 @@ func (p *Provider) patchPodResources(ctx context.Context, pod *corev1.Pod, res c
 		return fmt.Errorf("marshal resource patch failed: %w", err)
 	}
 
-	_, err = p.clientset.CoreV1().Pods(p.cfg.Namespace).Patch(ctx, pod.Name, types.StrategicMergePatchType, data, metav1.PatchOptions{})
+	_, err = p.clientset.CoreV1().Pods(p.cfg.K8s.Namespace).Patch(ctx, pod.Name, types.StrategicMergePatchType, data, metav1.PatchOptions{})
 	return err
 }
 
-// podAdminURL 构建 Pod 的 admin API 地址（http://{podIP}:{adminPort}）。
+// podAdminURL 构建 Pod 的 gatewayd admin API 地址（http://{podIP}:{adminPort}）。
+// 用于会话面直连（session/chat/events）。
 func (p *Provider) podAdminURL(pod *corev1.Pod) string {
-	port := p.cfg.AdminPort
+	port := p.cfg.K8s.AdminPort
 	if port == 0 {
 		port = defaultAdminPort
 	}
 	return fmt.Sprintf("http://%s:%d", pod.Status.PodIP, port)
 }
 
+// podStubURL 构建 Pod 的 personal-stub 管理面地址（http://{podIP}:{stubPort}）。
+// 用于管理面调用（健康/绑定/休眠/唤醒），personal-stub 内部代理到 gatewayd。
+func (p *Provider) podStubURL(pod *corev1.Pod) string {
+	port := p.cfg.K8s.StubPort
+	if port == 0 {
+		port = defaultStubPort
+	}
+	return fmt.Sprintf("http://%s:%d", pod.Status.PodIP, port)
+}
+
 // podAgentURL 构建 Pod 的 agent API 地址（http://{podIP}:{agentPort}）。
 func (p *Provider) podAgentURL(pod *corev1.Pod) string {
-	port := p.cfg.AgentPort
+	port := p.cfg.K8s.AgentPort
 	if port == 0 {
 		port = defaultAgentPort
 	}

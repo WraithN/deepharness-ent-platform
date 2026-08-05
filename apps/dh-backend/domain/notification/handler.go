@@ -146,6 +146,9 @@ func Action(w http.ResponseWriter, r *http.Request) {
 		if req.Approved != nil {
 			updated.Data["approved"] = *req.Approved
 		}
+		if req.Reason != "" {
+			updated.Data["rejectReason"] = req.Reason
+		}
 	}
 	if onAction != nil && req.Action == "approve" {
 		userID, _ := middleware.UserIDFromContext(r.Context())

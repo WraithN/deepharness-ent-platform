@@ -111,6 +111,7 @@ func (n *TestPlanReviewNode) Processor(fc *core.FlowContext) error {
 		Title:       fmt.Sprintf("测试方案评审: %s", fc.WorkitemTitle),
 		Body:        fmt.Sprintf("需求「%s」的测试方案已生成，请评审。通过则进入用例生成，不通过将重新设计测试方案。", fc.WorkitemTitle),
 		ActionType:  notificationobject.ActionApproveCodeOptimize,
+		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
 		Data: map[string]any{
 			"notificationType": notificationobject.TypeTestPlanReviewRequired,
 			"workitemId":       fc.WorkitemID,
@@ -224,6 +225,7 @@ func (n *TestCaseReviewNode) Processor(fc *core.FlowContext) error {
 		Title:       fmt.Sprintf("用例评审: %s", fc.WorkitemTitle),
 		Body:        fmt.Sprintf("需求「%s」的测试用例已生成，请评审。通过则执行自动化测试，不通过将重新生成用例。", fc.WorkitemTitle),
 		ActionType:  notificationobject.ActionApproveCodeOptimize,
+		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
 		Data: map[string]any{
 			"notificationType": notificationobject.TypeTestCaseReviewRequired,
 			"workitemId":       fc.WorkitemID,
@@ -378,6 +380,7 @@ func (n *TestAdmissionReviewNode) Processor(fc *core.FlowContext) error {
 		Title:       fmt.Sprintf("测试准入评审: %s", fc.WorkitemTitle),
 		Body:        fmt.Sprintf("需求「%s」的自动化测试与缺陷修复已完成，请评审。通过则结束测试，不通过将重新执行测试。", fc.WorkitemTitle),
 		ActionType:  notificationobject.ActionApproveCodeOptimize,
+		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
 		Data: map[string]any{
 			"notificationType":   notificationobject.TypeTestAdmissionReviewRequired,
 			"workitemId":         fc.WorkitemID,

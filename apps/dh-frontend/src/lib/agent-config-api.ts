@@ -10,6 +10,8 @@ export interface SaveWorkspaceAgentConfigRequest {
   baseUrl: string;
   apiKey: string;
   temperature?: number;
+  /** SSE 看门狗无事件超时阈值（秒），默认 120。 */
+  timeout?: number;
   advancedConfig?: {
     maxTokens?: number;
     contextWindow?: number;

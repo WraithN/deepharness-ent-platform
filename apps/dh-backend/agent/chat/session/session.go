@@ -138,10 +138,11 @@ func (s *SessionStore) ListSessions(ctx context.Context, workspaceID, userID str
 	result := make([]chat.Session, 0, len(s.sessions))
 	for _, sess := range s.sessions {
 		// 按 workspace + user 隔离；未设置 user_id 的历史数据不过滤用户，避免切换后丢失。
+		// userID 为空表示不过滤用户（如配置同步场景）。
 		if sess.WorkspaceID != workspaceID {
 			continue
 		}
-		if sess.UserID != "" && sess.UserID != userID {
+		if userID != "" && sess.UserID != "" && sess.UserID != userID {
 			continue
 		}
 		result = append(result, sess)

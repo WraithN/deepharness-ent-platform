@@ -1,4 +1,4 @@
-package mock
+package directhost
 
 import (
 	"context"
@@ -11,28 +11,32 @@ import (
 	"golang.org/x/exp/rand"
 )
 
-// Provider 本地开发 Mock，模拟 Agent 实例生命周期，无 K8s 依赖。
+// ProviderName 供给器类型名称。
+const ProviderName = "direct-host"
+
+// Provider 本地开发供给器，模拟 Agent 实例生命周期，无 K8s 依赖。
+// 使用固定主机列表模拟容器分配，适用于本地开发与测试环境。
 type Provider struct {
-	mu         sync.Mutex
-	instances  map[string]*mockInstance
-	warmPool   []*mockInstance
-	adminURL   string
-	agentURL   string
-	nextID     int
-	simDelay   time.Duration
+	mu        sync.Mutex
+	instances map[string]*directHostInstance
+	warmPool  []*directHostInstance
+	adminURL  string
+	agentURL  string
+	nextID    int
+	simDelay  time.Duration
 }
 
-type mockInstance struct {
-	instanceID    string
-	workspaceID   string
-	userID        string
-	status        agent.InstanceStatus
-	adminURL      string
-	agentURL      string
-	assignedAt    time.Time
+type directHostInstance struct {
+	instanceID  string
+	workspaceID string
+	userID      string
+	status      agent.InstanceStatus
+	adminURL    string
+	agentURL    string
+	assignedAt  time.Time
 }
 
-// Config Mock 供给器的配置参数。
+// Config direct-host 供给器的配置参数。
 type Config struct {
 	AdminURL      string
 	AgentURL      string
@@ -40,14 +44,19 @@ type Config struct {
 	SimulateDelay time.Duration
 }
 
-// New 创建 MockProvider。
+// New 创建 direct-host Provider。
 func New(cfg Config) *Provider {
 	return &Provider{
-		instances: make(map[string]*mockInstance),
+		instances: make(map[string]*directHostInstance),
 		adminURL:  cfg.AdminURL,
 		agentURL:  cfg.AgentURL,
 		simDelay:  cfg.SimulateDelay,
 	}
+}
+
+// Name 返回供给器类型名称。
+func (p *Provider) Name() string {
+	return ProviderName
 }
 
 func (p *Provider) provisionDelay() {
@@ -61,7 +70,7 @@ func (p *Provider) nextInstanceID() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.nextID++
-	return fmt.Sprintf("mock-agent-%d", p.nextID)
+	return fmt.Sprintf("direct-host-agent-%d", p.nextID)
 }
 
 // Provision 为用户分配 Agent 实例（休眠唤醒 > 暖池分配 > 新建）。
@@ -83,7 +92,7 @@ func (p *Provider) Provision(ctx context.Context, req agent.ProvisionRequest) (a
 	}
 
 	// 尝试从暖池分配
-	var inst *mockInstance
+	var inst *directHostInstance
 	if len(p.warmPool) > 0 {
 		inst = p.warmPool[len(p.warmPool)-1]
 		p.warmPool = p.warmPool[:len(p.warmPool)-1]
@@ -97,8 +106,8 @@ func (p *Provider) Provision(ctx context.Context, req agent.ProvisionRequest) (a
 	}
 
 	// 冷启动：新建实例
-	id := fmt.Sprintf("mock-agent-%d", p.nextID+1)
-	inst = &mockInstance{
+	id := fmt.Sprintf("direct-host-agent-%d", p.nextID+1)
+	inst = &directHostInstance{
 		instanceID:  id,
 		workspaceID: req.WorkspaceID,
 		userID:      req.UserID,
@@ -178,7 +187,7 @@ func (p *Provider) FindByUser(ctx context.Context, workspaceID, userID string) (
 	return &ai, nil
 }
 
-func (p *Provider) findByUserLocked(workspaceID, userID string) *mockInstance {
+func (p *Provider) findByUserLocked(workspaceID, userID string) *directHostInstance {
 	for _, inst := range p.instances {
 		if inst.workspaceID == workspaceID && inst.userID == userID {
 			return inst
@@ -193,9 +202,9 @@ func (p *Provider) WarmPoolEnsure(ctx context.Context, min int) error {
 	defer p.mu.Unlock()
 
 	for len(p.warmPool) < min {
-		id := fmt.Sprintf("mock-pool-%d", p.nextID+1)
+		id := fmt.Sprintf("direct-host-pool-%d", p.nextID+1)
 		p.nextID++
-		inst := &mockInstance{
+		inst := &directHostInstance{
 			instanceID: id,
 			status:     agent.InstanceStatusUnbound,
 			adminURL:   p.adminURL,
@@ -219,7 +228,7 @@ func (p *Provider) WarmPoolStatus(ctx context.Context) (agent.WarmPoolStatus, er
 	}, nil
 }
 
-func (p *Provider) toAgentInstance(inst *mockInstance) agent.AgentInstance {
+func (p *Provider) toAgentInstance(inst *directHostInstance) agent.AgentInstance {
 	return agent.AgentInstance{
 		InstanceID: inst.instanceID,
 		AdminURL:   inst.adminURL,

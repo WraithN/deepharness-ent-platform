@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { FileText, Eye, Download, Loader2, FolderInput, Check } from 'lucide-react';
+import { FileText, Eye, Download, Loader2, FolderInput, Check, Rocket } from 'lucide-react';
 import { fileApi } from '@/lib/file-api';
 import { productSpaceApi } from '@/lib/productspace-api';
+import { processApi } from '@/lib/process-api';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { cn, isProductSpaceFile } from '@/lib/utils';
@@ -43,11 +44,14 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
   const fileType = getFileType(fileName);
   const isMarkdown = /\.(?:md|markdown)$/i.test(fileName);
   const canAdoptToProductSpace = isMarkdown && isProductSpaceFile(path);
+  const isBrainstormResult = path.includes('/brainstorm/');
+  const canStartProductFlow = isBrainstormResult && !!workitemId && !!workspaceId;
   const [preview, setPreview] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [adopted, setAdopted] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(false);
+  const [startingFlow, setStartingFlow] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,6 +130,27 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
     }
   };
 
+  const handleStartProductFlow = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!workspaceId || !workitemId) return;
+    setStartingFlow(true);
+    try {
+      await processApi.startProductFlow({
+        workspaceId,
+        workitemId,
+        workitemTitle: displayTitle,
+        workitemDesc: '',
+      });
+      toast.success('产品流程已启动');
+    } catch (err) {
+      console.error('[FileAttachmentCard] start product flow failed:', err);
+      const msg = err instanceof Error ? err.message : '';
+      toast.error(msg || '启动产品流程失败，请重试');
+    } finally {
+      setStartingFlow(false);
+    }
+  };
+
   return (
     <div className="relative flex items-stretch gap-4 w-full p-4 rounded-2xl border border-border/60 bg-card shadow-sm hover:shadow-md hover:border-primary/30 transition-all">
       {/* 左上角文件类型标识 */}
@@ -175,6 +200,17 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
             >
               {importing || checkingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : adopted ? <Check className="h-3.5 w-3.5" /> : <FolderInput className="h-3.5 w-3.5" />}
               {adopted ? '已采纳到产品空间' : '采纳到产品空间'}
+            </button>
+          )}
+          {canStartProductFlow && (
+            <button
+              type="button"
+              onClick={handleStartProductFlow}
+              disabled={startingFlow}
+              className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {startingFlow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
+              发起AI产品流程
             </button>
           )}
         </div>

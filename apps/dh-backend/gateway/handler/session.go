@@ -197,7 +197,7 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// 把 workspace 级别的模型配置同步到 gatewayd，使运行时能感知租户自定义的
-		// 模型、base_url、api_key、temperature、max_tokens 等参数。
+		// 模型、base_url、api_key、temperature、max_tokens、watchdog_timeout 等参数。
 		if instanceID != "" {
 			if cfgErr == nil {
 				updateReq := client.UpdateAgentConfigRequest{
@@ -211,6 +211,10 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 				}
 				if cfg.AdvancedConfig != nil && cfg.AdvancedConfig.MaxTokens != nil {
 					updateReq.MaxTokens = cfg.AdvancedConfig.MaxTokens
+				}
+				if cfg.Timeout != nil {
+					secs := uint64(*cfg.Timeout)
+					updateReq.WatchdogTimeoutSecs = &secs
 				}
 				if syncErr := h.gatewaydClient.UpdateAgentConfig(r.Context(), threadID, instanceID, updateReq); syncErr != nil {
 					log.Printf("[CreateSession] UpdateAgentConfig failed: %v", syncErr)

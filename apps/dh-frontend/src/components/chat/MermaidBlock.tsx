@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState, useId } from 'react';
-import { useTheme } from 'next-themes';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 interface MermaidBlockProps {
@@ -9,13 +8,15 @@ interface MermaidBlockProps {
 // mermaid 库动态导入缓存，避免重复加载。
 let mermaidLoader: Promise<typeof import('mermaid')> | null = null;
 
-function initializeMermaid(theme: 'default' | 'dark') {
+function initializeMermaid() {
   if (!mermaidLoader) {
     mermaidLoader = import('mermaid').then(mod => {
       mod.default.initialize({
         startOnLoad: false,
-        theme,
+        theme: 'dark',
         securityLevel: 'loose',
+        fontSize: 14,
+        fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       });
       return mod;
     });
@@ -24,8 +25,10 @@ function initializeMermaid(theme: 'default' | 'dark') {
   mermaidLoader.then(mod => {
     mod.default.initialize({
       startOnLoad: false,
-      theme,
+      theme: 'dark',
       securityLevel: 'loose',
+      fontSize: 14,
+      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     });
   });
   return mermaidLoader;
@@ -60,37 +63,50 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({ code }) => {
   const rawId = useId();
   // mermaid 要求 id 以字母开头且不含特殊字符。
   const diagramId = `mermaid-${rawId.replace(/[^a-zA-Z0-9]/g, '')}`;
-  const { resolvedTheme } = useTheme();
-  const mermaidTheme = resolvedTheme === 'dark' ? 'dark' : 'default';
 
   useEffect(() => {
     let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let rendered = false;
     setLoading(true);
     setError(null);
 
-    initializeMermaid(mermaidTheme)
+    initializeMermaid()
       .then(mod => {
         if (cancelled) return;
         return mod.default.render(diagramId, preprocessMermaidCode(code.trim()));
       })
       .then(result => {
         if (cancelled) return;
-        if (result) {
+        if (result && result.svg) {
+          rendered = true;
+          if (timeoutId) clearTimeout(timeoutId);
           setSvg(result.svg);
           setLoading(false);
         }
       })
       .catch(err => {
         if (cancelled) return;
+        rendered = true;
+        if (timeoutId) clearTimeout(timeoutId);
         console.error('[MermaidBlock] render failed:', err);
         setError(err?.message || '渲染失败');
         setLoading(false);
       });
 
+    // 兜底：如果 Mermaid 库异常或网络卡死，15 秒后仍未完成则展示错误。
+    timeoutId = setTimeout(() => {
+      if (!cancelled && !rendered) {
+        setLoading(false);
+        setError('图表渲染超时，请检查 Mermaid 语法或网络');
+      }
+    }, 15000);
+
     return () => {
       cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [code, diagramId, mermaidTheme]);
+  }, [code, diagramId]);
 
   if (loading) {
     return (
@@ -115,9 +131,14 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({ code }) => {
 
   return (
     <div
-      ref={containerRef}
-      className="flex justify-center py-4 overflow-auto"
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+      className="mermaid-diagram-wrapper rounded-xl border border-border/50 p-4 my-2 shadow-sm overflow-auto"
+      style={{ background: '#0f172a', minHeight: '120px' }}
+    >
+      <div
+        ref={containerRef}
+        className="w-full"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+    </div>
   );
 };

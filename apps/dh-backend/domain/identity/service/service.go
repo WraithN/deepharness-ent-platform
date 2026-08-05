@@ -23,6 +23,7 @@ type TenantPolicy struct {
 	LockedAgentKeys     []string                       `json:"lockedAgentKeys"`
 	AllowedAgentKeys    []string                       `json:"allowedAgentKeys"`
 	DefaultAgentConfigs map[string]AgentConfigSnapshot `json:"defaultAgentConfigs"`
+	CICDConfigID        string                         `json:"cicdConfigId"`
 }
 
 // AgentConfigSnapshot 表示超管为某个 agent 预设的默认配置快照。
@@ -204,12 +205,13 @@ func scanTenant(row interface {
 	var t identity.Tenant
 	var lockedKeys, allowedKeys pq.StringArray
 	var defaultConfigs []byte
-	var displayID sql.NullString
-	err := row.Scan(&t.ID, &displayID, &t.Name, &t.AgentConfigLocked, &lockedKeys, &allowedKeys, &defaultConfigs, &t.CreatedAt)
+	var displayID, cicdConfigID sql.NullString
+	err := row.Scan(&t.ID, &displayID, &t.Name, &t.AgentConfigLocked, &lockedKeys, &allowedKeys, &defaultConfigs, &cicdConfigID, &t.CreatedAt)
 	if err != nil {
 		return identity.Tenant{}, err
 	}
 	t.DisplayID = displayID.String
+	t.CICDConfigID = cicdConfigID.String
 	t.LockedAgentKeys = []string(lockedKeys)
 	t.AllowedAgentKeys = []string(allowedKeys)
 	if len(defaultConfigs) > 0 {
@@ -220,7 +222,7 @@ func scanTenant(row interface {
 
 func (s *DBUserService) ListTenants() ([]identity.Tenant, error) {
 	rows, err := s.db.Query(`
-		SELECT id, display_id, name, agent_config_locked, locked_agent_keys, allowed_agent_keys, default_agent_configs, created_at
+		SELECT id, display_id, name, agent_config_locked, locked_agent_keys, allowed_agent_keys, default_agent_configs, cicd_config_id, created_at
 		FROM tenants WHERE id <> $1 ORDER BY created_at
 	`, systemTenantID)
 	if err != nil {
@@ -240,7 +242,7 @@ func (s *DBUserService) ListTenants() ([]identity.Tenant, error) {
 
 func (s *DBUserService) GetTenant(id string) (identity.Tenant, error) {
 	t, err := scanTenant(s.db.QueryRow(`
-		SELECT id, display_id, name, agent_config_locked, locked_agent_keys, allowed_agent_keys, default_agent_configs, created_at
+		SELECT id, display_id, name, agent_config_locked, locked_agent_keys, allowed_agent_keys, default_agent_configs, cicd_config_id, created_at
 		FROM tenants WHERE id = $1
 	`, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -268,9 +270,9 @@ func (s *DBUserService) CreateTenant(name string, policy TenantPolicy) (identity
 		return identity.Tenant{}, fmt.Errorf("generate tenant display_id failed: %w", err)
 	}
 	_, err = s.db.Exec(`
-		INSERT INTO tenants (id, display_id, name, agent_config_locked, locked_agent_keys, allowed_agent_keys, default_agent_configs)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, id, displayID, name, policy.AgentConfigLocked, pq.Array(policy.LockedAgentKeys), pq.Array(policy.AllowedAgentKeys), defaultConfigsJSON)
+		INSERT INTO tenants (id, display_id, name, agent_config_locked, locked_agent_keys, allowed_agent_keys, default_agent_configs, cicd_config_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, id, displayID, name, policy.AgentConfigLocked, pq.Array(policy.LockedAgentKeys), pq.Array(policy.AllowedAgentKeys), defaultConfigsJSON, policy.CICDConfigID)
 	if err != nil {
 		return identity.Tenant{}, fmt.Errorf("create tenant failed: %w", err)
 	}
@@ -292,9 +294,9 @@ func (s *DBUserService) UpdateTenant(id, name string, policy TenantPolicy) (iden
 		return identity.Tenant{}, fmt.Errorf("marshal default agent configs failed: %w", err)
 	}
 	_, err = s.db.Exec(`
-		UPDATE tenants SET name = $1, agent_config_locked = $2, locked_agent_keys = $3, allowed_agent_keys = $4, default_agent_configs = $5
-		WHERE id = $6
-	`, name, policy.AgentConfigLocked, pq.Array(policy.LockedAgentKeys), pq.Array(policy.AllowedAgentKeys), defaultConfigsJSON, id)
+		UPDATE tenants SET name = $1, agent_config_locked = $2, locked_agent_keys = $3, allowed_agent_keys = $4, default_agent_configs = $5, cicd_config_id = $6
+		WHERE id = $7
+	`, name, policy.AgentConfigLocked, pq.Array(policy.LockedAgentKeys), pq.Array(policy.AllowedAgentKeys), defaultConfigsJSON, policy.CICDConfigID, id)
 	if err != nil {
 		return identity.Tenant{}, fmt.Errorf("update tenant failed: %w", err)
 	}

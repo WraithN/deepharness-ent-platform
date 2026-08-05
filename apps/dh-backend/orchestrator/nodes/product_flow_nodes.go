@@ -195,6 +195,7 @@ func (n *ProductReviewNode) Processor(fc *core.FlowContext) error {
 		Title:       fmt.Sprintf("方案自主复核: %s", fc.WorkitemTitle),
 		Body:        fmt.Sprintf("需求「%s」的业务方案草案已生成，请复核。通过则进入 PRD 生成，不通过将返回重新输出方案。", fc.WorkitemTitle),
 		ActionType:  notificationobject.ActionApproveCodeOptimize,
+		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
 		Data: map[string]any{
 			"notificationType": notificationobject.TypeProductReviewRequired,
 			"workitemId":       fc.WorkitemID,
@@ -347,6 +348,7 @@ func (n *ProductProtoReviewNode) Processor(fc *core.FlowContext) error {
 		Title:       fmt.Sprintf("原型交互复核: %s", fc.WorkitemTitle),
 		Body:        fmt.Sprintf("需求「%s」的原型已生成，请进行交互复核。通过则进入需求评审，不通过将返回 PRD 初稿生成节点修订。", fc.WorkitemTitle),
 		ActionType:  notificationobject.ActionApproveCodeOptimize,
+		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
 		Data: map[string]any{
 			"notificationType": notificationobject.TypeProductProtoReviewRequired,
 			"workitemId":       fc.WorkitemID,
@@ -418,6 +420,7 @@ func (n *ProductFinalReviewNode) Processor(fc *core.FlowContext) error {
 		Title:       fmt.Sprintf("需求评审: %s", fc.WorkitemTitle),
 		Body:        fmt.Sprintf("需求「%s」的 PRD 与原型已准备就绪，请进行最终需求评审。通过后流程结束，可一键启动 AI 开发。", fc.WorkitemTitle),
 		ActionType:  notificationobject.ActionApproveCodeOptimize,
+		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
 		Data: map[string]any{
 			"notificationType": notificationobject.TypeProductFinalReviewRequired,
 			"workitemId":       fc.WorkitemID,

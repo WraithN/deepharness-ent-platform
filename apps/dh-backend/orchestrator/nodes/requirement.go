@@ -84,6 +84,7 @@ func (n *RequirementEvalNode) Processor(fc *core.FlowContext) error {
 		Title:       fmt.Sprintf("需求评估: %s", fc.WorkitemTitle),
 		Body:        body,
 		ActionType:  notificationobject.ActionApproveCodeOptimize,
+		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
 		Data: map[string]any{
 			"notificationType":     notificationobject.TypeRequirementEvalRequired,
 			"workitemId":           fc.WorkitemID,

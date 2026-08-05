@@ -119,8 +119,12 @@ type ModelVendorGroup struct {
 type ProvisionerType string
 
 const (
-	ProvisionerTypeMock ProvisionerType = "mock"
-	ProvisionerTypeK8s  ProvisionerType = "k8s"
+	// ProvisionerTypeDirectHost 本地开发模式，使用配置的固定主机列表模拟容器分配。
+	ProvisionerTypeDirectHost ProvisionerType = "direct-host"
+	// ProvisionerTypeK8s Kubernetes 原生模式，通过 Pod 资源管理 Agent 实例。
+	ProvisionerTypeK8s ProvisionerType = "k8s"
+	// ProvisionerTypeSelfDefined 自定义模式，通过 HTTP API 对接外部供给器服务。
+	ProvisionerTypeSelfDefined ProvisionerType = "self-defined"
 )
 
 // ProvisionerResourceSpec 描述 CPU/内存资源配额。
@@ -131,26 +135,54 @@ type ProvisionerResourceSpec struct {
 	MemoryLimit   string `json:"memoryLimit"   yaml:"memory_limit"`
 }
 
-// ProvisionerConfig Agent 实例供给器配置，集中所有 K8s / Mock 相关参数。
+// ProvisionerConfig Agent 实例供给器配置。
+// 公共字段适用于所有供给器类型；类型专属配置通过子结构体区分。
 type ProvisionerConfig struct {
-	Type               ProvisionerType         `yaml:"type"`
+	Type ProvisionerType `yaml:"type"`
+
+	// --- 公共配置（所有类型共享）---
+	WarmPoolMin       int           `yaml:"warm_pool_min"`
+	WarmPoolMax       int           `yaml:"warm_pool_max"`
+	IdleTimeout       time.Duration `yaml:"idle_timeout"`
+	SleepEvictTimeout time.Duration `yaml:"sleep_evict_timeout"`
+	MaxActivePerUser  int           `yaml:"max_active_per_user"`
+
+	// --- 类型专属配置 ---
+	DirectHost  DirectHostConfig  `yaml:"direct_host"`
+	K8s         K8sConfig         `yaml:"k8s"`
+	SelfDefined SelfDefinedConfig `yaml:"self_defined"`
+}
+
+// DirectHostConfig direct-host 模式配置（本地开发）。
+type DirectHostConfig struct {
+	Hosts     []string `yaml:"hosts"`
+	AgentPort int      `yaml:"agent_port"`
+	AdminPort int      `yaml:"admin_port"`
+	StubPort  int      `yaml:"stub_port"`
+}
+
+// K8sConfig k8s 模式配置（Kubernetes 原生管理）。
+type K8sConfig struct {
 	Namespace          string                  `yaml:"namespace"`
 	Image              string                  `yaml:"image"`
-	WarmPoolMin        int                     `yaml:"warm_pool_min"`
-	WarmPoolMax        int                     `yaml:"warm_pool_max"`
-	IdleTimeout        time.Duration           `yaml:"idle_timeout"`
-	SleepEvictTimeout  time.Duration           `yaml:"sleep_evict_timeout"`
-	MaxActivePerUser   int                     `yaml:"max_active_per_user"`
+	StubImage          string                  `yaml:"stub_image"`
 	AgentPort          int                     `yaml:"agent_port"`
 	AdminPort          int                     `yaml:"admin_port"`
 	StubPort           int                     `yaml:"stub_port"`
 	SharedPVCName      string                  `yaml:"shared_pvc_name"`
 	WorkspaceMountPath string                  `yaml:"workspace_mount_path"`
 	KubeconfigPath     string                  `yaml:"kubeconfig_path"`
-	MockHosts          []string                `yaml:"mock_hosts"`
 	ResourceActive     ProvisionerResourceSpec `yaml:"resource_active"`
 	ResourceSleeping   ProvisionerResourceSpec `yaml:"resource_sleeping"`
 	SupportsBind       bool                    `yaml:"supports_bind"`
+}
+
+// SelfDefinedConfig self-defined 模式配置（HTTP API 对接自定义供给器）。
+type SelfDefinedConfig struct {
+	Endpoint string        `yaml:"endpoint"` // 外部供给器 API 基地址，如 "http://my-provisioner:9000"
+	Token    string        `yaml:"token"`    // Bearer Token 认证
+	Timeout  time.Duration `yaml:"timeout"`  // HTTP 调用超时
+	StubPort int           `yaml:"stub_port"` // personal-stub 端口（ContainerInfo 需要）
 }
 
 // yamlConfig 与 config.yaml 的分层结构对应。
@@ -251,34 +283,51 @@ type yamlConfig struct {
 		SSHKeyEncryptionKey string `yaml:"ssh_key_encryption_key"`
 	} `yaml:"security"`
 	AgentProvisioner struct {
-		Type               string `yaml:"type"`
-		Namespace          string `yaml:"namespace"`
-		Image              string `yaml:"image"`
-		WarmPoolMin        int    `yaml:"warm_pool_min"`
-		WarmPoolMax        int    `yaml:"warm_pool_max"`
-		IdleTimeout        string `yaml:"idle_timeout"`
-		SleepEvictTimeout  string `yaml:"sleep_evict_timeout"`
-		MaxActivePerUser   int    `yaml:"max_active_per_user"`
-		AgentPort          int    `yaml:"agent_port"`
-		AdminPort          int    `yaml:"admin_port"`
-		StubPort           int    `yaml:"stub_port"`
-		SharedPVCName      string `yaml:"shared_pvc_name"`
-		WorkspaceMountPath string `yaml:"workspace_mount_path"`
-		KubeconfigPath     string `yaml:"kubeconfig_path"`
-		MockHosts          []string `yaml:"mock_hosts"`
-		ResourceActive     struct {
-			CPURequest    string `yaml:"cpu_request"`
-			CPULimit      string `yaml:"cpu_limit"`
-			MemoryRequest string `yaml:"memory_request"`
-			MemoryLimit   string `yaml:"memory_limit"`
-		} `yaml:"resource_active"`
-		ResourceSleeping struct {
-			CPURequest    string `yaml:"cpu_request"`
-			CPULimit      string `yaml:"cpu_limit"`
-			MemoryRequest string `yaml:"memory_request"`
-			MemoryLimit   string `yaml:"memory_limit"`
-		} `yaml:"resource_sleeping"`
-		SupportsBind bool `yaml:"supports_bind"`
+		Type              string `yaml:"type"`
+		WarmPoolMin       int    `yaml:"warm_pool_min"`
+		WarmPoolMax       int    `yaml:"warm_pool_max"`
+		IdleTimeout       string `yaml:"idle_timeout"`
+		SleepEvictTimeout string `yaml:"sleep_evict_timeout"`
+		MaxActivePerUser  int    `yaml:"max_active_per_user"`
+
+		DirectHost struct {
+			Hosts     []string `yaml:"hosts"`
+			AgentPort int      `yaml:"agent_port"`
+			AdminPort int      `yaml:"admin_port"`
+			StubPort  int      `yaml:"stub_port"`
+		} `yaml:"direct_host"`
+
+		K8s struct {
+			Namespace          string `yaml:"namespace"`
+			Image              string `yaml:"image"`
+			StubImage          string `yaml:"stub_image"`
+			AgentPort          int    `yaml:"agent_port"`
+			AdminPort          int    `yaml:"admin_port"`
+			StubPort           int    `yaml:"stub_port"`
+			SharedPVCName      string `yaml:"shared_pvc_name"`
+			WorkspaceMountPath string `yaml:"workspace_mount_path"`
+			KubeconfigPath     string `yaml:"kubeconfig_path"`
+			ResourceActive     struct {
+				CPURequest    string `yaml:"cpu_request"`
+				CPULimit      string `yaml:"cpu_limit"`
+				MemoryRequest string `yaml:"memory_request"`
+				MemoryLimit   string `yaml:"memory_limit"`
+			} `yaml:"resource_active"`
+			ResourceSleeping struct {
+				CPURequest    string `yaml:"cpu_request"`
+				CPULimit      string `yaml:"cpu_limit"`
+				MemoryRequest string `yaml:"memory_request"`
+				MemoryLimit   string `yaml:"memory_limit"`
+			} `yaml:"resource_sleeping"`
+			SupportsBind bool `yaml:"supports_bind"`
+		} `yaml:"k8s"`
+
+		SelfDefined struct {
+			Endpoint string `yaml:"endpoint"`
+			Token    string `yaml:"token"`
+			Timeout  string `yaml:"timeout"`
+			StubPort int    `yaml:"stub_port"`
+		} `yaml:"self_defined"`
 	} `yaml:"agent_provisioner"`
 }
 
@@ -377,33 +426,47 @@ func Load() (Config, error) {
 	// AgentProvisioner
 	cfg.AgentProvisioner = ProvisionerConfig{
 		Type:              ProvisionerType(yc.AgentProvisioner.Type),
-		Namespace:         yc.AgentProvisioner.Namespace,
-		Image:             yc.AgentProvisioner.Image,
 		WarmPoolMin:       yc.AgentProvisioner.WarmPoolMin,
 		WarmPoolMax:       yc.AgentProvisioner.WarmPoolMax,
 		IdleTimeout:       parseDurationOrZero(yc.AgentProvisioner.IdleTimeout),
 		SleepEvictTimeout: parseDurationOrZero(yc.AgentProvisioner.SleepEvictTimeout),
 		MaxActivePerUser:  yc.AgentProvisioner.MaxActivePerUser,
-		AgentPort:         yc.AgentProvisioner.AgentPort,
-		AdminPort:         yc.AgentProvisioner.AdminPort,
-		StubPort:          yc.AgentProvisioner.StubPort,
-		SharedPVCName:     yc.AgentProvisioner.SharedPVCName,
-		WorkspaceMountPath: yc.AgentProvisioner.WorkspaceMountPath,
-		KubeconfigPath:    yc.AgentProvisioner.KubeconfigPath,
-		MockHosts:         yc.AgentProvisioner.MockHosts,
-		ResourceActive: ProvisionerResourceSpec{
-			CPURequest:    yc.AgentProvisioner.ResourceActive.CPURequest,
-			CPULimit:      yc.AgentProvisioner.ResourceActive.CPULimit,
-			MemoryRequest: yc.AgentProvisioner.ResourceActive.MemoryRequest,
-			MemoryLimit:   yc.AgentProvisioner.ResourceActive.MemoryLimit,
+		DirectHost: DirectHostConfig{
+			Hosts:     yc.AgentProvisioner.DirectHost.Hosts,
+			AgentPort: yc.AgentProvisioner.DirectHost.AgentPort,
+			AdminPort: yc.AgentProvisioner.DirectHost.AdminPort,
+			StubPort:  yc.AgentProvisioner.DirectHost.StubPort,
 		},
-		ResourceSleeping: ProvisionerResourceSpec{
-			CPURequest:    yc.AgentProvisioner.ResourceSleeping.CPURequest,
-			CPULimit:      yc.AgentProvisioner.ResourceSleeping.CPULimit,
-			MemoryRequest: yc.AgentProvisioner.ResourceSleeping.MemoryRequest,
-			MemoryLimit:   yc.AgentProvisioner.ResourceSleeping.MemoryLimit,
+		K8s: K8sConfig{
+			Namespace:          yc.AgentProvisioner.K8s.Namespace,
+			Image:              yc.AgentProvisioner.K8s.Image,
+			StubImage:          yc.AgentProvisioner.K8s.StubImage,
+			AgentPort:          yc.AgentProvisioner.K8s.AgentPort,
+			AdminPort:          yc.AgentProvisioner.K8s.AdminPort,
+			StubPort:           yc.AgentProvisioner.K8s.StubPort,
+			SharedPVCName:      yc.AgentProvisioner.K8s.SharedPVCName,
+			WorkspaceMountPath: yc.AgentProvisioner.K8s.WorkspaceMountPath,
+			KubeconfigPath:     yc.AgentProvisioner.K8s.KubeconfigPath,
+			ResourceActive: ProvisionerResourceSpec{
+				CPURequest:    yc.AgentProvisioner.K8s.ResourceActive.CPURequest,
+				CPULimit:      yc.AgentProvisioner.K8s.ResourceActive.CPULimit,
+				MemoryRequest: yc.AgentProvisioner.K8s.ResourceActive.MemoryRequest,
+				MemoryLimit:   yc.AgentProvisioner.K8s.ResourceActive.MemoryLimit,
+			},
+			ResourceSleeping: ProvisionerResourceSpec{
+				CPURequest:    yc.AgentProvisioner.K8s.ResourceSleeping.CPURequest,
+				CPULimit:      yc.AgentProvisioner.K8s.ResourceSleeping.CPULimit,
+				MemoryRequest: yc.AgentProvisioner.K8s.ResourceSleeping.MemoryRequest,
+				MemoryLimit:   yc.AgentProvisioner.K8s.ResourceSleeping.MemoryLimit,
+			},
+			SupportsBind: yc.AgentProvisioner.K8s.SupportsBind,
 		},
-		SupportsBind: yc.AgentProvisioner.SupportsBind,
+		SelfDefined: SelfDefinedConfig{
+			Endpoint: yc.AgentProvisioner.SelfDefined.Endpoint,
+			Token:    yc.AgentProvisioner.SelfDefined.Token,
+			Timeout:  parseDurationOrZero(yc.AgentProvisioner.SelfDefined.Timeout),
+			StubPort: yc.AgentProvisioner.SelfDefined.StubPort,
+		},
 	}
 
 	// 环境变量覆盖
@@ -462,23 +525,37 @@ func Load() (Config, error) {
 	cfg.SSHKeyEncryptionKey = getEnv("SSH_KEY_ENCRYPTION_KEY", cfg.SSHKeyEncryptionKey)
 
 	cfg.AgentProvisioner.Type = ProvisionerType(getEnv("AGENT_PROVISIONER_TYPE", string(cfg.AgentProvisioner.Type)))
-	cfg.AgentProvisioner.Namespace = getEnv("AGENT_PROVISIONER_NAMESPACE", cfg.AgentProvisioner.Namespace)
-	cfg.AgentProvisioner.Image = getEnv("AGENT_PROVISIONER_IMAGE", cfg.AgentProvisioner.Image)
 	cfg.AgentProvisioner.WarmPoolMin = getIntEnv("AGENT_PROVISIONER_WARM_POOL_MIN", cfg.AgentProvisioner.WarmPoolMin)
 	cfg.AgentProvisioner.WarmPoolMax = getIntEnv("AGENT_PROVISIONER_WARM_POOL_MAX", cfg.AgentProvisioner.WarmPoolMax)
 	cfg.AgentProvisioner.IdleTimeout = getDurationEnv("AGENT_PROVISIONER_IDLE_TIMEOUT", cfg.AgentProvisioner.IdleTimeout)
 	cfg.AgentProvisioner.SleepEvictTimeout = getDurationEnv("AGENT_PROVISIONER_SLEEP_EVICT_TIMEOUT", cfg.AgentProvisioner.SleepEvictTimeout)
 	cfg.AgentProvisioner.MaxActivePerUser = getIntEnv("AGENT_PROVISIONER_MAX_ACTIVE_PER_USER", cfg.AgentProvisioner.MaxActivePerUser)
-	cfg.AgentProvisioner.AgentPort = getIntEnv("AGENT_PROVISIONER_AGENT_PORT", cfg.AgentProvisioner.AgentPort)
-	cfg.AgentProvisioner.AdminPort = getIntEnv("AGENT_PROVISIONER_ADMIN_PORT", cfg.AgentProvisioner.AdminPort)
-	cfg.AgentProvisioner.StubPort = getIntEnv("AGENT_PROVISIONER_STUB_PORT", cfg.AgentProvisioner.StubPort)
-	cfg.AgentProvisioner.SharedPVCName = getEnv("AGENT_PROVISIONER_SHARED_PVC_NAME", cfg.AgentProvisioner.SharedPVCName)
-	cfg.AgentProvisioner.WorkspaceMountPath = getEnv("AGENT_PROVISIONER_WORKSPACE_MOUNT_PATH", cfg.AgentProvisioner.WorkspaceMountPath)
-	if mockHosts := getEnv("AGENT_PROVISIONER_MOCK_HOSTS", ""); mockHosts != "" {
-		cfg.AgentProvisioner.MockHosts = strings.Split(mockHosts, ",")
+
+	// direct-host 环境变量覆盖
+	if hosts := getEnv("AGENT_PROVISIONER_DIRECT_HOST_HOSTS", ""); hosts != "" {
+		cfg.AgentProvisioner.DirectHost.Hosts = strings.Split(hosts, ",")
 	}
-	cfg.AgentProvisioner.KubeconfigPath = getEnv("AGENT_PROVISIONER_KUBECONFIG_PATH", cfg.AgentProvisioner.KubeconfigPath)
-	cfg.AgentProvisioner.SupportsBind = getBoolEnv("AGENT_PROVISIONER_SUPPORTS_BIND", cfg.AgentProvisioner.SupportsBind)
+	cfg.AgentProvisioner.DirectHost.AgentPort = getIntEnv("AGENT_PROVISIONER_DIRECT_HOST_AGENT_PORT", cfg.AgentProvisioner.DirectHost.AgentPort)
+	cfg.AgentProvisioner.DirectHost.AdminPort = getIntEnv("AGENT_PROVISIONER_DIRECT_HOST_ADMIN_PORT", cfg.AgentProvisioner.DirectHost.AdminPort)
+	cfg.AgentProvisioner.DirectHost.StubPort = getIntEnv("AGENT_PROVISIONER_DIRECT_HOST_STUB_PORT", cfg.AgentProvisioner.DirectHost.StubPort)
+
+	// k8s 环境变量覆盖
+	cfg.AgentProvisioner.K8s.Namespace = getEnv("AGENT_PROVISIONER_K8S_NAMESPACE", cfg.AgentProvisioner.K8s.Namespace)
+	cfg.AgentProvisioner.K8s.Image = getEnv("AGENT_PROVISIONER_K8S_IMAGE", cfg.AgentProvisioner.K8s.Image)
+	cfg.AgentProvisioner.K8s.StubImage = getEnv("AGENT_PROVISIONER_K8S_STUB_IMAGE", cfg.AgentProvisioner.K8s.StubImage)
+	cfg.AgentProvisioner.K8s.AgentPort = getIntEnv("AGENT_PROVISIONER_K8S_AGENT_PORT", cfg.AgentProvisioner.K8s.AgentPort)
+	cfg.AgentProvisioner.K8s.AdminPort = getIntEnv("AGENT_PROVISIONER_K8S_ADMIN_PORT", cfg.AgentProvisioner.K8s.AdminPort)
+	cfg.AgentProvisioner.K8s.StubPort = getIntEnv("AGENT_PROVISIONER_K8S_STUB_PORT", cfg.AgentProvisioner.K8s.StubPort)
+	cfg.AgentProvisioner.K8s.SharedPVCName = getEnv("AGENT_PROVISIONER_K8S_SHARED_PVC_NAME", cfg.AgentProvisioner.K8s.SharedPVCName)
+	cfg.AgentProvisioner.K8s.WorkspaceMountPath = getEnv("AGENT_PROVISIONER_K8S_WORKSPACE_MOUNT_PATH", cfg.AgentProvisioner.K8s.WorkspaceMountPath)
+	cfg.AgentProvisioner.K8s.KubeconfigPath = getEnv("AGENT_PROVISIONER_K8S_KUBECONFIG_PATH", cfg.AgentProvisioner.K8s.KubeconfigPath)
+	cfg.AgentProvisioner.K8s.SupportsBind = getBoolEnv("AGENT_PROVISIONER_K8S_SUPPORTS_BIND", cfg.AgentProvisioner.K8s.SupportsBind)
+
+	// self-defined 环境变量覆盖
+	cfg.AgentProvisioner.SelfDefined.Endpoint = getEnv("AGENT_PROVISIONER_SELF_DEFINED_ENDPOINT", cfg.AgentProvisioner.SelfDefined.Endpoint)
+	cfg.AgentProvisioner.SelfDefined.Token = getEnv("AGENT_PROVISIONER_SELF_DEFINED_TOKEN", cfg.AgentProvisioner.SelfDefined.Token)
+	cfg.AgentProvisioner.SelfDefined.Timeout = getDurationEnv("AGENT_PROVISIONER_SELF_DEFINED_TIMEOUT", cfg.AgentProvisioner.SelfDefined.Timeout)
+	cfg.AgentProvisioner.SelfDefined.StubPort = getIntEnv("AGENT_PROVISIONER_SELF_DEFINED_STUB_PORT", cfg.AgentProvisioner.SelfDefined.StubPort)
 
 	if err := cfg.validate(); err != nil {
 		return cfg, err

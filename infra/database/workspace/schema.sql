@@ -433,6 +433,38 @@ BEFORE UPDATE ON workspace_cicd
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
+-- 全局 CICD 配置：由超管在能力配置中维护，支持创建多个；租户通过 tenants.cicd_config_id 关联其一。
+CREATE TABLE IF NOT EXISTS cicd_configs (
+    id VARCHAR(36) PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL,
+    name VARCHAR(200) NOT NULL,
+    trigger_branches VARCHAR(500),
+    webhook_url VARCHAR(500),
+    script TEXT,
+    config JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE cicd_configs IS '全局 CICD 配置（超管能力配置）';
+COMMENT ON COLUMN cicd_configs.id IS 'CI/CD 配置 ID（VARCHAR(36)）';
+COMMENT ON COLUMN cicd_configs.tenant_id IS '所属租户 ID；__system__ 表示平台级配置，可被任意租户关联';
+COMMENT ON COLUMN cicd_configs.name IS '配置名称';
+COMMENT ON COLUMN cicd_configs.trigger_branches IS '触发分支规则';
+COMMENT ON COLUMN cicd_configs.webhook_url IS 'Webhook 地址';
+COMMENT ON COLUMN cicd_configs.script IS 'CI/CD 脚本';
+COMMENT ON COLUMN cicd_configs.config IS '扩展配置';
+COMMENT ON COLUMN cicd_configs.created_at IS '创建时间';
+COMMENT ON COLUMN cicd_configs.updated_at IS '更新时间';
+
+CREATE INDEX IF NOT EXISTS idx_cicd_configs_tenant_id ON cicd_configs (tenant_id);
+
+DROP TRIGGER IF EXISTS trigger_cicd_configs_updated_at ON cicd_configs;
+CREATE TRIGGER trigger_cicd_configs_updated_at
+BEFORE UPDATE ON cicd_configs
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
+
 -- 平台级智能体类型目录：超管可在此开启/关闭各智能体在全平台的可用范围。
 CREATE TABLE IF NOT EXISTS platform_agent_types (
     agent_key VARCHAR(50) PRIMARY KEY,
@@ -473,6 +505,7 @@ CREATE TABLE IF NOT EXISTS workspace_agent_configs (
     temperature NUMERIC(3,2),
     max_tokens INTEGER,
     context_window INTEGER,
+    timeout INTEGER DEFAULT 120,
     advanced_config JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -492,6 +525,7 @@ COMMENT ON COLUMN workspace_agent_configs.api_key IS '自定义模型 API Key';
 COMMENT ON COLUMN workspace_agent_configs.temperature IS '采样温度';
 COMMENT ON COLUMN workspace_agent_configs.max_tokens IS '最大生成 token 数';
 COMMENT ON COLUMN workspace_agent_configs.context_window IS '上下文窗口大小';
+COMMENT ON COLUMN workspace_agent_configs.timeout IS 'SSE 看门狗无事件超时阈值（秒），默认 120';
 COMMENT ON COLUMN workspace_agent_configs.advanced_config IS '高级配置 JSON';
 COMMENT ON COLUMN workspace_agent_configs.created_at IS '创建时间';
 COMMENT ON COLUMN workspace_agent_configs.updated_at IS '更新时间';

@@ -180,33 +180,55 @@ security:
   ssh_key_encryption_key: ""
 
 # Agent 实例供给器配置。
-#   type: 供给器类型，mock（内存模拟）或 k8s（Kubernetes 原生管理）。
-# mock 模式下仅需 type: mock，其余字段可留空；k8s 模式下需填写 namespace / image 等字段。
+#   type: 供给器类型
+#     - direct-host：本地开发，使用固定主机列表模拟容器分配
+#     - k8s：Kubernetes 原生管理（Pod 生命周期）
+#     - self-defined：通过 HTTP API 对接自定义外部供给器
+# 公共字段适用于所有类型；类型专属配置在对应子块中填写。
 agent_provisioner:
-  type: "mock"
-  namespace: "dh-agents"
-  image: "deepharness/gatewayd:latest"
+  type: "direct-host"
+
+  # --- 公共配置 ---
   warm_pool_min: 2
   warm_pool_max: 10
   idle_timeout: "15m"
   sleep_evict_timeout: "30m"
   max_active_per_user: 3
-  agent_port: 2345
-  admin_port: 2346
-  shared_pvc_name: "dh-workspace"
-  workspace_mount_path: "/workspace"
-  kubeconfig_path: ""         # 空则用 in-cluster config，非空时加载指定 kubeconfig 文件
-  mock_hosts:                 # mock 模式下容器池使用的固定 IP 列表
-    - "127.0.0.1"
-  stub_port: 8090             # personal-stub 端口（与 gatewayd 共部署于同一容器）
-  resource_active:
-    cpu_request: "2000m"
-    cpu_limit: "4000m"
-    memory_request: "4Gi"
-    memory_limit: "8Gi"
-  resource_sleeping:
-    cpu_request: "100m"
-    cpu_limit: "200m"
-    memory_request: "128Mi"
-    memory_limit: "256Mi"
-  supports_bind: false
+
+  # --- direct-host 模式配置（本地开发）---
+  direct_host:
+    hosts:                      # 固定 IP 列表，每个 host 代表一个容器实例
+      - "127.0.0.1"
+    agent_port: 2345            # gatewayd agent API 端口
+    admin_port: 2346            # gatewayd admin API 端口
+    stub_port: 8090             # personal-stub 端口（与 gatewayd 共部署）
+
+  # --- k8s 模式配置（Kubernetes 原生管理）---
+  k8s:
+    namespace: "dh-agents"
+    image: "deepharness/gatewayd:latest"
+    stub_image: "deepharness/personal-stub:latest"  # personal-stub sidecar 镜像
+    agent_port: 2345
+    admin_port: 2346
+    stub_port: 8090
+    shared_pvc_name: "dh-workspace"
+    workspace_mount_path: "/workspace"
+    kubeconfig_path: ""         # 空则用 in-cluster config，非空时加载指定 kubeconfig 文件
+    supports_bind: false
+    resource_active:            # 活跃状态资源配额
+      cpu_request: "2000m"
+      cpu_limit: "4000m"
+      memory_request: "4Gi"
+      memory_limit: "8Gi"
+    resource_sleeping:          # 休眠状态资源配额
+      cpu_request: "100m"
+      cpu_limit: "200m"
+      memory_request: "128Mi"
+      memory_limit: "256Mi"
+
+  # --- self-defined 模式配置（HTTP API 对接自定义供给器）---
+  self_defined:
+    endpoint: ""                # 外部供给器 API 基地址，如 "http://my-provisioner:9000"
+    token: ""                   # Bearer Token 认证
+    timeout: "30s"              # HTTP 调用超时
+    stub_port: 8090             # personal-stub 端口（ContainerInfo 需要）

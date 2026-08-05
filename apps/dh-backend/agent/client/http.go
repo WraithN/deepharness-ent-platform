@@ -412,12 +412,13 @@ func (c *GatewaydClient) AgentID() string {
 
 // UpdateAgentConfigRequest 是更新 gatewayd agent 模型配置的请求体。
 type UpdateAgentConfigRequest struct {
-	Model       string   `json:"model,omitempty"`
-	ModelType   string   `json:"model_type,omitempty"`
-	BaseURL     string   `json:"base_url,omitempty"`
-	APIKey      string   `json:"api_key,omitempty"`
-	Temperature *float64 `json:"temperature,omitempty"`
-	MaxTokens   *int     `json:"max_tokens,omitempty"`
+	Model               string   `json:"model,omitempty"`
+	ModelType           string   `json:"model_type,omitempty"`
+	BaseURL             string   `json:"base_url,omitempty"`
+	APIKey              string   `json:"api_key,omitempty"`
+	Temperature         *float64 `json:"temperature,omitempty"`
+	MaxTokens           *int     `json:"max_tokens,omitempty"`
+	WatchdogTimeoutSecs *uint64  `json:"watchdog_timeout_secs,omitempty"`
 }
 
 // UpdateAgentConfig 向 gatewayd 推送指定 session/agent 的模型配置。

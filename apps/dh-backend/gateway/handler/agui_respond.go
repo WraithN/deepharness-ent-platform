@@ -73,8 +73,11 @@ func (h *AGUIHandler) RespondToAgent(w http.ResponseWriter, r *http.Request) {
 	// 超时后转为 fallback run，由后端主动启动新 run 继续对话，避免前端长时间"思考中"。
 	respondCtx, cancel := context.WithTimeout(r.Context(), respondRequestTimeout)
 	defer cancel()
+	log.Printf("[AGUIHandler] RespondToAgent direct respond start: thread=%s instance=%s timeout=%v",
+		req.ThreadID, effectiveInstanceID, respondRequestTimeout)
 	directErr := h.resolveAGUIClient(r.Context()).Respond(respondCtx, req.ThreadID, effectiveInstanceID, req.Message)
 	if directErr == nil {
+		log.Printf("[AGUIHandler] RespondToAgent direct respond ok: thread=%s instance=%s", req.ThreadID, effectiveInstanceID)
 		SetJSONHeader(w)
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(respondToAgentResponse{Status: "ok"})
@@ -136,8 +139,11 @@ func (h *AGUIHandler) bufferRespondAndListenEvents(ctx context.Context, events <
 		if ev.RunID == "" {
 			ev.RunID = runID
 		}
+		log.Printf("[AGUIHandler] RespondAndListen event received: thread=%s run=%s type=%s name=%s msgId=%s", threadID, runID, ev.Type, ev.Name, ev.MessageID)
 		if h.buffer != nil {
-			_ = h.buffer.Append(bgCtx, threadID, ev)
+			if err := h.buffer.Append(bgCtx, threadID, ev); err != nil {
+				log.Printf("[AGUIHandler] RespondAndListen buffer append failed: thread=%s run=%s type=%s err=%v", threadID, runID, ev.Type, err)
+			}
 		}
 
 		switch ev.Type {
@@ -151,6 +157,7 @@ func (h *AGUIHandler) bufferRespondAndListenEvents(ctx context.Context, events <
 			sawRunError = true
 		}
 	}
+	log.Printf("[AGUIHandler] RespondAndListen event channel closed: thread=%s run=%s textLen=%d", threadID, runID, textBuilder.Len())
 
 	if !sawRunFinished && !sawRunError {
 		if h.buffer != nil {
@@ -451,40 +458,45 @@ func (h *AGUIHandler) runFallback(userID string, input agui.RunAgentInput, sessi
 	var collectedEvents []agui.Event
 
 	for ev := range events {
-		switch ev.Type {
-		case agui.EventTextMessageStart:
-			msgID = ev.MessageID
-		case agui.EventTextMessageContent:
-			textBuilder.WriteString(ev.Delta)
-		case agui.EventThinkingStart, agui.EventThinkingEnd,
-			agui.EventThinkingTextMessageStart, agui.EventThinkingTextMessageContent, agui.EventThinkingTextMessageEnd:
-			// 过滤思考过程：只保留用户可见的问题与选项，不展示英文推理。
+		log.Printf("[AGUIHandler] fallback run event received: run=%s type=%s name=%s msgId=%s thread=%s",
+			input.RunID, ev.Type, ev.Name, ev.MessageID, ev.ThreadID)
+
+		// 思考过程不展示给用户，也不写入 buffer；但仍记录文本内容用于最后解析。
+		if ev.Type == agui.EventThinkingStart || ev.Type == agui.EventThinkingEnd ||
+			ev.Type == agui.EventThinkingTextMessageStart || ev.Type == agui.EventThinkingTextMessageContent || ev.Type == agui.EventThinkingTextMessageEnd {
 			continue
-		case agui.EventCustom:
-			if ev.Name == "agent.question" {
-				sawQuestionEvent = true
-			}
-			collectedEvents = append(collectedEvents, ev)
-		case agui.EventRunFinished, agui.EventRunError:
-			// 暂存生命周期事件，在最后统一追加，确保 synthetic 事件先发出。
-			collectedEvents = append(collectedEvents, ev)
-		default:
-			collectedEvents = append(collectedEvents, ev)
 		}
+
+		// 文本内容先累积，最后再统一输出（避免与实时流重复）。
+		if ev.Type == agui.EventTextMessageStart {
+			msgID = ev.MessageID
+			continue
+		}
+		if ev.Type == agui.EventTextMessageContent {
+			textBuilder.WriteString(ev.Delta)
+			continue
+		}
+		if ev.Type == agui.EventTextMessageEnd {
+			continue
+		}
+
+		// 关键事件（agent.question / 生命周期 / 工具事件）立即写入 buffer，
+		// 使前端在 run 未结束时也能看到问题卡片或状态变化。
+		if ev.Type == agui.EventCustom && ev.Name == "agent.question" {
+			sawQuestionEvent = true
+		}
+		if h.buffer != nil {
+			if err := h.buffer.Append(bgCtx, activeSessionID, ev); err != nil {
+				log.Printf("[AGUIHandler] fallback run buffer append failed: run=%s type=%s err=%v", input.RunID, ev.Type, err)
+			}
+		}
+		collectedEvents = append(collectedEvents, ev)
 	}
+	log.Printf("[AGUIHandler] fallback run event channel closed: run=%s textLen=%d collectedEvents=%d sawQuestionEvent=%v thread=%s",
+		input.RunID, textBuilder.Len(), len(collectedEvents), sawQuestionEvent, activeSessionID)
 
 	text := textBuilder.String()
 	questionPayload := parseQuestionFromText(text)
-
-	// 追加非文本、非生命周期事件（如 RUN_STARTED、工具事件、agent.question 等）。
-	for _, ev := range collectedEvents {
-		if ev.Type == agui.EventRunFinished || ev.Type == agui.EventRunError {
-			continue
-		}
-		if h.buffer != nil {
-			_ = h.buffer.Append(bgCtx, activeSessionID, ev)
-		}
-	}
 
 	finalMsgID := msgID
 	if finalMsgID == "" {
@@ -510,22 +522,19 @@ func (h *AGUIHandler) runFallback(userID string, input agui.RunAgentInput, sessi
 		}
 	}
 
-	// 追加 RUN_FINISHED 或 RUN_ERROR。
+	// 如果事件流正常以 RUN_FINISHED / RUN_ERROR 结束，则已经在循环中写入 buffer；
+	// 否则补发 RUN_FINISHED，避免前端一直轮询等待。
+	var lastEvent *agui.Event
 	if len(collectedEvents) > 0 {
-		last := collectedEvents[len(collectedEvents)-1]
-		if last.Type == agui.EventRunFinished || last.Type == agui.EventRunError {
-			if h.buffer != nil {
-				_ = h.buffer.Append(bgCtx, activeSessionID, last)
-			}
-		} else {
-			if h.buffer != nil {
-				_ = h.buffer.Append(bgCtx, activeSessionID, agui.RunFinishedEvent(actualThreadID, input.RunID))
-			}
-		}
-	} else {
+		lastEvent = &collectedEvents[len(collectedEvents)-1]
+	}
+	if lastEvent == nil || (lastEvent.Type != agui.EventRunFinished && lastEvent.Type != agui.EventRunError) {
 		if h.buffer != nil {
-			_ = h.buffer.Append(bgCtx, activeSessionID, agui.RunFinishedEvent(actualThreadID, input.RunID))
+			if err := h.buffer.Append(bgCtx, activeSessionID, agui.RunFinishedEvent(actualThreadID, input.RunID)); err != nil {
+				log.Printf("[AGUIHandler] fallback run append RUN_FINISHED failed: run=%s err=%v", input.RunID, err)
+			}
 		}
+		log.Printf("[AGUIHandler] fallback run: appended trailing RUN_FINISHED: run=%s thread=%s", input.RunID, activeSessionID)
 	}
 
 	if activeSessionID != "" && finalText != "" {

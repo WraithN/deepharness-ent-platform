@@ -20,6 +20,7 @@ import {
   X,
   Bot,
   Boxes,
+  Workflow,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTheme } from 'next-themes';
@@ -64,6 +65,7 @@ const adminNavGroups: NavGroup[] = [
       { path: '/admin/skills', label: '技能管理', icon: Puzzle, description: '审核、上架或禁用系统内的技能' },
       { path: '/admin/prompts', label: '提示词管理', icon: MessageSquareQuote, description: '审核、上架或禁用系统内的提示词' },
       { path: '/admin/commands', label: '指令管理', icon: Terminal, description: '查看系统指令、所属分类及对应的提示词模板' },
+      { path: '/admin/cicd-configs', label: 'CICD 配置', icon: Workflow, description: '管理平台级 CICD 配置，供租户关联' },
       { path: '/admin/templates', label: '模板管理', icon: LayoutTemplate, description: '管理平台级需求、设计、研发规范模板' },
     ],
   },

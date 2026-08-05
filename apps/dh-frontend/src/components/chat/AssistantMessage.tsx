@@ -23,6 +23,8 @@ import { cn, formatTime, isProductSpaceFile } from '@/lib/utils';
 
 const CARD_MARKER_REGEX = /\[\[CARD:([^\]]+)\]\]/g;
 const REQ_NAME_MARKER_REGEX = /\[\[REQ_NAME:([^\]]+)\]\]/g;
+// 匹配 [[QUESTION:...]] 标记，从展示文本中移除，避免问题内容重复出现在助手消息中。
+const QUESTION_MARKER_REGEX = /\[\[QUESTION:([\s\S]*?)\]\]/g;
 // 匹配新旧两种评审报告标记，用于从展示文本中移除：
 // 新格式 [[REVIEW_REPORT_START]]...[[REVIEW_REPORT_END]]，旧格式 [[REVIEW_REPORT:{json}]]
 const REVIEW_REPORT_MARKER_REGEX = /\[\[REVIEW_REPORT_START\]\][\s\S]*?\[\[REVIEW_REPORT_END\]\]|\[\[REVIEW_REPORT:\{[^\]]*\}\]\]/g;
@@ -506,6 +508,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
                       .replace(CARD_MARKER_REGEX, '')
                       .replace(REQ_BREAKDOWN_JSON_REGEX, '')
                       .replace(REVIEW_REPORT_MARKER_REGEX, '')
+                      .replace(QUESTION_MARKER_REGEX, '')
                       .trim();
                     if (!cleanText) return null;
                     return (

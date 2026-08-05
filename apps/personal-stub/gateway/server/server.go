@@ -10,7 +10,8 @@ import (
 )
 
 // New 创建 personal-stub HTTP 服务器。
-// 负责文件读写、工程管理（git diff/tree/check/sync）和项目预览（dev server）。
+// 负责文件读写、工程管理（git diff/tree/check/sync）、项目预览（dev server），
+// 以及容器管理面（gatewayd 生命周期代理 + 运行时上报中继）。
 func New(cfg config.Config) http.Handler {
 	mux := http.NewServeMux()
 
@@ -18,8 +19,19 @@ func New(cfg config.Config) http.Handler {
 	handler.SetFilesRoot(cfg.WorkspaceRoot)
 	handler.SetAllowedRoots([]string{cfg.WorkspaceRoot})
 
+	// 注入容器管理面配置（gatewayd 代理 + 上报中继）。
+	handler.SetContainerConfig(cfg.GatewaydAdminURL, cfg.DHBackendURL, cfg.DHBackendRuntimeToken, cfg.DHBackendRuntimeID)
+
 	// 健康检查
 	mux.HandleFunc("/health", handler.HealthCheck)
+
+	// 容器管理面（gatewayd 生命周期代理 + 上报中继）
+	mux.HandleFunc("/api/v1/container/health", handler.ContainerHealth)
+	mux.HandleFunc("/api/v1/container/bind", handler.ContainerBind)
+	mux.HandleFunc("/api/v1/container/unbind", handler.ContainerUnbind)
+	mux.HandleFunc("/api/v1/container/sleep", handler.ContainerSleep)
+	mux.HandleFunc("/api/v1/container/wake", handler.ContainerWake)
+	mux.HandleFunc("/api/v1/container/report", handler.ContainerReport)
 
 	// 文件读取/写入/删除/下载/版本查询/保存
 	mux.HandleFunc("/api/v1/files/content", func(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +76,7 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/skills", handler.SkillsList)
 	mux.HandleFunc("/api/v1/skills/{name}/content", handler.SkillsContent)
 
-	log.Printf("[PersonalStub] workspaceRoot=%s", cfg.WorkspaceRoot)
+	log.Printf("[PersonalStub] workspaceRoot=%s gatewaydAdminURL=%s", cfg.WorkspaceRoot, cfg.GatewaydAdminURL)
 
 	return middleware.Logger(middleware.CORS(mux))
 }

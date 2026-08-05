@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     locked_agent_keys TEXT[] NOT NULL DEFAULT '{}',
     allowed_agent_keys TEXT[] NOT NULL DEFAULT '{}',
     default_agent_configs JSONB NOT NULL DEFAULT '{}',
+    cicd_config_id VARCHAR(36),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -33,6 +34,7 @@ COMMENT ON COLUMN tenants.agent_config_locked IS '超管是否整体锁定该租
 COMMENT ON COLUMN tenants.locked_agent_keys IS '被超管单独锁定的智能体 key 列表';
 COMMENT ON COLUMN tenants.allowed_agent_keys IS '超管为该租户允许使用的智能体 key 列表';
 COMMENT ON COLUMN tenants.default_agent_configs IS '超管为该租户预设的默认智能体配置快照';
+COMMENT ON COLUMN tenants.cicd_config_id IS '关联的全局 CICD 配置 ID';
 
 -- 租户 display_id 自增序列（t1, t2, t3...）
 CREATE SEQUENCE IF NOT EXISTS tenant_display_id_seq START 1;

@@ -65,6 +65,9 @@ const NOTIFICATION_ICONS: Record<string, React.ElementType> = {
   test_plan_review_required: ClipboardList,
   test_case_review_required: FlaskConical,
   test_admission_review_required: ShieldCheck,
+  product_review_required: ClipboardCheck,
+  product_proto_review_required: TestTubeDiagonal,
+  product_final_review_required: ShieldCheck,
 };
 
 export const NotificationCenter: React.FC = () => {
@@ -93,6 +96,12 @@ export const NotificationCenter: React.FC = () => {
   const [optimizeNotificationId, setOptimizeNotificationId] = useState<string | null>(null);
   const [optimizeTitle, setOptimizeTitle] = useState<string>('');
   const [optimizePrompt, setOptimizePrompt] = useState<string>('');
+
+  // ── 驳回原因对话框状态 ──
+  const [showRejectDialog, setShowRejectDialog] = useState(false);
+  const [rejectNotificationId, setRejectNotificationId] = useState<string | null>(null);
+  const [rejectTitle, setRejectTitle] = useState<string>('');
+  const [rejectReason, setRejectReason] = useState<string>('');
 
   // 审批通过：直接提交，无需优化
   const handleReviewPass = async (id: string) => {
@@ -148,24 +157,6 @@ export const NotificationCenter: React.FC = () => {
     fetchNotifications();
   };
 
-  // 人工审核不通过：approved=false，流程回到架构设计
-  const handleAuditReject = async (id: string) => {
-    setActing(id);
-    try {
-      await api.post(`/v1/notifications/${id}/action`, {
-        action: 'approve',
-        approved: false,
-      });
-      toast.success('审核不通过，将重新进行架构设计');
-      setNotifications(prev => prev.filter(n => n.id !== id));
-    } catch {
-      toast.error('操作失败，请重试');
-    } finally {
-      setActing('');
-    }
-    fetchNotifications();
-  };
-
   // 测试审核通过
   const handleTestReviewPass = async (id: string) => {
     setActing(id);
@@ -184,22 +175,46 @@ export const NotificationCenter: React.FC = () => {
     fetchNotifications();
   };
 
-  // 测试审核不通过
-  const handleTestReviewReject = async (id: string) => {
-    setActing(id);
+  // 打开驳回原因对话框
+  const openRejectDialog = (id: string, title: string) => {
+    setRejectNotificationId(id);
+    setRejectTitle(title);
+    setRejectReason('');
+    setShowRejectDialog(true);
+  };
+
+  // 提交驳回（附原因）
+  const handleSubmitReject = async () => {
+    if (!rejectNotificationId) return;
+    setActing(rejectNotificationId);
     try {
-      await api.post(`/v1/notifications/${id}/action`, {
+      await api.post(`/v1/notifications/${rejectNotificationId}/action`, {
         action: 'approve',
         approved: false,
+        reason: rejectReason,
       });
-      toast.success('审核不通过，将返回上一阶段');
-      setNotifications(prev => prev.filter(n => n.id !== id));
+      toast.success('已驳回');
+      setNotifications(prev => prev.filter(n => n.id !== rejectNotificationId));
     } catch {
       toast.error('操作失败，请重试');
     } finally {
       setActing('');
     }
+    setShowRejectDialog(false);
+    setRejectNotificationId(null);
+    setRejectReason('');
     fetchNotifications();
+  };
+
+  // 查看详情：标记已读后跳转到流程页
+  const handleViewDetail = async (id: string, url: string) => {
+    try {
+      await api.patch(`/v1/notifications/${id}/read`);
+    } catch {
+      // 忽略
+    }
+    setNotifications(prev => prev.filter(n => n.id !== id));
+    navigate(url);
   };
 
   // 审批不通过：提交优化指示，触发代码优化
@@ -404,11 +419,15 @@ export const NotificationCenter: React.FC = () => {
                         n.type === 'ai_dev_failed' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
                         : n.type === 'ai_dev_completed' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400'
                         : n.type === 'ai_dev_started' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-                        :                         n.type === 'human_review_required' ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400'
+                        : n.type === 'human_review_required' ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400'
                         : n.type === 'requirement_eval_required' ? 'bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400'
+                        : n.type === 'human_audit_required' ? 'bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400'
                         : n.type === 'test_plan_review_required' ? 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
                         : n.type === 'test_case_review_required' ? 'bg-cyan-100 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-400'
                         : n.type === 'test_admission_review_required' ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400'
+                        : n.type === 'product_review_required' ? 'bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400'
+                        : n.type === 'product_proto_review_required' ? 'bg-pink-100 text-pink-600 dark:bg-pink-900/30 dark:text-pink-400'
+                        : n.type === 'product_final_review_required' ? 'bg-fuchsia-100 text-fuchsia-600 dark:bg-fuchsia-900/30 dark:text-fuchsia-400'
                         : 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400'
                       }`}>
                         <Icon className="h-4 w-4" />
@@ -423,7 +442,7 @@ export const NotificationCenter: React.FC = () => {
                         {new Date(n.createdAt).toLocaleString('zh-CN')}
                       </p>
                       {/* 操作按钮 */}
-                      {n.actionType === 'approve_code_optimize' && n.actionStatus === 'pending' && n.type !== 'requirement_eval_required' && n.type !== 'human_audit_required' && n.type !== 'test_plan_review_required' && n.type !== 'test_case_review_required' && n.type !== 'test_admission_review_required' && (
+                      {n.actionType === 'approve_code_optimize' && n.actionStatus === 'pending' && n.type !== 'requirement_eval_required' && n.type !== 'human_audit_required' && n.type !== 'test_plan_review_required' && n.type !== 'test_case_review_required' && n.type !== 'test_admission_review_required' && n.type !== 'product_review_required' && n.type !== 'product_proto_review_required' && n.type !== 'product_final_review_required' && (
                         <div className="flex gap-2 pt-1">
                           <Button
                             size="sm"
@@ -492,7 +511,7 @@ export const NotificationCenter: React.FC = () => {
                             variant="outline"
                             className="h-7 text-xs gap-1"
                             disabled={acting === n.id}
-                            onClick={() => handleAuditReject(n.id)}
+                            onClick={() => openRejectDialog(n.id, n.title)}
                           >
                             <X className="h-3 w-3" />
                          不通过
@@ -516,14 +535,38 @@ export const NotificationCenter: React.FC = () => {
                             variant="outline"
                             className="h-7 text-xs gap-1"
                             disabled={acting === n.id}
-                            onClick={() => handleTestReviewReject(n.id)}
+                            onClick={() => openRejectDialog(n.id, n.title)}
                           >
                             <X className="h-3 w-3" />
-                            不通过
-                          </Button>
-                        </div>
-                      )}
-                      {n.actionType === 'approve_ai_dev' && n.actionStatus === 'pending' && (
+                             不通过
+                            </Button>
+                          </div>
+                        )}
+                        {/* 产品评审通知按钮 */}
+                        {n.actionType === 'approve_code_optimize' && n.actionStatus === 'pending' && (n.type === 'product_review_required' || n.type === 'product_proto_review_required' || n.type === 'product_final_review_required') && (
+                          <div className="flex gap-2 pt-1">
+                            <Button
+                              size="sm"
+                              className="h-7 text-xs gap-1"
+                              disabled={acting === n.id}
+                              onClick={() => handleTestReviewPass(n.id)}
+                            >
+                              {acting === n.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                              通过
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs gap-1"
+                              disabled={acting === n.id}
+                              onClick={() => openRejectDialog(n.id, n.title)}
+                            >
+                              <X className="h-3 w-3" />
+                               不通过
+                            </Button>
+                          </div>
+                        )}
+                        {n.actionType === 'approve_ai_dev' && n.actionStatus === 'pending' && (
                         <div className="flex gap-2 pt-1">
                           <Button
                             size="sm"
@@ -561,11 +604,24 @@ export const NotificationCenter: React.FC = () => {
                           已批准
                         </span>
                       )}
-                      {n.actionStatus === 'rejected' && (
-                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-300 font-semibold">
-                          已拒绝
-                        </span>
-                      )}
+                       {n.actionStatus === 'rejected' && (
+                         <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-300 font-semibold">
+                           已拒绝
+                         </span>
+                       )}
+                       {n.actionType === 'approve_code_optimize' && n.actionStatus === 'pending' && n.actionUrl && (
+                         <div className="pt-0.5">
+                           <Button
+                             size="sm"
+                             variant="link"
+                             className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
+                             onClick={() => handleViewDetail(n.id, n.actionUrl)}
+                           >
+                             查看详情
+                             <ArrowRight className="ml-1 h-3 w-3" />
+                           </Button>
+                         </div>
+                       )}
                     </div>
                   </div>
                 </div>
@@ -724,6 +780,57 @@ export const NotificationCenter: React.FC = () => {
           >
             <Wand2 className="h-3.5 w-3.5" />
             提交优化指示
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* ── 驳回原因对话框 ── */}
+    <Dialog open={showRejectDialog} onOpenChange={setShowRejectDialog}>
+      <DialogContent className="sm:max-w-[440px] p-0 flex flex-col overflow-hidden">
+        <DialogHeader className="px-6 py-4 border-b border-border/50">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+              <X className="h-4 w-4 text-red-600 dark:text-red-400" />
+            </div>
+            <div className="text-left">
+              <DialogTitle className="text-base font-semibold">驳回原因</DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground mt-0.5">
+                {rejectTitle}
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+        <div className="px-6 py-4 space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="reject-reason">驳回原因（可选）</Label>
+            <Textarea
+              id="reject-reason"
+              placeholder="请输入驳回原因，帮助团队理解需要改进的地方..."
+              value={rejectReason}
+              onChange={e => setRejectReason(e.target.value)}
+              className="min-h-[100px]"
+            />
+          </div>
+        </div>
+        <DialogFooter className="px-6 py-3.5 border-t border-border/50 bg-muted/30 flex justify-end gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setShowRejectDialog(false);
+              setRejectNotificationId(null);
+              setRejectReason('');
+            }}
+          >
+            取消
+          </Button>
+          <Button
+            onClick={handleSubmitReject}
+            className="gap-1.5"
+            variant="destructive"
+          >
+            <X className="h-3.5 w-3.5" />
+            确认驳回
           </Button>
         </DialogFooter>
       </DialogContent>

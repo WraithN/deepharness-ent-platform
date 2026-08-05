@@ -419,11 +419,29 @@ const resolveDefaultAgentKey = (configs: WorkspaceAgentConfig[], options: Availa
 
 const getAgentLabel = (key: string, options: AvailableAgent[]): string => options.find(o => o.agentKey === key)?.name ?? key;
 
-/** 根据历史会话项生成智能体展示文本（完整与截断版本）。 */
+/** 根据历史会话项生成智能体展示文本（完整版本，截断由 CSS 控制）。 */
 function getHistoryAgentLabel(item: { pluginKey?: string; instanceId?: string }, options: AvailableAgent[]) {
   const label = getAgentLabel(item.pluginKey || 'claude-code', options);
-  if (!item.instanceId) return { label, full: label, short: label };
-  return { label, full: `${label} · ${item.instanceId}`, short: `${label} · ${item.instanceId.slice(0, 8)}` };
+  if (!item.instanceId) return { label, full: label };
+  return { label, full: `${label} · ${item.instanceId}` };
+}
+
+/** 智能体实例标签：超出容器时显示省略号，hover 展示完整内容。 */
+function AgentInstanceLabel({
+  title,
+  instanceId,
+  className,
+}: {
+  title: string;
+  instanceId?: string;
+  className?: string;
+}) {
+  const text = instanceId ? `${title} · ${instanceId}` : title;
+  return (
+    <span className={cn('truncate', className)} title={text}>
+      {text}
+    </span>
+  );
 }
 
 // 当前工作空间 ID 从 workspace-utils 读取，避免多处重复兜底。
@@ -2920,7 +2938,7 @@ export const Chat: React.FC = () => {
                 <SelectContent>
                   {agentTabs.map(tab => (
                     <SelectItem key={tab.sessionId} value={tab.sessionId} className="text-xs">
-                      {tab.instanceId ? `${tab.title} · ${tab.instanceId.slice(0, 6)}` : tab.title}
+                      <AgentInstanceLabel title={tab.title} instanceId={tab.instanceId} className="max-w-[180px]" />
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -2943,7 +2961,7 @@ export const Chat: React.FC = () => {
                     >
                       <span className={`h-2 w-2 rounded-full ${AGENT_STATUS_COLORS[tab.status]}`} />
                       <Bot className="h-3 w-3 shrink-0" />
-                      <span className="truncate flex-1">{tab.instanceId ? `${tab.title} · ${tab.instanceId.slice(0, 6)}` : tab.title}</span>
+                      <AgentInstanceLabel title={tab.title} instanceId={tab.instanceId} className="flex-1" />
                       <button
                         className="h-4 w-4 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-opacity shrink-0 disabled:opacity-0 disabled:cursor-not-allowed"
                         title={agentTabs.length <= 1 ? '至少保留一个智能体' : '关闭智能体'}
@@ -2996,9 +3014,9 @@ export const Chat: React.FC = () => {
 
           {/* 第二层：当前会话标题 + 历史会话 + 新建会话 */}
           <div className={cn('border-t border-border flex items-center gap-2 bg-muted/20', showPreview ? 'h-8 px-2' : 'h-10 px-4')}>
-            <span className={cn('font-medium truncate', showPreview ? 'text-xs' : 'text-sm')}>
+            <span className={cn('font-medium truncate min-w-0', showPreview ? 'text-xs' : 'text-sm')}>
               {activeTab
-                ? (activeTab.instanceId ? `${activeTab.title} · ${activeTab.instanceId.slice(0, 6)}` : activeTab.title)
+                ? <AgentInstanceLabel title={activeTab.title} instanceId={activeTab.instanceId} />
                 : '未选择智能体'}
             </span>
             {activeTab && (
@@ -3075,7 +3093,7 @@ export const Chat: React.FC = () => {
                               className="text-[10px] text-muted-foreground truncate"
                               title={getHistoryAgentLabel(h, availableAgentOptions).full}
                             >
-                              {getHistoryAgentLabel(h, availableAgentOptions).short}
+                              {getHistoryAgentLabel(h, availableAgentOptions).full}
                             </div>
                           </div>
                         </div>
@@ -3313,7 +3331,7 @@ export const Chat: React.FC = () => {
                         key={idx}
                         type="button"
                         className="w-full text-left px-3 py-2 rounded-lg bg-background border border-border hover:border-primary hover:bg-accent transition-colors cursor-pointer text-sm flex items-start gap-2"
-                        onClick={() => respondToQuestion(opt.label, `用户回答：${opt.label}${opt.description ? `，${opt.description}` : ''}`)}
+                        onClick={() => respondToQuestion(opt.label, opt.label)}
                       >
                         <span className="font-bold text-primary shrink-0">{String.fromCharCode(65 + idx)}.</span>
                         <div className="flex-1 min-w-0">
@@ -3336,7 +3354,7 @@ export const Chat: React.FC = () => {
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && questionCustomInput.trim()) {
                         const val = questionCustomInput.trim();
-                        respondToQuestion(val, `用户回答：${val}`);
+                        respondToQuestion(val, val);
                       }
                     }}
                   />
@@ -3347,7 +3365,7 @@ export const Chat: React.FC = () => {
                     disabled={!questionCustomInput.trim()}
                     onClick={() => {
                       const val = questionCustomInput.trim();
-                      if (val) respondToQuestion(val, `用户回答：${val}`);
+                      if (val) respondToQuestion(val, val);
                     }}
                   >
                     <Send className="h-3 w-3" />

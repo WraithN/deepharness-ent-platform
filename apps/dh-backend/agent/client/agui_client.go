@@ -681,9 +681,11 @@ func (c *AGUIClient) RespondAndListen(ctx context.Context, threadID, instanceID,
 	safego.Go("agui-respond-listen", func() {
 		defer close(out)
 		defer wsConn.Close()
+		log.Printf("[AGUIClient] RespondAndListen event reader started: thread=%s", threadID)
 		for {
 			select {
 			case <-stop:
+				log.Printf("[AGUIClient] RespondAndListen event reader stopped by signal: thread=%s", threadID)
 				return
 			default:
 			}
@@ -702,6 +704,7 @@ func (c *AGUIClient) RespondAndListen(ctx context.Context, threadID, instanceID,
 				return
 			}
 			if msgType != websocket.TextMessage {
+				log.Printf("[AGUIClient] RespondAndListen ignoring non-text websocket message: thread=%s type=%d", threadID, msgType)
 				continue
 			}
 
@@ -713,9 +716,11 @@ func (c *AGUIClient) RespondAndListen(ctx context.Context, threadID, instanceID,
 			if ev.ThreadID == "" {
 				ev.ThreadID = threadID
 			}
+			log.Printf("[AGUIClient] RespondAndListen received event: thread=%s type=%s name=%s msgId=%s", threadID, ev.Type, ev.Name, ev.MessageID)
 			select {
 			case out <- ev:
 			case <-stop:
+				log.Printf("[AGUIClient] RespondAndListen event dropped after stop signal: thread=%s type=%s", threadID, ev.Type)
 				return
 			}
 		}
@@ -724,6 +729,7 @@ func (c *AGUIClient) RespondAndListen(ctx context.Context, threadID, instanceID,
 	// 短暂等待 WebSocket 连接就绪，避免 Respond 立即发出后事件未开始监听。
 	time.Sleep(200 * time.Millisecond)
 
+	log.Printf("[AGUIClient] RespondAndListen sending respond: thread=%s instance=%s", threadID, instanceID)
 	if err := c.Respond(ctx, threadID, instanceID, message); err != nil {
 		closeConn()
 		return nil, nil, fmt.Errorf("respond to agent: %w", err)

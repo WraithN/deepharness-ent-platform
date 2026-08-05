@@ -25,6 +25,7 @@ export interface Tenant {
   lockedAgentKeys: string[];
   allowedAgentKeys: string[];
   defaultAgentConfigs?: Record<string, WorkspaceAgentConfig>;
+  cicdConfigId?: string;
   createdAt: string;
 }
 
@@ -215,6 +216,7 @@ export interface AgentPolicy {
   lockedAgentKeys: string[];
   allowedAgentKeys: string[];
   defaultAgentConfigs?: Record<string, WorkspaceAgentConfig>;
+  cicdConfigId?: string;
 }
 
 export interface WorkspaceMember {
@@ -255,12 +257,29 @@ export interface WorkspaceStandard {
   content: string;
 }
 
-export interface WorkspaceCICD {
+export interface CICDConfig {
   id: string;
-  workspaceId: string;
+  tenantId: string;
+  name: string;
   triggerBranches: string;
   webhookUrl: string;
   script: string;
+  config?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceCICD {
+  id: string;
+  tenantId: string;
+  workspaceId: string;
+  name: string;
+  triggerBranches: string;
+  webhookUrl: string;
+  script: string;
+  config?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface WorkspaceAgent {
@@ -309,6 +328,8 @@ export interface WorkspaceAgentConfig {
   baseUrl: string;
   apiKey: string;
   temperature?: number;
+  /** SSE 看门狗无事件超时阈值（秒），默认 120。 */
+  timeout?: number;
   advancedConfig?: AdvancedAgentConfig;
   createdAt: string;
   updatedAt: string;

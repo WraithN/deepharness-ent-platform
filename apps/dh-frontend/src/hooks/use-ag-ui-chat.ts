@@ -73,10 +73,47 @@ export interface AgentQuestionEvent {
   threadId: string;
   instanceId: string;
   questions: AgentQuestionItem[];
+  /** 如果为 true，表示问题来自文本 [[QUESTION:...]] 标记，应通过普通消息回答而非 gatewayd respond。 */
+  isMarkerQuestion?: boolean;
 }
 
 const AGENT_URL = '/api/v1/agent';
 const SESSIONS_API_URL = '/api/v1/sessions';
+
+const QUESTION_MARKER_REGEX = /\[\[QUESTION:([\s\S]*?)\]\]/g;
+
+/**
+ * 从 assistant 文本末尾解析 [[QUESTION:问题|A. 选项一|B. 选项二|...]] 标记。
+ * 返回去掉标记后的 cleanText、问题正文以及选项列表。
+ * 解析失败时返回 null。
+ */
+function parseQuestionMarker(rawText: string): {
+  cleanText: string;
+  questionText: string;
+  options: AgentQuestionOption[];
+} | null {
+  const matches = Array.from(rawText.matchAll(QUESTION_MARKER_REGEX));
+  if (matches.length === 0) return null;
+  const lastMatch = matches[matches.length - 1];
+  const inner = lastMatch[1].trim();
+  if (!inner) return null;
+  const parts = inner.split('|').map(s => s.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  const [questionText, ...optionParts] = parts;
+  const options: AgentQuestionOption[] = optionParts.map((opt, idx) => {
+    const letter = String.fromCharCode(65 + idx);
+    const m = opt.match(/^([A-Z])\.\s*(.*)$/);
+    if (m) {
+      const text = m[2].trim();
+      return { label: text, value: `${m[1]}. ${text}` };
+    }
+    return { label: opt, value: `${letter}. ${opt}` };
+  });
+  const before = rawText.slice(0, lastMatch.index);
+  const after = rawText.slice(lastMatch.index + lastMatch[0].length);
+  const cleanText = (before + after).trim();
+  return { cleanText, questionText: questionText.trim(), options };
+}
 // 工具调用后模型整理长报告可能较长时间无 token，延长到 10 分钟。
 const NO_EVENT_TIMEOUT_MS = 600000;
 const NO_EVENT_TIMER_INTERVAL_MS = 5000;
@@ -517,6 +554,10 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
   const [isRunning, setIsRunning] = useState(false);
   const [runPhase, setRunPhase] = useState<RunPhase>(null);
   const [pendingQuestion, setPendingQuestion] = useState<AgentQuestionEvent | null>(null);
+  const pendingQuestionRef = useRef(pendingQuestion);
+  useEffect(() => {
+    pendingQuestionRef.current = pendingQuestion;
+  }, [pendingQuestion]);
 
   // 持久化 pendingQuestion 到 localStorage，刷新或切换页面后恢复。
   const PENDING_QUESTION_STORAGE_KEY = 'dh_pending_question';
@@ -561,6 +602,12 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
   // 断连重放轮询的定时器与会话标记：同一时间只允许一个会话的重放循环。
   const reattachTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reattachSessionIdRef = useRef<string | null>(null);
+  // 当前 run 已输出的 assistant 文本原始内容，用于在 RUN_FINISHED 时检测 [[QUESTION:...]] 标记。
+  const currentAssistantTextRef = useRef<string>('');
+  // 指向最新 handleSend 的 ref，供 marker 问题回答路径直接发送普通消息。
+  const handleSendRef = useRef<((text: string, context?: SendContext) => Promise<void>) | null>(null);
+  // 防止用户快速重复点击选项导致重复发送回答。
+  const isRespondingToQuestionRef = useRef(false);
 
   // 停止断连重放轮询（如果存在）。
   const stopRunReattach = useCallback(() => {
@@ -656,6 +703,8 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       }
 
       case 'TEXT_MESSAGE_START': {
+        // 新 assistant 文本块开始时清空原始文本累积器，用于检测 [[QUESTION:...]] 标记。
+        currentAssistantTextRef.current = '';
         // 单次 run 内只创建一个 assistant 消息，保证一轮回复只有一个 AI 头像。
         const blockId = ev.messageId ?? null;
         if (!ctx.assistantMessageId) {
@@ -702,6 +751,8 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       case 'TEXT_MESSAGE_CONTENT': {
         if (!ev.delta) break;
         const delta = ev.delta;
+        // 累积原始文本，用于 RUN_FINISHED 时检测 [[QUESTION:...]] 标记。
+        currentAssistantTextRef.current += delta;
         // 兜底：如果还没有 assistant 消息，创建一个（某些协议实现可能先 content 后 start）。
         if (!ctx.assistantMessageId) {
           const msgId = ev.messageId ?? generateId();
@@ -952,14 +1003,35 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         clearInProgressMessage(ctx.sessionId);
         clearActiveRun(ctx.sessionId);
         if (ctx.assistantMessageId) {
+          // 检测本轮末尾是否包含 [[QUESTION:...]] 标记。
+          // 命中后设置 pendingQuestion 供前端渲染内联问题卡片，并通过普通消息回答；
+          // 同时把 assistant 消息文本里的 marker 同步移除，避免聊天气泡里重复显示问题。
+          const rawText = currentAssistantTextRef.current;
+          const parsedMarker = rawText && !pendingQuestionRef.current ? parseQuestionMarker(rawText) : null;
+          if (parsedMarker) {
+            setPendingQuestion({
+              threadId: ctx.sessionId,
+              instanceId: instanceIdRef.current ?? '',
+              questions: [{ question: parsedMarker.questionText, options: parsedMarker.options }],
+              isMarkerQuestion: true,
+            });
+          }
           setMessages((prev) =>
             prev.map((m) => {
               if (m.id !== ctx.assistantMessageId || m.role !== 'assistant') return m;
               const finalized = withToolCallsFinalized(m);
-              if (finalized.status?.type === 'running') {
-                return { ...finalized, status: { type: 'complete', reason: 'unknown' } as const };
+              let content = m.content;
+              if (parsedMarker && Array.isArray(content)) {
+                content = content.map((p) =>
+                  p.type === 'text' && typeof (p as { text?: string }).text === 'string'
+                    ? { ...p, text: (p as { text: string }).text.replace(QUESTION_MARKER_REGEX, '') }
+                    : p
+                ) as ThreadMessageLike['content'];
               }
-              return finalized;
+              if (finalized.status?.type === 'running') {
+                return { ...finalized, content, status: { type: 'complete', reason: 'unknown' } as const };
+              }
+              return { ...finalized, content };
             })
           );
         } else {
@@ -974,6 +1046,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
             },
           ]);
         }
+        currentAssistantTextRef.current = '';
         activeRunSessionIdRef.current = null;
         break;
 
@@ -1298,35 +1371,58 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
   };
 
   /**
-   * 回复当前 agent.question 事件，继续 gatewayd 侧被中断的 agent 运行。
-   * 同时将用户回答作为消息追加到会话流中，保持对话上下文可见。
+   * 回复当前 agent.question 事件。
+   * 对于 marker 协议（[[QUESTION:...]]）直接通过普通消息发送回答，避免 gatewayd respond 不可靠问题；
+   * 对于传统 agent.question 工具事件，保留 gatewayd respond 路径作为兼容。
+   * 同时将用户回答作为 user 消息追加到会话流中，保持对话上下文可见。
    */
   const respondToQuestion = useCallback(
     async (message: string, displayText?: string) => {
+      if (isRespondingToQuestionRef.current) {
+        console.log('[useAgUiChat] respondToQuestion ignored: already responding');
+        return;
+      }
+      isRespondingToQuestionRef.current = true;
       const question = pendingQuestion;
       if (!question) {
         console.warn('[useAgUiChat] respondToQuestion called without pending question');
+        isRespondingToQuestionRef.current = false;
         return;
       }
       // 立即关闭提问弹窗，避免用户重复点击或等待接口响应。
       setPendingQuestion(null);
       // 将用户回答作为 user 消息追加到会话流，使对话上下文可见。
-      // displayText 用于展示层（如“用户回答：C，选项描述”），实际发送给 agent 的仍是 message。
-      const answerMessage: ThreadMessageLike = {
-        id: generateId(),
-        role: 'user',
-        content: [{ type: 'text', text: displayText?.trim() || message }],
-        createdAt: new Date(),
-      };
-      setMessages((prev) => [...prev, answerMessage]);
-      setIsRunning(true);
-      setRunPhase(PHASE_THINKING);
-      // question 事件中的 threadId 可能仍是 gatewayd 原始 threadId；如果此前 fallback 已切换过 sessionId，
-      // 必须响应到当前活跃 session（sessionIdRef.current），否则 respond 会发到旧 thread，导致上下文断裂。
-      const targetThreadId = sessionIdRef.current || question.threadId;
-      const targetInstanceId = question.instanceId;
-      console.log('[useAgUiChat] respondToQuestion sending:', { threadId: targetThreadId, instanceId: targetInstanceId, message, currentSessionId: sessionIdRef.current });
+      // displayText 用于展示层（如“C. 选项描述”），实际发送给 agent 的仍是 message。
+      // 展示时同时保留原问题，便于用户回顾上下文。
+      const questionText = question.questions?.[0]?.question?.trim() || '';
+      const answerText = displayText?.trim() || message.trim();
+      const userAnswerContent = questionText ? `问题：${questionText}\n用户回答：${answerText}` : answerText;
+      console.log('[useAgUiChat] respondToQuestion', { questionText, answerText, isMarkerQuestion: question.isMarkerQuestion, currentSessionId: sessionIdRef.current });
       try {
+        if (question.isMarkerQuestion) {
+          // 文本标记协议：把问题和回答作为普通 user 消息发送，触发新一轮 run。
+          if (handleSendRef.current) {
+            await handleSendRef.current(userAnswerContent);
+          } else {
+            console.warn('[useAgUiChat] handleSendRef not ready, cannot send marker answer');
+            toast.error('发送回答失败，请刷新后重试');
+          }
+          return;
+        }
+        // 传统 agent.question 工具：追加用户回答消息后调用 gatewayd respond。
+        const answerMessage: ThreadMessageLike = {
+          id: generateId(),
+          role: 'user',
+          content: [{ type: 'text', text: userAnswerContent }],
+          createdAt: new Date(),
+        };
+        setMessages((prev) => [...prev, answerMessage]);
+        setIsRunning(true);
+        setRunPhase(PHASE_THINKING);
+        // question 事件中的 threadId 可能仍是 gatewayd 原始 threadId；如果此前 fallback 已切换过 sessionId，
+        // 必须响应到当前活跃 session（sessionIdRef.current），否则 respond 会发到旧 thread，导致上下文断裂。
+        const targetThreadId = sessionIdRef.current || question.threadId;
+        const targetInstanceId = question.instanceId;
         const res = await api.post<RespondResponse>('/v1/agent/respond', {
           threadId: targetThreadId,
           instanceId: targetInstanceId,
@@ -1350,6 +1446,8 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         console.error('[useAgUiChat] respond to question failed:', err);
         toast.error(errMsg);
         cancelRun();
+      } finally {
+        isRespondingToQuestionRef.current = false;
       }
     },
     [pendingQuestion, cancelRun, startRunReattach]
@@ -1363,6 +1461,7 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
 
   const handleSend = useCallback(
     async (text: string, context: SendContext = {}) => {
+      handleSendRef.current = handleSend;
       if (!text.trim() && !context.quotedCard) return;
       // 防止并发 run：如果当前已有 run 正在进行，忽略新的发送请求。
       // 避免 two runs interleaving 导致文字乱序和多个 AI 头像。
@@ -1370,6 +1469,8 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         console.log('[useAgUiChat] handleSend rejected: a run is already in progress');
         return;
       }
+      // 用户发送新消息（包括回答问题）时关闭问题卡片。
+      setPendingQuestion(null);
       console.log('[useAgUiChat] handleSend start, text=', text.slice(0, 50));
 
       let currentSessionId = sessionIdRef.current;
@@ -1625,6 +1726,10 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
 
   const shared = useExternalStoreSharedOptions({});
   const runtime = useExternalStoreRuntime({ ...shared, ...adapter });
+
+  useEffect(() => {
+    handleSendRef.current = handleSend;
+  }, [handleSend]);
 
   return {
     runtime,

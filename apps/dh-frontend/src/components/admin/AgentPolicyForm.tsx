@@ -98,6 +98,7 @@ export const AgentPolicyForm: React.FC<AgentPolicyFormProps> = ({
       modelSource: 'builtin',
       baseUrl: '',
       apiKey: '',
+      timeout: 120,
       createdAt: '',
       updatedAt: '',
     };
@@ -330,7 +331,7 @@ export const AgentPolicyForm: React.FC<AgentPolicyFormProps> = ({
                     )}
 
                     {/* 高级参数 */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                       <div className="space-y-1">
                         <Label className="text-xs text-muted-foreground">最大 Token 数</Label>
                         <Input
@@ -353,6 +354,21 @@ export const AgentPolicyForm: React.FC<AgentPolicyFormProps> = ({
                           value={cfg.advancedConfig?.contextWindow ?? ''}
                           onChange={e =>
                             updateAdvanced(at.key, 'contextWindow', e.target.value ? parseInt(e.target.value, 10) : undefined)
+                          }
+                          disabled={disabled}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">无事件超时（秒）</Label>
+                        <Input
+                          type="number"
+                          min="1"
+                          placeholder="例如: 120"
+                          value={cfg.timeout ?? ''}
+                          onChange={e =>
+                            updateAgentConfig(at.key, {
+                              timeout: e.target.value ? parseInt(e.target.value, 10) : undefined,
+                            })
                           }
                           disabled={disabled}
                         />

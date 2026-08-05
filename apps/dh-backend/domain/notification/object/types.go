@@ -76,4 +76,5 @@ type ActionNotificationRequest struct {
 	ProjectName  string `json:"projectName"`   // 自定义工程名（无仓库时填写）
 	Prompt       string `json:"prompt"`        // 开发人员的优化提示词（代码复审审批时使用）
 	Approved     *bool  `json:"approved"`      // 人工复审结果：true=通过, false=需优化（nil=非复审场景）
+	Reason       string `json:"reason"`        // 驳回原因（审核不通过时必填）
 }

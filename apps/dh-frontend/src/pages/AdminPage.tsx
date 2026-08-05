@@ -31,10 +31,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useAuth } from '@/contexts/AuthContext';
 import { useClientPagination } from '@/hooks/use-client-pagination';
 import { agentConfigApi } from '@/lib/agent-config-api';
+import { cicdConfigApi } from '@/lib/cicd-config-api';
 import { getPlatformRoleLabel, PLATFORM_ROLE } from '@/lib/role-constants';
 import { tenantApi } from '@/lib/tenant-api';
 import { formatDateTime } from '@/lib/utils';
-import type { AgentPolicy, AgentType, ModelVendorGroup, Tenant, TenantMember } from '@/types';
+import type { AgentPolicy, AgentType, CICDConfig, ModelVendorGroup, Tenant, TenantMember } from '@/types';
 
 // 新成员默认密码（与后端 schema 及 AddTenantMember 保持一致）
 const DEFAULT_MEMBER_PASSWORD = '123456';
@@ -84,11 +85,46 @@ export const AdminPage: React.FC = () => {
     lockedAgentKeys: [],
     allowedAgentKeys: [],
     defaultAgentConfigs: {},
+    cicdConfigId: undefined,
   });
 
   const [newAgentPolicy, setNewAgentPolicy] = useState<AgentPolicy>(defaultAgentPolicy());
   const [editAgentPolicy, setEditAgentPolicy] = useState<AgentPolicy>(defaultAgentPolicy());
   const [modelGroups, setModelGroups] = useState<ModelVendorGroup[]>([]);
+  const [cicdConfigs, setCicdConfigs] = useState<CICDConfig[]>([]);
+
+  // CICD 配置下拉选择：新增/编辑租户共用，避免重复 JSX。
+  const CICDConfigSelect = ({
+    policy,
+    onChange,
+    disabled,
+  }: {
+    policy: AgentPolicy;
+    onChange: (policy: AgentPolicy) => void;
+    disabled?: boolean;
+  }) => (
+    <div className="space-y-2">
+      <Label className="text-sm">关联 CICD 配置</Label>
+      <Select
+        value={policy.cicdConfigId || '__none__'}
+        onValueChange={value =>
+          onChange({ ...policy, cicdConfigId: value === '__none__' ? undefined : value })
+        }
+        disabled={disabled}
+      >
+        <SelectTrigger>
+          <SelectValue placeholder="选择 CICD 配置" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">不关联</SelectItem>
+          {cicdConfigs.map(cfg => (
+            <SelectItem key={cfg.id} value={cfg.id}>{cfg.name}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <p className="text-xs text-muted-foreground">选择该租户使用的全局 CICD 配置</p>
+    </div>
+  );
 
   const loadTenants = async () => {
     setTenantsLoading(true);
@@ -116,6 +152,7 @@ export const AdminPage: React.FC = () => {
       lockedAgentKeys: tenant.lockedAgentKeys ?? [],
       allowedAgentKeys: tenant.allowedAgentKeys ?? [],
       defaultAgentConfigs: tenant.defaultAgentConfigs ?? {},
+      cicdConfigId: tenant.cicdConfigId,
     });
     setEditTenantOpen(true);
     await loadTenantMembers(tenant.id);
@@ -139,6 +176,7 @@ export const AdminPage: React.FC = () => {
       lockedAgentKeys: tenant.lockedAgentKeys ?? [],
       allowedAgentKeys: tenant.allowedAgentKeys ?? [],
       defaultAgentConfigs: tenant.defaultAgentConfigs ?? {},
+      cicdConfigId: tenant.cicdConfigId,
     });
     resetPendingMembers();
     setIsCopyingTenant(true);
@@ -327,6 +365,9 @@ export const AdminPage: React.FC = () => {
     agentConfigApi.listGlobalModelGroups()
       .then(setModelGroups)
       .catch(() => toast.error('加载全局模型池失败'));
+    cicdConfigApi.list()
+      .then(setCicdConfigs)
+      .catch(() => toast.error('加载 CICD 配置列表失败'));
   }, [location.pathname]);
 
   const toggleAgentType = async (key: string, enabled: boolean) => {
@@ -383,6 +424,7 @@ export const AdminPage: React.FC = () => {
                     policy={newAgentPolicy}
                     onChange={setNewAgentPolicy}
                   />
+                  <CICDConfigSelect policy={newAgentPolicy} onChange={setNewAgentPolicy} />
 
                   {/* 初始租户管理员与成员：保存时随租户一起创建 */}
                   <div className="border-t pt-4 space-y-3">
@@ -619,6 +661,7 @@ export const AdminPage: React.FC = () => {
                     onChange={setEditAgentPolicy}
                     disabled={viewMode}
                   />
+                  <CICDConfigSelect policy={editAgentPolicy} onChange={setEditAgentPolicy} disabled={viewMode} />
 
                   {/* 租户管理员管理区域 — 与租户编辑合并 */}
                   <div className="border-t pt-4 space-y-3">

@@ -163,6 +163,8 @@ const (
 	ROUTE_WORKSPACES_BY_ID_STANDARDS_GENERATE                                          = API_V1_PREFIX + "/workspaces/{id}/standards/generate"
 	ROUTE_WORKSPACES_BY_ID_STANDARDS_BY_STANDARD_ID                                    = API_V1_PREFIX + "/workspaces/{id}/standards/{standardId}"
 	ROUTE_WORKSPACES_BY_ID_CICD                                                        = API_V1_PREFIX + "/workspaces/{id}/cicd"
+	ROUTE_CICD_CONFIGS                                                                 = API_V1_PREFIX + "/cicd-configs"
+	ROUTE_CICD_CONFIGS_BY_ID                                                           = API_V1_PREFIX + "/cicd-configs/{id}"
 	ROUTE_WORKSPACES_BY_ID_PROMPTS                                                     = API_V1_PREFIX + "/workspaces/{id}/prompts"
 	ROUTE_WORKSPACES_BY_ID_PROMPTS_BY_PROMPT_ID                                        = API_V1_PREFIX + "/workspaces/{id}/prompts/{promptId}"
 	ROUTE_WORKSPACES_BY_ID_PROMPTS_BY_PROMPT_ID_BY_ACTION                              = API_V1_PREFIX + "/workspaces/{id}/prompts/{promptId}/{action}"
@@ -306,7 +308,7 @@ func New(cfg config.Config) (http.Handler, func()) {
 	initWorkspacePromptService(db)
 	initRepositoryService(db, cfg)
 	productdocHandler := initProductDocService(db, cfg.WorkspaceRoot)
-	workspaceHandler := workspace.NewHandler(workspaceService, workspaceService, workspaceService, workspaceService, workspaceService, workspaceService, workspaceService, userService)
+	workspaceHandler := workspace.NewHandler(workspaceService, workspaceService, workspaceService, workspaceService, workspaceService, workspaceService, workspaceService, workspaceService, userService)
 	initPlatformTemplateService(db)
 	initPrototypeTemplateService(db, cfg.WorkspaceRoot)
 	agentRuntimeSvc := initAgentRuntimeService(db, cfg.WorkspaceRoot)
@@ -321,19 +323,12 @@ func New(cfg config.Config) (http.Handler, func()) {
 	agentController.Start(context.Background())
 
 	// 容器池：管理 per-user 容器（gatewayd + personal-stub）的分配与释放。
-	// mock 模式使用 configured 固定 IP 列表；k8s 模式通过 K8sProvider 管理 Pod。
-	var containerPool provisioner.ContainerPool
-	switch cfg.AgentProvisioner.Type {
-	case config.ProvisionerTypeK8s:
-		k8sPool, err := provisioner.NewK8sContainerPool(cfg.AgentProvisioner, prov)
-		if err != nil {
-			log.Fatalf("[container-pool] failed to create k8s pool: %v", err)
-		}
-		containerPool = k8sPool
-	default:
-		containerPool = provisioner.NewMockContainerPool(cfg.AgentProvisioner)
+	// direct-host 模式使用固定 IP 列表；k8s / self-defined 模式通过 AgentProvisioner 委托管理。
+	containerPool, err := provisioner.NewContainerPool(cfg.AgentProvisioner, prov)
+	if err != nil {
+		log.Fatalf("[container-pool] failed to create pool: %v", err)
 	}
-	log.Printf("[container-pool] type=%s, pool=%s", cfg.AgentProvisioner.Type, containerPoolTypeName(cfg.AgentProvisioner.Type))
+	log.Printf("[container-pool] type=%s", cfg.AgentProvisioner.Type)
 
 	// 注入 auth 中间件的 userID 提取函数，供 ContainerMiddleware 使用。
 	provisioner.SetMiddlewareUserIDFunc(func(ctx context.Context) string {
@@ -551,6 +546,8 @@ func New(cfg config.Config) (http.Handler, func()) {
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_STANDARDS_GENERATE, middleware.Auth(http.HandlerFunc(workspace.StandardGenerate)))
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_STANDARDS_BY_STANDARD_ID, workspaceHandler.WorkspaceStandardByID)
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_CICD, workspaceHandler.WorkspaceCICD)
+	mux.Handle(ROUTE_CICD_CONFIGS, middleware.Auth(http.HandlerFunc(workspaceHandler.CICDConfigs)))
+	mux.Handle(ROUTE_CICD_CONFIGS_BY_ID, middleware.Auth(http.HandlerFunc(workspaceHandler.CICDConfigByID)))
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_PROMPTS, middleware.Auth(http.HandlerFunc(workspace.Prompts)))
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_PROMPTS_BY_PROMPT_ID, middleware.Auth(http.HandlerFunc(workspace.PromptByID)))
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_PROMPTS_BY_PROMPT_ID_BY_ACTION, middleware.Auth(http.HandlerFunc(workspace.PromptAction)))
@@ -1090,14 +1087,4 @@ func initProcessService(db *sql.DB) {
 	store := processstore.NewDBProcessStore(db)
 	svc := processservice.NewProcessService(store)
 	process.Init(svc)
-}
-
-// containerPoolTypeName 返回容器池类型的人类可读名称。
-func containerPoolTypeName(t config.ProvisionerType) string {
-	switch t {
-	case config.ProvisionerTypeK8s:
-		return "k8s"
-	default:
-		return "mock"
-	}
 }

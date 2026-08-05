@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X, FileText, Pencil, LayoutTemplate, Trash2, Send, Loader2, ExternalLink, List, MoreHorizontal, Archive, Download, FolderInput, Check } from 'lucide-react';
+import { X, FileText, Pencil, LayoutTemplate, Trash2, Send, Loader2, ExternalLink, List, MoreHorizontal, Archive, Download, FolderInput, Check, Rocket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { MarkdownView } from '@/components/chat/MarkdownView';
 import { fileApi, type FileContent } from '@/lib/file-api';
 import { productSpaceApi } from '@/lib/productspace-api';
+import { processApi } from '@/lib/process-api';
 import { api } from '@/lib/api';
 import type { WorkItemDTO, UserDTO } from '@/lib/api-types';
 import { useAuth } from '@/contexts/AuthContext';
@@ -105,6 +106,11 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
   const [importing, setImporting] = useState(false);
   const [adopted, setAdopted] = useState(false);
   const [checkingAdoptStatus, setCheckingAdoptStatus] = useState(false);
+
+  // 发起产品流程状态。
+  const [startingFlow, setStartingFlow] = useState(false);
+  const isBrainstormResult = path.includes('/brainstorm/');
+  const canStartProductFlow = isBrainstormResult && !!workitemId && !!workspaceId;
 
   const displayContent = useMemo(() => {
     if (!fileContent) return '';
@@ -284,6 +290,27 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
     }
   };
 
+  // 发起AI产品流程：基于当前 brainstorm 结果启动产品流程。
+  const handleStartProductFlow = async () => {
+    if (!workspaceId || !workitemId) return;
+    setStartingFlow(true);
+    try {
+      await processApi.startProductFlow({
+        workspaceId,
+        workitemId,
+        workitemTitle: requirementTitle || displayTitle,
+        workitemDesc: '',
+      });
+      toast.success('产品流程已启动');
+    } catch (e) {
+      console.error('[InlineFilePreview] start product flow failed:', e);
+      const msg = e instanceof Error ? e.message : '';
+      toast.error(msg || '启动产品流程失败，请重试');
+    } finally {
+      setStartingFlow(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-background">
       {/* 标题栏 */}
@@ -332,6 +359,20 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
             >
               {importing || checkingAdoptStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : adopted ? <Check className="h-3.5 w-3.5" /> : <FolderInput className="h-3.5 w-3.5" />}
               {adopted ? '已采纳' : '采纳到产品空间'}
+            </Button>
+          )}
+          {/* 发起AI产品流程（仅 brainstorm 结果） */}
+          {canStartProductFlow && (
+            <Button
+              variant="default"
+              size="sm"
+              className="h-8 text-xs gap-1.5"
+              onClick={handleStartProductFlow}
+              disabled={startingFlow || loading || !!error}
+              title="基于此 brainstorm 结果发起 AI 产品流程"
+            >
+              {startingFlow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
+              发起AI产品流程
             </Button>
           )}
           {/* 更多操作：提需求、做原型、作废 */}

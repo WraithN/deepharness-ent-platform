@@ -49,8 +49,8 @@ type WorkspaceStandardService interface {
 }
 
 type WorkspaceCICDService interface {
+	// GetCICD 读取工作空间所属租户关联的全局 CICD 配置。
 	GetCICD(workspaceID string) (workspace.CICD, error)
-	SaveCICD(workspaceID string, req object.CICDRequest) (workspace.CICD, error)
 }
 
 type WorkspaceWorkitemProjectService interface {
@@ -66,5 +66,6 @@ type WorkspaceService interface {
 	WorkspaceAgentService
 	WorkspaceStandardService
 	WorkspaceCICDService
+	CICDConfigService
 	WorkspaceWorkitemProjectService
 }

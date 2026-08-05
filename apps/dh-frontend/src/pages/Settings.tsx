@@ -1,4 +1,4 @@
-import { Bot, Box, Camera, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Code2, Copy, Download, FileText, ListTodo, Loader2, Lock, MessageSquareQuote, MoreHorizontal, Palette, Plus, Puzzle, Save, Search, Share2, Shield, SlidersHorizontal, Star, Trash2, UploadCloud, UserCircle, UserPlus, Users, Wand2, X } from 'lucide-react';
+import { Bot, Box, Camera, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Code2, Copy, Download, FileText, ListTodo, Loader2, Lock, MessageSquareQuote, MoreHorizontal, Palette, Plus, Puzzle, Save, Search, Share2, Shield, SlidersHorizontal, Star, Trash2, UserCircle, UserPlus, Users, Wand2, X } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -42,7 +42,7 @@ import { teamApi } from '@/lib/team-api';
 import { formatDateTime } from '@/lib/utils';
 import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 import { workspaceApi } from '@/lib/workspace-api';
-import type { ModelVendorGroup, Prompt, PromptCategory, SettingsConfig, Skill, SkillCategory, WorkitemPlatform, WorkitemProject, Workspace, WorkspaceAgentConfig, WorkspaceCICD, WorkspaceMember, WorkspacePrompt, WorkspaceRepository, WorkspaceStandard } from '@/types';
+import type { ModelVendorGroup, Prompt, PromptCategory, SettingsConfig, Skill, SkillCategory, WorkitemPlatform, WorkitemProject, Workspace, WorkspaceAgentConfig, WorkspaceMember, WorkspacePrompt, WorkspaceRepository, WorkspaceStandard } from '@/types';
 
 // 空间提示词分享审核状态展示配置（取值与后端 team_prompts.status 对齐）。
 const PROMPT_SHARE_STATUS_LABELS: Record<string, string> = {
@@ -231,7 +231,7 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, loc
                 </Button>
               </CollapsibleTrigger>
               <CollapsibleContent className="space-y-4 pt-2">
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
                   <div className="space-y-2">
                     <Label className="text-xs text-muted-foreground">最大 Token 数</Label>
                     <Input
@@ -265,6 +265,17 @@ const AgentConfigCard: React.FC<AgentConfigCardProps> = ({ config, readOnly, loc
                       placeholder="例如: 0.7"
                       value={config.temperature ?? ''}
                       onChange={e => updateField('temperature', e.target.value ? parseFloat(e.target.value) : undefined)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">无事件超时（秒）</Label>
+                    <Input
+                      disabled={disabled}
+                      type="number"
+                      min="1"
+                      placeholder="例如: 120"
+                      value={config.timeout ?? ''}
+                      onChange={e => updateField('timeout', e.target.value ? parseInt(e.target.value, 10) : undefined)}
                     />
                   </div>
                   <div className="space-y-2">
@@ -342,11 +353,6 @@ export const Settings: React.FC = () => {
   const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([]);
   const [workitemProject, setWorkitemProject] = useState<WorkitemProject | null>(null);
   const [workspaceStandards, setWorkspaceStandards] = useState<WorkspaceStandard[]>([]);
-  const [cicd, setCicd] = useState<WorkspaceCICD | null>(null);
-  const [cicdBranches, setCicdBranches] = useState('main, master');
-  const [cicdWebhook, setCicdWebhook] = useState('');
-  const [cicdScript, setCicdScript] = useState('npm run build\nnpm run test\nnpm run deploy');
-
   const [agentConfigs, setAgentConfigs] = useState<WorkspaceAgentConfig[]>([]);
   const [agentConfigsLoading, setAgentConfigsLoading] = useState(false);
   const [modelGroups, setModelGroups] = useState<ModelVendorGroup[]>([]);
@@ -437,7 +443,10 @@ export const Settings: React.FC = () => {
     agentConfigApi.listWorkspaceConfigs(workspaceId)
       .then(configs => {
         if (cancelled) return;
-        setAgentConfigs(configs);
+        setAgentConfigs(configs.map(cfg => ({
+          ...cfg,
+          timeout: cfg.timeout ?? 120,
+        })));
       })
       .catch(err => {
         if (cancelled) return;
@@ -455,21 +464,14 @@ export const Settings: React.FC = () => {
       workspaceApi.members(workspaceId).catch((): WorkspaceMember[] => []),
       workspaceApi.getWorkitemProject(workspaceId).catch((): WorkitemProject | null => null),
       workspaceApi.listStandards(workspaceId).catch((): WorkspaceStandard[] => []),
-      workspaceApi.getCICD(workspaceId).catch((): WorkspaceCICD | null => null),
       repositoryApi.list(workspaceId).catch((): WorkspaceRepository[] => []),
       workspaceApi.listWorkitemPlatforms().catch((): WorkitemPlatform[] => []),
-    ]).then(([ws, mems, wp, stds, cicdCfg, repos, platforms]) => {
+    ]).then(([ws, mems, wp, stds, repos, platforms]) => {
       if (cancelled) return;
       setWorkspace(ws);
       setWorkspaceMembers(mems);
       setWorkitemProject(wp);
       setWorkspaceStandards(stds);
-      setCicd(cicdCfg);
-      if (cicdCfg) {
-        setCicdBranches(cicdCfg.triggerBranches || 'main, master');
-        setCicdWebhook(cicdCfg.webhookUrl || '');
-        setCicdScript(cicdCfg.script || 'npm run build\nnpm run test\nnpm run deploy');
-      }
       if (wp) {
         setSettings(prev => ({ ...prev, reqProjectId: wp.externalKey || '' }));
         setReqPlatform(wp.platform || '');
@@ -986,6 +988,7 @@ export const Settings: React.FC = () => {
         baseUrl: cfg.baseUrl,
         apiKey: cfg.apiKey,
         temperature: cfg.temperature,
+        timeout: cfg.timeout,
         advancedConfig: cfg.advancedConfig,
       })));
       
@@ -1052,20 +1055,6 @@ export const Settings: React.FC = () => {
       
     } catch {
       toast.error('保存研发规范失败');
-    }
-  };
-
-  const handleSaveCICD = async () => {
-    const workspaceId = getCurrentWorkspaceId();
-    try {
-      await workspaceApi.saveCICD(workspaceId, {
-        triggerBranches: cicdBranches,
-        webhookUrl: cicdWebhook,
-        script: cicdScript,
-      });
-      
-    } catch {
-      toast.error('保存 CICD 配置失败');
     }
   };
 
@@ -1264,10 +1253,6 @@ export const Settings: React.FC = () => {
           <TabsTrigger value="standards" className="aurora-tab-item level-1">
             <FileText className="h-4 w-4" />
             研发规范
-          </TabsTrigger>
-          <TabsTrigger value="cicd" className="aurora-tab-item level-1">
-            <UploadCloud className="h-4 w-4" />
-            CICD配置
           </TabsTrigger>
           <TabsTrigger value="members" className="aurora-tab-item level-1">
             <Users className="h-4 w-4" />
@@ -1468,35 +1453,6 @@ export const Settings: React.FC = () => {
               {!isReadOnly && (
                 <Button onClick={handleSaveStandards} className="mt-6"><Save className="mr-2 h-4 w-4" /> 保存规范</Button>
               )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="cicd">
-          <Card className="soft-shadow border-none">
-            <CardHeader>
-              <CardTitle>CICD 配置</CardTitle>
-              <CardDescription>配置项目的持续集成与持续部署流水线设置。</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-2">
-                <Label>部署触发分支</Label>
-                <Input placeholder="例如: main, master, release/*" value={cicdBranches} onChange={e => setCicdBranches(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Webhook URL</Label>
-                <Input placeholder="输入构建触发的 Webhook URL" type="url" value={cicdWebhook} onChange={e => setCicdWebhook(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>部署脚本命令</Label>
-                <Textarea 
-                  className="min-h-[120px] text-sm bg-muted/20"
-                  style={{ fontFamily: '"JetBrains Mono", monospace' }}
-                  value={cicdScript}
-                  onChange={e => setCicdScript(e.target.value)}
-                />
-              </div>
-              <Button onClick={handleSaveCICD}><Save className="mr-2 h-4 w-4" /> 保存配置</Button>
             </CardContent>
           </Card>
         </TabsContent>

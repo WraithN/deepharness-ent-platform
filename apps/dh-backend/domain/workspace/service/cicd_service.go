@@ -4,88 +4,50 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
-
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/object"
-	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
-	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workspace"
-	"github.com/google/uuid"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workspace"
 )
 
-// GetCICD 获取工作空间的 CI/CD 配置。
+// GetCICD 获取工作空间关联的 CI/CD 配置（读取视图）。
+// 实际数据源为工作空间所属租户关联的全局 cicd_configs 记录。
 func (s *DBWorkspaceService) GetCICD(workspaceID string) (workspace.CICD, error) {
-	var c workspace.CICD
-	var config sql.NullString
+	var tenantID, cicdConfigID sql.NullString
 	err := s.db.QueryRow(`
-		SELECT id, workspace_id, trigger_branches, webhook_url, script, config, created_at, updated_at
-		FROM workspace_cicd WHERE workspace_id = $1
-	`, workspaceID).Scan(&c.ID, &c.WorkspaceID, &c.TriggerBranches, &c.WebhookURL, &c.Script, &config, &c.CreatedAt, &c.UpdatedAt)
+		SELECT t.id, t.cicd_config_id
+		FROM workspaces w
+		JOIN tenants t ON w.tenant_id = t.id
+		WHERE w.id = $1
+	`, workspaceID).Scan(&tenantID, &cicdConfigID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return workspace.CICD{}, common.NotFoundErrorf("cicd not found")
+		return workspace.CICD{}, common.NotFoundErrorf("workspace not found")
 	}
 	if err != nil {
-		return workspace.CICD{}, fmt.Errorf("get cicd failed: %w", err)
+		return workspace.CICD{}, fmt.Errorf("get workspace tenant failed: %w", err)
 	}
-	c.Config, err = sqlutil.UnmarshalConfig(config)
-	if err != nil {
-		return workspace.CICD{}, fmt.Errorf("unmarshal cicd config failed: %w", err)
-	}
-	return c, nil
-}
-
-// SaveCICD 保存工作空间的 CI/CD 配置，按 workspace_id 进行 upsert。
-func (s *DBWorkspaceService) SaveCICD(workspaceID string, req object.CICDRequest) (workspace.CICD, error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return workspace.CICD{}, fmt.Errorf("begin transaction failed: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := workspaceExistsTx(tx, workspaceID); err != nil {
-		return workspace.CICD{}, err
+	if cicdConfigID.String == "" {
+		return workspace.CICD{}, common.NotFoundErrorf("cicd not configured for tenant")
 	}
 
-	now := time.Now().UTC()
-	_, err = tx.Exec(`
-		INSERT INTO workspace_cicd (id, workspace_id, trigger_branches, webhook_url, script, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (workspace_id) DO UPDATE SET
-			trigger_branches = EXCLUDED.trigger_branches,
-			webhook_url = EXCLUDED.webhook_url,
-			script = EXCLUDED.script,
-			updated_at = EXCLUDED.updated_at
-	`, uuid.New().String(), workspaceID, req.TriggerBranches, req.WebhookURL, req.Script, now, now)
-	if err != nil {
-		return workspace.CICD{}, fmt.Errorf("save cicd failed: %w", err)
-	}
-
-	cicd, err := getCICDTx(tx, workspaceID)
-	if err != nil {
-		return workspace.CICD{}, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return workspace.CICD{}, fmt.Errorf("commit failed: %w", err)
-	}
-	return cicd, nil
-}
-
-// getCICDTx 在事务中获取工作空间的 CI/CD 配置。
-func getCICDTx(tx *sql.Tx, workspaceID string) (workspace.CICD, error) {
 	var c workspace.CICD
 	var config sql.NullString
-	err := tx.QueryRow(`
-		SELECT id, workspace_id, trigger_branches, webhook_url, script, config, created_at, updated_at
-		FROM workspace_cicd WHERE workspace_id = $1
-	`, workspaceID).Scan(&c.ID, &c.WorkspaceID, &c.TriggerBranches, &c.WebhookURL, &c.Script, &config, &c.CreatedAt, &c.UpdatedAt)
+	var name, triggerBranches, webhookURL, script sql.NullString
+	err = s.db.QueryRow(`
+		SELECT id, tenant_id, name, trigger_branches, webhook_url, script, config, created_at, updated_at
+		FROM cicd_configs WHERE id = $1
+	`, cicdConfigID.String).Scan(&c.ID, &c.TenantID, &name, &triggerBranches, &webhookURL, &script, &config, &c.CreatedAt, &c.UpdatedAt)
+	c.Name = name.String
+	c.TriggerBranches = triggerBranches.String
+	c.WebhookURL = webhookURL.String
+	c.Script = script.String
 	if errors.Is(err, sql.ErrNoRows) {
-		return workspace.CICD{}, common.NotFoundErrorf("cicd not found")
+		return workspace.CICD{}, common.NotFoundErrorf("cicd config not found")
 	}
 	if err != nil {
-		return workspace.CICD{}, fmt.Errorf("get cicd failed: %w", err)
+		return workspace.CICD{}, fmt.Errorf("get cicd config failed: %w", err)
 	}
+	c.WorkspaceID = workspaceID
 	c.Config, err = sqlutil.UnmarshalConfig(config)
 	if err != nil {
 		return workspace.CICD{}, fmt.Errorf("unmarshal cicd config failed: %w", err)
