@@ -12,12 +12,12 @@ const STANDARD_PROMPT_MAX_LEN = 2000;
 
 /** 规范类型对应的中文名称，用于按钮/弹窗标题与提示语。 */
 const STANDARD_KIND_LABELS: Record<StandardGenerateDialogProps['kind'], string> = {
-  coding: '编码规范',
-  design: '设计规范',
+  coding: '工作行为规范',
+  design: 'UI设计规范',
 };
 
 interface StandardGenerateDialogProps {
-  /** 规范类型：coding（编码规范）或 design（设计规范）。 */
+  /** 规范类型：coding（工作行为规范）或 design（UI设计规范）。 */
   kind: 'coding' | 'design';
   /** 当前空间 ID，用于调用智能生成接口。 */
   workspaceId: string;
@@ -26,8 +26,8 @@ interface StandardGenerateDialogProps {
 }
 
 /**
- * 规范智能生成弹窗：输入文字描述 → 调用默认 agent 生成 Markdown 规范 → 回填编辑器。
- * 编码规范与设计规范共用同一交互，按 kind 区分系统提示词与标题。
+ * 规范智能生成弹窗：输入文字描述 -> 调用默认 agent 生成 Markdown 规范 -> 回填编辑器。
+ * 工作行为规范与UI设计规范共用同一交互，按 kind 区分系统提示词与标题。
  */
 export function StandardGenerateDialog({ kind, workspaceId, onGenerated }: StandardGenerateDialogProps) {
   const [open, setOpen] = useState(false);

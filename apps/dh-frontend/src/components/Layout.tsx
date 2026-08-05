@@ -452,7 +452,7 @@ export const Layout: React.FC = () => {
                 {location.pathname === '/personal/flow' && 'AI 开发流程的阶段追踪与看板视图'}
                 {location.pathname === '/dashboard' && '查看团队在当前工作空间的统计数据与研发效率'}
                 {location.pathname.startsWith('/personal-assistant') && '代码守护与自动审查助手'}
-                {location.pathname === '/settings' && '管理当前工作空间的成员与研发规范等配置'}
+                {location.pathname === '/settings' && '管理当前工作空间的成员与智能体规约等配置'}
                 {location.pathname === '/profile' && '管理您的个人头像、昵称与简介信息'}
               </p>
             </div>

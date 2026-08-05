@@ -1042,19 +1042,19 @@ export const Settings: React.FC = () => {
         workspaceApi.saveStandard(workspaceId, {
           id: coding?.id,
           type: 'coding',
-          name: '编码规范',
+          name: '工作行为规范',
           content: settings.codingStandard,
         }),
         workspaceApi.saveStandard(workspaceId, {
           id: design?.id,
           type: 'design',
-          name: '设计规范',
+          name: 'UI设计规范',
           content: settings.designStandard,
         }),
       ]);
       
     } catch {
-      toast.error('保存研发规范失败');
+      toast.error('保存智能体规约失败');
     }
   };
 
@@ -1252,7 +1252,7 @@ export const Settings: React.FC = () => {
           </TabsTrigger>
           <TabsTrigger value="standards" className="aurora-tab-item level-1">
             <FileText className="h-4 w-4" />
-            研发规范
+            智能体规约
           </TabsTrigger>
           <TabsTrigger value="members" className="aurora-tab-item level-1">
             <Users className="h-4 w-4" />
@@ -1386,19 +1386,21 @@ export const Settings: React.FC = () => {
         <TabsContent value="standards">
           <Card className="soft-shadow border-none">
             <CardHeader>
-              <CardTitle>研发规范</CardTitle>
-              <CardDescription>定义团队的编码和设计规范，AI 助手将基于这些规范进行评审和生成。</CardDescription>
+              <CardTitle>智能体规约</CardTitle>
+              <CardDescription>定义团队的工作行为规范和 UI 设计规范，AI 助手将基于这些规约进行评审和生成。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <Tabs defaultValue="coding" className="w-full">
                 <TabsList className="aurora-tab-bar level-2 mb-4">
                   <TabsTrigger value="coding" className="aurora-tab-item level-2">
                     <Code2 className="h-4 w-4" />
-                    编码规范
+                    工作行为规范
+                    <span className="ml-1.5 text-xs text-muted-foreground">(AGENTS.md)</span>
                   </TabsTrigger>
                   <TabsTrigger value="design" className="aurora-tab-item level-2">
                     <Palette className="h-4 w-4" />
-                    设计规范
+                    UI设计规范
+                    <span className="ml-1.5 text-xs text-muted-foreground">(DESIGN.md)</span>
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="coding">
@@ -1420,7 +1422,7 @@ export const Settings: React.FC = () => {
                   <MarkdownEditor
                     value={settings.codingStandard}
                     onChange={value => setSettings({ ...settings, codingStandard: value })}
-                    placeholder="请输入编码规范（支持 Markdown）..."
+                    placeholder="请输入工作行为规范（支持 Markdown），对应 AGENTS.md..."
                     readOnly={isReadOnly}
                     templates={codingStandardTemplates.templates}
                   />
@@ -1444,7 +1446,7 @@ export const Settings: React.FC = () => {
                   <MarkdownEditor
                     value={settings.designStandard}
                     onChange={value => setSettings({ ...settings, designStandard: value })}
-                    placeholder="请输入设计规范（支持 Markdown）..."
+                    placeholder="请输入UI设计规范（支持 Markdown），对应 DESIGN.md..."
                     readOnly={isReadOnly}
                     templates={designStandardTemplates.templates}
                   />
