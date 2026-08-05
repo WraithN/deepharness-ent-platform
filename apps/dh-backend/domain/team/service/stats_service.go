@@ -68,12 +68,12 @@ func (s *DBTeamService) GetSkillStats(workspaceID string) (object.SkillStats, er
 
 	var topRows *sql.Rows
 	if workspaceID == "" {
-		topRows, err = s.db.Query(`
+		topRows, err = s.db.Query(fmt.Sprintf(`
 			SELECT id, name, category, downloads, rating
 			FROM team_skills
 			ORDER BY downloads DESC
 			LIMIT %d
-		`, defaultTopStatsLimit)
+		`, defaultTopStatsLimit))
 	} else {
 		topRows, err = s.db.Query(fmt.Sprintf(`
 			SELECT id, name, category, downloads, rating
