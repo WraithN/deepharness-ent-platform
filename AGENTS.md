@@ -161,7 +161,7 @@ dh-backend (Go, :8080) - 用户管理后台
   ↓ HTTP 代理
 personal-stub (Go, :8090) - 用户个人管理服务
   ↓ 文件系统操作 / 进程管理
-共享目录 ({workspaceRoot}/{workspaceId}/{userId}/)
+共享目录 ({workspaceRoot}/{userId}/{workspaceId}/)
 
 dh-frontend (React, :8888)
   ↓ HTTP / WebSocket（会话）
@@ -194,7 +194,7 @@ gatewayd (Rust, :2345) - Agent 代理服务（每空间×每用户一个容器�
 
 ```
 {workspaceRoot}/
-├── {workspaceId}/{userId}/          # 用户工作区
+├── {userId}/{workspaceId}/          # 用户工作区
 │   ├── products/prototypes/         # 原型工程（agent 写入，dh-backend serve）
 │   └── projects/                    # 项目代码
 └── shares/                          # 全局共享资源（dh-backend 部署，agent 只读）

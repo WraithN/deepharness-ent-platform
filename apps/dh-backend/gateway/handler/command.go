@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/orchestrator/prompts"
 	workitemservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workitem"
 )
@@ -170,18 +171,9 @@ func fetchWorkItem(svc workitemservice.WorkItemService, cardID string) (workitem
 	return item, nil
 }
 
-// commonPromptRules 是所有指令模板共享的通用提示词规则。
-// 在 renderTemplate 中自动附加到每个指令模板前，确保模型无论执行哪个指令都遵循：
-// 中文输出、不暴露内部目录、不调用后台 slash command、正确使用文件/工程/卡片标记。
-const commonPromptRules = `【通用规则】
-1. 所有回复必须使用中文，包括标题、正文、标记、代码注释、文件路径说明等。
-2. 不要在回复正文或标题中暴露内部工作目录（如 /home/.../workspace/...），只使用相对路径或项目名向用户说明。
-3. 禁止使用 /workflows、/commit、/pr、/review 等后台 slash command；所有任务都通过直接回答或调用工具完成。
-4. 在回复末尾用 [[FILE:绝对路径]] 或 [[PROJECT:绝对路径]] 标记实际创建的文件或工程。
-5. 如果指令需要生成卡片，必须在回复末尾保留对应的 [[CARD:卡片类型]] 标记。
-6. 除了 [[FILE:...]]、[[PROJECT:...]]、[[CARD:...]] 标记外，不要把普通 slash 字符串当作文件路径。
-7. 不要输出执行计划、Next Move、步骤安排、分步策略、工具调用说明等元信息；只输出用户请求的结果内容、必要的解释说明以及要求的标记。
-`
+// commonPromptRules 已迁移至 prompts.CommonPromptRules（orchestrator/prompts/common.go），
+// 由 prompts.ApplyPromptCommon 统一注入到 flow prompt 和 command template。
+// 此处不再重复定义，handler 通过 prompts 包引用。
 
 // protoTemplatesProvider 由 prototypetemplate 模块注册，用于在 /proto-make 模板中
 // 注入「可用工程模版」清单。为空（未注册或无就绪模版）时占位符替换为空串，
@@ -200,6 +192,8 @@ func SetProtoTemplatesProvider(fn func() string) {
 // {PROTO_TEMPLATES} 仅 /proto-make 使用，替换为就绪模版清单（无则空串，触发单页 HTML 回退）。
 // {HTML_SCAFFOLD_CSS} / {HTML_SCAFFOLD_JS} 替换为内置脚手架文件内容，供 agent 写入原型目录。
 // 若 workspacePath 为空但模板仍残留 {WORKSPACE_PATH}，则返回错误，防止生成错误路径。
+// 注意：此函数仅做模板渲染，不注入 CommonPromptRules 和规范引用；
+// 通用规则与规范引用由 applyPromptCommonToMessages 在 applyCommandsAndIntent 末尾统一注入。
 func renderTemplate(tmpl, args, workspacePath string) (string, error) {
 	rendered := strings.ReplaceAll(tmpl, "{ARGS}", args)
 	if workspacePath != "" {
@@ -219,7 +213,30 @@ func renderTemplate(tmpl, args, workspacePath string) (string, error) {
 	// 脚手架内容注入：dh-backend 仅做 prompt 渲染，不写共享目录；agent 收到内容后自行写入文件。
 	rendered = strings.ReplaceAll(rendered, "{HTML_SCAFFOLD_CSS}", ScaffoldCSS)
 	rendered = strings.ReplaceAll(rendered, "{HTML_SCAFFOLD_JS}", ScaffoldJS)
-	return commonPromptRules + "\n\n" + rendered, nil
+	return rendered, nil
+}
+
+// applyPromptCommonToMessages 对最后一条用户消息统一注入通用规则和工作空间规范引用。
+// 在 applyCommandsAndIntent 末尾调用，对所有路径（斜杠指令 / 意图识别 / 纯聊天）生效：
+//   - prepend CommonPromptRules（通用提示词规则）
+//   - append 工作空间规范引用（AGENTS.md / DESIGN.md 路径）
+//
+// 与 flow prompt 的 prompts.ApplyPromptCommon 保持一致，实现全链路统一。
+func applyPromptCommonToMessages(messages []agui.Message, workspacePath string) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != agui.RoleUser {
+			continue
+		}
+		text := messages[i].ContentText()
+		wrapped := prompts.ApplyPromptCommon(text, workspacePath)
+		data, err := json.Marshal(wrapped)
+		if err != nil {
+			log.Printf("[AGUIHandler] applyPromptCommon: marshal failed: %v", err)
+			return
+		}
+		messages[i].Content = json.RawMessage(data)
+		return
+	}
 }
 
 // applyCommandConfig 将单个指令配置应用到指定用户消息索引上。

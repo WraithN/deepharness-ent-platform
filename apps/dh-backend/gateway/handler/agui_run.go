@@ -363,6 +363,11 @@ func (h *AGUIHandler) applyCommandsAndIntent(
 	if intentCommand == "" {
 		injectCardForChat(input.Messages, input.Context, h.workItemSvc, input.RunID)
 	}
+
+	// 统一注入通用规则和工作空间规范引用（CommonPromptRules + AGENTS.md / DESIGN.md），
+	// 对所有路径（斜杠指令 / 意图识别 / 纯聊天）生效。
+	// 与 flow prompt 的 prompts.ApplyPromptCommon 保持一致，实现全链路统一。
+	applyPromptCommonToMessages(input.Messages, workspacePath)
 	return
 }
 

@@ -197,11 +197,13 @@ agent_provisioner:
 
   # --- direct-host 模式配置（本地开发）---
   direct_host:
-    hosts:                      # 固定 IP 列表，每个 host 代表一个容器实例
+    hosts:                      # 固定 IP 列表，每个 host 可承载多个用户实例
       - "127.0.0.1"
-    agent_port: 2345            # gatewayd agent API 端口
-    admin_port: 2346            # gatewayd admin API 端口
-    stub_port: 8090             # personal-stub 端口（与 gatewayd 共部署）
+    agent_port: 2345            # gatewayd agent API 基础端口
+    admin_port: 2346            # gatewayd admin API 基础端口
+    stub_port: 8090             # personal-stub 基础端口（与 gatewayd 共部署）
+    port_step: 10               # 每个槽位的端口递增步长（槽位 i: base + i * port_step）
+    max_users_per_host: 5       # 每台主机最大用户数（槽位数）
 
   # --- k8s 模式配置（Kubernetes 原生管理）---
   k8s:

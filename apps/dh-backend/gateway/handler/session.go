@@ -10,12 +10,19 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui/buffer"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/provisioner"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/service"
 	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	"github.com/google/uuid"
+)
+
+// 标准类型常量，与 workspace_standards.type 字段对应。
+const (
+	standardTypeCoding = "coding"
+	standardTypeDesign = "design"
 )
 
 type SessionHandler struct {
@@ -26,6 +33,7 @@ type SessionHandler struct {
 	agentConfigService service.AgentConfigService
 	cfg                config.Config
 	buffer             buffer.SSEBuffer
+	adminClient        *provisioner.ContainerAdminClient
 }
 
 func NewSessionHandler(
@@ -45,6 +53,7 @@ func NewSessionHandler(
 		agentConfigService: agentConfigService,
 		cfg:                cfg,
 		buffer:             buf,
+		adminClient:        provisioner.NewContainerAdminClient(),
 	}
 }
 
@@ -145,6 +154,10 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		WriteJSONError(w, http.StatusInternalServerError, ErrCodeGeneral, err.Error())
 		return
 	}
+
+	// 下发工作空间规范（AGENTS.md / DESIGN.md / CLAUDE.md）到用户工作目录。
+	// agent 启动后会自动发现并加载这些文件，实现工作行为规范与 UI 设计规范的注入。
+	h.syncWorkspaceStandards(r.Context(), workspaceID, workspacePath)
 
 	agentID := req.AgentID
 	if agentID == "" {
@@ -324,6 +337,11 @@ func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"code":1,"message":"failed to delete session"}`, http.StatusInternalServerError)
 		return
 	}
+
+	// 清理工作空间规范文件（AGENTS.md / DESIGN.md / CLAUDE.md）。
+	// 多会话场景下可能被其他会话重新下发，此处为尽力清理。
+	h.clearWorkspaceStandards(r.Context(), sess.WorkspacePath)
+
 	json.NewEncoder(w).Encode(map[string]any{
 		"code":    0,
 		"message": "success",
@@ -448,5 +466,53 @@ func (h *SessionHandler) recoverPendingRuns(ctx context.Context, sessionID strin
 		}
 		log.Printf("[SessionHandler] recover: persisted crashed run runID=%s parts=%d", runID, len(parts))
 		_ = h.buffer.ClearRunState(ctx, sessionID, runID)
+	}
+}
+
+// syncWorkspaceStandards 从数据库读取工作空间规范，通过 personal-stub 写入用户工作目录。
+// 写入 AGENTS.md / DESIGN.md / CLAUDE.md 三个文件，确保 agent 能自动发现并加载。
+// 失败时仅记录日志，不阻断会话创建。
+func (h *SessionHandler) syncWorkspaceStandards(ctx context.Context, workspaceID, workspacePath string) {
+	if h.workspaceService == nil || h.cfg.PersonalStubURL == "" {
+		return
+	}
+
+	standards, err := h.workspaceService.ListStandards(workspaceID, "")
+	if err != nil {
+		log.Printf("[SessionHandler] sync standards: list standards failed for ws=%s: %v", workspaceID, err)
+		return
+	}
+
+	var coding, design string
+	for _, st := range standards {
+		switch st.Type {
+		case standardTypeCoding:
+			coding = st.Content
+		case standardTypeDesign:
+			design = st.Content
+		}
+	}
+
+	// 内容为空时仍调用 sync，确保旧文件被覆盖（空内容写入等于清除）。
+	if err := h.adminClient.StandardsSync(ctx, h.cfg.PersonalStubURL, provisioner.StandardsSyncRequest{
+		WorkspacePath:  workspacePath,
+		CodingStandard: coding,
+		DesignStandard: design,
+	}); err != nil {
+		log.Printf("[SessionHandler] sync standards: call personal-stub sync failed for ws=%s: %v", workspaceID, err)
+	}
+}
+
+// clearWorkspaceStandards 通过 personal-stub 删除用户工作目录中的规范文件。
+// 失败时仅记录日志，不阻断会话删除。
+func (h *SessionHandler) clearWorkspaceStandards(ctx context.Context, workspacePath string) {
+	if workspacePath == "" || h.cfg.PersonalStubURL == "" {
+		return
+	}
+
+	if err := h.adminClient.StandardsClear(ctx, h.cfg.PersonalStubURL, provisioner.StandardsClearRequest{
+		WorkspacePath: workspacePath,
+	}); err != nil {
+		log.Printf("[SessionHandler] clear standards: call personal-stub clear failed: %v", err)
 	}
 }

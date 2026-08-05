@@ -29,6 +29,7 @@ import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAuth } from '@/contexts/AuthContext';
 import { useClientPagination } from '@/hooks/use-client-pagination';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -1391,18 +1392,28 @@ export const Settings: React.FC = () => {
             </CardHeader>
             <CardContent className="space-y-6">
               <Tabs defaultValue="coding" className="w-full">
-                <TabsList className="aurora-tab-bar level-2 mb-4">
-                  <TabsTrigger value="coding" className="aurora-tab-item level-2">
-                    <Code2 className="h-4 w-4" />
-                    工作行为规范
-                    <span className="ml-1.5 text-xs text-muted-foreground">(AGENTS.md)</span>
-                  </TabsTrigger>
-                  <TabsTrigger value="design" className="aurora-tab-item level-2">
-                    <Palette className="h-4 w-4" />
-                    UI设计规范
-                    <span className="ml-1.5 text-xs text-muted-foreground">(DESIGN.md)</span>
-                  </TabsTrigger>
-                </TabsList>
+                <TooltipProvider delayDuration={300}>
+                  <TabsList className="aurora-tab-bar level-2 mb-4">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <TabsTrigger value="coding" className="aurora-tab-item level-2">
+                          <Code2 className="h-4 w-4" />
+                          工作行为规范
+                        </TabsTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>工作空间级 AGENTS.md</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <TabsTrigger value="design" className="aurora-tab-item level-2">
+                          <Palette className="h-4 w-4" />
+                          UI设计规范
+                        </TabsTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>工作空间级 DESIGN.md</TooltipContent>
+                    </Tooltip>
+                  </TabsList>
+                </TooltipProvider>
                 <TabsContent value="coding">
                   {!isReadOnly && (
                     <div className="mb-2 flex justify-end">

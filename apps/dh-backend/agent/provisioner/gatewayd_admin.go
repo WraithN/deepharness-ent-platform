@@ -16,6 +16,8 @@ const (
 	containerUnbindPath  = "/api/v1/container/unbind"
 	containerSleepPath   = "/api/v1/container/sleep"
 	containerWakePath    = "/api/v1/container/wake"
+	standardsSyncPath    = "/api/v1/standards/sync"
+	standardsClearPath   = "/api/v1/standards/clear"
 	containerHTTPTimeout = 10 * time.Second
 )
 
@@ -31,6 +33,18 @@ type BindRequest struct {
 	WorkspacePath string   `json:"workspacePath"`
 	Roles         []string `json:"roles"`
 	AgentType     string   `json:"agentType"`
+}
+
+// StandardsSyncRequest personal-stub /api/v1/standards/sync 请求体。
+type StandardsSyncRequest struct {
+	WorkspacePath  string `json:"workspacePath"`
+	CodingStandard string `json:"codingStandard"`
+	DesignStandard string `json:"designStandard"`
+}
+
+// StandardsClearRequest personal-stub /api/v1/standards/clear 请求体。
+type StandardsClearRequest struct {
+	WorkspacePath string `json:"workspacePath"`
 }
 
 // ContainerAdminClient 封装对 personal-stub 容器管理 API（:8090）的 HTTP 调用。
@@ -127,6 +141,17 @@ func (c *ContainerAdminClient) Wake(ctx context.Context, containerURL string) er
 		return fmt.Errorf("wake returned status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// StandardsSync 将工作空间规范写入用户工作目录（AGENTS.md / DESIGN.md / CLAUDE.md）。
+// stubURL 为 personal-stub 基地址。
+func (c *ContainerAdminClient) StandardsSync(ctx context.Context, stubURL string, req StandardsSyncRequest) error {
+	return c.postJSON(ctx, stubURL+standardsSyncPath, req)
+}
+
+// StandardsClear 删除用户工作目录中的规范文件。
+func (c *ContainerAdminClient) StandardsClear(ctx context.Context, stubURL string, req StandardsClearRequest) error {
+	return c.postJSON(ctx, stubURL+standardsClearPath, req)
 }
 
 func (c *ContainerAdminClient) postJSON(ctx context.Context, url string, body interface{}) error {

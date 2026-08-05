@@ -47,19 +47,12 @@ func (a *adminClientAdapter) Wake(ctx context.Context, containerURL string) erro
 
 // NewProvisioner 根据配置创建对应类型的 AgentProvisioner 实现。
 // 支持三种供给器类型：direct-host（本地开发）、k8s（Kubernetes 原生）、self-defined（HTTP API 对接自定义）。
+// 对于 direct-host 模式，返回的 *directhost.Manager 实现 AgentProvisioner；
+// NewContainerPool 通过 PoolAdapter 复用同一 Manager 实例实现 ContainerPool。
 func NewProvisioner(cfg config.ProvisionerConfig) (agent.AgentProvisioner, error) {
 	switch cfg.Type {
 	case config.ProvisionerTypeDirectHost, "":
-		dhCfg := cfg.DirectHost
-		// direct-host 模式：管理面通过 personal-stub 代理 gatewayd
-		stubURL := fmt.Sprintf("http://localhost:%d", portOr(dhCfg.StubPort, agent.DefaultStubPort))
-		agentURL := fmt.Sprintf("http://localhost:%d", portOr(dhCfg.AgentPort, agent.DefaultAgentPort))
-		return directhost.New(directhost.Config{
-			AdminURL:      stubURL,
-			AgentURL:      agentURL,
-			WarmPoolMin:   cfg.WarmPoolMin,
-			SimulateDelay: 0,
-		}), nil
+		return directhost.NewManagerFromConfig(cfg.DirectHost), nil
 
 	case config.ProvisionerTypeK8s:
 		return k8s.New(cfg, &adminClientAdapter{inner: NewContainerAdminClient()})
@@ -77,27 +70,24 @@ func NewProvisioner(cfg config.ProvisionerConfig) (agent.AgentProvisioner, error
 }
 
 // NewContainerPool 根据配置创建对应类型的 ContainerPool。
-// direct-host 模式使用固定主机列表；k8s 和 self-defined 模式通过 AgentProvisioner 委托管理。
+// direct-host 模式通过 PoolAdapter 复用 NewProvisioner 返回的 *directhost.Manager（同一实例）；
+// k8s 和 self-defined 模式通过 AgentProvisioner 委托管理。
 func NewContainerPool(cfg config.ProvisionerConfig, prov agent.AgentProvisioner) (agent.ContainerPool, error) {
 	switch cfg.Type {
+	case config.ProvisionerTypeDirectHost, "":
+		m, ok := prov.(*directhost.Manager)
+		if !ok {
+			return nil, fmt.Errorf("direct-host provisioner is not *directhost.Manager: %T", prov)
+		}
+		return directhost.NewPoolAdapter(m), nil
+
 	case config.ProvisionerTypeK8s:
 		return NewAgentContainerPool(prov, cfg.K8s.StubPort), nil
 
 	case config.ProvisionerTypeSelfDefined:
 		return NewAgentContainerPool(prov, cfg.SelfDefined.StubPort), nil
 
-	case config.ProvisionerTypeDirectHost, "":
-		return directhost.NewContainerPool(cfg.DirectHost, cfg.WarmPoolMin, cfg.WarmPoolMax), nil
-
 	default:
 		return nil, fmt.Errorf("unknown provisioner type: %s", cfg.Type)
 	}
-}
-
-// portOr 返回端口值，为 0 时返回默认端口。
-func portOr(port, defaultPort int) int {
-	if port == 0 {
-		return defaultPort
-	}
-	return port
 }

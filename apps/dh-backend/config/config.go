@@ -155,10 +155,12 @@ type ProvisionerConfig struct {
 
 // DirectHostConfig direct-host 模式配置（本地开发）。
 type DirectHostConfig struct {
-	Hosts     []string `yaml:"hosts"`
-	AgentPort int      `yaml:"agent_port"`
-	AdminPort int      `yaml:"admin_port"`
-	StubPort  int      `yaml:"stub_port"`
+	Hosts           []string `yaml:"hosts"`
+	AgentPort       int      `yaml:"agent_port"`
+	AdminPort       int      `yaml:"admin_port"`
+	StubPort        int      `yaml:"stub_port"`
+	PortStep        int      `yaml:"port_step"`         // 每个槽位的端口递增步长（默认 10）
+	MaxUsersPerHost int      `yaml:"max_users_per_host"` // 每台主机最大用户数（默认 5）
 }
 
 // K8sConfig k8s 模式配置（Kubernetes 原生管理）。
@@ -291,10 +293,12 @@ type yamlConfig struct {
 		MaxActivePerUser  int    `yaml:"max_active_per_user"`
 
 		DirectHost struct {
-			Hosts     []string `yaml:"hosts"`
-			AgentPort int      `yaml:"agent_port"`
-			AdminPort int      `yaml:"admin_port"`
-			StubPort  int      `yaml:"stub_port"`
+			Hosts           []string `yaml:"hosts"`
+			AgentPort       int      `yaml:"agent_port"`
+			AdminPort       int      `yaml:"admin_port"`
+			StubPort        int      `yaml:"stub_port"`
+			PortStep        int      `yaml:"port_step"`
+			MaxUsersPerHost int      `yaml:"max_users_per_host"`
 		} `yaml:"direct_host"`
 
 		K8s struct {
@@ -432,10 +436,12 @@ func Load() (Config, error) {
 		SleepEvictTimeout: parseDurationOrZero(yc.AgentProvisioner.SleepEvictTimeout),
 		MaxActivePerUser:  yc.AgentProvisioner.MaxActivePerUser,
 		DirectHost: DirectHostConfig{
-			Hosts:     yc.AgentProvisioner.DirectHost.Hosts,
-			AgentPort: yc.AgentProvisioner.DirectHost.AgentPort,
-			AdminPort: yc.AgentProvisioner.DirectHost.AdminPort,
-			StubPort:  yc.AgentProvisioner.DirectHost.StubPort,
+			Hosts:           yc.AgentProvisioner.DirectHost.Hosts,
+			AgentPort:       yc.AgentProvisioner.DirectHost.AgentPort,
+			AdminPort:       yc.AgentProvisioner.DirectHost.AdminPort,
+			StubPort:        yc.AgentProvisioner.DirectHost.StubPort,
+			PortStep:        yc.AgentProvisioner.DirectHost.PortStep,
+			MaxUsersPerHost: yc.AgentProvisioner.DirectHost.MaxUsersPerHost,
 		},
 		K8s: K8sConfig{
 			Namespace:          yc.AgentProvisioner.K8s.Namespace,
@@ -538,6 +544,8 @@ func Load() (Config, error) {
 	cfg.AgentProvisioner.DirectHost.AgentPort = getIntEnv("AGENT_PROVISIONER_DIRECT_HOST_AGENT_PORT", cfg.AgentProvisioner.DirectHost.AgentPort)
 	cfg.AgentProvisioner.DirectHost.AdminPort = getIntEnv("AGENT_PROVISIONER_DIRECT_HOST_ADMIN_PORT", cfg.AgentProvisioner.DirectHost.AdminPort)
 	cfg.AgentProvisioner.DirectHost.StubPort = getIntEnv("AGENT_PROVISIONER_DIRECT_HOST_STUB_PORT", cfg.AgentProvisioner.DirectHost.StubPort)
+	cfg.AgentProvisioner.DirectHost.PortStep = getIntEnv("AGENT_PROVISIONER_DIRECT_HOST_PORT_STEP", cfg.AgentProvisioner.DirectHost.PortStep)
+	cfg.AgentProvisioner.DirectHost.MaxUsersPerHost = getIntEnv("AGENT_PROVISIONER_DIRECT_HOST_MAX_USERS_PER_HOST", cfg.AgentProvisioner.DirectHost.MaxUsersPerHost)
 
 	// k8s 环境变量覆盖
 	cfg.AgentProvisioner.K8s.Namespace = getEnv("AGENT_PROVISIONER_K8S_NAMESPACE", cfg.AgentProvisioner.K8s.Namespace)

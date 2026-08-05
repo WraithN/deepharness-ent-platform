@@ -33,6 +33,10 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/container/wake", handler.ContainerWake)
 	mux.HandleFunc("/api/v1/container/report", handler.ContainerReport)
 
+	// 规范文件管理（AGENTS.md / DESIGN.md / CLAUDE.md 下发与清理）
+	mux.HandleFunc("/api/v1/standards/sync", handler.StandardsSync)
+	mux.HandleFunc("/api/v1/standards/clear", handler.StandardsClear)
+
 	// 文件读取/写入/删除/下载/版本查询/保存
 	mux.HandleFunc("/api/v1/files/content", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
