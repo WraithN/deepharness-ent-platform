@@ -89,6 +89,8 @@ export const STAGE_NAMES = {
 export const PROCESS_TYPE_LABELS: Record<string, string> = {
   ai_dev: 'AI 开发',
   auto_test: '自动化测试',
+  auto_test_asset: '测试资产',
+  auto_test_execution: '测试执行',
   product: '产品流程',
 };
 

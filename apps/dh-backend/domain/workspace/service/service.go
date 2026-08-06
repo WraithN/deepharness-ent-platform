@@ -10,7 +10,7 @@ import (
 )
 
 type WorkspaceCRUDService interface {
-	CreateWorkspace(tenantID, name, description, ownerUserID, subRole, sourceWorkspaceID string, policy object.AgentPolicy) (workspace.Workspace, error)
+	CreateWorkspace(tenantID, name, description, ownerUserID string, subRoles []string, sourceWorkspaceID string, policy object.AgentPolicy) (workspace.Workspace, error)
 	GetWorkspace(id string) (workspace.Workspace, error)
 	UpdateWorkspace(id, name, description string, policy object.AgentPolicy) (workspace.Workspace, error)
 	DeleteWorkspace(id string) error
@@ -27,12 +27,12 @@ type WorkspaceDirectoryService interface {
 }
 
 type WorkspaceMemberService interface {
-	AddMember(workspaceID, userID, role, subRole string) error
-	AddMemberByEmail(workspaceID, email, role, subRole string) error
+	AddMember(workspaceID, userID, role string, subRoles []string) error
+	AddMemberByEmail(workspaceID, email, role string, subRoles []string) error
 	ListMembers(workspaceID string) ([]workspace.Member, error)
 	GetMemberRole(workspaceID, userID string) (string, error)
-	GetMemberSubRole(ctx context.Context, workspaceID, userID string) (string, error)
-	UpdateMemberRole(workspaceID, userID, role, subRole string) error
+	GetMemberSubRoles(ctx context.Context, workspaceID, userID string) ([]string, error)
+	UpdateMemberRole(workspaceID, userID, role string, subRoles []string) error
 	RemoveMember(workspaceID, userID, assetAssigneeID string) error
 }
 

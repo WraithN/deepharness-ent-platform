@@ -7,8 +7,8 @@ import (
 
 func TestRenderProductBrainstorm(t *testing.T) {
 	result := BuildProductBrainstormPrompt("测试需求", "这是一个描述", "/workspace")
-	if !strings.Contains(result, "/brainstorm") {
-		t.Error("missing /brainstorm command")
+	if !strings.Contains(result, "/grill-me") {
+		t.Error("missing /grill-me command")
 	}
 	if !strings.Contains(result, "测试需求") {
 		t.Error("missing title")

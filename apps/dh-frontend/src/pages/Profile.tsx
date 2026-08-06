@@ -130,7 +130,7 @@ export const Profile: React.FC = () => {
             <div className="space-y-2">
               <Label htmlFor="role">角色</Label>
               <div className="h-9 px-3 rounded-md border border-input bg-muted/30 flex items-center text-sm text-muted-foreground">
-                {getSubRoleLabel(membership?.subRole) || '成员'}
+                {membership?.subRoles?.map(getSubRoleLabel).join('、') || '成员'}
               </div>
             </div>
           </div>

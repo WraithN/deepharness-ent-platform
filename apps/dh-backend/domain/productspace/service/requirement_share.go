@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 // generateRequirementShareToken 生成需求级统一分享短链 token，复用 base62 字符集。
@@ -142,7 +142,7 @@ func (s *DBProductSpaceService) createRequirementShareInternal(ctx context.Conte
 	_, err = s.db.Exec(
 		`INSERT INTO requirement_shares (id, token, workspace_id, user_id, title, doc_id, product_folder, allow_comments, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		uuid.NewString(), token, workspaceID, userID, nullIfEmpty(req.Title), nullIfEmpty(req.DocID), nullIfEmpty(folder), req.AllowComments, now,
+		idutil.GenerateID(), token, workspaceID, userID, nullIfEmpty(req.Title), nullIfEmpty(req.DocID), nullIfEmpty(folder), req.AllowComments, now,
 	)
 	if err != nil {
 		return object.RequirementShare{}, fmt.Errorf("create requirement share failed: %w", err)
@@ -362,7 +362,7 @@ func (s *DBProductSpaceService) AddRequirementSharePrototypeComment(token, itemI
 		       ins.content, ins.selector, ins.target_text, ins.x, ins.y, ins.created_at
 		FROM ins
 		LEFT JOIN users u ON u.id = ins.user_id
-	`, uuid.NewString(), itemID, workspaceID, anonymousVisitorUserID, content, selector, targetText, req.X, req.Y), &c)
+	`, idutil.GenerateID(), itemID, workspaceID, anonymousVisitorUserID, content, selector, targetText, req.X, req.Y), &c)
 	if err != nil {
 		return nil, fmt.Errorf("insert requirement share prototype comment failed: %w", err)
 	}
@@ -451,7 +451,7 @@ func (s *DBProductSpaceService) AddRequirementShareDocComment(token string, req 
 
 	now := time.Now().UTC()
 	c := shareCommentInternal{
-		ID:          uuid.NewString(),
+		ID:          idutil.GenerateID(),
 		ShareToken:  token,
 		DocID:       docID,
 		WorkspaceID: workspaceID,

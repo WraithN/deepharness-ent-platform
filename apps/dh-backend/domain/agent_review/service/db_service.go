@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agent_review/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 type DBAgentReviewService struct {
@@ -19,7 +19,7 @@ func NewDBAgentReviewService(db *sql.DB) *DBAgentReviewService {
 }
 
 func (s *DBAgentReviewService) AdoptReviewReport(req object.AdoptReviewReportRequest) (object.AgentReviewReport, error) {
-	id := uuid.New().String()
+	id := idutil.GenerateID()
 	now := time.Now().UTC()
 
 	issuesJSON, err := json.Marshal(req.Issues)

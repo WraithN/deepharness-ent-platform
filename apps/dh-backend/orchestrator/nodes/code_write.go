@@ -8,17 +8,17 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	processobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/orchestrator/core"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 // CodeWriteNode 代码编写节点基类（AI 节点）
 // 封装"调用 gatewayd 执行 /code -> 消费事件 -> 持久化会话/消息"的通用流程。
 type CodeWriteNode struct {
 	core.BaseNode
-	BuildPrompt        func(fc *core.FlowContext) string
-	SessionTitlePrefix string
+	BuildPrompt         func(fc *core.FlowContext) string
+	SessionTitlePrefix  string
 	SessionContextExtra map[string]any
-	AfterComplete      func(fc *core.FlowContext) error
+	AfterComplete       func(fc *core.FlowContext) error
 }
 
 func (n *CodeWriteNode) Processor(fc *core.FlowContext) error {
@@ -27,7 +27,7 @@ func (n *CodeWriteNode) Processor(fc *core.FlowContext) error {
 	prompt := n.BuildPrompt(fc)
 	log.Printf("[CodeWriteNode:%s] prompt length=%d", n.Name(), len(prompt))
 
-	sessionID := uuid.New().String()
+	sessionID := idutil.GenerateID()
 	fc.SessionID = sessionID
 
 	fc.UpdateStageFull(n.Name(), processobject.UpdateStageRequest{
@@ -61,7 +61,7 @@ func (n *CodeWriteNode) Processor(fc *core.FlowContext) error {
 	}
 
 	if err := deps.Messages.Append(fc.Ctx, sessionID, chat.Message{
-		ID:        uuid.New().String(),
+		ID:        idutil.GenerateID(),
 		SessionID: sessionID,
 		Role:      "user",
 		Content:   prompt,
@@ -82,7 +82,7 @@ func (n *CodeWriteNode) Processor(fc *core.FlowContext) error {
 	log.Printf("[CodeWriteNode:%s] completed, response length=%d", n.Name(), len(result.Text))
 
 	if err := deps.Messages.Append(fc.Ctx, sessionID, chat.Message{
-		ID:        uuid.New().String(),
+		ID:        idutil.GenerateID(),
 		SessionID: sessionID,
 		Role:      "assistant",
 		Content:   result.Text,

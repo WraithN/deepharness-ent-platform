@@ -116,16 +116,16 @@ export interface LanguageStatDTO {
 
 export interface RepositoryDetailsDTO {
   repository: RepositoryDTO;
-  commitStats: CommitStatsDTO;
-  branches: BranchInfoDTO[];
-  contributors: string[];
+  commitStats?: CommitStatsDTO | null;
+  branches?: BranchInfoDTO[] | null;
+  contributors?: string[] | null;
   fileCount: number;
   sizeBytes: number;
   language: string;
   effectiveLinesOfCode: number;
-  committerStats: CommitterStatDTO[];
-  weeklyCommits: DailyCommitDTO[];
-  languageStats: LanguageStatDTO[];
+  committerStats?: CommitterStatDTO[] | null;
+  weeklyCommits?: DailyCommitDTO[] | null;
+  languageStats?: LanguageStatDTO[] | null;
 }
 
 // ── User ──
@@ -152,7 +152,7 @@ export interface MineWorkspaceDTO {
   createdAt: string;
   updatedAt: string;
   role: SpaceRole;
-  subRole: SubRole;
+  subRoles: SubRole[];
 }
 
 // 用户个人信息（GET/PUT /api/v1/identity/users/me/profile）

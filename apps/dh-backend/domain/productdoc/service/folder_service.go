@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/object"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
@@ -62,7 +62,7 @@ func (s *DBProductDocService) ensureDefaultFolder(workspaceID string) error {
 		WHERE NOT EXISTS (
 			SELECT 1 FROM product_doc_folders WHERE workspace_id = $2::varchar AND is_default
 		)
-	`, uuid.New().String(), workspaceID, DefaultFolderName, now, now)
+	`, idutil.GenerateID(), workspaceID, DefaultFolderName, now, now)
 	if err != nil {
 		return fmt.Errorf("ensure default folder failed: %w", err)
 	}
@@ -81,7 +81,7 @@ func (s *DBProductDocService) CreateFolder(req object.CreateFolderRequest) (obje
 	}
 
 	now := time.Now().UTC()
-	id := uuid.New().String()
+	id := idutil.GenerateID()
 
 	// 新目录排在同级的末尾
 	var nextOrder int

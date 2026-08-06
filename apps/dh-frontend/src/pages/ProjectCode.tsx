@@ -2274,7 +2274,7 @@ export const ProjectCode: React.FC = () => {
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                       <Card>
                         <CardContent className="p-4 text-center">
-                          <p className="text-2xl font-bold text-foreground">{repoDetails.commitStats.totalCommits}</p>
+                          <p className="text-2xl font-bold text-foreground">{repoDetails.commitStats?.totalCommits ?? 0}</p>
                           <p className="text-xs text-muted-foreground mt-1">总提交</p>
                         </CardContent>
                       </Card>
@@ -2300,27 +2300,27 @@ export const ProjectCode: React.FC = () => {
                       </Card>
                       <Card>
                         <CardContent className="p-4 text-center">
-                          <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">{repoDetails.commitStats.lastWeek}</p>
+                          <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">{repoDetails.commitStats?.lastWeek ?? 0}</p>
                           <p className="text-xs text-muted-foreground mt-1">本周</p>
                         </CardContent>
                       </Card>
                       <Card>
                         <CardContent className="p-4 text-center">
-                          <p className="text-2xl font-bold text-rose-600 dark:text-rose-400">{repoDetails.commitStats.lastMonth}</p>
+                          <p className="text-2xl font-bold text-rose-600 dark:text-rose-400">{repoDetails.commitStats?.lastMonth ?? 0}</p>
                           <p className="text-xs text-muted-foreground mt-1">本月</p>
                         </CardContent>
                       </Card>
                     </div>
 
                     {/* 语言分布 */}
-                    {repoDetails.languageStats.length > 0 && (
+                    {(repoDetails.languageStats?.length ?? 0) > 0 && (
                       <Card className="p-5">
                         <h3 className="text-base font-semibold mb-4 flex items-center gap-2">
                           <Code className="h-4 w-4 text-primary" />
                           语言分布
                         </h3>
                         <div className="space-y-3">
-                          {repoDetails.languageStats.slice(0, 4).map((lang, idx) => (
+                          {(repoDetails.languageStats ?? []).slice(0, 4).map((lang, idx) => (
                             <div key={idx}>
                               <div className="flex items-center justify-between text-sm mb-1">
                                 <span className="font-medium">{lang.name}</span>
@@ -2337,9 +2337,9 @@ export const ProjectCode: React.FC = () => {
                             </div>
                           ))}
                         </div>
-                        {repoDetails.languageStats.length > 4 && (
+                        {(repoDetails.languageStats?.length ?? 0) > 4 && (
                           <div className="mt-4 flex flex-wrap gap-2">
-                            {repoDetails.languageStats.slice(4).map((lang, idx) => (
+                            {(repoDetails.languageStats ?? []).slice(4).map((lang, idx) => (
                               <span
                                 key={idx}
                                 className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full bg-muted text-muted-foreground"
@@ -2375,15 +2375,15 @@ export const ProjectCode: React.FC = () => {
                         </div>
                       </Card>
 
-                      {repoDetails.committerStats.length > 0 && (
+                      {(repoDetails.committerStats?.length ?? 0) > 0 && (
                         <Card className="p-5">
                           <h3 className="text-base font-semibold mb-4 flex items-center gap-2">
                             <Users className="h-4 w-4 text-primary" />
                             贡献者分布
                           </h3>
                           <div className="space-y-4">
-                            {repoDetails.committerStats.slice(0, 5).map((c, idx) => {
-                              const total = repoDetails.commitStats.totalCommits || 1;
+                            {(repoDetails.committerStats ?? []).slice(0, 5).map((c, idx) => {
+                              const total = repoDetails.commitStats?.totalCommits || 1;
                               const initial = (c.name || c.email || '?').charAt(0).toUpperCase();
                               return (
                                 <div key={idx} className="flex items-center gap-3">
@@ -2408,7 +2408,7 @@ export const ProjectCode: React.FC = () => {
                     </div>
 
                     {/* 近 7 日提交趋势 */}
-                    {repoDetails.weeklyCommits.length > 0 && (
+                    {(repoDetails.weeklyCommits?.length ?? 0) > 0 && (
                       <Card className="p-5">
                         <h3 className="text-base font-semibold mb-4 flex items-center gap-2">
                           <BarChart3 className="h-4 w-4 text-primary" />
@@ -2416,7 +2416,7 @@ export const ProjectCode: React.FC = () => {
                         </h3>
                         <div className="h-64 w-full">
                           <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={repoDetails.weeklyCommits}>
+                            <BarChart data={repoDetails.weeklyCommits ?? []}>
                               <XAxis dataKey="date" tickFormatter={(v: string) => v.slice(5)} />
                               <YAxis allowDecimals={false} />
                               <Tooltip />

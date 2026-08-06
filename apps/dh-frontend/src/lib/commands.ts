@@ -57,7 +57,7 @@ export const COMMAND_CATEGORIES: Record<string, CommandCategory> = {
   '/prd-write': 'product',
   '/prd-research': 'product',
   '/prd-analysis': 'product',
-  '/brainstorm': 'product',
+  '/grill-me': 'product',
   '/req-breakdown': 'product',
   '/data-analysis': 'product',
 };

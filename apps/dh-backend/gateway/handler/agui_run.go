@@ -14,7 +14,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 // contentPart 描述 assistant 消息的一个结构化内容部件，用于落库到 message.metadata，
@@ -160,10 +160,10 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		reqStart:      reqStart,
 		// bgCtx 独立于请求 context：前端断连后仍需继续从 gatewayd 读取事件并缓冲/持久化，
 		// 因此必须使用 background context 避免请求取消导致缓冲与落库失败。
-		bgCtx:         context.Background(),
-		state:         &runState{pendingToolCallIDs: []string{}},
-		finishTimer:   finishTimer,
-		maxTimer:      maxTimer,
+		bgCtx:       context.Background(),
+		state:       &runState{pendingToolCallIDs: []string{}},
+		finishTimer: finishTimer,
+		maxTimer:    maxTimer,
 	}
 	stream.run(r, events)
 }
@@ -197,7 +197,7 @@ func (h *AGUIHandler) parseAndValidateRunRequest(w http.ResponseWriter, r *http.
 
 	// 确保每条 run 都有唯一 runId。
 	if input.RunID == "" {
-		input.RunID = uuid.New().String()
+		input.RunID = idutil.GenerateID()
 	}
 
 	// 提取最后一条用户消息文本，用于 debug 日志。
@@ -303,6 +303,15 @@ func (h *AGUIHandler) applyCommandsAndIntent(
 		return
 	} else if matched {
 		log.Printf("[AGUIHandler] run=%s prd-analysis message augmented", input.RunID)
+	}
+
+	// /prd-research 指令预处理：与 /prd-analysis 同类流程，
+	// 先抓取目标网站，再把结果追加到用户消息参数中。
+	if matched, fatal := h.tryAugmentPRDResearchMessage(r, input.Messages, workspaceID, input.RunID); fatal {
+		abort = true
+		return
+	} else if matched {
+		log.Printf("[AGUIHandler] run=%s prd-research message augmented", input.RunID)
 	}
 
 	commandApplied, err = interceptCommands(input.Messages, input.Context, workspacePath, workspaceID, h.workItemSvc)
@@ -492,7 +501,7 @@ func (s *agentRunStream) persistRunAssistant() {
 		return
 	}
 	if msgID == "" {
-		msgID = uuid.New().String()
+		msgID = idutil.GenerateID()
 	}
 	metadata := map[string]any{}
 	if len(parts) > 0 {
@@ -761,7 +770,7 @@ func (s *agentRunStream) emitProtoFallbackMarker() {
 	marker := buildProtoProjectMarker(projects)
 	msgID := s.state.runMessageID
 	if msgID == "" {
-		msgID = uuid.New().String()
+		msgID = idutil.GenerateID()
 	}
 	fallbackEv := agui.Event{
 		Type:      agui.EventTextMessageContent,
@@ -828,21 +837,21 @@ func (s *agentRunStream) run(r *http.Request, events <-chan agui.Event) {
 				log.Printf("[AGUIHandler] run=%s TOOL_CALL_RESULT id=%s tool=%s result=%.200s after %v", s.input.RunID, ev.ToolCallID, ev.ToolCallName, ev.Content, time.Since(s.reqStart))
 			case agui.EventRunStarted:
 				log.Printf("[AGUIHandler] run=%s RUN_STARTED threadId=%s after %v", s.input.RunID, ev.ThreadID, time.Since(s.reqStart))
-		case agui.EventRunFinished:
-			log.Printf("[AGUIHandler] run=%s RUN_FINISHED threadId=%s after %v", s.input.RunID, ev.ThreadID, time.Since(s.reqStart))
-			s.finishTimer.Stop()
-			s.maxTimer.Stop()
-			s.flushPendingState(true)
-			// /proto-make 兜底：确保 agent 未输出工程标记时仍渲染原型预览卡片
-			s.emitProtoFallbackMarker()
-			if err := s.writeEvent(ev); err != nil {
-				log.Printf("[AGUIHandler] run=%s write RUN_FINISHED failed: %v", s.input.RunID, err)
-			}
-			s.persistRunAssistant()
-			s.h.finalizeSession(s.bgCtx, s.sessionID, s.input.Messages)
-			return
-		case agui.EventCustom:
-			log.Printf("[AGUIHandler] run=%s CUSTOM name=%s value=%s after %v", s.input.RunID, ev.Name, string(ev.Value), time.Since(s.reqStart))
+			case agui.EventRunFinished:
+				log.Printf("[AGUIHandler] run=%s RUN_FINISHED threadId=%s after %v", s.input.RunID, ev.ThreadID, time.Since(s.reqStart))
+				s.finishTimer.Stop()
+				s.maxTimer.Stop()
+				s.flushPendingState(true)
+				// /proto-make 兜底：确保 agent 未输出工程标记时仍渲染原型预览卡片
+				s.emitProtoFallbackMarker()
+				if err := s.writeEvent(ev); err != nil {
+					log.Printf("[AGUIHandler] run=%s write RUN_FINISHED failed: %v", s.input.RunID, err)
+				}
+				s.persistRunAssistant()
+				s.h.finalizeSession(s.bgCtx, s.sessionID, s.input.Messages)
+				return
+			case agui.EventCustom:
+				log.Printf("[AGUIHandler] run=%s CUSTOM name=%s value=%s after %v", s.input.RunID, ev.Name, string(ev.Value), time.Since(s.reqStart))
 			case agui.EventRunError:
 				log.Printf("[AGUIHandler] run=%s RUN_ERROR after %v: %s", s.input.RunID, time.Since(s.reqStart), ev.Message)
 				s.finishTimer.Stop()

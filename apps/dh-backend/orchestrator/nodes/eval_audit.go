@@ -10,7 +10,7 @@ import (
 	processobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/orchestrator/core"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/orchestrator/prompts"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 // AiEvalNode 智能评估（AI 节点）
@@ -50,14 +50,14 @@ func (n *AiEvalNode) Processor(fc *core.FlowContext) error {
 
 	now := time.Now()
 	deps.Messages.Append(fc.Ctx, fc.SessionID, chat.Message{
-		ID:        uuid.New().String(),
+		ID:        idutil.GenerateID(),
 		SessionID: fc.SessionID,
 		Role:      "user",
 		Content:   prompt,
 		Timestamp: now,
 	})
 	deps.Messages.Append(fc.Ctx, fc.SessionID, chat.Message{
-		ID:        uuid.New().String(),
+		ID:        idutil.GenerateID(),
 		SessionID: fc.SessionID,
 		Role:      "assistant",
 		Content:   result.Text,
@@ -123,18 +123,18 @@ func (n *HumanAuditNode) Processor(fc *core.FlowContext) error {
 		ActionType:  notificationobject.ActionApproveCodeOptimize,
 		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
 		Data: map[string]any{
-			"notificationType":  notificationobject.TypeHumanAuditRequired,
-			"workitemId":        fc.WorkitemID,
-			"workitemTitle":     fc.WorkitemTitle,
-			"processId":         fc.ProcessID,
-			"sessionId":         fc.SessionID,
-			"threadId":          fc.ThreadID,
-			"workspacePath":     fc.WorkspacePath,
-			"workspaceId":       fc.WorkspaceID,
-			"tenantId":          fc.TenantID,
-			"userName":          fc.UserName,
-			"archDesignResult":  fc.ArchDesignResult,
-			"aiEvalResult":      fc.AIEvalResult,
+			"notificationType": notificationobject.TypeHumanAuditRequired,
+			"workitemId":       fc.WorkitemID,
+			"workitemTitle":    fc.WorkitemTitle,
+			"processId":        fc.ProcessID,
+			"sessionId":        fc.SessionID,
+			"threadId":         fc.ThreadID,
+			"workspacePath":    fc.WorkspacePath,
+			"workspaceId":      fc.WorkspaceID,
+			"tenantId":         fc.TenantID,
+			"userName":         fc.UserName,
+			"archDesignResult": fc.ArchDesignResult,
+			"aiEvalResult":     fc.AIEvalResult,
 		},
 	})
 	if err != nil {

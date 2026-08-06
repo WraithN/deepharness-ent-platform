@@ -35,6 +35,10 @@ import {
   RUNTIME_STATUS_LABELS,
   AGENT_TYPE_LABELS,
 } from '@/lib/agent-runtime-api';
+import { tenantApi } from '@/lib/tenant-api';
+import { workspaceApi } from '@/lib/workspace-api';
+import { api } from '@/lib/api';
+import type { UserDTO } from '@/lib/api-types';
 
 interface FilterState {
   tenantId: string[];
@@ -96,6 +100,17 @@ export const AgentRuntimePage: React.FC = () => {
     agentType: searchParams.getAll('agentType'),
   });
 
+  // 筛选项来源：从 dh-backend 数据库查询，而非上报数据
+  const [tenants, setTenants] = useState<{ id: string; name: string }[]>([]);
+  const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]);
+  const [users, setUsers] = useState<UserDTO[]>([]);
+
+  useEffect(() => {
+    tenantApi.list().then(setTenants).catch(() => {});
+    workspaceApi.list('', 1, 100).then((res) => setWorkspaces(res.list ?? [])).catch(() => {});
+    api.get<UserDTO[]>('/v1/identity/users').then(setUsers).catch(() => {});
+  }, []);
+
   const loadRuntimes = async () => {
     setLoading(true);
     try {
@@ -136,25 +151,26 @@ export const AgentRuntimePage: React.FC = () => {
     setSearchParams(params, { replace: true });
   }, [filter, page]);
 
-  const tenantOptions = useMemo(() => {
-    const map = new Map(runtimes.map((r) => [r.tenantId, { value: r.tenantId, label: r.tenantName || r.tenantId }]));
-    return Array.from(map.values());
-  }, [runtimes]);
+  const tenantOptions = useMemo(
+    () => tenants.map((t) => ({ value: t.id, label: t.name || t.id })),
+    [tenants],
+  );
 
-  const workspaceOptions = useMemo(() => {
-    const map = new Map(runtimes.map((r) => [r.workspaceId, { value: r.workspaceId, label: r.workspaceName || r.workspaceId }]));
-    return Array.from(map.values());
-  }, [runtimes]);
+  const workspaceOptions = useMemo(
+    () => workspaces.map((w) => ({ value: w.id, label: w.name || w.id })),
+    [workspaces],
+  );
 
-  const userOptions = useMemo(() => {
-    const map = new Map(runtimes.map((r) => [r.userId, { value: r.userId, label: r.userDisplayName || r.userName || r.userId }]));
-    return Array.from(map.values());
-  }, [runtimes]);
-  const agentTypeOptions = useMemo(() => {
-    const types = new Set<string>();
-    runtimes.forEach((r) => r.agents.forEach((a) => types.add(a.type)));
-    return Array.from(types).map((type) => ({ value: type, label: AGENT_TYPE_LABELS[type] || type }));
-  }, [runtimes]);
+  const userOptions = useMemo(
+    () => users.map((u) => ({ value: u.id, label: u.name || u.id })),
+    [users],
+  );
+  // 智能体类型选项使用固定列表（gatewayd 支持的三种类型），
+  // 避免从当前页数据派生导致筛选后选项消失的问题。
+  const agentTypeOptions = useMemo(
+    () => Object.entries(AGENT_TYPE_LABELS).map(([value, label]) => ({ value, label })),
+    [],
+  );
 
   const handleReset = () => {
     setFilter({ tenantId: [], workspaceId: [], userId: [], agentType: [] });
@@ -266,10 +282,11 @@ export const AgentRuntimePage: React.FC = () => {
             <TableHeader>
               <TableRow className="bg-muted/30 hover:bg-muted/30">
                 <TableHead className="px-4">运行时ID</TableHead>
+                <TableHead className="px-4">IP</TableHead>
                 <TableHead className="px-4">所属成员</TableHead>
                 <TableHead className="px-4">工作空间</TableHead>
                 <TableHead className="px-4">所属租户</TableHead>
-                <TableHead className="px-4">绑定智能体</TableHead>
+                <TableHead className="px-4">智能体</TableHead>
                 <TableHead className="px-4">状态</TableHead>
                 <TableHead className="px-4">运行时长</TableHead>
                 <TableHead className="px-4 text-right">操作</TableHead>
@@ -279,7 +296,7 @@ export const AgentRuntimePage: React.FC = () => {
               {loading && runtimes.length === 0 && (
                 Array.from({ length: 4 }).map((_, i) => (
                   <TableRow key={i}>
-                    <TableCell colSpan={8} className="px-4 py-6">
+                    <TableCell colSpan={9} className="px-4 py-6">
                       <Skeleton className="h-6 w-full" />
                     </TableCell>
                   </TableRow>
@@ -287,7 +304,7 @@ export const AgentRuntimePage: React.FC = () => {
               )}
               {!loading && runtimes.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={9} className="px-4 py-12 text-center text-sm text-muted-foreground">
                     暂无运行时数据
                   </TableCell>
                 </TableRow>
@@ -298,7 +315,12 @@ export const AgentRuntimePage: React.FC = () => {
                   className="cursor-pointer"
                   onClick={() => openDrawer(rt)}
                 >
-                  <TableCell className="px-4 font-mono text-foreground/80">{rt.runtimeId}</TableCell>
+                  <TableCell className="px-4 font-mono text-foreground/80">
+                    <span className="inline-block max-w-[200px] truncate align-bottom" title={rt.runtimeId}>
+                      {rt.runtimeId}
+                    </span>
+                  </TableCell>
+                  <TableCell className="px-4 font-mono text-xs text-muted-foreground">{rt.ip || '-'}</TableCell>
                   <TableCell className="px-4">
                     <div className="flex items-center gap-2">
                       <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs">
@@ -311,20 +333,35 @@ export const AgentRuntimePage: React.FC = () => {
                   <TableCell className="px-4 text-muted-foreground">{rt.tenantName || rt.tenantId}</TableCell>
                   <TableCell className="px-4">
                     <div className="flex flex-wrap gap-1" onClick={(e) => e.stopPropagation()}>
-                      {rt.agents.slice(0, 3).map((agent) => (
-                        <button
-                          key={`${rt.runtimeId}-${agent.name}`}
-                          className={cn(
-                            'inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium transition-colors hover:opacity-80',
-                            getAgentTypeClass(agent.type),
-                          )}
-                          onClick={() => setFilter((prev) => ({ ...prev, agentType: [agent.type] }))}
-                        >
-                          {agent.type}
-                        </button>
-                      ))}
-                      {rt.agents.length > 3 && (
-                        <span className="text-xs text-muted-foreground self-center">+{rt.agents.length - 3}</span>
+                      {(rt.installedAgents ?? []).map((type) => {
+                        const isActive = rt.agents.some((a) => a.type === type && a.status === 'running');
+                        return (
+                          <button
+                            key={`${rt.runtimeId}-${type}`}
+                            title={isActive ? '运行中' : '已安装'}
+                            className={cn(
+                              'inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium transition-colors hover:opacity-80',
+                              isActive ? getAgentTypeClass(type) : 'bg-slate-100 text-slate-400 dark:bg-slate-800/50 dark:text-slate-500',
+                            )}
+                            onClick={() => setFilter((prev) => ({ ...prev, agentType: [type] }))}
+                          >
+                            {type}
+                          </button>
+                        );
+                      })}
+                      {(rt.installedAgents ?? []).length === 0 && rt.agents.length > 0 && (
+                        rt.agents.slice(0, 3).map((agent) => (
+                          <button
+                            key={`${rt.runtimeId}-${agent.name}`}
+                            className={cn(
+                              'inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium transition-colors hover:opacity-80',
+                              getAgentTypeClass(agent.type),
+                            )}
+                            onClick={() => setFilter((prev) => ({ ...prev, agentType: [agent.type] }))}
+                          >
+                            {agent.type}
+                          </button>
+                        ))
                       )}
                     </div>
                   </TableCell>
@@ -405,6 +442,25 @@ export const AgentRuntimePage: React.FC = () => {
                     />
                     <InfoItem label="沙箱规格" value={selectedRuntime.sandboxSpec || '-'} />
                     <InfoItem label="运行时长" value={formatUptime(selectedRuntime.uptimeSeconds)} />
+                    <InfoItem label="IP 地址" value={selectedRuntime.ip || '-'} />
+                    <InfoItem label="上报时间" value={selectedRuntime.reportedAt ? new Date(selectedRuntime.reportedAt).toLocaleString('zh-CN') : '-'} />
+                    <InfoItem
+                      label="已安装智能体"
+                      value={
+                        <div className="flex flex-wrap gap-1">
+                          {(selectedRuntime.installedAgents ?? []).map((type) => (
+                            <span key={type} className={cn('inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium', getAgentTypeClass(type))}>
+                              {AGENT_TYPE_LABELS[type] || type}
+                            </span>
+                          ))}
+                          {(selectedRuntime.installedAgents ?? []).length === 0 && <span className="text-muted-foreground">-</span>}
+                        </div>
+                      }
+                    />
+                    <InfoItem label="活跃实例数" value={String(selectedRuntime.agents.length)} />
+                    <InfoItem label="近1日会话" value={String(selectedRuntime.sessions1d ?? 0)} />
+                    <InfoItem label="近7日会话" value={String(selectedRuntime.sessions7d ?? 0)} />
+                    <InfoItem label="最近活跃" value={selectedRuntime.lastActiveAt ? new Date(selectedRuntime.lastActiveAt).toLocaleString('zh-CN') : '-'} />
                   </div>
                 </section>
 

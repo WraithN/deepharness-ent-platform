@@ -1,4 +1,4 @@
-import { Bot, Box, Camera, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Code2, Copy, Download, FileText, ListTodo, Loader2, Lock, MessageSquareQuote, MoreHorizontal, Palette, Plus, Puzzle, Save, Search, Share2, Shield, SlidersHorizontal, Star, Trash2, UserCircle, UserPlus, Users, Wand2, X } from 'lucide-react';
+import { Bot, Box, Camera, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Code2, Copy, Download, FileText, ListTodo, Loader2, Lock, MessageSquareQuote, MoreHorizontal, Palette, Plus, Puzzle, Save, Search, Settings as SettingsIcon, Share2, Shield, SlidersHorizontal, Star, Trash2, Upload, UserCircle, UserPlus, Users, Wand2, X } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -75,6 +75,36 @@ const DEFAULT_SETTINGS: SettingsConfig = {
 
 // 尚未入库的本地仓库行 ID 前缀，保存时据此调用 create 而非 update。
 const LOCAL_REPO_ID_PREFIX = 'local-';
+
+// 从仓库 URL 解析仓库名称（取最后一段路径并去除 .git 后缀），与后端 ParseRepoName 保持一致。
+const parseRepoNameFromUrl = (rawUrl: string): string => {
+  let u = rawUrl.replace(/\.git$/i, '').replace(/\/$/, '');
+  if (!u) return '';
+  const slashIdx = u.lastIndexOf('/');
+  if (slashIdx >= 0) return u.slice(slashIdx + 1);
+  const colonIdx = u.lastIndexOf(':');
+  if (colonIdx >= 0) return u.slice(colonIdx + 1);
+  return u;
+};
+
+// 校验是否为合法的 Git 远程 URL（与后端 IsValidGitURL 对齐，不限于 GitHub）。
+const isValidGitUrl = (rawUrl: string): boolean => {
+  if (!rawUrl) return false;
+  return (
+    /^https?:\/\/.+/.test(rawUrl) ||
+    /^ssh:\/\/.+/.test(rawUrl) ||
+    /^git:\/\/.+/.test(rawUrl) ||
+    /^git@[\w.-]+:[\w./-]+/.test(rawUrl)
+  );
+};
+
+// 根据本地工程名与空间名生成默认 GitHub 远程地址。
+// org 优先取 workspace.name，未加载时 fallback 为 'org'。
+const getDefaultRemoteUrl = (repoName: string, workspaceName?: string | null): string => {
+  if (!repoName) return '';
+  const org = workspaceName?.trim() || 'org';
+  return `https://github.com/${org}/${repoName}.git`;
+};
 
 // 需求管理平台接口失败时的回退列表，保证下拉框始终可用。
 const DEFAULT_WORKITEM_PLATFORMS: WorkitemPlatform[] = [
@@ -433,6 +463,7 @@ export const Settings: React.FC = () => {
     return () => { cancelled = true; };
   }, [membership?.workspaceId]);
 
+  // 加载仓库未推送提交数量。
   useEffect(() => {
     setPromptPage(1);
   }, [promptSearchTerm, selectedPromptCategory]);
@@ -482,7 +513,24 @@ export const Settings: React.FC = () => {
       if (!wp?.platform && platforms.length > 0) {
         setReqPlatform(platforms[0].key);
       }
-      setGitRepos(repos as WorkspaceRepository[]);
+      const wsName = (ws as Workspace | null)?.name;
+      const filledDefaultIds = new Set<string>();
+      const initialRepos = (repos as WorkspaceRepository[]).map(r => {
+        if (!r.url && r.name) {
+          const defaultUrl = getDefaultRemoteUrl(r.name, wsName);
+          if (defaultUrl) {
+            filledDefaultIds.add(r.id);
+            return { ...r, url: defaultUrl };
+          }
+        }
+        return r;
+      });
+      setGitRepos(initialRepos);
+      if (filledDefaultIds.size > 0) {
+        setDirtyRepoIds(new Set(filledDefaultIds));
+      } else {
+        setDirtyRepoIds(new Set());
+      }
       if (stds.length > 0) {
         const coding = stds.find(s => s.type === 'coding');
         const design = stds.find(s => s.type === 'design');
@@ -919,18 +967,56 @@ export const Settings: React.FC = () => {
   const effectivePlatforms = workitemPlatforms.length > 0 ? workitemPlatforms : DEFAULT_WORKITEM_PLATFORMS;
   const selectedPlatform = effectivePlatforms.find(p => p.key === reqPlatform);
   const [gitRepos, setGitRepos] = useState<WorkspaceRepository[]>([]);
+  // 记录哪些仓库行存在待保存的变更；保存成功后清除对应项。
+  const [dirtyRepoIds, setDirtyRepoIds] = useState<Set<string>>(new Set());
+  // 各仓库未推送提交数量。
+  const [unpushedCounts, setUnpushedCounts] = useState<Record<string, number>>({});
+  // 分支/仓库类型设置弹窗状态。
+  const [repoSettingsRepo, setRepoSettingsRepo] = useState<WorkspaceRepository | null>(null);
+  const [repoSettingsBranch, setRepoSettingsBranch] = useState('');
+  const [repoSettingsType, setRepoSettingsType] = useState<WorkspaceRepository['type']>('dev');
+  // 正在推送的仓库 ID 集合。
+  const [pushingRepoIds, setPushingRepoIds] = useState<Set<string>>(new Set());
+
+  const markRepoDirty = (id: string) => {
+    setDirtyRepoIds(prev => new Set(prev).add(id));
+  };
+
+  const clearRepoDirty = (id: string) => {
+    setDirtyRepoIds(prev => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
 
   const handleGitUrlChange = (id: string, url: string) => {
     setGitRepos(repos => repos.map(repo => repo.id === id ? { ...repo, url } : repo));
+    markRepoDirty(id);
   };
 
-  const handleRepoTypeChange = (id: string, type: WorkspaceRepository['type']) => {
-    setGitRepos(repos => repos.map(repo => repo.id === id ? { ...repo, type } : repo));
-  };
-
-  const handleRepoBranchChange = (id: string, defaultBranch: string) => {
-    setGitRepos(repos => repos.map(repo => repo.id === id ? { ...repo, defaultBranch } : repo));
-  };
+  // 加载仓库未推送提交数量。
+  useEffect(() => {
+    let cancelled = false;
+    const wsId = getCurrentWorkspaceId();
+    Promise.all(
+      gitRepos.map(async repo => {
+        if (!repo.id || repo.id.startsWith(LOCAL_REPO_ID_PREFIX) || repo.cloneStatus !== 'cloned' || !repo.url) {
+          return { id: repo.id, count: 0 };
+        }
+        try {
+          const res = await repositoryApi.unpushedCommits(wsId, repo.id);
+          return { id: repo.id, count: res.count };
+        } catch {
+          return { id: repo.id, count: 0 };
+        }
+      })
+    ).then(results => {
+      if (cancelled) return;
+      setUnpushedCounts(Object.fromEntries(results.filter(r => r.id).map(r => [r.id, r.count])));
+    });
+    return () => { cancelled = true; };
+  }, [gitRepos.map(r => `${r.id}:${r.cloneStatus}:${r.url}`).join(',')]);
 
   const handleAddRepo = () => {
     // 仅在前端新增一行空白仓库，待用户填写后在 handleSaveBasic 中统一入库
@@ -940,11 +1026,13 @@ export const Settings: React.FC = () => {
       name: '',
       url: '',
       type: 'dev',
+      defaultBranch: 'main',
       cloneStatus: 'pending',
       createdAt: '',
       updatedAt: '',
     };
     setGitRepos([...gitRepos, tempRepo]);
+    markRepoDirty(tempRepo.id);
     // 跳转到新仓库所在页（末页），确保用户可见
     const newTotalPages = Math.max(1, Math.ceil((gitRepos.length + 1) / GIT_REPO_PAGE_SIZE));
     gitRepoPagination.onPageChange(newTotalPages);
@@ -1034,6 +1122,77 @@ export const Settings: React.FC = () => {
     }
   };
 
+  // 保存单个仓库配置（每行独立保存按钮）。
+  const handleSaveRepo = async (repo: WorkspaceRepository) => {
+    const wsId = getCurrentWorkspaceId();
+    if (repo.url && !isValidGitUrl(repo.url)) {
+      toast.error('仓库地址格式无效，请输入有效的 Git 远程地址');
+      return;
+    }
+    try {
+      let saved: WorkspaceRepository;
+      if (repo.id.startsWith(LOCAL_REPO_ID_PREFIX)) {
+        if (!repo.url) {
+          toast.error('请先配置远程地址');
+          return;
+        }
+        saved = await repositoryApi.create(wsId, {
+          url: repo.url, type: repo.type, defaultBranch: repo.defaultBranch,
+        });
+      } else {
+        saved = await repositoryApi.update(wsId, repo.id, {
+          url: repo.url, type: repo.type, defaultBranch: repo.defaultBranch,
+        });
+      }
+      setGitRepos(repos => repos.map(r => r.id === repo.id ? saved : r));
+      clearRepoDirty(saved.id);
+      toast.success('仓库配置已保存');
+    } catch {
+      toast.error('保存仓库配置失败');
+    }
+  };
+
+  // 推送仓库当前分支到远程 origin。
+  const handlePushRepo = async (repo: WorkspaceRepository) => {
+    const wsId = getCurrentWorkspaceId();
+    setPushingRepoIds(prev => new Set(prev).add(repo.id));
+    try {
+      await repositoryApi.push(wsId, repo.id);
+      toast.success('推送成功');
+      setUnpushedCounts(prev => ({ ...prev, [repo.id]: 0 }));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '推送失败');
+    } finally {
+      setPushingRepoIds(prev => {
+        const next = new Set(prev);
+        next.delete(repo.id);
+        return next;
+      });
+    }
+  };
+
+  // 分支/类型设置弹窗。
+  const handleOpenRepoSettings = (repo: WorkspaceRepository) => {
+    setRepoSettingsRepo(repo);
+    setRepoSettingsBranch(repo.defaultBranch || 'main');
+    setRepoSettingsType(repo.type);
+  };
+  const handleCloseRepoSettings = () => {
+    setRepoSettingsRepo(null);
+    setRepoSettingsBranch('');
+    setRepoSettingsType('dev');
+  };
+  const handleConfirmRepoSettings = () => {
+    if (!repoSettingsRepo) return;
+    setGitRepos(repos => repos.map(r =>
+      r.id === repoSettingsRepo.id
+        ? { ...r, defaultBranch: repoSettingsBranch, type: repoSettingsType }
+        : r
+    ));
+    markRepoDirty(repoSettingsRepo.id);
+    handleCloseRepoSettings();
+  };
+
   const handleSaveStandards = async () => {
     const workspaceId = getCurrentWorkspaceId();
     try {
@@ -1066,7 +1225,7 @@ export const Settings: React.FC = () => {
     email: string;
     platformRole: PlatformRole;
     spaceRole: SpaceRole;
-    subRole?: SubRole;
+    subRoles?: SubRole[];
     joinedAt: string;
   };
 
@@ -1077,14 +1236,14 @@ export const Settings: React.FC = () => {
     email: m.email,
     platformRole: m.platformRole,
     spaceRole: m.role,
-    subRole: m.subRole,
+    subRoles: m.subRoles,
     joinedAt: m.joinedAt,
   }));
 
   const filteredUsers = displayUsers.filter(user =>
     user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    getSubRoleLabel(user.subRole).toLowerCase().includes(searchTerm.toLowerCase()) ||
+    user.subRoles?.map(getSubRoleLabel).join(' ').toLowerCase().includes(searchTerm.toLowerCase()) ||
     getPlatformRoleLabel(user.platformRole).toLowerCase().includes(searchTerm.toLowerCase()) ||
     user.spaceRole.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -1105,27 +1264,38 @@ export const Settings: React.FC = () => {
   });
   const paginatedGitRepos = gitRepos.slice(gitRepoPagination.startIndex, gitRepoPagination.endIndex);
 
-  // getSubRoleBadge 根据职能子角色渲染徽章，文案与添加成员弹窗保持一致，不带图标
-  const getSubRoleBadge = (subRole?: string) => {
-    const label = getSubRoleLabel(subRole);
-    switch (subRole) {
-      case SUB_ROLE.PM: return <Badge variant="secondary" className="rounded-lg px-3 py-1.5 font-medium">{label}</Badge>;
-      case SUB_ROLE.DESIGNER: return <Badge variant="secondary" className="rounded-lg px-3 py-1.5 font-medium bg-fuchsia-100 text-fuchsia-700 hover:bg-fuchsia-200 dark:bg-fuchsia-900/30 dark:text-fuchsia-300">{label}</Badge>;
-      case SUB_ROLE.DEVELOPER: return <Badge variant="secondary" className="rounded-lg px-3 py-1.5 font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300">{label}</Badge>;
-      case SUB_ROLE.TESTER: return <Badge variant="secondary" className="rounded-lg px-3 py-1.5 font-medium bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300">{label}</Badge>;
-      default: return <Badge variant="outline" className="rounded-lg px-3 py-1.5">{label || '成员'}</Badge>;
+  // getSubRoleBadge 根据职能子角色列表渲染徽章，文案与添加成员弹窗保持一致，不带图标
+  const getSubRoleBadge = (subRoles?: SubRole[]) => {
+    if (!subRoles || subRoles.length === 0) {
+      return <Badge variant="outline" className="rounded-lg px-3 py-1.5">成员</Badge>;
     }
+    return (
+      <div className="flex flex-wrap gap-2">
+        {subRoles.map(subRole => {
+          const label = getSubRoleLabel(subRole);
+          switch (subRole) {
+            case SUB_ROLE.PM: return <Badge key={subRole} variant="secondary" className="rounded-lg px-3 py-1.5 font-medium">{label}</Badge>;
+            case SUB_ROLE.DESIGNER: return <Badge key={subRole} variant="secondary" className="rounded-lg px-3 py-1.5 font-medium bg-fuchsia-100 text-fuchsia-700 hover:bg-fuchsia-200 dark:bg-fuchsia-900/30 dark:text-fuchsia-300">{label}</Badge>;
+            case SUB_ROLE.DEVELOPER: return <Badge key={subRole} variant="secondary" className="rounded-lg px-3 py-1.5 font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300">{label}</Badge>;
+            case SUB_ROLE.TESTER: return <Badge key={subRole} variant="secondary" className="rounded-lg px-3 py-1.5 font-medium bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300">{label}</Badge>;
+            default: return <Badge key={subRole} variant="outline" className="rounded-lg px-3 py-1.5">{label}</Badge>;
+          }
+        })}
+      </div>
+    );
   };
 
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState('developer');
+  const [inviteSubRoles, setInviteSubRoles] = useState<string[]>(['developer']);
   const [inviteAsAdmin, setInviteAsAdmin] = useState(false);
 
   const [memberToDelete, setMemberToDelete] = useState<typeof displayUsers[number] | null>(null);
   const [assetAssigneeId, setAssetAssigneeId] = useState<string>('');
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [editMember, setEditMember] = useState<DisplayMember | null>(null);
+  const [editSubRoles, setEditSubRoles] = useState<string[]>([]);
 
   const handleInvite = () => {
     setIsInviteOpen(true);
@@ -1137,16 +1307,13 @@ export const Settings: React.FC = () => {
       return;
     }
     const workspaceId = getCurrentWorkspaceId();
-    // inviteRole 取值：pm | designer | developer | tester
     // 设置空间管理员仅租户管理员可操作（前端隐藏勾选框，此处再兜底一次）
     const role = inviteAsAdmin && isTenantAdmin ? SPACE_ROLE.SPACE_ADMIN : SPACE_ROLE.MEMBER;
-    const subRole = inviteRole;
-    workspaceApi.addMember(workspaceId, { userId: inviteEmail, role, subRole })
+    workspaceApi.addMember(workspaceId, { userId: inviteEmail, role, subRoles: inviteSubRoles })
       .then(() => {
-        
         setIsInviteOpen(false);
         setInviteEmail('');
-        setInviteRole('developer');
+        setInviteSubRoles(['developer']);
         setInviteAsAdmin(false);
         loadMembers();
       })
@@ -1156,9 +1323,8 @@ export const Settings: React.FC = () => {
   const handleSetAdmin = (user: typeof displayUsers[number], asAdmin: boolean) => {
     const workspaceId = getCurrentWorkspaceId();
     const role = asAdmin ? SPACE_ROLE.SPACE_ADMIN : SPACE_ROLE.MEMBER;
-    workspaceApi.updateMemberRole(workspaceId, user.id, { role, subRole: user.subRole })
+    workspaceApi.updateMemberRole(workspaceId, user.id, { role, subRoles: user.subRoles })
       .then(() => {
-        
         loadMembers();
       })
       .catch(() => toast.error('设置失败'));
@@ -1208,6 +1374,14 @@ export const Settings: React.FC = () => {
         {isTenantAdmin && (
           <DropdownMenuItem onClick={() => handleSetAdmin(member, !isTargetSpaceAdmin)}>
             {isTargetSpaceAdmin ? '取消空间管理员' : '设为空间管理员'}
+          </DropdownMenuItem>
+        )}
+        {canManageMembers && (
+          <DropdownMenuItem onClick={() => {
+            setEditMember(member);
+            setEditSubRoles(member.subRoles ?? []);
+          }}>
+            修改角色
           </DropdownMenuItem>
         )}
         {isTenantAdmin && canDeleteMember && <DropdownMenuSeparator />}
@@ -1311,75 +1485,171 @@ export const Settings: React.FC = () => {
                     </Button>
                   )}
                 </div>
-                
-                <div className="space-y-2">
-                  {gitRepos.length === 0 && (
-                    <p className="text-sm text-muted-foreground py-4 text-center">暂无仓库配置</p>
-                  )}
-                  {paginatedGitRepos.map((repo) => (
-                    <div key={repo.id} className="flex items-center gap-3 p-3 rounded-lg border border-border/50 bg-muted/10">
-                      <div className="flex-1">
-                        <Input 
-                          placeholder="仓库地址（如 https://gitlab.com/org/repo.git）"
-                          value={repo.url} 
-                          onChange={e => handleGitUrlChange(repo.id, e.target.value)} 
-                          disabled={isReadOnly}
-                        />
-                      </div>
-                      <div className="w-[130px]">
-                        <Input 
-                          placeholder="main"
-                          value={repo.defaultBranch || ''} 
-                          onChange={e => handleRepoBranchChange(repo.id, e.target.value)} 
-                          disabled={isReadOnly}
-                        />
-                      </div>
-                      <div className="w-[110px]">
-                        <Select disabled={isReadOnly} value={repo.type} onValueChange={(val) => handleRepoTypeChange(repo.id, val as WorkspaceRepository['type'])}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="dev">开发库</SelectItem>
-                            <SelectItem value="case">用例库</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex items-center gap-0.5 shrink-0">
-                        <RepoStandardsDialog workspaceId={workspaceId} repo={repo} isReadOnly={isReadOnly} />
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" disabled={isReadOnly} title="删除仓库">
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>确认删除</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                确定要删除这个仓库配置吗？此操作不可撤销。
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>取消</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => handleRemoveRepo(repo.id)}>删除</AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </div>
+
+                {gitRepos.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4 text-center">暂无仓库配置</p>
+                ) : (
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="grid grid-cols-[160px_1fr_90px_90px_160px] gap-3 px-4 py-2 bg-muted/30 text-sm font-medium text-muted-foreground border-b">
+                      <div>工程名称</div>
+                      <div>Git仓库地址</div>
+                      <div>分支</div>
+                      <div>仓库类型</div>
+                      <div className="text-right">操作</div>
                     </div>
-                  ))}
-                </div>
+                    {paginatedGitRepos.map((repo) => (
+                      <div key={repo.id} className="grid grid-cols-[160px_1fr_90px_90px_160px] gap-3 px-4 py-3 items-center border-b last:border-b-0 text-sm">
+                        <div className="truncate font-medium" title={repo.name || undefined}>
+                          {repo.name || <span className="text-muted-foreground">未命名</span>}
+                        </div>
+                        <div className="min-w-0 space-y-1">
+                          <Input
+                            placeholder="仓库地址（如 https://gitlab.com/org/repo.git）"
+                            value={repo.url}
+                            onChange={e => handleGitUrlChange(repo.id, e.target.value)}
+                            disabled={isReadOnly}
+                          />
+                          {repo.url && (() => {
+                            const parsedName = parseRepoNameFromUrl(repo.url);
+                            const valid = isValidGitUrl(repo.url);
+                            return (
+                              <>
+                                {!valid && (
+                                  <p className="text-xs text-destructive">
+                                    地址格式无效。支持格式：HTTPS（https://host/org/repo.git）、SSH（ssh://git@host/org/repo.git）、SCP（git@host:org/repo.git）、Git 协议（git://host/org/repo.git）。
+                                  </p>
+                                )}
+                                {valid && parsedName && parsedName !== repo.name && (
+                                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                                    保存后工程名将由「{repo.name || '未命名'}」变更为「{parsedName}」。
+                                  </p>
+                                )}
+                              </>
+                            );
+                          })()}
+                          {!repo.url && !isReadOnly && (
+                            <p className="text-xs text-muted-foreground">
+                              未配置远程地址，保存前请输入或确认上方自动生成的默认地址。
+                            </p>
+                          )}
+                        </div>
+                        <div className="truncate text-muted-foreground" title={repo.defaultBranch || undefined}>
+                          {repo.defaultBranch || 'main'}
+                        </div>
+                        <div className="truncate">
+                          {repo.type === 'dev' ? '开发库' : '用例库'}
+                        </div>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => handleOpenRepoSettings(repo)}
+                            title="设置"
+                          >
+                            <SettingsIcon className="h-4 w-4" />
+                          </Button>
+                          {!isReadOnly && (
+                            <>
+                              <Button
+                                size="icon"
+                                className="h-8 w-8 relative"
+                                onClick={() => handleSaveRepo(repo)}
+                                disabled={
+                                  (repo.id.startsWith(LOCAL_REPO_ID_PREFIX) && !repo.url) ||
+                                  !dirtyRepoIds.has(repo.id) ||
+                                  (repo.url !== '' && !isValidGitUrl(repo.url))
+                                }
+                                title="保存"
+                              >
+                                <Save className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                className="h-8 w-8 relative"
+                                onClick={() => handlePushRepo(repo)}
+                                disabled={
+                                  repo.id.startsWith(LOCAL_REPO_ID_PREFIX) ||
+                                  !repo.url ||
+                                  (unpushedCounts[repo.id] || 0) === 0
+                                }
+                                title="推送到远程"
+                              >
+                                <Upload className="h-4 w-4" />
+                                {(unpushedCounts[repo.id] || 0) > 0 && (
+                                  <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[10px] text-white">
+                                    {unpushedCounts[repo.id]}
+                                  </span>
+                                )}
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="删除仓库">
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>确认删除</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      确定要删除这个仓库配置吗？此操作不可撤销。
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>取消</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => handleRemoveRepo(repo.id)}>删除</AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <RecordPaginationBar
+                  total={gitRepos.length}
+                  currentPage={gitRepoPagination.currentPage}
+                  totalPages={gitRepoPagination.totalPages}
+                  onPageChange={gitRepoPagination.onPageChange}
+                />
               </div>
-              <RecordPaginationBar
-                total={gitRepos.length}
-                currentPage={gitRepoPagination.currentPage}
-                totalPages={gitRepoPagination.totalPages}
-                onPageChange={gitRepoPagination.onPageChange}
-              />
-              {!isReadOnly && gitRepos.length > 0 && (
-                <Button onClick={handleSaveRepos} className="mt-6"><Save className="mr-2 h-4 w-4" /> 保存仓库配置</Button>
-              )}
+
+              {/* 仓库设置弹窗：统一设置默认分支与仓库类型。 */}
+              <Dialog open={!!repoSettingsRepo} onOpenChange={open => !open && handleCloseRepoSettings()}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>仓库设置</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>默认分支</Label>
+                      <Input
+                        value={repoSettingsBranch}
+                        onChange={e => setRepoSettingsBranch(e.target.value)}
+                        placeholder="main"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>仓库类型</Label>
+                      <Select value={repoSettingsType} onValueChange={val => setRepoSettingsType(val as WorkspaceRepository['type'])}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="dev">开发库</SelectItem>
+                          <SelectItem value="case">用例库</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2 mt-4">
+                    <Button variant="outline" onClick={handleCloseRepoSettings}>取消</Button>
+                    <Button onClick={handleConfirmRepoSettings}>确认</Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
             </CardContent>
           </Card>
         </TabsContent>
@@ -2066,19 +2336,31 @@ export const Settings: React.FC = () => {
                       onChange={e => setInviteEmail(e.target.value)}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label>角色</Label>
-                    <Select value={inviteRole} onValueChange={setInviteRole}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="选择角色" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pm">产品经理</SelectItem>
-                        <SelectItem value="developer">开发人员</SelectItem>
-                        <SelectItem value="tester">测试人员</SelectItem>
-                        <SelectItem value="designer">UI设计师</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="space-y-3">
+                    <Label>职能子角色</Label>
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        { value: SUB_ROLE.PM, label: '产品经理' },
+                        { value: SUB_ROLE.DESIGNER, label: 'UI设计师' },
+                        { value: SUB_ROLE.DEVELOPER, label: '开发人员' },
+                        { value: SUB_ROLE.TESTER, label: '测试人员' },
+                      ].map(({ value, label }) => (
+                        <div key={value} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`invite-role-${value}`}
+                            checked={inviteSubRoles.includes(value)}
+                            onCheckedChange={checked => {
+                              setInviteSubRoles(prev =>
+                                checked === true
+                                  ? [...prev, value]
+                                  : prev.filter(r => r !== value)
+                              );
+                            }}
+                          />
+                          <Label htmlFor={`invite-role-${value}`} className="text-sm font-normal cursor-pointer">{label}</Label>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                   {/* 设置空间管理员仅租户管理员（含超级管理员）可操作 */}
                   {isTenantAdmin && (
@@ -2144,7 +2426,7 @@ export const Settings: React.FC = () => {
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="px-4 py-5">{getSubRoleBadge(member.subRole)}</TableCell>
+                          <TableCell className="px-4 py-5">{getSubRoleBadge(member.subRoles)}</TableCell>
                           <TableCell className="px-4 py-5">
                             {member.spaceRole === SPACE_ROLE.SPACE_ADMIN ? (
                               <Badge className="bg-primary rounded-lg px-3 py-1.5 font-medium">是</Badge>
@@ -2216,7 +2498,7 @@ export const Settings: React.FC = () => {
                           .filter(u => u.id !== memberToDelete?.id)
                           .map(u => (
                             <SelectItem key={u.id} value={u.id}>
-                              {u.displayId} · {u.name}（{getSubRoleLabel(u.subRole)}）
+                              {u.displayId} · {u.name}（{u.subRoles?.map(getSubRoleLabel).join('、') ?? '成员'}）
                             </SelectItem>
                           ))}
                       </SelectContent>
@@ -2239,6 +2521,69 @@ export const Settings: React.FC = () => {
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
+
+            <Dialog open={!!editMember} onOpenChange={open => { if (!open) setEditMember(null); }}>
+              <DialogContent className="sm:max-w-md max-w-[calc(100%-2rem)]">
+                <DialogHeader>
+                  <DialogTitle>修改成员角色</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 shrink-0 rounded-full bg-primary/15 flex items-center justify-center text-primary font-medium">
+                      {editMember?.name.charAt(0)}
+                    </div>
+                    <div>
+                      <div className="font-medium text-foreground">{editMember?.name}</div>
+                      <div className="text-sm text-muted-foreground">{editMember?.email}</div>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <Label>职能子角色</Label>
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        { value: SUB_ROLE.PM, label: '产品经理' },
+                        { value: SUB_ROLE.DESIGNER, label: 'UI设计师' },
+                        { value: SUB_ROLE.DEVELOPER, label: '开发人员' },
+                        { value: SUB_ROLE.TESTER, label: '测试人员' },
+                      ].map(({ value, label }) => (
+                        <div key={value} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`edit-role-${value}`}
+                            checked={editSubRoles.includes(value)}
+                            onCheckedChange={checked => {
+                              setEditSubRoles(prev =>
+                                checked === true
+                                  ? [...prev, value]
+                                  : prev.filter(r => r !== value)
+                              );
+                            }}
+                          />
+                          <Label htmlFor={`edit-role-${value}`} className="text-sm font-normal cursor-pointer">{label}</Label>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setEditMember(null)}>取消</Button>
+                  <Button
+                    onClick={() => {
+                      if (!editMember) return;
+                      const workspaceId = getCurrentWorkspaceId();
+                      workspaceApi.updateMemberRole(workspaceId, editMember.id, { role: editMember.spaceRole, subRoles: editSubRoles })
+                        .then(() => {
+                          setEditMember(null);
+                          loadMembers();
+                          toast.success('角色已更新');
+                        })
+                        .catch(() => toast.error('更新角色失败'));
+                    }}
+                  >
+                    保存
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
         </TabsContent>
       </Tabs>

@@ -16,6 +16,16 @@ func Init(svc service.UserService) {
 	defaultUserService = svc
 }
 
+// UserExists 检查指定 userID 是否为平台注册用户。
+// 用于上报接口拒绝非平台用户的状态上报。
+func UserExists(userID string) bool {
+	if defaultUserService == nil || userID == "" {
+		return false
+	}
+	_, err := defaultUserService.GetByID(userID)
+	return err == nil
+}
+
 func Users(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if defaultUserService == nil {

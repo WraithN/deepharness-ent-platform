@@ -140,9 +140,11 @@ const (
 
 // 流程类型常量
 const (
-	ProcessTypeAIDev    = "ai_dev"
-	ProcessTypeAutoTest = "auto_test"
-	ProcessTypeProduct  = "product"
+	ProcessTypeAIDev              = "ai_dev"
+	ProcessTypeAutoTest           = "auto_test"
+	ProcessTypeAutoTestAsset      = "auto_test_asset"
+	ProcessTypeAutoTestExecution  = "auto_test_execution"
+	ProcessTypeProduct            = "product"
 )
 
 // ProcessStage 流程阶段
@@ -256,6 +258,66 @@ func NewAutoTestProcess(workspaceID, workitemID, title string) *Process {
 		WorkitemID:  workitemID,
 		Title:       title,
 		Type:        ProcessTypeAutoTest,
+		Stages:      stages,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+}
+
+// NewAutoTestAssetProcess 创建测试资产流程（测试需求 -> 测试计划 -> 用例 -> 评审）
+func NewAutoTestAssetProcess(workspaceID, workitemID, title string) *Process {
+	now := time.Now()
+	testStages := []string{
+		StageTestRequirement, StageTestPlanDesign, StageTestPlanReview,
+		StageTestCaseGen, StageTestCaseReview, StageTestComplete,
+	}
+	stages := make([]ProcessStage, 0, len(testStages))
+	for _, name := range testStages {
+		meta := StageMetaMap[name]
+		stages = append(stages, ProcessStage{
+			Name:         name,
+			Label:        StageLabels[name],
+			Status:       StageStatusPending,
+			StageType:    meta.StageType,
+			OperatorType: meta.OperatorType,
+		})
+	}
+	return &Process{
+		ID:          "",
+		WorkspaceID: workspaceID,
+		WorkitemID:  workitemID,
+		Title:       title,
+		Type:        ProcessTypeAutoTestAsset,
+		Stages:      stages,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+}
+
+// NewAutoTestExecutionProcess 创建测试执行流程（测试需求 -> 自动化执行 -> 缺陷验证 -> 准入评审）
+func NewAutoTestExecutionProcess(workspaceID, workitemID, title string) *Process {
+	now := time.Now()
+	testStages := []string{
+		StageTestRequirement, StageTestAutoExec,
+		StageTestDefectVerify, StageTestAdmissionReview, StageTestComplete,
+	}
+	stages := make([]ProcessStage, 0, len(testStages))
+	for _, name := range testStages {
+		meta := StageMetaMap[name]
+		stages = append(stages, ProcessStage{
+			Name:         name,
+			Label:        StageLabels[name],
+			Status:       StageStatusPending,
+			StageType:    meta.StageType,
+			OperatorType: meta.OperatorType,
+		})
+	}
+	return &Process{
+		ID:          "",
+		WorkspaceID: workspaceID,
+		WorkitemID:  workitemID,
+		Title:       title,
+		Type:        ProcessTypeAutoTestExecution,
 		Stages:      stages,
 		CreatedAt:   now,
 		UpdatedAt:   now,

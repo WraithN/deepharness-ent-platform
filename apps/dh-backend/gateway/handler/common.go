@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -68,6 +69,7 @@ func HandleServiceError(w http.ResponseWriter, err error, notFoundMsg, defaultMs
 		WriteJSONError(w, http.StatusNotFound, ErrCodeGeneral, notFoundMsg)
 		return
 	}
+	log.Printf("[HandleServiceError] %s: %v", defaultMsg, err)
 	WriteJSONError(w, http.StatusInternalServerError, ErrCodeGeneral, defaultMsg)
 }
 

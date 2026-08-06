@@ -32,6 +32,9 @@ type RepositoryService interface {
 	GetBranches(workspaceID, repoID, userID string) ([]object.BranchInfo, error)
 	RefreshBranches(workspaceID, repoID, userID string) ([]object.BranchInfo, error)
 	SwitchBranch(workspaceID, repoID, branchName, userID string) error
+	SetRemoteURL(workspaceID, repoID, userID, url string) error
+	Push(workspaceID, repoID, userID string) error
+	GetUnpushedCommits(workspaceID, repoID, userID string) (int, error)
 
 	// 用户级仓库操作 —— 将工作空间配置的仓库同步到用户自己的 projects 目录下。
 	// ListUserRepos 返回工作空间下所有配置仓库在用户 projects 目录中的同步状态。

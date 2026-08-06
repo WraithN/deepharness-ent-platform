@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 // intentRecognitionTimeout 是意图识别 LLM 调用的超时时间。
@@ -29,7 +29,7 @@ func (c *AGUIClient) QuickComplete(ctx context.Context, prompt string, workspace
 	}
 	input := agui.RunAgentInput{
 		ThreadID: "", // 创建新 thread
-		RunID:    uuid.New().String(),
+		RunID:    idutil.GenerateID(),
 		Messages: []agui.Message{
 			agui.UserMessage("", prompt),
 		},

@@ -11,8 +11,8 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/workspacepath"
-	"github.com/google/uuid"
 )
 
 // scanRecentPrototypeProjects 扫描原型产物目录，返回修改时间不早于 since 的工程绝对路径（按时间倒序）。
@@ -98,7 +98,7 @@ func cloneAGUIMessages(msgs []agui.Message) []agui.Message {
 
 // generateMessageID 生成消息 ID。
 func generateMessageID() string {
-	return "msg-" + uuid.New().String()[:8]
+	return "msg-" + idutil.GenerateShortID()
 }
 
 // emitLongTaskFeedback 对长耗时指令发送合成进度反馈，避免前端长时间显示"思考中"。
@@ -112,7 +112,7 @@ func emitLongTaskFeedback(command, runID, sessionID string, writeEvent func(agui
 		"/code":         "正在编写代码",
 		"/user-story":   "正在拆分用户故事",
 		"/prd-write":    "正在撰写 PRD",
-		"/prd-research": "正在进行技术调研",
+		"/prd-research": "正在进行产品爬虫调研",
 		"/ui-kit":       "正在生成 UI 组件库规范",
 		"/test-case":    "正在生成测试用例",
 		"/auto-test":    "正在生成自动化脚本",

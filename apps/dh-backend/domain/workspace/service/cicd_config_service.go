@@ -4,15 +4,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/identity"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workspace"
-	"github.com/google/uuid"
 )
 
 // CICDConfigService 定义全局 CICD 配置的服务接口。
@@ -78,7 +77,7 @@ func (s *DBWorkspaceService) CreateCICDConfig(req object.CICDConfigRequest) (wor
 		return workspace.CICDConfig{}, fmt.Errorf("marshal cicd config failed: %w", err)
 	}
 	now := time.Now().UTC()
-	id := strings.ReplaceAll(uuid.New().String(), "-", "")
+	id := idutil.GenerateID()
 	_, err = s.db.Exec(`
 		INSERT INTO cicd_configs (id, tenant_id, name, trigger_branches, webhook_url, script, config, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)

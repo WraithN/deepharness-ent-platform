@@ -12,13 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
 	"github.com/gorilla/websocket"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 )
-
 
 type SSEEvent struct {
 	Type       string          `json:"type"`
@@ -240,7 +239,7 @@ func (c *GatewaydClient) transformEvent(eventType string, rawPayload json.RawMes
 
 		props, _ := json.Marshal(map[string]any{
 			"part": map[string]any{
-				"id":      uuid.New().String(),
+				"id":      idutil.GenerateID(),
 				"type":    "text",
 				"content": p.Text,
 				"delta":   p.Text,
@@ -266,7 +265,7 @@ func (c *GatewaydClient) transformEvent(eventType string, rawPayload json.RawMes
 
 		props, _ := json.Marshal(map[string]any{
 			"part": map[string]any{
-				"id":      uuid.New().String(),
+				"id":      idutil.GenerateID(),
 				"type":    partType,
 				"content": p.Content,
 				"name":    p.ToolName,
@@ -460,7 +459,7 @@ func (c *GatewaydClient) AttachAgent(ctx context.Context, threadID, pluginKey, w
 
 	body, _ := json.Marshal(map[string]any{
 		"agent_key":      pluginKey,
-		"name":           pluginKey + "-" + uuid.New().String()[:8],
+		"name":           pluginKey + "-" + idutil.GenerateShortID(),
 		"work_directory": workspace,
 		"force":          true,
 	})
@@ -586,7 +585,7 @@ func (c *GatewaydClient) SendMessage(ctx context.Context, session chat.Session, 
 	c.subscribers[convID] = append(c.subscribers[convID], ch)
 	c.mu.Unlock()
 
-	msgID := uuid.New().String()
+	msgID := idutil.GenerateID()
 	msgProps, _ := json.Marshal(map[string]any{
 		"info": map[string]any{
 			"id": msgID,

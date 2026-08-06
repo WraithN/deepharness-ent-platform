@@ -12,8 +12,8 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/gitutil"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/repository"
-	"github.com/google/uuid"
 )
 
 // EventResult 事件流消费结果
@@ -43,7 +43,7 @@ func ConsumeEvents(events <-chan agui.Event) EventResult {
 func BuildRunInput(threadID, content, workspacePath string) agui.RunAgentInput {
 	return agui.RunAgentInput{
 		ThreadID:       threadID,
-		RunID:          uuid.New().String(),
+		RunID:          idutil.GenerateID(),
 		Messages:       []agui.Message{agui.UserMessage("", content)},
 		State:          json.RawMessage(`{}`),
 		Tools:          []agui.Tool{},

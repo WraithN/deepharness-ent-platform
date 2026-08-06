@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
-	"github.com/google/uuid"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
@@ -56,7 +56,7 @@ func (s *DBWorkspaceService) CreateAgent(workspaceID string, req object.AgentReq
 
 	now := time.Now().UTC()
 	a := agent.Agent{
-		ID:          uuid.New().String(),
+		ID:          idutil.GenerateID(),
 		WorkspaceID: workspaceID,
 		Name:        req.Name,
 		Role:        req.Role,

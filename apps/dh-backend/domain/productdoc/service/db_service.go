@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/object"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
@@ -125,9 +125,9 @@ func (s *DBProductDocService) CreateDoc(req object.CreateProductDocRequest) (obj
 		req.Status = object.DocStatusDraft
 	}
 
-	id := uuid.New().String()
+	id := idutil.GenerateID()
 	if req.Slug == "" {
-		req.Slug = uuid.New().String()
+		req.Slug = idutil.GenerateID()
 	}
 
 	// 未携带作者时给一个兜底值，保证 user_id 非空且不会与真实用户冲突。
@@ -298,7 +298,7 @@ func (s *DBProductDocService) PublishVersion(docID string, req object.PublishPro
 	}
 
 	now := time.Now().UTC()
-	id := uuid.New().String()
+	id := idutil.GenerateID()
 
 	var nextVersion int
 	err = s.db.QueryRow("SELECT COALESCE(MAX(version), 0) + 1 FROM product_doc_versions WHERE doc_id = $1", docID).Scan(&nextVersion)

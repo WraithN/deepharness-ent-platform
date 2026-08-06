@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 // MessageRole 表示 AG-UI 消息角色。
@@ -39,7 +39,7 @@ type Message struct {
 // UserMessage 快速构造一条用户消息（字符串内容）。
 func UserMessage(id, content string) Message {
 	if id == "" {
-		id = generateID()
+		id = idutil.GenerateID()
 	}
 	return Message{Role: RoleUser, ID: id, Content: json.RawMessage(fmt.Sprintf("%q", content))}
 }
@@ -122,7 +122,6 @@ type RunAgentInput struct {
 	// Workspace 仅在 dh-backend 内部使用，用于向 gatewayd 挂载 agent 时指定工作目录。
 	// 该字段不会被序列化到 gatewayd。
 	Workspace string `json:"-"`
-
 }
 
 // EventType 是 AG-UI 事件类型枚举。
@@ -301,8 +300,4 @@ func TextMessageEndEvent(messageID string) Event {
 	ev := NewEvent(EventTextMessageEnd)
 	ev.MessageID = messageID
 	return ev
-}
-
-func generateID() string {
-	return uuid.New().String()
 }

@@ -49,10 +49,21 @@ type AgentRuntime struct {
 	MemPercent      float64         `json:"memPercent"`
 	SandboxSpec     string          `json:"sandboxSpec"`
 	Agents          []AgentInstance `json:"agents"`
+	// InstalledAgents 是已安装（CLI 可用）但未必正在运行的智能体类型列表。
+	// 仅包含 opencode / claude-code / codex 三种 gatewayd 支持的类型。
+	InstalledAgents []string        `json:"installedAgents"`
+	// Sessions7d 是近 7 日会话总数，由 gatewayd 从本地 SQLite 统计上报。
+	Sessions7d int64                 `json:"sessions7d"`
+	// Sessions1d 是近 1 日会话总数，由 gatewayd 从本地 SQLite 统计上报。
+	Sessions1d int64                 `json:"sessions1d"`
+	// LastActiveAt 是最近一次会话活跃时间，由 gatewayd 上报。无会话时为零值。
+	LastActiveAt time.Time            `json:"lastActiveAt"`
 	// WorkspacePath 是 gatewayd 实际使用的工作目录，格式为 ${workspace_root}/${user_id}/${workspace_id}。
 	// 由 gatewayd 通过状态上报接口回传，供 platform 后端统一文件路径与指令模板使用。
 	WorkspacePath string          `json:"workspacePath"`
 	GatewaydURL   string          `json:"gatewaydUrl"`
+	// IP 是容器/主机的主网卡 IP 地址，由 personal-stub 采集并随状态上报。
+	IP            string          `json:"ip"`
 	ReportedAt      time.Time       `json:"reportedAt"`
 	CreatedAt       time.Time       `json:"createdAt"`
 	UpdatedAt       time.Time       `json:"updatedAt"`
@@ -81,10 +92,20 @@ type ReportStatusRequest struct {
 	MemPercent    float64                     `json:"mem_percent"`
 	SandboxSpec   string                      `json:"sandbox_spec"`
 	Agents        []ReportStatusAgentInstance `json:"agents"`
+	// InstalledAgents 是已安装（CLI 可用）的智能体类型列表，由 gatewayd 上报。
+	InstalledAgents []string    `json:"installed_agents,omitempty"`
+	// Sessions7d 是近 7 日会话总数，由 gatewayd 从本地 SQLite 统计上报。
+	Sessions7d int64          `json:"sessions_7d,omitempty"`
+	// Sessions1d 是近 1 日会话总数，由 gatewayd 从本地 SQLite 统计上报。
+	Sessions1d int64          `json:"sessions_1d,omitempty"`
+	// LastActiveAt 是最近一次会话活跃时间（RFC3339），由 gatewayd 上报。无会话时不传。
+	LastActiveAt *time.Time   `json:"last_active_at,omitempty"`
 	// WorkspacePath 是 gatewayd 实际使用的工作目录，格式为 ${workspace_root}/${user_id}/${workspace_id}。
 	// 若上报方未提供，服务端会根据 workspace.root 配置自动计算。
 	WorkspacePath string        `json:"workspace_path,omitempty"`
 	GatewaydURL   string        `json:"gatewayd_url,omitempty"`
+	// IP 是容器/主机的主网卡 IP 地址，由 personal-stub 采集并随状态上报。
+	IP            string        `json:"ip,omitempty"`
 	ReportedAt    *time.Time    `json:"reported_at,omitempty"`
 }
 

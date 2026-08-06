@@ -72,9 +72,13 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({ code }) => {
     setError(null);
 
     initializeMermaid()
-      .then(mod => {
+      .then(async mod => {
         if (cancelled) return;
-        return mod.default.render(diagramId, preprocessMermaidCode(code.trim()));
+        const processed = preprocessMermaidCode(code.trim());
+        // 先用 parse 校验语法，非法时抛错进入 catch 渲染错误回退，
+        // 避免 mermaid render 返回带“Syntax error”炸弹图的 SVG 却仍被当成成功结果。
+        await mod.default.parse(processed, { suppressErrors: false });
+        return mod.default.render(diagramId, processed);
       })
       .then(result => {
         if (cancelled) return;

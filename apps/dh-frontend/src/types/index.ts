@@ -227,7 +227,7 @@ export interface WorkspaceMember {
   email: string;
   platformRole: PlatformRole;
   role: SpaceRole;
-  subRole?: SubRole;
+  subRoles?: SubRole[];
   joinedAt: string;
 }
 

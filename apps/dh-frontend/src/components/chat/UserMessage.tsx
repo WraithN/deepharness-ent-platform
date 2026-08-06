@@ -82,7 +82,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, o
       <div className="flex flex-col max-w-[calc(100%-2.75rem)] min-w-0 items-end">
         <div className="flex flex-col gap-2 w-fit max-w-full bg-primary text-primary-foreground rounded-2xl rounded-tr-sm shadow-sm">
           {textPart?.text && (
-            <div className="px-3 py-2 text-xs sm:text-sm">
+            <div className="px-3 py-2 text-xs sm:text-sm break-words min-w-0 overflow-hidden">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{

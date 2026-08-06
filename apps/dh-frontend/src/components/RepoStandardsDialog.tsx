@@ -43,8 +43,8 @@ export function RepoStandardsDialog({ workspaceId, repo, isReadOnly }: RepoStand
   const [dirtyDesign, setDirtyDesign] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [saving, setSaving] = useState(false);
-  // 仓库未配置（未填写地址或尚未保存入库）时不请求后端，直接展示引导提示。
-  const unconfigured = !repo.url || repo.id.startsWith(LOCAL_REPO_ID_PREFIX);
+  const isLocalDraft = repo.id.startsWith(LOCAL_REPO_ID_PREFIX);
+  const missingRemoteUrl = !repo.url && !isLocalDraft;
 
   const cloned = status?.cloned ?? false;
   const hasFrontend = status?.hasFrontend ?? false;
@@ -54,7 +54,7 @@ export function RepoStandardsDialog({ workspaceId, repo, isReadOnly }: RepoStand
   /** 打开弹窗时拉取规范文件状态与内容。 */
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
-    if (!nextOpen || unconfigured) return;
+    if (!nextOpen || isLocalDraft) return;
     setLoading(true);
     repositoryApi
       .standardFiles(workspaceId, repo.id)
@@ -125,7 +125,7 @@ export function RepoStandardsDialog({ workspaceId, repo, isReadOnly }: RepoStand
         <DialogHeader>
           <DialogTitle>仓库规范配置 ({repo.name || '未命名'})</DialogTitle>
         </DialogHeader>
-        {unconfigured ? (
+        {isLocalDraft ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
             <AlertCircle className="h-8 w-8 text-muted-foreground/50" />
             <p>需要先配置 Git 仓库</p>
@@ -154,6 +154,17 @@ export function RepoStandardsDialog({ workspaceId, repo, isReadOnly }: RepoStand
                 {detecting ? '检测中...' : actionLabel}
               </Button>
             </div>
+            {missingRemoteUrl && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 mt-2">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>
+                  当前仓库未配置远程地址，无法从远程拉取或同步。
+                  {cloned
+                    ? '仓库已克隆到本地，仍可直接编辑规范文件；保存后会提交到当前分支。'
+                    : '若仓库已克隆到本地，可直接编辑规范文件；否则请先在基础配置中填写仓库地址。'}
+                </span>
+              </div>
+            )}
             {!cloned && (
               <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
                 <AlertCircle className="h-4 w-4 shrink-0" />

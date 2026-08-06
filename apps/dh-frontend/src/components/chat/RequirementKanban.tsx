@@ -48,7 +48,7 @@ const COLUMN_STYLES: Record<ChatReqItem['status'], { header: string; title: stri
 
 const VIEW_MODE_STORAGE_KEY = 'chat-requirement-kanban-view-mode';
 
-/** 智能会话中的需求看板：支持展开/收缩与父子层级展示。 */
+/** 智能会话中的需求追踪：支持展开/收缩与父子层级展示。 */
 export const RequirementKanban: React.FC<RequirementKanbanProps> = ({ items, highlightId, onOpenDetail, setItemRef }) => {
   const [viewMode, setViewMode] = useState<KanbanViewMode>(() => {
     try {

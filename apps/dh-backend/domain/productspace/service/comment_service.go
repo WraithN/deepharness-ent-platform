@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 // scanPrototypeComment 从数据库行扫描批注评论对象（含位置/元素信息）。
@@ -94,7 +94,7 @@ func (s *DBProductSpaceService) AddComment(ctx context.Context, workspaceID, use
 		       ins.content, ins.selector, ins.target_text, ins.x, ins.y, ins.created_at
 		FROM ins
 		LEFT JOIN users u ON u.id = ins.user_id
-	`, uuid.NewString(), itemID, workspaceID, userID, content, selector, targetText, req.X, req.Y), &c)
+	`, idutil.GenerateID(), itemID, workspaceID, userID, content, selector, targetText, req.X, req.Y), &c)
 	if err != nil {
 		return nil, fmt.Errorf("insert prototype comment failed: %w", err)
 	}

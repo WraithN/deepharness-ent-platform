@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
-	"github.com/google/uuid"
 	"github.com/lib/pq"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
@@ -172,10 +172,10 @@ func (s *DBAgentConfigService) GetAgentType(key string) (agent.AgentType, error)
 
 // workspaceAgentPolicy 表示工作空间维度的智能体策略。
 type workspaceAgentPolicy struct {
-	locked           bool
-	lockedKeys       map[string]bool
-	allowedKeys      map[string]bool
-	defaultConfigs   map[string]agent.WorkspaceAgentConfig
+	locked         bool
+	lockedKeys     map[string]bool
+	allowedKeys    map[string]bool
+	defaultConfigs map[string]agent.WorkspaceAgentConfig
 }
 
 // getWorkspaceAgentPolicy 读取工作空间所属租户的智能体策略。
@@ -380,7 +380,7 @@ func (s *DBAgentConfigService) SaveWorkspaceConfig(workspaceID string, req objec
 	}
 
 	now := time.Now().UTC()
-	id := uuid.New().String()
+	id := idutil.GenerateID()
 
 	// 开启事务保存配置；若设置为默认智能体，先清空同空间其他默认智能体，确保最多只有一个默认。
 	tx, err := s.db.Begin()

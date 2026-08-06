@@ -70,9 +70,9 @@ type CICDConfigRequest struct {
 // MineWorkspace 表示当前用户加入的工作空间及其成员关系。
 type MineWorkspace struct {
 	workspace.Workspace
-	Role       string `json:"role"`
-	SubRole    string `json:"subRole"`
-	TenantName string `json:"tenantName"`
+	Role       string   `json:"role"`
+	SubRoles   []string `json:"subRoles"`
+	TenantName string   `json:"tenantName"`
 }
 
 // 空间成员权限角色常量（决定空间内管理权限）。

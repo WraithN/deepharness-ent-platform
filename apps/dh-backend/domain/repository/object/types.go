@@ -20,6 +20,11 @@ type UpdateRepositoryRequest struct {
 	DefaultBranch string `json:"defaultBranch,omitempty"`
 }
 
+// SetRemoteURLRequest 设置远程 origin URL 请求。
+type SetRemoteURLRequest struct {
+	URL string `json:"url"`
+}
+
 // ScannedRepository 扫描发现的本地仓库。
 type ScannedRepository struct {
 	Name              string     `json:"name"`

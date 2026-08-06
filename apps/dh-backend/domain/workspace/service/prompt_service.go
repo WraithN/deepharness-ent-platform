@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
-	"github.com/google/uuid"
 )
 
 // WorkspacePromptService 定义工作空间提示词服务接口。
@@ -170,7 +170,7 @@ func (s *DBWorkspacePromptService) Add(workspaceID string, req object.AddWorkspa
 
 	now := time.Now().UTC()
 	p := object.WorkspacePrompt{
-		ID:              uuid.New().String(),
+		ID:              idutil.GenerateID(),
 		WorkspaceID:     workspaceID,
 		LibraryPromptID: &req.LibraryPromptID,
 		Name:            name,
@@ -401,7 +401,7 @@ func (s *DBWorkspacePromptService) Copy(workspaceID, promptID, userID string) (o
 	}
 
 	now := time.Now().UTC()
-	copyID := uuid.New().String()
+	copyID := idutil.GenerateID()
 	tx, err := s.db.Begin()
 	if err != nil {
 		return object.WorkspacePrompt{}, fmt.Errorf("begin transaction failed: %w", err)
@@ -450,7 +450,7 @@ func (s *DBWorkspacePromptService) Share(workspaceID, promptID, userID string) (
 	}
 
 	now := time.Now().UTC()
-	sharedID := uuid.New().String()
+	sharedID := idutil.GenerateID()
 	tx, err := s.db.Begin()
 	if err != nil {
 		return object.WorkspacePrompt{}, fmt.Errorf("begin transaction failed: %w", err)
@@ -559,7 +559,7 @@ func (s *DBWorkspacePromptService) CreateCategory(workspaceID, name string) (obj
 
 	now := time.Now().UTC()
 	c := object.PromptCategory{
-		ID:          uuid.New().String(),
+		ID:          idutil.GenerateID(),
 		WorkspaceID: workspaceID,
 		Name:        name,
 		CreatedAt:   now,
@@ -630,7 +630,7 @@ func SeedBuiltinPromptCategories(tx *sql.Tx, workspaceID string) error {
 			INSERT INTO workspace_prompt_categories (id, workspace_id, name, is_builtin, created_at, updated_at)
 			VALUES ($1, $2, $3, TRUE, $4, $5)
 			ON CONFLICT DO NOTHING
-		`, uuid.New().String(), workspaceID, name, now, now); err != nil {
+		`, idutil.GenerateID(), workspaceID, name, now, now); err != nil {
 			return fmt.Errorf("seed builtin category %s failed: %w", name, err)
 		}
 	}

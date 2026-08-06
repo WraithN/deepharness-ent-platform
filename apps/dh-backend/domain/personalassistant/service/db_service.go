@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/personalassistant/object"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
@@ -55,7 +55,7 @@ func (s *DBPersonalAssistantService) ListAssistants(userID string) ([]object.Per
 func (s *DBPersonalAssistantService) CreateAssistant(userID, userName string, req CreateAssistantRequest) (object.PersonalAssistant, error) {
 	now := time.Now().UTC()
 	assistant := object.PersonalAssistant{
-		ID:          uuid.New().String(),
+		ID:          idutil.GenerateID(),
 		Name:        req.Name,
 		Role:        req.Role,
 		Description: req.Description,
@@ -151,12 +151,12 @@ func (s *DBPersonalAssistantService) ListSessions(assistantID string) ([]object.
 func (s *DBPersonalAssistantService) CreateSession(assistantID, title string) (object.Session, error) {
 	now := time.Now().UTC()
 	session := object.Session{
-		ID:          uuid.New().String(),
-		AssistantID: assistantID,
-		Title:       title,
+		ID:           idutil.GenerateID(),
+		AssistantID:  assistantID,
+		Title:        title,
 		MessageCount: 0,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	_, err := s.db.Exec(`
 		INSERT INTO personal_assistant_sessions (id, assistant_id, title, message_count, created_at, updated_at)
@@ -245,7 +245,7 @@ func (s *DBPersonalAssistantService) ProcessMessage(assistantID, sessionID, cont
 
 	now := time.Now().UTC()
 	userMsg := object.Message{
-		ID:        uuid.New().String(),
+		ID:        idutil.GenerateID(),
 		SessionID: sessionID,
 		Role:      "user",
 		Type:      "text",
@@ -260,7 +260,7 @@ func (s *DBPersonalAssistantService) ProcessMessage(assistantID, sessionID, cont
 	}
 
 	reply := object.Message{
-		ID:        uuid.New().String(),
+		ID:        idutil.GenerateID(),
 		SessionID: sessionID,
 		Role:      "assistant",
 		Type:      "text",

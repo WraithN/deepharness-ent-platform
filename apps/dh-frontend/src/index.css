@@ -425,6 +425,11 @@ html {
   }
 }
 
+/* ── Radix ScrollArea 修复：内部 display:table 会随内容撑宽，导致聊天消息溢出 ── */
+[data-radix-scroll-area-viewport] > div {
+  display: block !important;
+}
+
 /* ========================================
    Markdown 预览美化样式
    适用于 .markdown-preview 容器内的内容
@@ -435,6 +440,8 @@ html {
     @apply text-sm leading-relaxed;
     overflow-wrap: break-word;
     word-break: break-word;
+    max-width: 100%;
+    overflow: hidden;
   }
 
   /* ── 标题层级 ── */
@@ -523,10 +530,13 @@ html {
 
   /* ── 表格美化 ── */
   .markdown-preview table {
-    @apply w-full text-xs my-3 overflow-hidden rounded-lg;
+    @apply w-full text-xs my-3 rounded-lg;
     border-collapse: separate;
     border-spacing: 0;
     box-shadow: 0 1px 8px rgba(0, 0, 0, 0.04);
+    table-layout: fixed;
+    display: block;
+    overflow-x: auto;
   }
 
   .markdown-preview thead {
@@ -551,6 +561,8 @@ html {
   .markdown-preview td {
     @apply px-3 py-2;
     border-bottom: 1px solid hsl(var(--border) / 0.5);
+    word-break: break-word;
+    overflow-wrap: anywhere;
   }
 
   /* 奇偶行隔行变色 */
@@ -597,6 +609,8 @@ html {
   .markdown-preview pre {
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--primary) / 0.3) transparent;
+    overflow-x: auto;
+    max-width: 100%;
   }
 
   .markdown-preview pre::-webkit-scrollbar {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -373,6 +374,56 @@ func (c *GitClient) Pull(dest, url, sshKey string) error {
 			return nil
 		}
 		return fmt.Errorf("git pull failed: %w", err)
+	}
+	return nil
+}
+
+// SetRemoteURL 在已克隆目录设置（或创建）origin 远程地址。
+func (c *GitClient) SetRemoteURL(dest, rawURL string) error {
+	r, err := git.PlainOpen(dest)
+	if err != nil {
+		return fmt.Errorf("open repo failed: %w", err)
+	}
+
+	cfg, err := r.Config()
+	if err != nil {
+		return fmt.Errorf("load repo config failed: %w", err)
+	}
+
+	remoteCfg := cfg.Remotes["origin"]
+	if remoteCfg == nil {
+		remoteCfg = &config.RemoteConfig{
+			Name: "origin",
+			URLs: []string{rawURL},
+		}
+		cfg.Remotes["origin"] = remoteCfg
+	} else {
+		remoteCfg.URLs = []string{rawURL}
+	}
+
+	if err := r.SetConfig(cfg); err != nil {
+		return fmt.Errorf("set remote url failed: %w", err)
+	}
+	return nil
+}
+
+// Push 在已克隆目录执行 git push origin。
+func (c *GitClient) Push(dest, url, sshKey string) error {
+	auth, err := resolveAuth(url, sshKey)
+	if err != nil {
+		return err
+	}
+
+	r, err := git.PlainOpen(dest)
+	if err != nil {
+		return fmt.Errorf("open repo failed: %w", err)
+	}
+
+	if err := r.Push(&git.PushOptions{Auth: auth, RemoteName: "origin"}); err != nil {
+		if err == git.NoErrAlreadyUpToDate {
+			return nil
+		}
+		return fmt.Errorf("git push failed: %w", err)
 	}
 	return nil
 }

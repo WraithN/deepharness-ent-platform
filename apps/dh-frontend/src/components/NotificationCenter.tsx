@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, Zap, FileCheck, AlertCircle, Rocket, Loader2, FolderGit2, Wand2, ClipboardCheck, ClipboardList, CheckCircle2, X, FlaskConical, TestTubeDiagonal, ShieldCheck } from 'lucide-react';
+import { Bell, Zap, FileCheck, AlertCircle, Rocket, Loader2, FolderGit2, Wand2, ClipboardCheck, ClipboardList, CheckCircle2, X, FlaskConical, TestTubeDiagonal, ShieldCheck, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -615,7 +615,7 @@ export const NotificationCenter: React.FC = () => {
                              size="sm"
                              variant="link"
                              className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
-                             onClick={() => handleViewDetail(n.id, n.actionUrl)}
+                             onClick={() => handleViewDetail(n.id, n.actionUrl ?? '')}
                            >
                              查看详情
                              <ArrowRight className="ml-1 h-3 w-3" />

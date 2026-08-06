@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
-	"github.com/google/uuid"
 )
 
 // ListSkills 返回团队技能列表，支持服务端分页。
@@ -95,7 +95,7 @@ func (s *DBTeamService) ListSkills(workspaceID string, page, pageSize int) (comm
 func (s *DBTeamService) CreateSkill(req object.CreateSkillRequest, workspaceID string) (object.Skill, error) {
 	now := time.Now().UTC()
 	skill := object.Skill{
-		ID:          uuid.New().String(),
+		ID:          idutil.GenerateID(),
 		Name:        req.Name,
 		Description: req.Description,
 		Category:    req.Category,

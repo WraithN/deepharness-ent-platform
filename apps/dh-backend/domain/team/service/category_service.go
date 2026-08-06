@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team/object"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
@@ -56,7 +56,7 @@ func (s *DBTeamService) CreateSkillCategory(req object.CreateSkillCategoryReques
 	}
 	now := time.Now().UTC()
 	category := object.SkillCategory{
-		ID:        uuid.New().String(),
+		ID:        idutil.GenerateID(),
 		Name:      strings.TrimSpace(req.Name),
 		Builtin:   false,
 		SortOrder: 0,
@@ -138,7 +138,7 @@ func (s *DBTeamService) CreatePromptCategory(req object.CreatePromptCategoryRequ
 	}
 	now := time.Now().UTC()
 	category := object.PromptCategory{
-		ID:        uuid.New().String(),
+		ID:        idutil.GenerateID(),
 		Name:      strings.TrimSpace(req.Name),
 		Builtin:   false,
 		SortOrder: 0,

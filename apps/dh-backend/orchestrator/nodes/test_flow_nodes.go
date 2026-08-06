@@ -16,10 +16,20 @@ import (
 
 type TestRequirementNode struct {
 	core.BaseNode
+	// ProcessType 指定该节点创建何种类型的测试流程；为空时保持旧版 auto_test 兼容。
+	ProcessType string
 }
 
 func (n *TestRequirementNode) Input(fc *core.FlowContext) error {
-	proc := processobject.NewAutoTestProcess(fc.WorkspaceID, fc.WorkitemID, fc.WorkitemTitle)
+	var proc *processobject.Process
+	switch n.ProcessType {
+	case processobject.ProcessTypeAutoTestAsset:
+		proc = processobject.NewAutoTestAssetProcess(fc.WorkspaceID, fc.WorkitemID, fc.WorkitemTitle)
+	case processobject.ProcessTypeAutoTestExecution:
+		proc = processobject.NewAutoTestExecutionProcess(fc.WorkspaceID, fc.WorkitemID, fc.WorkitemTitle)
+	default:
+		proc = processobject.NewAutoTestProcess(fc.WorkspaceID, fc.WorkitemID, fc.WorkitemTitle)
+	}
 	created := fc.CreateProcess(proc)
 	fc.ProcessID = created.ID
 	return nil

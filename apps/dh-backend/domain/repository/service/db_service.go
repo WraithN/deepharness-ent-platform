@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,11 +15,12 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/crypto"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/gitutil"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/repository"
 	gitrepo "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/repository"
-	"github.com/google/uuid"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
@@ -123,7 +125,7 @@ func (s *DBRepositoryService) Create(workspaceID, userID string, req object.Crea
 	name := ParseRepoName(req.URL)
 	now := time.Now().UTC()
 	r := repository.Repository{
-		ID:            uuid.New().String(),
+		ID:            idutil.GenerateID(),
 		WorkspaceID:   workspaceID,
 		Name:          name,
 		URL:           req.URL,
@@ -189,6 +191,13 @@ func (s *DBRepositoryService) Update(workspaceID, repoID, userID string, req obj
 		log.Printf("[Repository] Update resolveSSHKey failed for user %s: %v", userID, keyErr)
 	}
 	existing.SSHKey = sshKey
+
+	// 本地路径已存在且 URL 变更时，同步更新 git remote origin URL。
+	if req.URL != "" && existing.LocalPath != "" && existing.CloneStatus == repository.CloneStatusCloned {
+		if err := s.gitClient.SetRemoteURL(existing.LocalPath, req.URL); err != nil {
+			log.Printf("[Repository] Update SetRemoteURL failed for repo %s: %v", repoID, err)
+		}
+	}
 
 	// 加密 SSH Key 后存入 DB
 	encryptedKey, encErr := crypto.Encrypt(sshKey, s.encryptionKey)
@@ -283,6 +292,87 @@ func (s *DBRepositoryService) syncRepository(r repository.Repository, sshKey str
 	}
 	now := time.Now().UTC()
 	s.updateStatusAndSyncTime(r.ID, repository.CloneStatusCloned, &now)
+}
+
+// SetRemoteURL 设置仓库的远程 origin URL 并同步更新本地仓库 remote。
+func (s *DBRepositoryService) SetRemoteURL(workspaceID, repoID, userID, rawURL string) error {
+	repo, err := s.Get(workspaceID, repoID)
+	if err != nil {
+		return err
+	}
+	if repo.LocalPath == "" || repo.CloneStatus != repository.CloneStatusCloned {
+		return fmt.Errorf("repository not cloned yet")
+	}
+
+	sshKey, _ := s.resolveSSHKey(userID)
+	repo.URL = rawURL
+	repo.Name = ParseRepoName(rawURL)
+	repo.SSHKey = sshKey
+
+	// 先更新本地 remote，再更新 DB；本地失败时返回错误便于前端提示。
+	if err := s.gitClient.SetRemoteURL(repo.LocalPath, rawURL); err != nil {
+		return fmt.Errorf("set remote url failed: %w", err)
+	}
+
+	encryptedKey, encErr := crypto.Encrypt(sshKey, s.encryptionKey)
+	if encErr != nil {
+		return fmt.Errorf("encrypt ssh key failed: %w", encErr)
+	}
+
+	_, err = s.db.Exec(`
+		UPDATE repositories
+		SET name = $1, url = $2, ssh_key = $3, updated_at = $4
+		WHERE id = $5 AND workspace_id = $6
+	`, repo.Name, repo.URL, encryptedKey, time.Now().UTC(), repo.ID, repo.WorkspaceID)
+	if err != nil {
+		return fmt.Errorf("update repository url failed: %w", err)
+	}
+	return nil
+}
+
+// Push 推送仓库当前分支到远程 origin。
+func (s *DBRepositoryService) Push(workspaceID, repoID, userID string) error {
+	repo, err := s.Get(workspaceID, repoID)
+	if err != nil {
+		return err
+	}
+	if repo.LocalPath == "" || repo.CloneStatus != repository.CloneStatusCloned {
+		return fmt.Errorf("repository not cloned yet")
+	}
+	if repo.URL == "" {
+		return fmt.Errorf("remote URL not configured")
+	}
+
+	sshKey, keyErr := s.resolveSSHKey(userID)
+	if keyErr != nil {
+		return fmt.Errorf("resolve ssh key failed: %w", keyErr)
+	}
+	if err := s.gitClient.Push(repo.LocalPath, repo.URL, sshKey); err != nil {
+		return fmt.Errorf("git push failed: %w", err)
+	}
+	return nil
+}
+
+// GetUnpushedCommits 返回本地仓库中尚未推送到远程的提交数量。
+func (s *DBRepositoryService) GetUnpushedCommits(workspaceID, repoID, userID string) (int, error) {
+	repo, err := s.Get(workspaceID, repoID)
+	if err != nil {
+		return 0, err
+	}
+	if repo.LocalPath == "" || repo.CloneStatus != repository.CloneStatusCloned {
+		return 0, nil
+	}
+
+	ctx := context.Background()
+	out, err := gitutil.Exec(ctx, repo.LocalPath, "rev-list", "--count", "HEAD", "--not", "--remotes")
+	if err != nil {
+		return 0, fmt.Errorf("count unpushed commits failed: %w", err)
+	}
+	count, _ := strconv.Atoi(strings.TrimSpace(out))
+	if count < 0 {
+		count = 0
+	}
+	return count, nil
 }
 
 // isValidSSHKey 校验是否为有效的 SSH 私钥格式。

@@ -13,8 +13,8 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
-	"github.com/google/uuid"
 )
 
 const fallbackMsgHistoryLimit = 100
@@ -106,7 +106,7 @@ func (h *AGUIHandler) respondAndListenFallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	runID := uuid.New().String()
+	runID := idutil.GenerateID()
 	go h.bufferRespondAndListenEvents(ctx, events, closeConn, req.ThreadID, runID, effectiveInstanceID)
 
 	SetJSONHeader(w)
@@ -169,7 +169,7 @@ func (h *AGUIHandler) bufferRespondAndListenEvents(ctx context.Context, events <
 	if text != "" {
 		finalMsgID := msgID
 		if finalMsgID == "" {
-			finalMsgID = uuid.New().String()
+			finalMsgID = idutil.GenerateID()
 		}
 		msg := chat.Message{
 			ID:        finalMsgID,
@@ -253,7 +253,7 @@ func (h *AGUIHandler) fallbackRunForRespond(w http.ResponseWriter, r *http.Reque
 	// 新 run 中 agent 可能把用户回答当作最终指令而提前开始生成文档、探索代码或忘记使用 question 工具。
 	// 用最强制的 developer 提示重申当前所处阶段、输出格式和绝对禁止事项。
 	continueReminder := `【系统强制指令 - 最高优先级】
-你当前处于 /brainstorm 需求澄清流程的“继续提问”阶段。
+你当前处于 /grill-me 需求澄清流程的“继续提问”阶段。
 上一条消息是用户对上一个问题的回答， ONLY 用于澄清需求，不是新任务，不是开发指令，不是要求你立即实现或探索代码。
 你的唯一任务是：根据用户回答，继续提出下一个澄清问题。
 
@@ -279,7 +279,7 @@ C. 导出过去 30 天的数据
 在所有维度澄清完成前，禁止任何工具调用和任何实现/探索行为。重复：不要探索代码，不要生成文档，只提问。`
 	messages = append(messages, agui.Message{
 		Role:    agui.RoleDeveloper,
-		ID:      uuid.New().String(),
+		ID:      idutil.GenerateID(),
 		Content: json.RawMessage(fmt.Sprintf("%q", continueReminder)),
 	})
 
@@ -288,8 +288,8 @@ C. 导出过去 30 天的数据
 	// 保存用户回答消息到原 session；同时把恢复出的上下文项存入 metadata，方便后续再次 fallback。
 	h.saveUserMessages(ctx, sessionID, []agui.Message{answerMessage}, ctxItems)
 
-	runID := uuid.New().String()
-	fallbackInstanceID := uuid.New().String()
+	runID := idutil.GenerateID()
+	fallbackInstanceID := idutil.GenerateID()
 	fallbackInput := agui.RunAgentInput{
 		ThreadID:  sessionID,
 		RunID:     runID,
@@ -379,13 +379,13 @@ func extractContextItemsFromHistory(history []chat.Message) []agui.ContextItem {
 }
 
 // runFallback 在独立 goroutine 中执行回退 agent run：
-// 1. 优先尝试在原 thread 上强制替换 agent 实例（trySameThread=true），避免新建 thread 导致上下文迁移；
-// 2. 若原 thread 失败，则创建新 thread 并迁移消息后重试；
-// 3. 调用 aguiClient.Run 获取事件流；
-// 4. 过滤掉思考过程，对 assistant 文本做“问题 + 选项”解析；
-// 5. 如果 agent 未发出 agent.question 自定义事件，则补发一个合成的 agent.question 事件，
-//    并把 assistant 文本裁剪为仅展示问题与选项，保证前端能渲染内联问题卡片；
-// 6. 缓冲最终事件到 SSE buffer 供前端轮询重放，并持久化简化的 assistant 消息。
+//  1. 优先尝试在原 thread 上强制替换 agent 实例（trySameThread=true），避免新建 thread 导致上下文迁移；
+//  2. 若原 thread 失败，则创建新 thread 并迁移消息后重试；
+//  3. 调用 aguiClient.Run 获取事件流；
+//  4. 过滤掉思考过程，对 assistant 文本做“问题 + 选项”解析；
+//  5. 如果 agent 未发出 agent.question 自定义事件，则补发一个合成的 agent.question 事件，
+//     并把 assistant 文本裁剪为仅展示问题与选项，保证前端能渲染内联问题卡片；
+//  6. 缓冲最终事件到 SSE buffer 供前端轮询重放，并持久化简化的 assistant 消息。
 func (h *AGUIHandler) runFallback(userID string, input agui.RunAgentInput, sessionID, fallbackInstanceID string, trySameThread bool) {
 	bgCtx := context.Background()
 	log.Printf("[AGUIHandler] fallback run: starting run=%s originalThread=%s trySameThread=%v msgCount=%d",
@@ -500,7 +500,7 @@ func (h *AGUIHandler) runFallback(userID string, input agui.RunAgentInput, sessi
 
 	finalMsgID := msgID
 	if finalMsgID == "" {
-		finalMsgID = uuid.New().String()
+		finalMsgID = idutil.GenerateID()
 	}
 	finalText := text
 

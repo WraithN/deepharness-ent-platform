@@ -32,6 +32,16 @@ export interface AgentRuntime {
   memPercent: number;
   sandboxSpec: string;
   agents: AgentInstance[];
+  /** 已安装的智能体类型列表（CLI 已安装但未必正在运行） */
+  installedAgents: string[];
+  /** 近 7 日会话总数 */
+  sessions7d: number;
+  /** 近 1 日会话总数 */
+  sessions1d: number;
+  /** 最近一次会话活跃时间 */
+  lastActiveAt: string;
+  /** 容器/主机 IP 地址，由 personal-stub 采集上报 */
+  ip: string;
   reportedAt: string;
   createdAt: string;
   updatedAt: string;

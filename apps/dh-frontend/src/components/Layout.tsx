@@ -10,13 +10,13 @@ import {
   X,
   Terminal,
   ChevronDown,
+  ChevronRight,
   Code2,
-  Briefcase,
-  Palette,
   Sun,
   Moon,
   LogOut,
-  Workflow
+  Workflow,
+  User,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { NotificationCenter } from '@/components/NotificationCenter';
@@ -44,7 +44,6 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissions } from '@/hooks/use-permissions';
 import { getSubRoleLabel, SUB_ROLE, PLATFORM_ROLE } from '@/lib/role-constants';
-import type { SubRole } from '@/lib/role-constants';
 import { workspaceApi } from '@/lib/workspace-api';
 import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 import type { LucideIcon } from 'lucide-react';
@@ -64,36 +63,12 @@ const globalNavItems: NavItem[] = [
 
 const tenantNavItems: NavItem[] = [
   { path: '/chat', label: '智能会话', icon: MessageCircle },
-  { path: '/personal-space', label: '研发空间', icon: Code2, perm: 'canViewCode' },
+  { path: '/personal-space', label: '个人工作台', icon: User, perm: 'canViewCode' },
   { path: '/personal/flow', label: '流程追踪', icon: Workflow },
   { path: '/dashboard', label: '数据大盘', icon: LayoutDashboard, perm: 'canViewDashboard' },
   // 虾班智守功能暂时屏蔽，侧边栏不展示。
   { path: '/settings', label: '空间设置', icon: Settings, perm: 'canViewSettings' },
 ];
-
-/**
- * 根据职能子角色返回代码空间的展示名称。
- * - designer → 设计空间
- * - pm → 产品空间
- * - 其他（developer/tester/space_admin/未设置）→ 研发空间
- */
-function getCodeSpaceLabel(subRole: SubRole | string | undefined): string {
-  if (subRole === SUB_ROLE.DESIGNER) return '设计空间';
-  if (subRole === SUB_ROLE.PM) return '产品空间';
-  return '研发空间';
-}
-
-/**
- * 根据职能子角色返回代码空间的图标。
- * - designer → Palette（调色板）
- * - pm → Briefcase（产品工作台）
- * - 其他 → Code2（代码）
- */
-function getCodeSpaceIcon(subRole: SubRole | string | undefined): LucideIcon {
-  if (subRole === SUB_ROLE.DESIGNER) return Palette;
-  if (subRole === SUB_ROLE.PM) return Briefcase;
-  return Code2;
-}
 
 export const Layout: React.FC = () => {
   const { theme, setTheme } = useTheme();
@@ -108,15 +83,39 @@ export const Layout: React.FC = () => {
   const isSuperAdmin = currentUser?.platformRole === PLATFORM_ROLE.SUPER_ADMIN;
 
   // 导航项按权限过滤：无 perm 字段的始终展示，有 perm 字段的按权限判定
-  // 同时根据当前用户的职能子角色动态替换个人空间的展示文案与图标。
-  const codeSpaceLabel = getCodeSpaceLabel(membership?.subRole);
-  const codeSpaceIcon = getCodeSpaceIcon(membership?.subRole);
-  const visibleNavItems = tenantNavItems.map(item =>
-    item.path === '/personal-space' ? { ...item, label: codeSpaceLabel, icon: codeSpaceIcon } : item
-  ).filter(item => !item.perm || perms[item.perm]);
+  // 个人工作台（/personal-space）统一渲染为单一 NavLink，角色切换在工作台内通过 Tab 完成。
+  const personalSubRoles = membership?.subRoles?.length ? membership.subRoles : [SUB_ROLE.DEVELOPER];
+  const baseNavItems = tenantNavItems
+    .filter(item => item.path !== '/personal-space')
+    .filter(item => !item.perm || perms[item.perm]);
+  const firstNavItem = baseNavItems[0];
+  const otherNavItems = baseNavItems.slice(1);
 
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
   const closeSidebar = () => setSidebarOpen(false);
+
+  const renderNavItem = (item: NavItem) => (
+    <NavLink
+      key={item.path}
+      to={item.path}
+      onClick={() => {
+        closeSidebar();
+      }}
+      title={isCollapsed ? item.label : undefined}
+      className={({ isActive }) =>
+        `flex items-center rounded-lg text-sm font-medium transition-all duration-250 ease-smooth overflow-hidden ${
+          isCollapsed ? 'justify-center mx-auto w-9 h-9' : 'gap-3 px-3 py-2.5'
+        } ${
+          isActive
+            ? 'bg-primary/10 text-primary shadow-glow border border-primary/20'
+            : 'text-muted-foreground hover:bg-secondary/80 hover:text-foreground hover:shadow-glow'
+        }`
+      }
+    >
+      <item.icon className={`h-5 w-5 shrink-0 transition-colors ${location.pathname.startsWith(item.path) ? 'text-primary' : 'text-muted-foreground'}`} />
+      <span className={`whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0 hidden' : 'w-auto opacity-100'}`}>{item.label}</span>
+    </NavLink>
+  );
 
   const [logoutOpen, setLogoutOpen] = useState(false);
 
@@ -148,7 +147,7 @@ export const Layout: React.FC = () => {
         tenantId: currentUser.tenantId,
         name: workspaceName.trim(),
         ownerUserId: currentUser.id,
-        subRole: membership?.subRole,
+        subRoles: personalSubRoles,
         sourceWorkspaceId: getCurrentWorkspaceId(),
       });
       setCreateWorkspaceOpen(false);
@@ -217,7 +216,7 @@ export const Layout: React.FC = () => {
                                 <span className="text-xs text-muted-foreground truncate">{membership.tenantName}</span>
                               )}
                               <span className="text-sm font-medium truncate group-hover:text-primary transition-colors">{membership?.workspaceName ?? '未加入工作空间'}</span>
-                              <span className="text-xs text-muted-foreground truncate">{membership ? getSubRoleLabel(membership.subRole) : ''}</span>
+                              <span className="text-xs text-muted-foreground truncate">{membership?.subRoles?.map(getSubRoleLabel).join('、') ?? ''}</span>
                             </div>
                           </div>
                           <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -262,28 +261,29 @@ export const Layout: React.FC = () => {
             <p className={`px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 transition-all duration-300 whitespace-nowrap ${isCollapsed ? 'h-0 w-0 opacity-0 overflow-hidden' : 'opacity-100'}`}>
               空间功能
             </p>
-            {visibleNavItems.map((item) => (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                onClick={() => {
-                  closeSidebar();
-                }}
-                title={isCollapsed ? item.label : undefined}
-                className={({ isActive }) =>
-                  `flex items-center rounded-lg text-sm font-medium transition-all duration-250 ease-smooth overflow-hidden ${
-                    isCollapsed ? 'justify-center mx-auto w-9 h-9' : 'gap-3 px-3 py-2.5'
-                  } ${
-                    isActive
-                      ? 'bg-primary/10 text-primary shadow-glow border border-primary/20'
-                      : 'text-muted-foreground hover:bg-secondary/80 hover:text-foreground hover:shadow-glow'
-                  }`
-                }
-              >
-                <item.icon className={`h-5 w-5 shrink-0 transition-colors ${location.pathname.startsWith(item.path) ? 'text-primary' : 'text-muted-foreground'}`} />
-                <span className={`whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0 hidden' : 'w-auto opacity-100'}`}>{item.label}</span>
-              </NavLink>
-            ))}
+            {firstNavItem && renderNavItem(firstNavItem)}
+            <NavLink
+              to="/personal-space"
+              onClick={() => closeSidebar()}
+              title={isCollapsed ? '个人工作台' : undefined}
+              className={({ isActive }) =>
+                `flex items-center rounded-lg text-sm font-medium transition-all duration-250 ease-smooth overflow-hidden ${
+                  isCollapsed ? 'justify-center mx-auto w-9 h-9' : 'gap-3 px-3 py-2.5'
+                } ${
+                  isActive
+                    ? 'bg-primary/10 text-primary shadow-glow border border-primary/20'
+                    : 'text-muted-foreground hover:bg-secondary/80 hover:text-foreground hover:shadow-glow'
+                }`
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  <User className={`h-5 w-5 shrink-0 transition-colors ${isActive ? 'text-primary' : 'text-muted-foreground'}`} />
+                  <span className={`whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0 hidden' : 'w-auto opacity-100'}`}>个人工作台</span>
+                </>
+              )}
+            </NavLink>
+            {otherNavItems.map(renderNavItem)}
           </nav>
         </div>
         
@@ -318,7 +318,7 @@ export const Layout: React.FC = () => {
                 </div>
                 <div className="flex flex-col flex-1 overflow-hidden">
                   <span className="text-sm font-medium truncate">{currentUser?.name ?? ''}</span>
-                  <span className="text-xs text-muted-foreground truncate">{getSubRoleLabel(membership?.subRole)}</span>
+                  <span className="text-xs text-muted-foreground truncate">{membership?.subRoles?.map(getSubRoleLabel).join('、') ?? ''}</span>
                 </div>
               </div>
               <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-60 group-hover:opacity-100 transition-opacity" onClick={() => setLogoutOpen(true)} title="退出登录">
@@ -437,7 +437,7 @@ export const Layout: React.FC = () => {
                 {location.pathname === '/market/skills' && '技能市场'}
                 {location.pathname === '/market/prompts' && '提示词市场'}
                 {location.pathname === '/chat' && '智能会话'}
-                {location.pathname === '/personal-space' && codeSpaceLabel}
+                {location.pathname === '/personal-space' && '个人工作台'}
                 {location.pathname === '/personal/flow' && '流程追踪'}
                 {location.pathname === '/dashboard' && '数据大盘'}
                 {location.pathname.startsWith('/personal-assistant') && '虾班智守'}
@@ -448,7 +448,7 @@ export const Layout: React.FC = () => {
                 {location.pathname === '/market/skills' && '发现和使用团队沉淀的各类AI技能'}
                 {location.pathname === '/market/prompts' && '发现和使用团队沉淀的优质提示词'}
                 {location.pathname === '/chat' && 'AI 驱动的多轮对话与问题解决辅助'}
-                {location.pathname === '/personal-space' && '按角色组织的个人工作台'}
+                {location.pathname === '/personal-space' && '需求追踪与角色工作台'}
                 {location.pathname === '/personal/flow' && 'AI 开发流程的阶段追踪与看板视图'}
                 {location.pathname === '/dashboard' && '查看团队在当前工作空间的统计数据与研发效率'}
                 {location.pathname.startsWith('/personal-assistant') && '代码守护与自动审查助手'}

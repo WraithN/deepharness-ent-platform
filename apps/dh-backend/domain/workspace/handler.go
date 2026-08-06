@@ -259,7 +259,7 @@ func (h *Handler) Workspaces(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 工作空间的智能体策略从租户继承，创建时使用空策略（默认值）
-		ws, err := h.crudSvc.CreateWorkspace(tenantID, req.Name, req.Description, req.OwnerUserID, req.SubRole, req.SourceWorkspaceID, object.AgentPolicy{})
+		ws, err := h.crudSvc.CreateWorkspace(tenantID, req.Name, req.Description, req.OwnerUserID, req.SubRoles, req.SourceWorkspaceID, object.AgentPolicy{})
 		if err != nil {
 			handler.HandleServiceError(w, err, "workspace not found", "failed to create workspace")
 			return
@@ -401,9 +401,11 @@ func (h *Handler) Members(w http.ResponseWriter, r *http.Request) {
 			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid role")
 			return
 		}
-		if req.SubRole != "" && !isValidMemberSubRole(req.SubRole) {
-			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid subRole")
-			return
+		for _, subRole := range req.SubRoles {
+			if !isValidMemberSubRole(subRole) {
+				handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid subRole")
+				return
+			}
 		}
 		// 添加为空间管理员仅租户管理员（含超级管理员）可操作
 		if req.Role == object.MemberRoleSpaceAdmin && !h.requireSuperOrTenantAdmin(w, r) {
@@ -425,7 +427,7 @@ func (h *Handler) Members(w http.ResponseWriter, r *http.Request) {
 			userID = u.ID
 		}
 
-		if err := h.memberSvc.AddMember(workspaceID, userID, req.Role, req.SubRole); err != nil {
+		if err := h.memberSvc.AddMember(workspaceID, userID, req.Role, req.SubRoles); err != nil {
 			handler.HandleServiceError(w, err, "workspace not found", "failed to add member")
 			return
 		}
@@ -481,15 +483,18 @@ func (h *Handler) MemberByID(w http.ResponseWriter, r *http.Request) {
 			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid role")
 			return
 		}
-		if req.SubRole != "" && !isValidMemberSubRole(req.SubRole) {
-			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid subRole")
-			return
+		for _, subRole := range req.SubRoles {
+			if !isValidMemberSubRole(subRole) {
+				handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid subRole")
+				return
+			}
 		}
 		// 新角色设为空间管理员同样仅租户管理员（含超级管理员）可操作
 		if req.Role == object.MemberRoleSpaceAdmin && !h.requireSuperOrTenantAdmin(w, r) {
 			return
 		}
-		if err := h.memberSvc.UpdateMemberRole(workspaceID, userID, req.Role, req.SubRole); err != nil {
+		if err := h.memberSvc.UpdateMemberRole(workspaceID, userID, req.Role, req.SubRoles); err != nil {
+			log.Printf("[Workspace] UpdateMemberRole failed: workspaceID=%s userID=%s role=%s subRoles=%v err=%v", workspaceID, userID, req.Role, req.SubRoles, err)
 			handler.HandleServiceError(w, err, "member not found", "failed to update member role")
 			return
 		}
@@ -764,7 +769,7 @@ type createWorkspaceRequest struct {
 	Name              string             `json:"name"`
 	Description       string             `json:"description"`
 	OwnerUserID       string             `json:"ownerUserId"`
-	SubRole           string             `json:"subRole"`
+	SubRoles          []string           `json:"subRoles"`
 	SourceWorkspaceID string             `json:"sourceWorkspaceId"`
 	AgentPolicy       object.AgentPolicy `json:"agentPolicy"`
 }
@@ -776,12 +781,12 @@ type updateWorkspaceRequest struct {
 }
 
 type addMemberRequest struct {
-	UserID  string `json:"userId"`
-	Role    string `json:"role"`
-	SubRole string `json:"subRole"`
+	UserID   string   `json:"userId"`
+	Role     string   `json:"role"`
+	SubRoles []string `json:"subRoles"`
 }
 
 type updateMemberRequest struct {
-	Role    string `json:"role"`
-	SubRole string `json:"subRole"`
+	Role     string   `json:"role"`
+	SubRoles []string `json:"subRoles"`
 }

@@ -103,26 +103,28 @@ func NewDBProductSpaceService(db *sql.DB, workspaceRoot string, workspaceService
 	}, nil
 }
 
-// requirePM 校验当前用户在工作空间中的职能子角色为 PM。
+// requirePM 校验当前用户在工作空间中的职能子角色包含 PM。
 // 当成员不存在时返回 ErrNotFound，避免与“存在但无权限”统一返回 403 造成信息泄露。
 func (s *DBProductSpaceService) requirePM(ctx context.Context, workspaceID, userID string) error {
-	subRole, err := s.workspaceService.GetMemberSubRole(ctx, workspaceID, userID)
+	subRoles, err := s.workspaceService.GetMemberSubRoles(ctx, workspaceID, userID)
 	if err != nil {
 		if errors.Is(err, common.ErrMemberNotFound) {
 			return fmt.Errorf("%w: %s", ErrNotFound, errMsgWorkspaceOrMemberNotFound)
 		}
 		return fmt.Errorf("%w: %w", ErrForbidden, err)
 	}
-	if subRole != pmSubRole {
-		return fmt.Errorf("%w: only pm can access product space", ErrForbidden)
+	for _, r := range subRoles {
+		if r == pmSubRole {
+			return nil
+		}
 	}
-	return nil
+	return fmt.Errorf("%w: only pm can access product space", ErrForbidden)
 }
 
 // requireMember 校验当前用户是否为工作空间成员（任意职能子角色均可）。
 // 用于 /proto-make 生成内容的“自我采纳”等仅需确认成员身份的场景。
 func (s *DBProductSpaceService) requireMember(ctx context.Context, workspaceID, userID string) error {
-	_, err := s.workspaceService.GetMemberSubRole(ctx, workspaceID, userID)
+	_, err := s.workspaceService.GetMemberSubRoles(ctx, workspaceID, userID)
 	if err != nil {
 		if errors.Is(err, common.ErrMemberNotFound) {
 			return fmt.Errorf("%w: %s", ErrNotFound, errMsgWorkspaceOrMemberNotFound)

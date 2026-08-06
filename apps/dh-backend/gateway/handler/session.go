@@ -15,8 +15,8 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/service"
 	workspaceservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
-	"github.com/google/uuid"
 )
 
 // 标准类型常量，与 workspace_standards.type 字段对应。
@@ -131,7 +131,7 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("[CreateSession] gatewayd unreachable (%v), fallback to local session id", err)
-		threadID = uuid.New().String()
+		threadID = idutil.GenerateID()
 		gatewaydUnreachable = true
 	}
 
@@ -452,7 +452,7 @@ func (h *SessionHandler) recoverPendingRuns(ctx context.Context, sessionID strin
 			metadata["contentParts"] = parts
 		}
 		msg := chat.Message{
-			ID:        uuid.New().String(),
+			ID:        idutil.GenerateID(),
 			SessionID: sessionID,
 			Role:      "assistant",
 			Type:      "text",

@@ -7,14 +7,19 @@ server:
 workspace:
   root: "/home/nan/test"
 
-# 同容器 gatewayd admin API 地址（管理面代理用）
-# personal-stub 通过此地址代理 gatewayd 的健康/绑定/休眠/唤醒操作
+# gatewayd 进程管理配置
+# personal-stub 与 gatewayd 始终同机部署，由 personal-stub 直接启动和管理 gatewayd 进程。
+# 若 bin 为空，回退到外部启动模式（使用 admin_url 指向外部已启动的 gatewayd）。
 gatewayd:
-  admin_url: "http://localhost:2346"
+  bin: ""                      # gatewayd 二进制路径，如 /path/to/dh-gatewayd
+  mode: "single"               # single（1:1）或 multi（1:N）
+  agent_port: 2345             # 1:1 模式下 gatewayd agent API 端口
+  admin_port: 2346             # 1:1 模式下 gatewayd admin API 端口
+  admin_url: "http://localhost:2346"  # 外部启动模式回退地址
 
 # dh-backend 地址（上报中继用）
 # personal-stub 将 gatewayd 运行时状态转发到 dh-backend
 dh_backend:
   url: "http://localhost:8080"
-  runtime_bearer_token: ""    # 与 dh-backend 的 agent_runtime.bearer_token 一致
-  runtime_id: ""              # 当前容器对应的 agent_runtime ID
+  runtime_bearer_token: "96be41dbe1875010dafbe237c7082df1379a503c33412cd5f19d256a5c566c92"  # 与 dh-backend agent_runtime.bearer_token 一致
+  runtime_id: ""              # 留空时自动使用主机名作为 runtime ID

@@ -10,7 +10,7 @@ type Member struct {
 	Name         string    `json:"name"`
 	Email        string    `json:"email"`
 	Role         string    `json:"role"`
-	SubRole      string    `json:"subRole"`
+	SubRoles     []string  `json:"subRoles"`
 	PlatformRole string    `json:"platformRole"`
 	JoinedAt     time.Time `json:"joinedAt"`
 }

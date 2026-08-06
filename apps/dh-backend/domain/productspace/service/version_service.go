@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/pathutil"
-	"github.com/google/uuid"
 )
 
 // resolveVersionFilePath 解析 product_doc_versions 中存储的文件路径。
@@ -271,7 +271,7 @@ func (s *DBProductSpaceService) saveVersionAndUpdateTx(
 ) error {
 	now := time.Now().UTC()
 
-	versionID := uuid.New().String()
+	versionID := idutil.GenerateID()
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO product_doc_versions (
 			id, doc_id, version, title, file_path, file_ext, mime_type, size_bytes, change_summary, created_by, created_at
@@ -450,7 +450,7 @@ func (s *DBProductSpaceService) RestoreVersion(ctx context.Context, workspaceID,
 	}
 
 	now := time.Now().UTC()
-	versionID := uuid.New().String()
+	versionID := idutil.GenerateID()
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO product_doc_versions (
 			id, doc_id, version, title, file_path, file_ext, mime_type, size_bytes, change_summary, created_by, created_at

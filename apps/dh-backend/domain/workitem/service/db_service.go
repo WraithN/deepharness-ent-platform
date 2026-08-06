@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workitem"
-	"github.com/google/uuid"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
@@ -159,7 +159,7 @@ func (s *DBWorkItemService) CreateWorkItem(req object.CreateWorkItemRequest) (ob
 		req.Status = workitem.StatusBacklog
 	}
 
-	id := uuid.New().String()
+	id := idutil.GenerateID()
 	_, err := s.db.Exec(`
 		INSERT INTO workitems (id, tenant_id, project_id, workspace_id, "type", title, description, status, priority,
 			assignee_id, reporter, source, external_id, parent_id, created_at, updated_at)

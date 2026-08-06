@@ -115,7 +115,7 @@ export const FlowTracking: React.FC = () => {
           <TabsList>
             <TabsTrigger value="instances">
               运行实例
-              <Badge variant="secondary" className="ml-2 text-[10px]">
+              <Badge variant="secondary" className="ml-2 text-xs">
                 {processes.length}
               </Badge>
             </TabsTrigger>
@@ -260,16 +260,16 @@ const ProcessListCard: React.FC<ProcessListCardProps> = ({ process, workitem, on
       <CardHeader className="p-4 pb-2">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <CardTitle className="text-sm font-medium truncate">
+            <CardTitle className="text-base font-semibold truncate">
               {process.title}
             </CardTitle>
-            <Badge variant="outline" className="text-[10px] shrink-0">
+            <Badge variant="outline" className="text-xs shrink-0">
               {PROCESS_TYPE_LABELS[process.type] ?? process.type}
             </Badge>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {hasActiveStage && (
-              <Badge variant="secondary" className="text-[10px] gap-1">
+              <Badge variant="secondary" className="text-xs gap-1">
                 <Loader2 className="h-3 w-3 animate-spin" />
                 进行中
               </Badge>
@@ -286,8 +286,8 @@ const ProcessListCard: React.FC<ProcessListCardProps> = ({ process, workitem, on
             return (
               <div key={stage.name} className="flex items-center gap-1.5">
                 <div className="flex items-center gap-1">
-                  <Icon className={`h-3.5 w-3.5 ${colorClass}`} />
-                  <span className="text-[10px] text-muted-foreground">{stage.label}</span>
+                  <Icon className={`h-4 w-4 ${colorClass}`} />
+                  <span className="text-xs font-medium text-foreground">{stage.label}</span>
                 </div>
               </div>
             );

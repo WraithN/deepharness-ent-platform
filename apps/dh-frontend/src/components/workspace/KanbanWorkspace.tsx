@@ -157,7 +157,7 @@ interface KanbanCard {
 }
 
 /**
- * 通用需求看板组件。
+ * 通用需求追踪组件。
  *
  * 数据来自 /v1/workitems?type=requirement，支持拖拽更新状态。
  * 点击卡片弹出居中详情弹窗。

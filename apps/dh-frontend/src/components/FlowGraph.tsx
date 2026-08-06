@@ -164,9 +164,62 @@ const PRODUCT_FLOW: FlowConfig = {
   },
 };
 
+const TEST_ASSET_FLOW: FlowConfig = {
+  topRow: [
+    STAGE_NAMES.TEST_REQUIREMENT,
+    STAGE_NAMES.TEST_PLAN_DESIGN,
+    STAGE_NAMES.TEST_PLAN_REVIEW,
+    STAGE_NAMES.TEST_CASE_GEN,
+    STAGE_NAMES.TEST_CASE_REVIEW,
+    STAGE_NAMES.TEST_COMPLETE,
+  ],
+  stageTypeFallback: {
+    [STAGE_NAMES.TEST_REQUIREMENT]: STAGE_TYPE.ACTION,
+    [STAGE_NAMES.TEST_PLAN_DESIGN]: STAGE_TYPE.ACTION,
+    [STAGE_NAMES.TEST_PLAN_REVIEW]: STAGE_TYPE.JUDGE,
+    [STAGE_NAMES.TEST_CASE_GEN]: STAGE_TYPE.ACTION,
+    [STAGE_NAMES.TEST_CASE_REVIEW]: STAGE_TYPE.JUDGE,
+    [STAGE_NAMES.TEST_COMPLETE]: STAGE_TYPE.ACTION,
+  },
+  operatorTypeFallback: {
+    [STAGE_NAMES.TEST_REQUIREMENT]: 'human',
+    [STAGE_NAMES.TEST_PLAN_DESIGN]: 'ai',
+    [STAGE_NAMES.TEST_PLAN_REVIEW]: 'human',
+    [STAGE_NAMES.TEST_CASE_GEN]: 'ai',
+    [STAGE_NAMES.TEST_CASE_REVIEW]: 'human',
+    [STAGE_NAMES.TEST_COMPLETE]: 'human',
+  },
+};
+
+const TEST_EXECUTION_FLOW: FlowConfig = {
+  topRow: [
+    STAGE_NAMES.TEST_REQUIREMENT,
+    STAGE_NAMES.TEST_AUTO_EXEC,
+    STAGE_NAMES.TEST_DEFECT_VERIFY,
+    STAGE_NAMES.TEST_ADMISSION_REVIEW,
+    STAGE_NAMES.TEST_COMPLETE,
+  ],
+  stageTypeFallback: {
+    [STAGE_NAMES.TEST_REQUIREMENT]: STAGE_TYPE.ACTION,
+    [STAGE_NAMES.TEST_AUTO_EXEC]: STAGE_TYPE.ACTION,
+    [STAGE_NAMES.TEST_DEFECT_VERIFY]: STAGE_TYPE.ACTION,
+    [STAGE_NAMES.TEST_ADMISSION_REVIEW]: STAGE_TYPE.JUDGE,
+    [STAGE_NAMES.TEST_COMPLETE]: STAGE_TYPE.ACTION,
+  },
+  operatorTypeFallback: {
+    [STAGE_NAMES.TEST_REQUIREMENT]: 'human',
+    [STAGE_NAMES.TEST_AUTO_EXEC]: 'ai',
+    [STAGE_NAMES.TEST_DEFECT_VERIFY]: 'ai',
+    [STAGE_NAMES.TEST_ADMISSION_REVIEW]: 'human',
+    [STAGE_NAMES.TEST_COMPLETE]: 'human',
+  },
+};
+
 const PROCESS_TYPE_CONFIG: Record<string, FlowConfig> = {
   ai_dev: DEV_FLOW,
   auto_test: TEST_FLOW,
+  auto_test_asset: TEST_ASSET_FLOW,
+  auto_test_execution: TEST_EXECUTION_FLOW,
   product: PRODUCT_FLOW,
 };
 
@@ -408,20 +461,14 @@ export const FlowGraph: React.FC<{
       }
     };
 
-    if (processType === 'auto_test') {
-      // ── 自动化测试流程边 ──
-
-      // 顺序边（正向流程）
+    if (processType === 'auto_test' || processType === 'auto_test_asset') {
+      // ── 智能化测试资产流程边：测试需求 -> 测试计划 -> 计划评审 -> 用例生成 -> 用例评审 -> 完成 ──
       addEdge(STAGE_NAMES.TEST_REQUIREMENT, STAGE_NAMES.TEST_PLAN_DESIGN, false);
       addEdge(STAGE_NAMES.TEST_PLAN_DESIGN, STAGE_NAMES.TEST_PLAN_REVIEW, false);
       addEdge(STAGE_NAMES.TEST_PLAN_REVIEW, STAGE_NAMES.TEST_CASE_GEN, true, 'Y 通过');
       addEdge(STAGE_NAMES.TEST_CASE_GEN, STAGE_NAMES.TEST_CASE_REVIEW, false);
-      addEdge(STAGE_NAMES.TEST_CASE_REVIEW, STAGE_NAMES.TEST_AUTO_EXEC, true, 'Y 通过');
-      addEdge(STAGE_NAMES.TEST_AUTO_EXEC, STAGE_NAMES.TEST_DEFECT_VERIFY, false);
-      addEdge(STAGE_NAMES.TEST_DEFECT_VERIFY, STAGE_NAMES.TEST_ADMISSION_REVIEW, false);
-      addEdge(STAGE_NAMES.TEST_ADMISSION_REVIEW, STAGE_NAMES.TEST_COMPLETE, true, 'Y 通过');
+      addEdge(STAGE_NAMES.TEST_CASE_REVIEW, STAGE_NAMES.TEST_COMPLETE, true, 'Y 通过');
 
-      // 驳回边（折线回头）
       {
         const planReviewCx = stageCenterX(topRow, STAGE_NAMES.TEST_PLAN_REVIEW, bottomRowRef);
         const planDesignCx = stageCenterX(topRow, STAGE_NAMES.TEST_PLAN_DESIGN, bottomRowRef);
@@ -444,6 +491,13 @@ export const FlowGraph: React.FC<{
           [{ x: caseReviewCx, y: NODE_Y_BOTTOM - 10 }, { x: caseGenCx, y: NODE_Y_BOTTOM - 10 }],
         );
       }
+    } else if (processType === 'auto_test_execution') {
+      // ── 智能化测试执行流程边：测试需求 -> 自动化执行 -> 缺陷验证 -> 准入评审 -> 完成 ──
+      addEdge(STAGE_NAMES.TEST_REQUIREMENT, STAGE_NAMES.TEST_AUTO_EXEC, false);
+      addEdge(STAGE_NAMES.TEST_AUTO_EXEC, STAGE_NAMES.TEST_DEFECT_VERIFY, false);
+      addEdge(STAGE_NAMES.TEST_DEFECT_VERIFY, STAGE_NAMES.TEST_ADMISSION_REVIEW, false);
+      addEdge(STAGE_NAMES.TEST_ADMISSION_REVIEW, STAGE_NAMES.TEST_COMPLETE, true, 'Y 通过');
+
       {
         const admissionCx = stageCenterX(topRow, STAGE_NAMES.TEST_ADMISSION_REVIEW, bottomRowRef);
         const autoExecCx = stageCenterX(topRow, STAGE_NAMES.TEST_AUTO_EXEC, bottomRowRef);

@@ -6,7 +6,7 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process/store"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 var ALL_AIDEV_STAGES = []string{
@@ -43,7 +43,7 @@ func NewProcessService(s store.ProcessStore) *ProcessServiceImpl {
 func (s *ProcessServiceImpl) Create(_ context.Context, req object.CreateProcessRequest) (object.Process, error) {
 	now := time.Now()
 	p := object.Process{
-		ID:          uuid.New().String(),
+		ID:          idutil.GenerateID(),
 		WorkspaceID: req.WorkspaceID,
 		WorkitemID:  req.WorkitemID,
 		Title:       req.Title,
@@ -157,16 +157,16 @@ func (s *ProcessServiceImpl) UpdateStage(_ context.Context, processID string, st
 	}
 	if !updated {
 		newStage := object.ProcessStage{
-			Name:         stageName,
-			Label:        object.StageLabels[stageName],
-			Status:       req.Status,
-			SessionID:    req.SessionID,
-			Prompt:       req.Prompt,
-			Error:        req.Error,
-			OperatorType: req.OperatorType,
-			OperatorName: req.OperatorName,
-			OperatorID:   req.OperatorID,
-			AgentRole:    req.AgentRole,
+			Name:           stageName,
+			Label:          object.StageLabels[stageName],
+			Status:         req.Status,
+			SessionID:      req.SessionID,
+			Prompt:         req.Prompt,
+			Error:          req.Error,
+			OperatorType:   req.OperatorType,
+			OperatorName:   req.OperatorName,
+			OperatorID:     req.OperatorID,
+			AgentRole:      req.AgentRole,
 			InputDesc:      req.InputDesc,
 			ExtraInputDesc: req.ExtraInputDesc,
 			ExtraInput:     req.ExtraInput,

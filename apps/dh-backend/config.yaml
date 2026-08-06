@@ -195,7 +195,7 @@ agent_provisioner:
   sleep_evict_timeout: "30m"
   max_active_per_user: 3
 
-  # --- direct-host 模式配置（本地开发）---
+  # --- direct-host 模式配置 ---
   direct_host:
     hosts:                      # 固定 IP 列表，每个 host 可承载多个用户实例
       - "127.0.0.1"
@@ -204,6 +204,14 @@ agent_provisioner:
     stub_port: 8090             # personal-stub 基础端口（与 gatewayd 共部署）
     port_step: 10               # 每个槽位的端口递增步长（槽位 i: base + i * port_step）
     max_users_per_host: 5       # 每台主机最大用户数（槽位数）
+    # gatewayd 二进制路径，传递给 personal-stub 由其启动和管理 gatewayd 进程。
+    # 留空则回退到外部启动模式（如 start-dev.sh 手动启动）。
+    gatewayd_bin: ""            # gatewayd 二进制路径，如 /path/to/dh-gatewayd
+    stub_bin: ""                # personal-stub 二进制路径，如 /path/to/personal-stub
+    bearer_token: "96be41dbe1875010dafbe237c7082df1379a503c33412cd5f19d256a5c566c92"
+    dh_backend_url: "http://localhost:8080"
+    # gatewayd 管理模式：single（1:1，每用户独占 personal-stub + gatewayd）或 multi（1:N，每主机一个 personal-stub 管理多个 gatewayd）。
+    gatewayd_mode: "single"
 
   # --- k8s 模式配置（Kubernetes 原生管理）---
   k8s:

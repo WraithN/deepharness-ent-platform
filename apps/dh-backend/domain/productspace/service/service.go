@@ -26,7 +26,7 @@ var (
 
 // workspaceMemberRoleProvider 抽象了获取工作空间成员职能子角色的能力。
 type workspaceMemberRoleProvider interface {
-	GetMemberSubRole(ctx context.Context, workspaceID, userID string) (string, error)
+	GetMemberSubRoles(ctx context.Context, workspaceID, userID string) ([]string, error)
 }
 
 type ProductSpaceItemService interface {

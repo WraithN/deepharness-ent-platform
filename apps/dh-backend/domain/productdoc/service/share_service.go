@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/object"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 const (
@@ -63,7 +63,7 @@ func (s *DBProductDocService) CreateShare(workspaceID, docID string) (object.Pro
 	share := object.ProductDocShare{Token: token, DocID: docID, CreatedAt: now}
 	_, err = s.db.Exec(
 		`INSERT INTO product_doc_shares (id, token, doc_id, workspace_id, created_at) VALUES ($1, $2, $3, $4, $5)`,
-		uuid.New().String(), token, docID, workspaceID, now,
+		idutil.GenerateID(), token, docID, workspaceID, now,
 	)
 	if err != nil {
 		return object.ProductDocShare{}, fmt.Errorf("create product doc share failed: %w", err)

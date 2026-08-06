@@ -19,9 +19,9 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/feishu/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/pathutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
-	"github.com/google/uuid"
 )
 
 const (
@@ -345,7 +345,7 @@ func (s *DBFeishuService) dispatchContext() (context.Context, context.CancelFunc
 func buildRunInput(threadID, content, workspacePath string) agui.RunAgentInput {
 	return agui.RunAgentInput{
 		ThreadID:       threadID,
-		RunID:          uuid.New().String(),
+		RunID:          idutil.GenerateID(),
 		Messages:       []agui.Message{agui.UserMessage("", content)},
 		State:          json.RawMessage(`{}`),
 		Tools:          []agui.Tool{},
@@ -416,7 +416,7 @@ func (s *DBFeishuService) persistRun(threadID string, ev object.InboundEvent, us
 // appendMessage 向指定 session 追加一条消息。
 func (s *DBFeishuService) appendMessage(sessionID, role, content string) error {
 	msg := chat.Message{
-		ID:        uuid.New().String(),
+		ID:        idutil.GenerateID(),
 		SessionID: sessionID,
 		Role:      role,
 		Type:      "text",

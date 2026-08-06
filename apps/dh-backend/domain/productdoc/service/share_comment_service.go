@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/object"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 const (
@@ -135,7 +135,7 @@ func (s *DBProductDocService) AddShareComment(token string, req object.AddShareC
 			(id, share_token, doc_id, workspace_id, author_name, quote_text, content, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING `+shareCommentColumns,
-		uuid.New().String(), token, docID, workspaceID, authorName, quoteText, content, shareCommentStatusOpen,
+		idutil.GenerateID(), token, docID, workspaceID, authorName, quoteText, content, shareCommentStatusOpen,
 	))
 	if err != nil {
 		return nil, fmt.Errorf("新增分享批注失败: %w", err)
@@ -179,7 +179,7 @@ func (s *DBProductDocService) AddDocShareComment(workspaceID, docID, userID stri
 			(id, share_token, doc_id, workspace_id, author_name, quote_text, content, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING `+shareCommentColumns,
-		uuid.New().String(), "", docID, workspaceID, authorName, quoteText, content, shareCommentStatusOpen,
+		idutil.GenerateID(), "", docID, workspaceID, authorName, quoteText, content, shareCommentStatusOpen,
 	))
 	if err != nil {
 		return nil, fmt.Errorf("新增文档批注失败: %w", err)

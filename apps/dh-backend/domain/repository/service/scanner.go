@@ -13,11 +13,11 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/gitutil"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/pathutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/workspacepath"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/repository"
 	"github.com/go-enry/go-enry/v2"
-	"github.com/google/uuid"
 )
 
 // Scan 扫描指定用户工作空间下的本地 Git 仓库并自动导入到数据库。
@@ -99,7 +99,7 @@ func (s *DBRepositoryService) Scan(workspaceID, userID string) ([]object.Scanned
 		// Auto-import to DB if not exists by local_path
 		if existingRepo, exists := existingPaths[repoDir]; !exists {
 			now := time.Now().UTC()
-			id := uuid.New().String()
+			id := idutil.GenerateID()
 			_, err := s.db.Exec(`
 				INSERT INTO repositories (id, workspace_id, name, url, type, default_branch, local_path, clone_status, created_at, updated_at)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)

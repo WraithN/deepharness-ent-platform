@@ -25,11 +25,13 @@ export function usePermissions(): Permissions {
   const isSuperAdmin = user?.platformRole === PLATFORM_ROLE.SUPER_ADMIN;
   const isSpaceAdmin = membership?.spaceRole === SPACE_ROLE.SPACE_ADMIN;
 
-  // 功能收敛仅对 member 生效；pm/designer 隐藏数据大盘与设置，但仍可查看代码空间。
+  // 功能收敛仅对 member 生效；若用户的全部子角色均为受限角色，则隐藏数据大盘与设置。
+  // 任一子角色为 developer/tester 或 space_admin 时，仍可查看全部功能。
   const restrictedForDashboardAndSettings =
     !isSpaceAdmin &&
-    !!membership?.subRole &&
-    RESTRICTED_SUB_ROLES.has(membership.subRole);
+    !!membership?.subRoles &&
+    membership.subRoles.length > 0 &&
+    membership.subRoles.every(subRole => RESTRICTED_SUB_ROLES.has(subRole));
 
   return {
     isSuperAdmin,

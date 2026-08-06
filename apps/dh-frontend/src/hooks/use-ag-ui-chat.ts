@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 import { parseUserStoryFromText } from '@/components/chat/UserStoryCard';
 import { parseRequirementBreakdownFromText } from '@/components/chat/RequirementBreakdownCard';
+import { QUESTION_MARKER_REGEX, parseQuestionMarker } from '@/lib/markers';
 
 export interface SendContext {
   quotedCard?: { type: 'req' | 'defect' | 'case'; id: string; title: string; reporter: string };
@@ -80,40 +81,6 @@ export interface AgentQuestionEvent {
 const AGENT_URL = '/api/v1/agent';
 const SESSIONS_API_URL = '/api/v1/sessions';
 
-const QUESTION_MARKER_REGEX = /\[\[QUESTION:([\s\S]*?)\]\]/g;
-
-/**
- * 从 assistant 文本末尾解析 [[QUESTION:问题|A. 选项一|B. 选项二|...]] 标记。
- * 返回去掉标记后的 cleanText、问题正文以及选项列表。
- * 解析失败时返回 null。
- */
-function parseQuestionMarker(rawText: string): {
-  cleanText: string;
-  questionText: string;
-  options: AgentQuestionOption[];
-} | null {
-  const matches = Array.from(rawText.matchAll(QUESTION_MARKER_REGEX));
-  if (matches.length === 0) return null;
-  const lastMatch = matches[matches.length - 1];
-  const inner = lastMatch[1].trim();
-  if (!inner) return null;
-  const parts = inner.split('|').map(s => s.trim()).filter(Boolean);
-  if (parts.length < 2) return null;
-  const [questionText, ...optionParts] = parts;
-  const options: AgentQuestionOption[] = optionParts.map((opt, idx) => {
-    const letter = String.fromCharCode(65 + idx);
-    const m = opt.match(/^([A-Z])\.\s*(.*)$/);
-    if (m) {
-      const text = m[2].trim();
-      return { label: text, value: `${m[1]}. ${text}` };
-    }
-    return { label: opt, value: `${letter}. ${opt}` };
-  });
-  const before = rawText.slice(0, lastMatch.index);
-  const after = rawText.slice(lastMatch.index + lastMatch[0].length);
-  const cleanText = (before + after).trim();
-  return { cleanText, questionText: questionText.trim(), options };
-}
 // 工具调用后模型整理长报告可能较长时间无 token，延长到 10 分钟。
 const NO_EVENT_TIMEOUT_MS = 600000;
 const NO_EVENT_TIMER_INTERVAL_MS = 5000;

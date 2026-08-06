@@ -255,11 +255,17 @@ start_personal_stub() {
 
     cd "$PERSONAL_STUB_DIR"
     if [ "$DETACH_MODE" = true ]; then
-        setsid nohup env PORT=$PERSONAL_STUB_PORT ./dist/personal-stub > /tmp/personal-stub.log 2>&1 &
+        setsid nohup env PORT=$PERSONAL_STUB_PORT \
+            DH_BACKEND_URL="http://localhost:8080" \
+            DH_BACKEND_RUNTIME_TOKEN="96be41dbe1875010dafbe237c7082df1379a503c33412cd5f19d256a5c566c92" \
+            ./dist/personal-stub > /tmp/personal-stub.log 2>&1 &
         disown
         local pid=$!
     else
-        PORT=$PERSONAL_STUB_PORT ./dist/personal-stub > /tmp/personal-stub.log 2>&1 &
+        PORT=$PERSONAL_STUB_PORT \
+        DH_BACKEND_URL="http://localhost:8080" \
+        DH_BACKEND_RUNTIME_TOKEN="96be41dbe1875010dafbe237c7082df1379a503c33412cd5f19d256a5c566c92" \
+        ./dist/personal-stub > /tmp/personal-stub.log 2>&1 &
         local pid=$!
         PIDS+=("$pid")
     fi
@@ -314,12 +320,24 @@ start_dh_backend() {
     fi
 
     cd "$DH_BACKEND_DIR"
+    # 注入 direct-host 进程管理配置：Manager 将按需启动 per-user gatewayd + personal-stub。
+    local GATEWAYD_BIN_PATH="${GATEWAYD_DEBUG:-$GATEWAYD_RELEASE}"
     if [ "$DETACH_MODE" = true ]; then
-        setsid nohup env PORT=$DH_BACKEND_PORT ./dist/dh-backend > /tmp/dh-backend.log 2>&1 &
+        setsid nohup env PORT=$DH_BACKEND_PORT \
+            AGENT_PROVISIONER_DIRECT_HOST_GATEWAYD_BIN="$GATEWAYD_BIN_PATH" \
+            AGENT_PROVISIONER_DIRECT_HOST_STUB_BIN="${PLATFORM_ROOT}/${PERSONAL_STUB_BIN}" \
+            AGENT_PROVISIONER_DIRECT_HOST_BEARER_TOKEN="96be41dbe1875010dafbe237c7082df1379a503c33412cd5f19d256a5c566c92" \
+            AGENT_PROVISIONER_DIRECT_HOST_DH_BACKEND_URL="http://localhost:${DH_BACKEND_PORT}" \
+            ./dist/dh-backend > /tmp/dh-backend.log 2>&1 &
         disown
         local pid=$!
     else
-        PORT=$DH_BACKEND_PORT ./dist/dh-backend > /tmp/dh-backend.log 2>&1 &
+        PORT=$DH_BACKEND_PORT \
+        AGENT_PROVISIONER_DIRECT_HOST_GATEWAYD_BIN="$GATEWAYD_BIN_PATH" \
+        AGENT_PROVISIONER_DIRECT_HOST_STUB_BIN="${PLATFORM_ROOT}/${PERSONAL_STUB_BIN}" \
+        AGENT_PROVISIONER_DIRECT_HOST_BEARER_TOKEN="96be41dbe1875010dafbe237c7082df1379a503c33412cd5f19d256a5c566c92" \
+        AGENT_PROVISIONER_DIRECT_HOST_DH_BACKEND_URL="http://localhost:${DH_BACKEND_PORT}" \
+        ./dist/dh-backend > /tmp/dh-backend.log 2>&1 &
         local pid=$!
         PIDS+=("$pid")
     fi
@@ -397,9 +415,17 @@ main() {
     build_go_if_needed "${PERSONAL_STUB_DIR}" "$PERSONAL_STUB_BIN" "personal-stub"
     build_go_if_needed "${DH_BACKEND_DIR}" "$DH_BACKEND_BIN" "dh-backend"
 
+    # 构建 gatewayd（由 personal-stub 启动和管理）
+    build_gatewayd
+
+    # 构建 crawler-service 并注册其 MCP server（gatewayd 启动时加载）
+    log_info "Building crawler-service for MCP server..."
+    (cd "${PLATFORM_ROOT}" && pnpm --filter @repo/crawler-service build)
+    bash "${PLATFORM_ROOT}/scripts/init-crawler-mcp.sh"
+
     # 按依赖顺序启动
-    start_gatewayd
-    start_personal_stub
+    # gatewayd 由 personal-stub 自动启动和管理（不再由 start-dev.sh 直接启动）。
+    # personal-stub 由 dh-backend 的 direct-host Manager 按需启动（per-user）。
     start_crawler_service
     start_dh_backend
     start_frontend

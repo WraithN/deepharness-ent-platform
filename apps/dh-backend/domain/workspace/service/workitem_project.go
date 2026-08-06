@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workspace"
-	"github.com/google/uuid"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
@@ -36,7 +36,7 @@ func (s *DBWorkspaceService) SetWorkitemProject(workspaceID string, req object.W
 			external_key = EXCLUDED.external_key,
 			name = EXCLUDED.name,
 			updated_at = EXCLUDED.updated_at
-	`, uuid.New().String(), workspaceID, req.Platform, req.ExternalKey, req.Name, now, now)
+	`, idutil.GenerateID(), workspaceID, req.Platform, req.ExternalKey, req.Name, now, now)
 	if err != nil {
 		return workspace.WorkitemProject{}, fmt.Errorf("set workitem project failed: %w", err)
 	}

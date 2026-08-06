@@ -60,6 +60,21 @@ export const repositoryApi = {
   sync: (workspaceId: string, repoId: string) =>
     api.post<void>(`/v1/workspaces/${workspaceId}/repositories/${repoId}/sync`),
   /**
+   * 设置仓库远程 origin URL 并同步更新本地仓库 remote。
+   */
+  setRemoteURL: (workspaceId: string, repoId: string, url: string) =>
+    api.post<{ status: string }>(`/v1/workspaces/${workspaceId}/repositories/${repoId}/remote`, { url }),
+  /**
+   * 推送仓库当前分支到远程 origin。
+   */
+  push: (workspaceId: string, repoId: string) =>
+    api.post<{ status: string }>(`/v1/workspaces/${workspaceId}/repositories/${repoId}/push`),
+  /**
+   * 获取本地仓库尚未推送到远程的提交数量。
+   */
+  unpushedCommits: (workspaceId: string, repoId: string) =>
+    api.get<{ count: number }>(`/v1/workspaces/${workspaceId}/repositories/${repoId}/unpushed`),
+  /**
    * 获取仓库指定路径的文件内容。
    */
   content: (workspaceId: string, repoId: string, path: string) =>

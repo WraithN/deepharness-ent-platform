@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/object"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 // 常量：关联条目类型
@@ -56,7 +56,7 @@ func (s *DBWorkItemService) CreateDocLink(workitemID string, req object.CreateDo
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (workitem_id, product_space_item_id) DO UPDATE SET item_type = EXCLUDED.item_type
 		RETURNING id, workitem_id, product_space_item_id, workspace_id, item_type, created_at
-	`, uuid.New().String(), workitemID, req.ProductSpaceItemID, req.WorkspaceID, req.ItemType, time.Now().UTC()).Scan(
+	`, idutil.GenerateID(), workitemID, req.ProductSpaceItemID, req.WorkspaceID, req.ItemType, time.Now().UTC()).Scan(
 		&link.ID, &link.WorkItemID, &link.ProductSpaceItemID, &link.WorkspaceID, &link.ItemType, &link.CreatedAt,
 	)
 	if err != nil {
@@ -104,7 +104,7 @@ func (s *DBWorkItemService) CreateDesignVersion(workitemID, workspaceID, userID,
 		return object.DesignVersion{}, fmt.Errorf("compute version number failed: %w", err)
 	}
 
-	id := uuid.NewString()
+	id := idutil.GenerateID()
 	createdAt := time.Now().UTC()
 	if changeSummary == "" {
 		changeSummary = "采纳原型"
@@ -139,7 +139,7 @@ func (s *DBWorkItemService) CreateDesignVersion(workitemID, workspaceID, userID,
 			return object.DesignVersion{}, fmt.Errorf("query product doc version failed: %w", err)
 		}
 
-		itemID := uuid.NewString()
+		itemID := idutil.GenerateID()
 		_, err = tx.Exec(`
 			INSERT INTO workitem_design_version_items (id, design_version_id, product_space_item_id, product_doc_version_id, item_type, created_at)
 			VALUES ($1, $2, $3, $4, $5, $6)

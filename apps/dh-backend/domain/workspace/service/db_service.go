@@ -6,16 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workspace/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/workspacepath"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workspace"
-	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
 
@@ -32,7 +31,7 @@ func NewDBWorkspaceService(db *sql.DB, workspaceRoot string) *DBWorkspaceService
 }
 
 // CreateWorkspace 创建新工作空间，并将所有者加入成员表；若指定 sourceWorkspaceID，则继承源空间的智能体配置。
-func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerUserID, subRole, sourceWorkspaceID string, policy object.AgentPolicy) (workspace.Workspace, error) {
+func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerUserID string, subRoles []string, sourceWorkspaceID string, policy object.AgentPolicy) (workspace.Workspace, error) {
 	// 确保 slice 不为 nil，避免 pq.Array(nil) 插入 NULL 违反 NOT NULL 约束
 	if policy.LockedAgentKeys == nil {
 		policy.LockedAgentKeys = []string{}
@@ -42,7 +41,7 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 	}
 	now := time.Now().UTC()
 	ws := workspace.Workspace{
-		ID:                  strings.ReplaceAll(uuid.New().String(), "-", ""),
+		ID:                  idutil.GenerateID(),
 		TenantID:            tenantID,
 		Name:                name,
 		Description:         description,
@@ -85,14 +84,14 @@ func (s *DBWorkspaceService) CreateWorkspace(tenantID, name, description, ownerU
 		return workspace.Workspace{}, fmt.Errorf("insert workspace failed: %w", err)
 	}
 
-	if subRole == "" {
-		subRole = object.MemberSubRoleDeveloper
+	if len(subRoles) == 0 {
+		subRoles = []string{object.MemberSubRoleDeveloper}
 	}
 
 	_, err = tx.Exec(`
 		INSERT INTO workspace_members (workspace_id, user_id, display_id, role, sub_role, joined_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
-	`, ws.ID, ownerUserID, "u1", object.MemberRoleSpaceAdmin, subRole, now)
+	`, ws.ID, ownerUserID, "u1", object.MemberRoleSpaceAdmin, sqlutil.NullString(formatSubRoles(subRoles)), now)
 	if err != nil {
 		return workspace.Workspace{}, fmt.Errorf("insert workspace member failed: %w", err)
 	}
@@ -161,7 +160,7 @@ func (s *DBWorkspaceService) copyWorkspaceAgentConfigsTx(tx *sql.Tx, targetWorks
 				id, workspace_id, agent_key, enabled, is_default, model, model_source, base_url, api_key,
 				temperature, max_tokens, context_window, advanced_config, created_at, updated_at
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
-		`, strings.ReplaceAll(uuid.New().String(), "-", ""), targetWorkspaceID, agentKey, enabled, isDefault,
+		`, idutil.GenerateID(), targetWorkspaceID, agentKey, enabled, isDefault,
 			model, modelSource, baseURL, apiKey, temperature, maxTokens, contextWindow, advancedConfig, now); err != nil {
 			return fmt.Errorf("insert copied workspace agent config failed: %w", err)
 		}
@@ -421,11 +420,12 @@ func (s *DBWorkspaceService) ListMine(userID string) ([]object.MineWorkspace, er
 		var lockedKeys pq.StringArray
 		var allowedKeys pq.StringArray
 		var tenantName sql.NullString
+		var subRole string
 		if err := rows.Scan(
 			&mw.ID, &mw.DisplayID, &mw.TenantID, &mw.Name, &desc,
 			&mw.AgentConfigLocked, &lockedKeys, &allowedKeys, &defaultConfigs,
 			&mw.CreatedAt, &mw.UpdatedAt,
-			&mw.Role, &mw.SubRole,
+			&mw.Role, &subRole,
 			&tenantName,
 		); err != nil {
 			return nil, fmt.Errorf("scan mine workspace failed: %w", err)
@@ -434,6 +434,10 @@ func (s *DBWorkspaceService) ListMine(userID string) ([]object.MineWorkspace, er
 		mw.LockedAgentKeys = []string(lockedKeys)
 		mw.AllowedAgentKeys = []string(allowedKeys)
 		mw.TenantName = sqlutil.ScanNullString(tenantName)
+		mw.SubRoles = parseSubRoles(subRole)
+		if len(mw.SubRoles) == 0 {
+			mw.SubRoles = []string{object.MemberSubRoleDeveloper}
+		}
 		if len(defaultConfigs) > 0 {
 			if err := json.Unmarshal(defaultConfigs, &mw.DefaultAgentConfigs); err != nil {
 				return nil, fmt.Errorf("unmarshal default agent configs failed: %w", err)

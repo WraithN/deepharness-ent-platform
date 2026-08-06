@@ -21,7 +21,7 @@ export const workspaceApi = {
     name: string;
     description?: string;
     ownerUserId: string;
-    subRole?: string;
+    subRoles?: string[];
     sourceWorkspaceId?: string;
     agentPolicy?: AgentPolicy;
   }) => api.post<Workspace>('/v1/workspaces', req),
@@ -31,9 +31,9 @@ export const workspaceApi = {
   delete: (id: string) => api.delete<void>(`/v1/workspaces/${id}`),
 
   members: (workspaceId: string) => api.get<WorkspaceMember[]>(`/v1/workspaces/${workspaceId}/members`),
-  addMember: (workspaceId: string, req: { userId: string; role: string; subRole?: string }) =>
+  addMember: (workspaceId: string, req: { userId: string; role: string; subRoles?: string[] }) =>
     api.post<void>(`/v1/workspaces/${workspaceId}/members`, req),
-  updateMemberRole: (workspaceId: string, userId: string, req: { role: string; subRole?: string }) =>
+  updateMemberRole: (workspaceId: string, userId: string, req: { role: string; subRoles?: string[] }) =>
     api.put<void>(`/v1/workspaces/${workspaceId}/members/${userId}`, req),
   removeMember: (workspaceId: string, userId: string, assetAssigneeId?: string) => {
     const query = assetAssigneeId ? `?assetAssigneeId=${encodeURIComponent(assetAssigneeId)}` : '';

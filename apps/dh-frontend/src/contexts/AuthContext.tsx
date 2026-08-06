@@ -41,7 +41,7 @@ export interface WorkspaceMembership {
   workspaceName: string;
   tenantName: string;
   spaceRole: SpaceRole;
-  subRole: SubRole;
+  subRoles: SubRole[];
 }
 
 interface AuthContextType {
@@ -66,7 +66,7 @@ function toMembership(dto: MineWorkspaceDTO): WorkspaceMembership {
     workspaceName: dto.name,
     tenantName: dto.tenantName,
     spaceRole: dto.role,
-    subRole: dto.subRole,
+    subRoles: dto.subRoles ?? [],
   };
 }
 

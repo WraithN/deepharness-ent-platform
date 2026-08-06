@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productdoc/object"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/lib/pq"
 )
 
@@ -197,7 +197,7 @@ func (s *DBProductDocService) RestoreVersion(workspaceID, docID string, version 
 		INSERT INTO product_doc_versions (id, doc_id, version, title, content, change_summary, created_by, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, doc_id, version, title, content, change_summary, created_by, created_at
-	`, uuid.New().String(), docID, nextVersion, title.String, content.String,
+	`, idutil.GenerateID(), docID, nextVersion, title.String, content.String,
 		fmt.Sprintf(changeSummaryRestoreFormat, version), userID, now).Scan(
 		&newVersion.ID, &newVersion.DocID, &newVersion.Version,
 		&vTitle, &vContent, &vSummary, &vCreatedBy, &newVersion.CreatedAt,
@@ -299,7 +299,7 @@ func (s *DBProductDocService) recordVersionAudit(action, workspaceID, docID stri
 	_, err = s.db.Exec(`
 		INSERT INTO audit_events (id, tenant_id, user_id, action, resource, details, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, uuid.New().String(), workspaceID, userID, action, docID, string(details), time.Now().UTC())
+	`, idutil.GenerateID(), workspaceID, userID, action, docID, string(details), time.Now().UTC())
 	if err != nil {
 		log.Printf("[ProductDoc] record audit failed: %v", err)
 	}

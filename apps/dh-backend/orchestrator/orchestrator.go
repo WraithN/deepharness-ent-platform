@@ -270,13 +270,22 @@ func (o *Orchestrator) OnTestReviewResult(ctx context.Context, notificationID, u
 		fc.PausedNode = processobject.StageTestAdmissionReview
 	}
 
-	flow := flows.NewAutoTestFlow(o.deps)
+	// 根据评审类型选择对应流程：方案/用例评审属于测试资产流程，准入评审属于测试执行流程
+	var flow *core.Flow
+	switch reviewType {
+	case notificationobject.TypeTestPlanReviewRequired, notificationobject.TypeTestCaseReviewRequired:
+		flow = flows.NewAutoTestAssetFlow(o.deps)
+	case notificationobject.TypeTestAdmissionReviewRequired:
+		flow = flows.NewAutoTestExecutionFlow(o.deps)
+	default:
+		flow = flows.NewAutoTestFlow(o.deps)
+	}
 	if err := flow.Resume(fc); err != nil {
 		log.Printf("[Orchestrator] test flow resume failed: %v", err)
 	}
 }
 
-// StartAutoTestFlow 启动自动化测试流程
+// StartAutoTestFlow 启动自动化测试流程（旧版完整链路，保留兼容）
 func (o *Orchestrator) StartAutoTestFlow(ctx context.Context, userID, userName, workspaceID, tenantID, workitemID, workitemTitle, workitemDesc, workspacePath string) {
 	fc := &core.FlowContext{
 		Ctx:           ctx,
@@ -294,6 +303,50 @@ func (o *Orchestrator) StartAutoTestFlow(ctx context.Context, userID, userName, 
 		flow := flows.NewAutoTestFlow(o.deps)
 		if err := flow.Run(fc); err != nil {
 			log.Printf("[Orchestrator] test flow paused or failed: %v", err)
+		}
+	})
+}
+
+// StartAutoTestAssetFlow 启动测试资产流程
+func (o *Orchestrator) StartAutoTestAssetFlow(ctx context.Context, userID, userName, workspaceID, tenantID, workitemID, workitemTitle, workitemDesc, workspacePath string) {
+	fc := &core.FlowContext{
+		Ctx:           ctx,
+		WorkspaceID:   workspaceID,
+		TenantID:      tenantID,
+		UserID:        userID,
+		UserName:      userName,
+		WorkitemID:    workitemID,
+		WorkitemTitle: workitemTitle,
+		WorkitemDesc:  workitemDesc,
+		WorkspacePath: workspacePath,
+	}
+
+	safego.Go("orchestrator-test-asset-flow", func() {
+		flow := flows.NewAutoTestAssetFlow(o.deps)
+		if err := flow.Run(fc); err != nil {
+			log.Printf("[Orchestrator] test asset flow paused or failed: %v", err)
+		}
+	})
+}
+
+// StartAutoTestExecutionFlow 启动测试执行流程
+func (o *Orchestrator) StartAutoTestExecutionFlow(ctx context.Context, userID, userName, workspaceID, tenantID, workitemID, workitemTitle, workitemDesc, workspacePath string) {
+	fc := &core.FlowContext{
+		Ctx:           ctx,
+		WorkspaceID:   workspaceID,
+		TenantID:      tenantID,
+		UserID:        userID,
+		UserName:      userName,
+		WorkitemID:    workitemID,
+		WorkitemTitle: workitemTitle,
+		WorkitemDesc:  workitemDesc,
+		WorkspacePath: workspacePath,
+	}
+
+	safego.Go("orchestrator-test-execution-flow", func() {
+		flow := flows.NewAutoTestExecutionFlow(o.deps)
+		if err := flow.Run(fc); err != nil {
+			log.Printf("[Orchestrator] test execution flow paused or failed: %v", err)
 		}
 	})
 }

@@ -31,13 +31,22 @@ const MERMAID_KEYWORDS = [
  */
 const MERMAID_MAX_SCAN_LINES = 10;
 const MERMAID_ARROW_PATTERN = /(-->|--\.|==>|-.->|\.->|\|\|)/;
-const MERMAID_NODE_PATTERN = /\w+\s*\[.*?\]|\w+\s*\(.*?\)|\w+\s*\{.*?\}|\w+\s*\(\(.*?\)\)/;
+// Mermaid 节点语法要求 ID 紧跟形状括号（如 A[Label]、A(Label)），中间无空格。
+// 旧正则 \w+\s*\(.*?\) 会误匹配普通文本中的 "word (desc)" 模式（如 "lg (12px)"）。
+const MERMAID_NODE_PATTERN = /\w+\[.*?\]|\w+\(.*?\)|\w+\{.*?\}|\w+\(\(.*?\)\)/;
+
+/**
+ * 检测代码块的前若干行是否包含编程语言特征（import、export、变量声明等），
+ * 用于排除被误判为 Mermaid 的 TypeScript/JavaScript 代码。
+ */
+const NON_MERMAID_LINE_PATTERN = /^(import\s|export\s|const\s|let\s|var\s|function\s|return\s|if\s*\(|for\s*\(|while\s*\(|switch\s*\()/;
 
 function isMermaidContent(code: string): boolean {
   const lines = code.trim().split('\n');
   for (let i = 0; i < Math.min(lines.length, MERMAID_MAX_SCAN_LINES); i++) {
     const line = lines[i].trim();
     if (!line || line.startsWith('%%')) continue;
+    if (NON_MERMAID_LINE_PATTERN.test(line)) continue;
     if (MERMAID_KEYWORDS.some(kw => line.startsWith(kw))) return true;
     if (MERMAID_ARROW_PATTERN.test(line)) return true;
     if (MERMAID_NODE_PATTERN.test(line)) return true;

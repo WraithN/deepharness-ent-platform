@@ -10,14 +10,14 @@ import (
 	processobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/orchestrator/core"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/orchestrator/prompts"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 // NewArchDesignNode 创建架构设计节点
 func NewArchDesignNode(deps *core.FlowDeps) *ArchDesignNode {
 	return &ArchDesignNode{
 		CodeWriteNode: CodeWriteNode{
-			BaseNode:           core.NewBaseNode(processobject.StageArchDesign, core.NodeTypeAI, deps),
+			BaseNode: core.NewBaseNode(processobject.StageArchDesign, core.NodeTypeAI, deps),
 			BuildPrompt: func(fc *core.FlowContext) string {
 				return prompts.BuildArchDesignPrompt(fc.WorkitemTitle, fc.WorkitemDesc, fc.WorkspacePath)
 			},
@@ -86,14 +86,14 @@ func (n *ReviewNode) Processor(fc *core.FlowContext) error {
 
 	now := time.Now()
 	deps.Messages.Append(fc.Ctx, fc.DevSessionID, chat.Message{
-		ID:        uuid.New().String(),
+		ID:        idutil.GenerateID(),
 		SessionID: fc.DevSessionID,
 		Role:      "user",
 		Content:   fc.ReviewPrompt,
 		Timestamp: now,
 	})
 	deps.Messages.Append(fc.Ctx, fc.DevSessionID, chat.Message{
-		ID:        uuid.New().String(),
+		ID:        idutil.GenerateID(),
 		SessionID: fc.DevSessionID,
 		Role:      "assistant",
 		Content:   result.Text,

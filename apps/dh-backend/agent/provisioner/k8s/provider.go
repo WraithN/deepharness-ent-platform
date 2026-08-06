@@ -15,16 +15,15 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/google/uuid"
-
 	agent "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 // provisioning 超时与轮询间隔常量。
 const (
-	podReadyTimeout     = 120 * time.Second
+	podReadyTimeout      = 120 * time.Second
 	podReadyPollInterval = 2 * time.Second
 	podNamePrefix        = "gw-"
 )
@@ -581,5 +580,5 @@ func (p *Provider) podToInstance(pod *corev1.Pod, status agent.InstanceStatus) a
 
 // generatePodName 生成唯一的 Pod 名称。
 func generatePodName() string {
-	return podNamePrefix + uuid.NewString()[:8]
+	return podNamePrefix + idutil.GenerateShortID()
 }

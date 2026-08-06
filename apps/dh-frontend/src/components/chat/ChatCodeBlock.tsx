@@ -32,7 +32,7 @@ export const ChatCodeBlock: React.FC<ChatCodeBlockProps> = ({ code, language = '
   }
 
   return (
-    <div className="rounded-xl overflow-hidden border border-border/50 my-1">
+    <div className="rounded-xl overflow-x-auto border border-border/50 my-1">
       <div className="px-3 py-1 bg-muted/80 border-b border-border/30 text-xs text-muted-foreground flex items-center justify-between">
         <span>{language}</span>
         <button
@@ -45,7 +45,7 @@ export const ChatCodeBlock: React.FC<ChatCodeBlockProps> = ({ code, language = '
       <SyntaxHighlighter
         language={language}
         style={vscDarkPlus}
-        customStyle={{ margin: 0, borderRadius: 0, fontSize: '14px', maxHeight: '400px' }}
+        customStyle={{ margin: 0, borderRadius: 0, fontSize: '14px', maxHeight: '400px', maxWidth: '100%' }}
         showLineNumbers
       >
         {code}

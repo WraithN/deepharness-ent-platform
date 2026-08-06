@@ -13,7 +13,7 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 // scanProductSpaceItem 从数据库行扫描到领域对象。
@@ -299,9 +299,9 @@ func (s *DBProductSpaceService) syncPrototypeFilesFromDisk(ctx context.Context, 
 			dirParts := strings.Split(filepath.ToSlash(filepath.Dir(rel)), "/")
 			if len(dirParts) == 1 {
 				distIndex := filepath.Join(filepath.Dir(path), "dist", "index.html")
-			if fi, err := stubFileInfo(ctx, distIndex); err == nil && fi != nil && fi.Exists && !fi.IsDir {
-				continue
-			}
+				if fi, err := stubFileInfo(ctx, distIndex); err == nil && fi != nil && fi.Exists && !fi.IsDir {
+					continue
+				}
 			}
 		}
 
@@ -314,7 +314,7 @@ func (s *DBProductSpaceService) syncPrototypeFilesFromDisk(ctx context.Context, 
 		title := filepath.Base(path)
 		size := int64(len(data))
 		content := base64.StdEncoding.EncodeToString(data)
-		id := uuid.NewString()
+		id := idutil.GenerateID()
 		item, err := s.insertProductDoc(
 			ctx, s.db, id, workspaceID, userID, object.ItemTypePrototype, title, id, relPath,
 			content, ItemStatusDraft, 1, "html", mimeTypeForExt("html"), size, userID,
@@ -573,7 +573,7 @@ func (s *DBProductSpaceService) CreateItem(ctx context.Context, workspaceID, use
 	}
 	defer tx.Rollback()
 
-	id := uuid.New().String()
+	id := idutil.GenerateID()
 	item, err := s.insertProductDoc(
 		ctx, tx, id, workspaceID, userID, req.Type, title, id, relativePath,
 		content, ItemStatusDraft, 1, ext, mime, size, userID,

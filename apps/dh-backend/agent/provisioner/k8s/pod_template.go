@@ -144,6 +144,18 @@ func buildPodSpec(cfg config.K8sConfig, mode string, extraEnv []corev1.EnvVar, r
 					{Name: "PORT", Value: fmt.Sprintf("%d", stubPort)},
 					{Name: "WORKSPACE_ROOT", Value: mountPath},
 					{Name: "GATEWAYD_ADMIN_URL", Value: fmt.Sprintf("http://localhost:%d", adminPort)},
+					// 上报中继配置：personal-stub 将状态转发到 dh-backend
+					{Name: "DH_BACKEND_URL", Value: cfg.DHBackendURL},
+					{Name: "DH_BACKEND_RUNTIME_TOKEN", Value: cfg.DHBackendRuntimeToken},
+					// 使用 Pod 名称作为 runtime ID，与 provisioner 的 instance ID 一致
+					{
+						Name: "DH_BACKEND_RUNTIME_ID",
+						ValueFrom: &corev1.EnvVarSource{
+							FieldRef: &corev1.ObjectFieldSelector{
+								FieldPath: "metadata.name",
+							},
+						},
+					},
 				},
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: volumeNameWorkspace, MountPath: mountPath},

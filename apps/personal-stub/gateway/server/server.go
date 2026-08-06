@@ -22,6 +22,9 @@ func New(cfg config.Config) http.Handler {
 	// 注入容器管理面配置（gatewayd 代理 + 上报中继）。
 	handler.SetContainerConfig(cfg.GatewaydAdminURL, cfg.DHBackendURL, cfg.DHBackendRuntimeToken, cfg.DHBackendRuntimeID)
 
+	// 启动系统指标采集（CPU/内存），供状态上报注入。
+	handler.StartSysInfoCollector()
+
 	// 健康检查
 	mux.HandleFunc("/health", handler.HealthCheck)
 
@@ -32,6 +35,9 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/container/sleep", handler.ContainerSleep)
 	mux.HandleFunc("/api/v1/container/wake", handler.ContainerWake)
 	mux.HandleFunc("/api/v1/container/report", handler.ContainerReport)
+	// gatewayd 通过 DH_PLATFORM_URL 指向 personal-stub 时，实际调用此路径。
+	// personal-stub 注入 CPU/内存/IP 后转发到 dh-backend 同名端点。
+	mux.HandleFunc("/api/v1/agent-runtimes/{id}/status", handler.AgentRuntimeStatusReport)
 
 	// 规范文件管理（AGENTS.md / DESIGN.md / CLAUDE.md 下发与清理）
 	mux.HandleFunc("/api/v1/standards/sync", handler.StandardsSync)

@@ -61,7 +61,9 @@ func (s *DBRepositoryService) fetchBranchesFromGit(ctx context.Context, workspac
 	}
 
 	if repo.LocalPath == "" {
-		return nil, fmt.Errorf("repository not cloned yet")
+		log.Printf("[Repository] local path empty for repo %s (status=%s, error=%s), returning fallback branches",
+			repoID, repo.CloneStatus, repo.ErrorMessage)
+		return s.fallbackBranches(repo), nil
 	}
 
 	sc := stubclient.FromContext(ctx)

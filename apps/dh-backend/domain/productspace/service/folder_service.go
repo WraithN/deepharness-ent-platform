@@ -13,8 +13,8 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/pathutil"
-	"github.com/google/uuid"
 )
 
 // UpdateContent 更新文档内容，原内容快照为历史版本。
@@ -434,7 +434,7 @@ func (s *DBProductSpaceService) createDocItemAndPublish(
 		return nil, fmt.Errorf("symlink check failed: %w", err)
 	}
 
-	id := uuid.NewString()
+	id := idutil.GenerateID()
 	item, err := s.insertProductDoc(
 		ctx, s.db, id, workspaceID, userID, object.ItemTypeDoc, title, id, relativePath,
 		content, ItemStatusPublished, 1, ext, mime, size, userID,
@@ -522,7 +522,7 @@ func (s *DBProductSpaceService) publishDocContentVersion(
 	version int,
 	userID string,
 ) error {
-	id := uuid.NewString()
+	id := idutil.GenerateID()
 	now := time.Now().UTC()
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO product_doc_versions (id, doc_id, version, title, content, change_summary, created_by, created_at)
@@ -689,7 +689,7 @@ func (s *DBProductSpaceService) importProcessPrototype(
 				continue
 			}
 		} else {
-			id := uuid.NewString()
+			id := idutil.GenerateID()
 			_, err := s.insertProductDoc(ctx, s.db, id, workspaceID, ownerUserID, object.ItemTypePrototype, title, id, targetRelPath,
 				contentBase64, ItemStatusDraft, 1, "html", mimeTypeForExt("html"), size, ownerUserID)
 			if err != nil {
@@ -960,7 +960,7 @@ func (s *DBProductSpaceService) ImportPrototype(ctx context.Context, workspaceID
 		title := filepath.Base(path)
 		size := int64(len(data))
 		content := base64.StdEncoding.EncodeToString(data)
-		id := uuid.NewString()
+		id := idutil.GenerateID()
 		item, err := s.insertProductDoc(ctx, s.db, id, workspaceID, userID, object.ItemTypePrototype, title, id, relPath, content, ItemStatusDraft, 1, "html", mimeTypeForExt("html"), size, userID)
 		if err != nil {
 			log.Printf("import prototype file %s failed: %v", relPath, err)

@@ -48,8 +48,7 @@ CREATE TABLE IF NOT EXISTS workspace_members (
     sub_role VARCHAR(50),
     joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (workspace_id, user_id),
-    CONSTRAINT chk_wm_role CHECK (role IN ('space_admin', 'member')),
-    CONSTRAINT chk_wm_sub_role CHECK (sub_role IS NULL OR sub_role IN ('pm', 'designer', 'developer', 'tester'))
+    CONSTRAINT chk_wm_role CHECK (role IN ('space_admin', 'member'))
 );
 
 COMMENT ON TABLE workspace_members IS '空间成员';
@@ -57,7 +56,7 @@ COMMENT ON COLUMN workspace_members.workspace_id IS '空间 ID';
 COMMENT ON COLUMN workspace_members.user_id IS '用户唯一 ID（uuid，去掉 -）';
 COMMENT ON COLUMN workspace_members.display_id IS '空间内展示 ID，格式 u1, u2...，每个空间独立自增';
 COMMENT ON COLUMN workspace_members.role IS '空间权限角色：space_admin（空间管理员，可编辑设置/管成员）| member（普通成员）';
-COMMENT ON COLUMN workspace_members.sub_role IS '职能子角色（仅 member 生效收敛）：pm | designer | developer | tester。space_admin 此字段仅作身份展示。';
+COMMENT ON COLUMN workspace_members.sub_role IS '职能子角色（可多个，逗号分隔；仅 member 生效收敛）：pm | designer | developer | tester。space_admin 此字段仅作身份展示。';
 COMMENT ON COLUMN workspace_members.joined_at IS '加入时间';
 
 CREATE INDEX IF NOT EXISTS idx_workspace_members_user_id ON workspace_members (user_id);

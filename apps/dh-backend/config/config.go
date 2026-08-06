@@ -153,14 +153,26 @@ type ProvisionerConfig struct {
 	SelfDefined SelfDefinedConfig `yaml:"self_defined"`
 }
 
-// DirectHostConfig direct-host 模式配置（本地开发）。
+// DirectHostConfig direct-host 模式配置。
 type DirectHostConfig struct {
 	Hosts           []string `yaml:"hosts"`
 	AgentPort       int      `yaml:"agent_port"`
 	AdminPort       int      `yaml:"admin_port"`
 	StubPort        int      `yaml:"stub_port"`
-	PortStep        int      `yaml:"port_step"`         // 每个槽位的端口递增步长（默认 10）
-	MaxUsersPerHost int      `yaml:"max_users_per_host"` // 每台主机最大用户数（默认 5）
+	PortStep        int      `yaml:"port_step"`
+	MaxUsersPerHost int      `yaml:"max_users_per_host"`
+	// GatewaydBin 是 gatewayd 二进制文件路径，传递给 personal-stub 由其启动和管理。
+	GatewaydBin string `yaml:"gatewayd_bin"`
+	// StubBin 是 personal-stub 二进制文件路径。
+	StubBin string `yaml:"stub_bin"`
+	// BearerToken 是运行时上报的 Bearer Token，注入到 personal-stub。
+	BearerToken string `yaml:"bearer_token"`
+	// DHBackendURL 是 dh-backend 的地址，供 personal-stub 上报中继使用。
+	DHBackendURL string `yaml:"dh_backend_url"`
+	// GatewaydMode 是 gatewayd 管理模式："single"（1:1）或 "multi"（1:N）。
+	// single：每个用户独占一个 personal-stub + gatewayd 实例对。
+	// multi：每台主机一个 personal-stub，按需为多个用户启动 gatewayd 实例。
+	GatewaydMode string `yaml:"gatewayd_mode"`
 }
 
 // K8sConfig k8s 模式配置（Kubernetes 原生管理）。
@@ -177,6 +189,11 @@ type K8sConfig struct {
 	ResourceActive     ProvisionerResourceSpec `yaml:"resource_active"`
 	ResourceSleeping   ProvisionerResourceSpec `yaml:"resource_sleeping"`
 	SupportsBind       bool                    `yaml:"supports_bind"`
+	// DHBackendURL 是 dh-backend 在集群内可访问的地址（如 "http://dh-backend-svc:8080"）。
+	// 注入到 personal-stub sidecar，供运行时状态上报中继使用。
+	DHBackendURL string `yaml:"dh_backend_url"`
+	// DHBackendRuntimeToken 是运行时上报的 Bearer Token，与 agent_runtime.bearer_token 一致。
+	DHBackendRuntimeToken string `yaml:"dh_backend_runtime_token"`
 }
 
 // SelfDefinedConfig self-defined 模式配置（HTTP API 对接自定义供给器）。
@@ -299,6 +316,11 @@ type yamlConfig struct {
 			StubPort        int      `yaml:"stub_port"`
 			PortStep        int      `yaml:"port_step"`
 			MaxUsersPerHost int      `yaml:"max_users_per_host"`
+			GatewaydBin     string   `yaml:"gatewayd_bin"`
+			StubBin         string   `yaml:"stub_bin"`
+			BearerToken     string   `yaml:"bearer_token"`
+			DHBackendURL    string   `yaml:"dh_backend_url"`
+			GatewaydMode    string   `yaml:"gatewayd_mode"`
 		} `yaml:"direct_host"`
 
 		K8s struct {
@@ -311,6 +333,8 @@ type yamlConfig struct {
 			SharedPVCName      string `yaml:"shared_pvc_name"`
 			WorkspaceMountPath string `yaml:"workspace_mount_path"`
 			KubeconfigPath     string `yaml:"kubeconfig_path"`
+			DHBackendURL       string `yaml:"dh_backend_url"`
+			DHBackendRuntimeToken string `yaml:"dh_backend_runtime_token"`
 			ResourceActive     struct {
 				CPURequest    string `yaml:"cpu_request"`
 				CPULimit      string `yaml:"cpu_limit"`
@@ -442,6 +466,11 @@ func Load() (Config, error) {
 			StubPort:        yc.AgentProvisioner.DirectHost.StubPort,
 			PortStep:        yc.AgentProvisioner.DirectHost.PortStep,
 			MaxUsersPerHost: yc.AgentProvisioner.DirectHost.MaxUsersPerHost,
+			GatewaydBin:     yc.AgentProvisioner.DirectHost.GatewaydBin,
+			StubBin:         yc.AgentProvisioner.DirectHost.StubBin,
+			BearerToken:     yc.AgentProvisioner.DirectHost.BearerToken,
+			DHBackendURL:    yc.AgentProvisioner.DirectHost.DHBackendURL,
+			GatewaydMode:    yc.AgentProvisioner.DirectHost.GatewaydMode,
 		},
 		K8s: K8sConfig{
 			Namespace:          yc.AgentProvisioner.K8s.Namespace,
@@ -453,6 +482,8 @@ func Load() (Config, error) {
 			SharedPVCName:      yc.AgentProvisioner.K8s.SharedPVCName,
 			WorkspaceMountPath: yc.AgentProvisioner.K8s.WorkspaceMountPath,
 			KubeconfigPath:     yc.AgentProvisioner.K8s.KubeconfigPath,
+			DHBackendURL:          yc.AgentProvisioner.K8s.DHBackendURL,
+			DHBackendRuntimeToken: yc.AgentProvisioner.K8s.DHBackendRuntimeToken,
 			ResourceActive: ProvisionerResourceSpec{
 				CPURequest:    yc.AgentProvisioner.K8s.ResourceActive.CPURequest,
 				CPULimit:      yc.AgentProvisioner.K8s.ResourceActive.CPULimit,
@@ -546,6 +577,11 @@ func Load() (Config, error) {
 	cfg.AgentProvisioner.DirectHost.StubPort = getIntEnv("AGENT_PROVISIONER_DIRECT_HOST_STUB_PORT", cfg.AgentProvisioner.DirectHost.StubPort)
 	cfg.AgentProvisioner.DirectHost.PortStep = getIntEnv("AGENT_PROVISIONER_DIRECT_HOST_PORT_STEP", cfg.AgentProvisioner.DirectHost.PortStep)
 	cfg.AgentProvisioner.DirectHost.MaxUsersPerHost = getIntEnv("AGENT_PROVISIONER_DIRECT_HOST_MAX_USERS_PER_HOST", cfg.AgentProvisioner.DirectHost.MaxUsersPerHost)
+	cfg.AgentProvisioner.DirectHost.GatewaydBin = getEnv("AGENT_PROVISIONER_DIRECT_HOST_GATEWAYD_BIN", cfg.AgentProvisioner.DirectHost.GatewaydBin)
+	cfg.AgentProvisioner.DirectHost.StubBin = getEnv("AGENT_PROVISIONER_DIRECT_HOST_STUB_BIN", cfg.AgentProvisioner.DirectHost.StubBin)
+	cfg.AgentProvisioner.DirectHost.BearerToken = getEnv("AGENT_PROVISIONER_DIRECT_HOST_BEARER_TOKEN", cfg.AgentProvisioner.DirectHost.BearerToken)
+	cfg.AgentProvisioner.DirectHost.DHBackendURL = getEnv("AGENT_PROVISIONER_DIRECT_HOST_DH_BACKEND_URL", cfg.AgentProvisioner.DirectHost.DHBackendURL)
+	cfg.AgentProvisioner.DirectHost.GatewaydMode = getEnv("AGENT_PROVISIONER_DIRECT_HOST_GATEWAYD_MODE", cfg.AgentProvisioner.DirectHost.GatewaydMode)
 
 	// k8s 环境变量覆盖
 	cfg.AgentProvisioner.K8s.Namespace = getEnv("AGENT_PROVISIONER_K8S_NAMESPACE", cfg.AgentProvisioner.K8s.Namespace)
@@ -557,6 +593,8 @@ func Load() (Config, error) {
 	cfg.AgentProvisioner.K8s.SharedPVCName = getEnv("AGENT_PROVISIONER_K8S_SHARED_PVC_NAME", cfg.AgentProvisioner.K8s.SharedPVCName)
 	cfg.AgentProvisioner.K8s.WorkspaceMountPath = getEnv("AGENT_PROVISIONER_K8S_WORKSPACE_MOUNT_PATH", cfg.AgentProvisioner.K8s.WorkspaceMountPath)
 	cfg.AgentProvisioner.K8s.KubeconfigPath = getEnv("AGENT_PROVISIONER_K8S_KUBECONFIG_PATH", cfg.AgentProvisioner.K8s.KubeconfigPath)
+	cfg.AgentProvisioner.K8s.DHBackendURL = getEnv("AGENT_PROVISIONER_K8S_DH_BACKEND_URL", cfg.AgentProvisioner.K8s.DHBackendURL)
+	cfg.AgentProvisioner.K8s.DHBackendRuntimeToken = getEnv("AGENT_PROVISIONER_K8S_DH_BACKEND_RUNTIME_TOKEN", cfg.AgentProvisioner.K8s.DHBackendRuntimeToken)
 	cfg.AgentProvisioner.K8s.SupportsBind = getBoolEnv("AGENT_PROVISIONER_K8S_SUPPORTS_BIND", cfg.AgentProvisioner.K8s.SupportsBind)
 
 	// self-defined 环境变量覆盖

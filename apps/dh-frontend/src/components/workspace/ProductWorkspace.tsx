@@ -11,6 +11,7 @@ import {
   ChevronDown, Folder, FolderPlus, Pin, MoreVertical, FolderInput, Pencil, Share2, MessageSquare,
   Layers, Download, Copy, Gavel, CheckCircle2, XCircle, UserCheck, Sparkles,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { MarkdownEditor } from '@/components/MarkdownEditor';
@@ -87,8 +88,24 @@ const SIDEBAR_STATUS_DOT: Record<string, string> = {
 
 
 
-type ProductTopTab = 'kanban' | 'design';
+type ProductTopTab = string;
 type ProductSubTab = 'doc' | 'prototype' | 'history';
+
+/** 额外 Tab 配置：由父组件根据用户角色注入（工程代码 / 用例设计 / UI设计 等）。 */
+export interface ExtraTab {
+  key: string;
+  label: string;
+  icon: LucideIcon;
+  render: () => React.ReactNode;
+}
+
+/** ProductWorkspace 组件 Props */
+export interface ProductWorkspaceProps {
+  /** 是否显示"需求设计"Tab（PM 角色显示）。默认 true。 */
+  showDesignTab?: boolean;
+  /** 额外角色 Tab（工程代码 / 用例设计 / UI设计 等）。 */
+  extraTabs?: ExtraTab[];
+}
 
 /** 目录最多支持的层级数（与后端 MaxFolderDepth 保持一致） */
 const MAX_FOLDER_DEPTH = 6;
@@ -420,23 +437,23 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({ open, onOpe
 };
 
 /**
- * 产品空间工作台（PM 专属）。
+ * 个人工作台 - 统一工作台视图。
  *
- * 顶部 Tab：需求看板 / 需求设计。
+ * 顶部 Tab：需求追踪（始终） + 需求设计（PM） + 角色专属 Tab（工程代码 / 用例设计 / UI设计）。
  * 需求设计下二级 Tab：文档 / 原型 / 版本历史。
- * 所有文案与图标均采用产品化语义，隐藏 Git/研发术语。
+ * Tab 列表根据用户职能子角色动态构建，支持多角色同时展示多个 Tab。
  */
-export const ProductWorkspace: React.FC = () => {
+export const ProductWorkspace: React.FC<ProductWorkspaceProps> = ({ showDesignTab = true, extraTabs = [] }) => {
   // 支持深链直达指定 Tab（如分享原型链接 ?tab=prototype&prototype=<itemId>）。
   const [{ topTab, subTab }, setTabs] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab') ?? '';
     const validSubTabs: ProductSubTab[] = ['doc', 'prototype', 'history'];
-    const validTopTabs: ProductTopTab[] = ['kanban', 'design'];
     if (validSubTabs.includes(tab as ProductSubTab)) {
       return { topTab: 'design' as ProductTopTab, subTab: tab as ProductSubTab };
     }
-    if (validTopTabs.includes(tab as ProductTopTab)) {
+    const extraKeys = extraTabs.map(t => t.key);
+    if (tab === 'kanban' || tab === 'design' || extraKeys.includes(tab)) {
       return { topTab: tab as ProductTopTab, subTab: (params.get('subtab') as ProductSubTab) ?? 'doc' };
     }
     return { topTab: 'kanban' as ProductTopTab, subTab: 'doc' as ProductSubTab };
@@ -500,10 +517,19 @@ export const ProductWorkspace: React.FC = () => {
     processing: false,
   });
 
-  const topTabs = [
-    { key: 'kanban' as const, label: '需求看板', icon: LayoutGrid },
-    { key: 'design' as const, label: '需求设计', icon: Layers },
-  ];
+  // 顶部 Tab 列表：需求追踪（始终） + 需求设计（PM） + 角色专属 Tab
+  const topTabs = useMemo(() => {
+    const tabs: { key: string; label: string; icon: LucideIcon }[] = [
+      { key: 'kanban', label: '需求追踪', icon: LayoutGrid },
+    ];
+    if (showDesignTab) {
+      tabs.push({ key: 'design', label: '需求设计', icon: Layers });
+    }
+    for (const extra of extraTabs) {
+      tabs.push({ key: extra.key, label: extra.label, icon: extra.icon });
+    }
+    return tabs;
+  }, [showDesignTab, extraTabs]);
 
   const subTabs = [
     { key: 'doc' as const, label: '文档', icon: FileText },
@@ -1039,6 +1065,8 @@ export const ProductWorkspace: React.FC = () => {
             {topTab === 'design' && !hasNoDesign && !!selectedWorkitemId && subTab === 'doc' && <DocMode focusDocId={focusDocId} />}
             {topTab === 'design' && !hasNoDesign && !!selectedWorkitemId && subTab === 'prototype' && <PrototypeWorkspace focusItemId={focusItemId} />}
             {topTab === 'design' && !hasNoDesign && !!selectedWorkitemId && subTab === 'history' && <VersionHistoryMode workitemId={selectedWorkitemId} />}
+            {/* 额外角色 Tab 内容（工程代码 / 用例设计 / UI设计 等） */}
+            {extraTabs.find(t => t.key === topTab)?.render()}
           </Card>
         </div>
       </div>

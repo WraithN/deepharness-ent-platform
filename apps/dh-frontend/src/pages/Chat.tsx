@@ -14,7 +14,6 @@ import {
   ClipboardList,
   Clock,
   Code2,
-  Compass,
   Eye,
   FileBarChart,
   FileText,
@@ -212,7 +211,7 @@ function parseInlineOptions(rawText: string): { questionText: string; options: {
 // 指令 -> 图标的映射（图标为 React 组件，无法放入配置文件）。
 const COMMAND_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   '/prd-write': FileText,
-  '/prd-research': Compass,
+  '/prd-research': Globe,
   '/prd-analysis': Globe,
   '/proto-make': LayoutTemplate,
   '/code': Code2,
@@ -233,8 +232,7 @@ const COMMAND_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   '/design-token': Palette,
   '/req-breakdown': ListChecks,
   '/data-analysis': BarChart3,
-  '/brainstorm': Lightbulb,
-  '/grill-me': Flame,
+  '/grill-me': Lightbulb,
 };
 
 /** 欢迎页快捷指令卡片定义。 */
@@ -248,7 +246,7 @@ interface WelcomeCard {
 const WELCOME_CARDS_DEFAULT: WelcomeCard[] = [
   { cmd: '/prd-write', title: '撰写 PRD', desc: '根据需求生成产品需求文档' },
   { cmd: '/req-breakdown', title: '需求拆分', desc: '将需求拆分为结构化需求项与验收标准' },
-  { cmd: '/prd-research', title: '需求调研', desc: '对需求主题进行深度调研分析' },
+  { cmd: '/prd-research', title: '产品调研', desc: '输入网站链接，自动爬取并生成竞品分析报告' },
   { cmd: '/data-analysis', title: '数据分析', desc: '分析数据并生成业务洞察' },
 ];
 
@@ -278,9 +276,9 @@ const WELCOME_CARDS_BY_ROLE: Partial<Record<SubRole, WelcomeCard[]>> = {
   [SUB_ROLE.PM]: [
     { cmd: '/prd-write', title: '撰写 PRD', desc: '根据需求生成产品需求文档' },
     { cmd: '/req-breakdown', title: '需求拆分', desc: '将需求拆分为结构化需求项与验收标准' },
-    { cmd: '/brainstorm', title: '头脑风暴', desc: '基于任务卡片逐步澄清需求并生成文档' },
+    { cmd: '/grill-me', title: '头脑风暴', desc: '基于任务卡片逐步澄清需求并生成文档' },
     { cmd: '/proto-make', title: '制作原型', desc: '根据文档生成可预览的原型工程' },
-    { cmd: '/prd-research', title: '需求调研', desc: '对需求主题进行深度调研分析' },
+    { cmd: '/prd-research', title: '产品调研', desc: '输入网站链接，自动爬取并生成竞品分析报告' },
   ],
 };
 
@@ -624,12 +622,14 @@ export const Chat: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { membership, user } = useAuth();
-  // 按职能子角色选择欢迎页快捷卡片（无子角色时使用默认）
+  // 多角色场景下取首个职能子角色用于会话欢迎卡片等默认视图；
+  // 若包含产品经理，则开放文档引用能力。
+  const activeSubRole = membership?.subRoles?.[0] ?? SUB_ROLE.DEVELOPER;
   const welcomeCards =
-    (membership?.subRole && WELCOME_CARDS_BY_ROLE[membership.subRole]) || WELCOME_CARDS_DEFAULT;
+    (activeSubRole && WELCOME_CARDS_BY_ROLE[activeSubRole]) || WELCOME_CARDS_DEFAULT;
   // 文档引用仅面向产品职能（文档是产品空间的产物，其他角色无文档概念）；
   // 无子角色（管理员等场景）沿用产品默认视图，与欢迎卡片回退逻辑一致。
-  const canUseDocs = !membership?.subRole || membership.subRole === SUB_ROLE.PM;
+  const canUseDocs = !membership?.subRoles?.length || membership.subRoles.includes(SUB_ROLE.PM);
   const [input, setInput] = useState('');
 
   // Input toolbar dropdowns
@@ -1025,7 +1025,7 @@ export const Chat: React.FC = () => {
   const [compactPlusSubmenu, setCompactPlusSubmenu] = useState<'design' | 'repo' | 'prompt' | 'skill' | 'cmd' | null>(null);
   const [activeSkillTab, setActiveSkillTab] = useState('全部');
   const [activeTaskTab, setActiveTaskTab] = useState<'req' | 'defect' | 'case'>('req');
-  const [activeCommandTab, setActiveCommandTab] = useState<CommandCategory>(getDefaultCommandCategory(membership?.subRole));
+  const [activeCommandTab, setActiveCommandTab] = useState<CommandCategory>(getDefaultCommandCategory(activeSubRole));
   const repoMenuRef = useRef<HTMLDivElement>(null);
   const promptMenuRef = useRef<HTMLDivElement>(null);
   const skillMenuRef = useRef<HTMLDivElement>(null);
@@ -3150,20 +3150,20 @@ export const Chat: React.FC = () => {
                 <p className="text-muted-foreground text-sm max-w-md mb-6">
                   我可以帮你撰写 PRD、调研需求、制作原型、编写代码。选择下方指令快速开始，或直接输入你的问题。
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-2xl px-4">
                   {visibleWelcomeCards.map(card => {
                     const Icon = COMMAND_ICON_MAP[card.cmd] ?? Terminal;
                     return (
                       <Button
                         key={card.cmd}
                         variant="outline"
-                        className="h-auto py-3 justify-start text-left glass-card click-card"
+                        className="h-auto py-3 justify-start text-left glass-card click-card whitespace-normal"
                         onClick={() => insertCommand(card.cmd)}
                       >
                         <Icon className="h-4 w-4 mr-2 text-primary shrink-0" />
-                        <div className="flex flex-col items-start">
-                          <span className="text-sm font-medium">{card.title}</span>
-                          <span className="text-xs text-muted-foreground">{card.desc}</span>
+                        <div className="flex flex-col items-start min-w-0">
+                          <span className="text-sm font-medium whitespace-normal break-words">{card.title}</span>
+                          <span className="text-xs text-muted-foreground whitespace-normal break-words">{card.desc}</span>
                         </div>
                       </Button>
                     );
@@ -4046,7 +4046,7 @@ export const Chat: React.FC = () => {
               <div className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
                 <LayoutTemplate className="h-4 w-4 text-primary" />
                 <span className="font-semibold text-sm">
-                  {kanbanType === 'req' ? '需求看板' : kanbanType === 'defect' ? '缺陷看板' : '用例看板'}
+                  {kanbanType === 'req' ? '需求追踪' : kanbanType === 'defect' ? '缺陷看板' : '用例看板'}
                 </span>
                 <button className="ml-auto h-7 w-7 flex items-center justify-center rounded hover:bg-muted text-muted-foreground" onClick={closeKanban}>
                   <X className="h-4 w-4" />

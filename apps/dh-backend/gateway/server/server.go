@@ -26,6 +26,7 @@ import (
 	crawlerservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/crawler/service"
 	agentruntimeservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentruntime/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/provisioner"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/provisioner/directhost"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit"
 	auditservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/feishu"
@@ -187,6 +188,9 @@ const (
 	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_SAVE                                = API_V1_PREFIX + "/workspaces/{id}/repositories/{repoId}/save"
 	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_COMMIT                              = API_V1_PREFIX + "/workspaces/{id}/repositories/{repoId}/commit"
 	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_STATUS                              = API_V1_PREFIX + "/workspaces/{id}/repositories/{repoId}/status"
+	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_REMOTE                              = API_V1_PREFIX + "/workspaces/{id}/repositories/{repoId}/remote"
+	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_PUSH                                = API_V1_PREFIX + "/workspaces/{id}/repositories/{repoId}/push"
+	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_UNPUSHED                          = API_V1_PREFIX + "/workspaces/{id}/repositories/{repoId}/unpushed"
 	ROUTE_WORKSPACES_BY_ID_PRODUCT_DOCS                                                = API_V1_PREFIX + "/workspaces/{id}/product-docs"
 	ROUTE_WORKSPACES_BY_ID_PRODUCT_DOCS_BY_DOC_ID                                      = API_V1_PREFIX + "/workspaces/{id}/product-docs/{docId}"
 	ROUTE_WORKSPACES_BY_ID_PRODUCT_DOCS_BY_DOC_ID_VERSIONS                             = API_V1_PREFIX + "/workspaces/{id}/product-docs/{docId}/versions"
@@ -317,6 +321,15 @@ func New(cfg config.Config) (http.Handler, func()) {
 	if err != nil {
 		log.Fatalf("[provisioner] failed to create provisioner: %v", err)
 	}
+
+	// direct-host 模式：注入 workspace 解析器，供 Manager 启动 per-user 进程时补全 workspaceID。
+	if dm, ok := prov.(*directhost.Manager); ok {
+		dm.SetWorkspaceResolver(func(userID string) string {
+			var wsID string
+			_ = db.QueryRow("SELECT workspace_id FROM workspace_members WHERE user_id = $1 LIMIT 1", userID).Scan(&wsID)
+			return wsID
+		})
+	}
 	agentStatusTracker := provisioner.NewStatusTracker()
 	agentController := provisioner.NewController(prov, cfg.AgentProvisioner)
 	agentStatusHandler := handler.NewAgentStatusHandler(prov, agentStatusTracker)
@@ -382,6 +395,7 @@ func New(cfg config.Config) (http.Handler, func()) {
 
 	// containerMiddleware 为每个已认证请求解析用户容器，并注入 ContainerInfo + stubclient 到 context。
 	// 顺序：Auth（注入 userID）-> Container（分配容器 + 注入 context）-> Handler。
+	// 1:N 模式下，还会通过 personal-stub health 端点发现 gatewayd 端口并更新 ContainerInfo。
 	containerMW := func(next http.Handler) http.Handler {
 		return middleware.Auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			userID, _ := middleware.UserIDFromContext(r.Context())
@@ -403,6 +417,8 @@ func New(cfg config.Config) (http.Handler, func()) {
 				_, _ = w.Write([]byte(`{"code":500,"message":"container pool error"}`))
 				return
 			}
+			// 1:N 模式下通过 personal-stub health 端点发现 gatewayd 端口。
+			container = discoverGatewaydPorts(r.Context(), container, userID)
 			ctx := provisioner.WithContainer(r.Context(), container)
 			ctx = stubclient.WithClient(ctx, stubclient.New(container.PersonalStubURL()))
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -571,6 +587,9 @@ func New(cfg config.Config) (http.Handler, func()) {
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_SAVE, repository.SaveFileContent)
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_COMMIT, repository.GitCommit)
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_STATUS, repository.GitStatus)
+	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_REMOTE, repository.SetRemoteURL)
+	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_PUSH, repository.PushRepository)
+	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_UNPUSHED, repository.UnpushedCommits)
 
 	// Product doc module
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_PRODUCT_DOCS, productdocHandler.ProductDocs)
@@ -1006,6 +1025,8 @@ func initAgentRuntimeService(db *sql.DB, workspaceRoot string) agentruntimeservi
 	log.Printf("[AgentRuntime] using postgres storage, workspaceRoot=%s", workspaceRoot)
 	svc := agentruntimeservice.NewDBAgentRuntimeService(db, workspaceRoot)
 	agentruntime.Init(svc)
+	// 启动后台过期检测：定期将超过心跳阈值未上报的运行时标记为 stopped。
+	svc.StartStaleChecker()
 	return svc
 }
 

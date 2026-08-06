@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/agent"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/identity"
-	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 
@@ -262,7 +261,7 @@ func (s *DBUserService) CreateTenant(name string, policy TenantPolicy) (identity
 	if err != nil {
 		return identity.Tenant{}, fmt.Errorf("marshal default agent configs failed: %w", err)
 	}
-	id := generateID()
+	id := idutil.GenerateID()
 	// 从序列生成 display_id（自增数字）
 	var displayID string
 	err = s.db.QueryRow(`SELECT nextval('tenant_display_id_seq')::text`).Scan(&displayID)
@@ -360,7 +359,7 @@ func (s *DBUserService) AddTenantMember(tenantID, email, name string) (TenantMem
 		return TenantMember{}, fmt.Errorf("hash password failed: %w", err)
 	}
 
-	id := generateID()
+	id := idutil.GenerateID()
 	err = s.db.QueryRow(`
 		INSERT INTO users (id, tenant_id, email, name, platform_role, password_hash)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -389,9 +388,4 @@ func (s *DBUserService) SetTenantAdmin(tenantID, userID string, isAdmin bool) er
 		return common.NotFoundErrorf("user not found in this tenant")
 	}
 	return nil
-}
-
-// generateID 生成 uuid4 去横线的 32 字符 ID。
-func generateID() string {
-	return strings.ReplaceAll(uuid.New().String(), "-", "")
 }

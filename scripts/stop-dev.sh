@@ -29,7 +29,7 @@ kill_port() {
 
 echo -e "${YELLOW}Stopping development services...${NC}"
 
-for port in 8888 8080 8090 2345 2346; do
+for port in 8888 8080 8090 8091 2345 2346; do
     kill_port "$port"
 done
 
@@ -39,5 +39,6 @@ pkill -f "personal-stub" 2>/dev/null || true
 pkill -f "dh-backend" 2>/dev/null || true
 pkill -f "vite --host --port 8888" 2>/dev/null || true
 pkill -f "pnpm dev --port 8888" 2>/dev/null || true
+pkill -f "crawler-service" 2>/dev/null || true
 
 echo -e "${GREEN}All services stopped${NC}"

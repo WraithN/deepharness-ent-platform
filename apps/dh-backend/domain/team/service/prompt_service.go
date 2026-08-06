@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/team/object"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
-	"github.com/google/uuid"
 )
 
 // ListPromptsVisibleTo 返回指定用户可见的提示词，支持服务端分页。
@@ -106,7 +106,7 @@ func (s *DBTeamService) ListPromptsVisibleTo(userID string, isSuperAdmin bool, p
 func (s *DBTeamService) CreatePrompt(req object.CreatePromptRequest, createdBy string) (object.Prompt, error) {
 	now := time.Now().UTC()
 	prompt := object.Prompt{
-		ID:           uuid.New().String(),
+		ID:           idutil.GenerateID(),
 		Name:         req.Name,
 		Description:  req.Description,
 		Content:      req.Content,

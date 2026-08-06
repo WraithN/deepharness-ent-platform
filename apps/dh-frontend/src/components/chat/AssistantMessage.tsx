@@ -20,21 +20,17 @@ import type { ReviewReportData } from './ReviewReportCard';
 import type { ChatPart } from './types';
 import { toast } from 'sonner';
 import { cn, formatTime, isProductSpaceFile } from '@/lib/utils';
-
-const CARD_MARKER_REGEX = /\[\[CARD:([^\]]+)\]\]/g;
-const REQ_NAME_MARKER_REGEX = /\[\[REQ_NAME:([^\]]+)\]\]/g;
-// 匹配 [[QUESTION:...]] 标记，从展示文本中移除，避免问题内容重复出现在助手消息中。
-const QUESTION_MARKER_REGEX = /\[\[QUESTION:([\s\S]*?)\]\]/g;
-// 匹配新旧两种评审报告标记，用于从展示文本中移除：
-// 新格式 [[REVIEW_REPORT_START]]...[[REVIEW_REPORT_END]]，旧格式 [[REVIEW_REPORT:{json}]]
-const REVIEW_REPORT_MARKER_REGEX = /\[\[REVIEW_REPORT_START\]\][\s\S]*?\[\[REVIEW_REPORT_END\]\]|\[\[REVIEW_REPORT:\{[^\]]*\}\]\]/g;
+import {
+  stripAllMarkers,
+  parseAllFilePaths,
+  parseCardTypes,
+  parseReqName,
+} from '@/lib/markers';
 
 const TEXT_COLLAPSE_LINE_THRESHOLD = 12;
 const TEXT_COLLAPSE_CHAR_THRESHOLD = 800;
 const PROTOTYPE_DIR_SEGMENT = '/products/prototypes/';
-const REQ_BREAKDOWN_JSON_REGEX = /\[\[REQ_BREAKDOWN_START\]\][\s\S]*?\[\[REQ_BREAKDOWN_END\]\]/g;
 // 匹配需求拆分相关文件：路径中包含 req-breakdown 且以 .md/.json 结尾。
-// 支持 xxx/req-breakdown/foo-req-breakdown.md、xxx-req-breakdown.json 等命名。
 const REQ_BREAKDOWN_FILE_REGEX = /req-breakdown.*\.(md|json)$/i;
 const REQ_BREAKDOWN_JSON_FILE_REGEX = /req-breakdown.*\.json$/i;
 
@@ -53,17 +49,6 @@ const TOOL_DISPLAY_NAME_MAP: Record<string, string> = {
 
 function getToolDisplayName(toolName: string): string {
   return TOOL_DISPLAY_NAME_MAP[toolName.toLowerCase()] ?? toolName;
-}
-
-function extractCardTypes(text: string): string[] {
-  const types: string[] = [];
-  for (const match of text.matchAll(CARD_MARKER_REGEX)) {
-    const type = match[1]?.trim();
-    if (type && !types.includes(type)) {
-      types.push(type);
-    }
-  }
-  return types;
 }
 
 interface AssistantMessageProps {
@@ -173,43 +158,14 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
   };
 
   // 从所有 text 部件中提取 [[FILE:...]] / [[PROJECT:...]] 标记，避免内部推理文本被折叠后丢失附件路径。
-  const FILE_MARKER_REGEX = /\[\[FILE:([^\]]+)\]\]/g;
-  const PROJECT_MARKER_REGEX = /\[\[PROJECT:([^\]]+)\]\]/g;
-
-  const UNRESOLVED_PLACEHOLDER_PATTERNS = [
-    '绝对路径',
-    '需求名称',
-    '调研主题',
-    '工程名',
-    '功能名称',
-    '功能名',
-    '分析主题',
-    '用户故事',
-  ] as const;
-
-  function hasUnresolvedPlaceholders(filePath: string): boolean {
-    return UNRESOLVED_PLACEHOLDER_PATTERNS.some((pattern) => filePath.includes(pattern));
-  }
-
-  const fileAttachments: string[] = [];
-  const projectPaths: string[] = [];
-  for (const part of content) {
-    if (part.type !== 'text') continue;
-    const textPart = part as TextMessagePart;
-    if (!textPart.text) continue;
-    for (const match of textPart.text.matchAll(FILE_MARKER_REGEX)) {
-      const path = match[1]?.trim();
-      if (path && !fileAttachments.includes(path) && !hasUnresolvedPlaceholders(path)) {
-        fileAttachments.push(path);
-      }
-    }
-    for (const match of textPart.text.matchAll(PROJECT_MARKER_REGEX)) {
-      const path = match[1]?.trim();
-      if (path && !projectPaths.includes(path) && !hasUnresolvedPlaceholders(path)) {
-        projectPaths.push(path);
-      }
-    }
-  }
+  const allTextParts = useMemo(
+    () => content.filter((p): p is TextMessagePart => p.type === 'text').map(p => p.text).filter(Boolean),
+    [content],
+  );
+  const { files: fileAttachments, projects: projectPaths } = useMemo(
+    () => parseAllFilePaths(allTextParts),
+    [allTextParts],
+  );
 
   for (let i = 0; i < content.length; i++) {
     const part = content[i];
@@ -283,16 +239,13 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
 
   // 用于检测 [[CARD:...]] 标记的完整文本，包含识别为推理的 text 部件，
   // 避免模型把标记放在内部推理流中时卡片无法被触发。
-  const allTextContent = content
-    .filter((p) => p.type === 'text')
-    .map((p) => (p as TextMessagePart).text)
-    .filter(Boolean)
-    .join('\n');
+  const allTextContent = useMemo(
+    () => content.filter((p) => p.type === 'text').map((p) => (p as TextMessagePart).text).filter(Boolean).join('\n'),
+    [content],
+  );
 
   // 解析 [[REQ_NAME:需求名]] 标记，优先作为原型卡片的需求名展示；
-  // 若消息内无该标记则回退到父组件传入的 requirementTitle（如引用需求卡片的标题）。
-  const reqNameMatch = allTextContent.match(REQ_NAME_MARKER_REGEX);
-  const parsedRequirementTitle = reqNameMatch?.[1]?.trim();
+  const parsedRequirementTitle = useMemo(() => parseReqName(allTextContent), [allTextContent]);
   const prototypeRequirementTitle = requirementTitle || parsedRequirementTitle;
 
   // 按消息内的需求标题匹配真实需求 ID；父组件已传入的 workitemId 仍作为最高优先级。
@@ -355,7 +308,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
       )
     : nonPrototypeFileAttachments;
 
-  const cardTypes = extractCardTypes(allTextContent);
+  const cardTypes = useMemo(() => parseCardTypes(allTextContent), [allTextContent]);
   const hasUserStoryFromMarker = cardTypes.includes('user_story');
   const userStoryData = hasUserStoryFromMarker
     ? parseUserStoryFromText(textContent, fileAttachments[0] ?? '')
@@ -496,23 +449,15 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
 
           {/* 最终给用户的实际输出（去掉 [[FILE:...]] 和 [[PROJECT:...]] 标记，避免重复展示） */}
           {textContent && (
-            <div>
-              <div className="relative">
+            <div className="min-w-0 w-full overflow-hidden">
+              <div className="relative min-w-0">
                 <div className={showCollapsed ? 'chat-bubble-text chat-bubble-text-closed' : 'chat-bubble-text chat-bubble-text-open'}>
                   {outputParts.map((part, idx) => {
                     if (!part.text) return null;
-                    const cleanText = part.text
-                      .replace(FILE_MARKER_REGEX, '')
-                      .replace(PROJECT_MARKER_REGEX, '')
-                      .replace(REQ_NAME_MARKER_REGEX, '')
-                      .replace(CARD_MARKER_REGEX, '')
-                      .replace(REQ_BREAKDOWN_JSON_REGEX, '')
-                      .replace(REVIEW_REPORT_MARKER_REGEX, '')
-                      .replace(QUESTION_MARKER_REGEX, '')
-                      .trim();
+                    const cleanText = stripAllMarkers(part.text);
                     if (!cleanText) return null;
                     return (
-                      <div key={idx} className="px-5 py-1.5 text-sm break-words">
+                      <div key={idx} className="px-5 py-1.5 text-sm break-words min-w-0">
                         <MarkdownView content={cleanText} collapsible={false} />
                       </div>
                     );

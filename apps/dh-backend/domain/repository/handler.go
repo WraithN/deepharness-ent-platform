@@ -3,6 +3,7 @@ package repository
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/object"
@@ -104,6 +105,10 @@ func RepositoryByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut, http.MethodPatch:
 		var req object.UpdateRepositoryRequest
 		if !handler.DecodeJSONBody(w, r, &req) {
+			return
+		}
+		if req.URL != "" && !gitrepo.IsValidGitURL(req.URL) {
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid git URL format, supported: https://, ssh://, git@host:path, git://")
 			return
 		}
 		if req.Type != "" && !isValidRepoType(req.Type) {
@@ -475,4 +480,89 @@ func SyncUserRepo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte(`{"status":"accepted"}`))
+}
+
+// SetRemoteURL 处理 POST /api/v1/workspaces/{id}/repositories/{repoId}/remote。
+// 设置仓库远程 origin URL 并同步更新本地仓库 remote。
+func SetRemoteURL(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	repoID, ok := handler.PathValueOr404(w, r, "repoId")
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
+		return
+	}
+
+	var req object.SetRemoteURLRequest
+	if !handler.DecodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.URL == "" || !gitrepo.IsValidGitURL(req.URL) {
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid git URL format, supported: https://, ssh://, git@host:path, git://")
+		return
+	}
+
+	userID, _ := middleware.UserIDFromContext(r.Context())
+	if err := defaultService.SetRemoteURL(workspaceID, repoID, userID, req.URL); err != nil {
+		handler.HandleServiceError(w, err, "repository not found", "failed to set remote URL")
+		return
+	}
+	handler.SetJSONHeader(w)
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
+// PushRepository 处理 POST /api/v1/workspaces/{id}/repositories/{repoId}/push。
+// 推送仓库当前分支到远程 origin。
+func PushRepository(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	repoID, ok := handler.PathValueOr404(w, r, "repoId")
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
+		return
+	}
+
+	userID, _ := middleware.UserIDFromContext(r.Context())
+	if err := defaultService.Push(workspaceID, repoID, userID); err != nil {
+		handler.HandleServiceError(w, err, "repository not found", "failed to push repository")
+		return
+	}
+	handler.SetJSONHeader(w)
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
+// UnpushedCommits 处理 GET /api/v1/workspaces/{id}/repositories/{repoId}/unpushed。
+// 返回本地仓库尚未推送到远程的提交数量。
+func UnpushedCommits(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := handler.PathValueOr404(w, r, "id")
+	if !ok {
+		return
+	}
+	repoID, ok := handler.PathValueOr404(w, r, "repoId")
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		handler.WriteJSONError(w, http.StatusMethodNotAllowed, handler.ErrCodeGeneral, "method not allowed")
+		return
+	}
+
+	userID, _ := middleware.UserIDFromContext(r.Context())
+	count, err := defaultService.GetUnpushedCommits(workspaceID, repoID, userID)
+	if err != nil {
+		handler.HandleServiceError(w, err, "repository not found", "failed to get unpushed commits")
+		return
+	}
+	handler.SetJSONHeader(w)
+	w.Write([]byte(fmt.Sprintf(`{"count":%d}`, count)))
 }

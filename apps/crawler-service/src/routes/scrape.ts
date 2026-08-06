@@ -23,23 +23,30 @@ export default async function scrapeRoutes(app: FastifyInstance) {
       includeLinks: body.includeLinks,
     });
 
-    // 2. Firecrawl 负责结构化提取；失败则使用 Playwright 兜底 markdown。
+    // 2. Firecrawl 负责结构化提取；传入 cookies 保持登录态，waitFor 支持 SPA 渲染。
     const firecrawlResult = await scrapeWithFirecrawl(pageResult.url, {
       maxPages: body.maxPages,
       includeLinks: body.includeLinks,
+      cookies: body.cookies,
     });
+
+    // 智能合并：优先使用内容更丰富的 markdown。
+    // SPA 场景下 Firecrawl 可能返回空或极少内容，此时应回退到 Playwright 渲染结果。
+    const fcMd = firecrawlResult?.markdown ?? "";
+    const pwMd = pageResult.markdown;
+    const useFirecrawl = fcMd.length >= pwMd.length * 0.5;
 
     const response: ScrapeResponse = {
       url: pageResult.url,
       title: firecrawlResult?.title || pageResult.title,
-      markdown: firecrawlResult?.markdown || pageResult.markdown,
+      markdown: useFirecrawl ? fcMd : pwMd,
       text: pageResult.text,
       html: body.outputFormat === "html" ? pageResult.html : undefined,
       links: body.includeLinks ? (firecrawlResult?.links ?? pageResult.links) : [],
       screenshot: pageResult.screenshot,
       metadata: {
         pageCount: firecrawlResult?.pageCount ?? 1,
-        crawlSource: firecrawlResult ? "firecrawl" : "playwright",
+        crawlSource: useFirecrawl && firecrawlResult ? "firecrawl" : "playwright",
       },
     };
 

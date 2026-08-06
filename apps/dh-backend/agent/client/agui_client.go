@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -114,7 +114,7 @@ func (c *AGUIClient) AttachAgent(ctx context.Context, threadID string, force boo
 func (c *AGUIClient) attachAgentWithKey(ctx context.Context, threadID string, force bool, pluginKey string, workspace string) error {
 	body, _ := json.Marshal(map[string]any{
 		"agent_key":      pluginKey,
-		"name":           pluginKey + "-" + uuid.New().String()[:8],
+		"name":           pluginKey + "-" + idutil.GenerateShortID(),
 		"work_directory": workspace,
 		"force":          force,
 	})
@@ -182,7 +182,7 @@ func (c *AGUIClient) ForgetThread(threadID string) {
 func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string, <-chan agui.Event, error) {
 	runStart := time.Now()
 	if input.RunID == "" {
-		input.RunID = uuid.New().String()
+		input.RunID = idutil.GenerateID()
 	}
 
 	log.Printf("[AGUIClient] >>> Run ENTER run=%s threadId=%q agentKeyInput=%q workspace=%q msgCount=%d toolsCount=%d contextCount=%d",
@@ -369,6 +369,7 @@ func (c *AGUIClient) doChatRequest(ctx context.Context, url string, body []byte,
 // gatewayd 两种 session 丢失回包格式：
 //   - {"error":"session not found"}   (旧格式)
 //   - {"error":"session <session_id>"} (新格式，含 session ID)
+//
 // 后者不含 "not found" 字样，需通过 404 状态码 + session 关键字综合判断。
 func isSessionNotFound(err error) bool {
 	if err == nil {

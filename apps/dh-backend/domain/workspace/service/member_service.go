@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/sqlutil"
@@ -14,8 +15,48 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
 
+// subRoleSeparator 用于在同一列中分隔多个职能子角色。
+const subRoleSeparator = ","
+
+// formatSubRoles 将多个子角色序列化为逗号分隔字符串；空列表返回空字符串。
+func formatSubRoles(roles []string) string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, r := range roles {
+		r = strings.TrimSpace(r)
+		if r == "" || seen[r] {
+			continue
+		}
+		seen[r] = true
+		out = append(out, r)
+	}
+	return strings.Join(out, subRoleSeparator)
+}
+
+// parseSubRoles 将逗号分隔字符串解析为子角色列表。
+func parseSubRoles(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, subRoleSeparator)
+	seen := make(map[string]bool)
+	var out []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // AddMember 向工作空间添加成员，并分配该空间内唯一的展示 ID（u + 自增序号）。
-func (s *DBWorkspaceService) AddMember(workspaceID, userID, role, subRole string) error {
+func (s *DBWorkspaceService) AddMember(workspaceID, userID, role string, subRoles []string) error {
 	if err := s.workspaceExists(workspaceID); err != nil {
 		return err
 	}
@@ -28,7 +69,7 @@ func (s *DBWorkspaceService) AddMember(workspaceID, userID, role, subRole string
 	_, err = s.db.Exec(`
 		INSERT INTO workspace_members (workspace_id, user_id, display_id, role, sub_role, joined_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
-	`, workspaceID, userID, displayID, role, sqlutil.NullString(subRole), time.Now().UTC())
+	`, workspaceID, userID, displayID, role, sqlutil.NullString(formatSubRoles(subRoles)), time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("add member failed: %w", err)
 	}
@@ -36,7 +77,7 @@ func (s *DBWorkspaceService) AddMember(workspaceID, userID, role, subRole string
 }
 
 // AddMemberByEmail 通过邮箱向工作空间添加成员。
-func (s *DBWorkspaceService) AddMemberByEmail(workspaceID, email, role, subRole string) error {
+func (s *DBWorkspaceService) AddMemberByEmail(workspaceID, email, role string, subRoles []string) error {
 	var userID string
 	err := s.db.QueryRow(`SELECT id FROM users WHERE email = $1`, email).Scan(&userID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -45,7 +86,7 @@ func (s *DBWorkspaceService) AddMemberByEmail(workspaceID, email, role, subRole 
 	if err != nil {
 		return fmt.Errorf("resolve user by email failed: %w", err)
 	}
-	return s.AddMember(workspaceID, userID, role, subRole)
+	return s.AddMember(workspaceID, userID, role, subRoles)
 }
 
 // ListMembers 返回工作空间成员列表，并关联 users 表获取姓名与邮箱。
@@ -69,14 +110,14 @@ func (s *DBWorkspaceService) ListMembers(workspaceID string) ([]workspace.Member
 	result := make([]workspace.Member, 0)
 	for rows.Next() {
 		var m workspace.Member
-		var name, email, subRole, platformRole, displayID sql.NullString
-		if err := rows.Scan(&m.WorkspaceID, &m.UserID, &displayID, &name, &email, &m.Role, &subRole, &platformRole, &m.JoinedAt); err != nil {
+		var name, email, subRoles, platformRole, displayID sql.NullString
+		if err := rows.Scan(&m.WorkspaceID, &m.UserID, &displayID, &name, &email, &m.Role, &subRoles, &platformRole, &m.JoinedAt); err != nil {
 			return nil, fmt.Errorf("scan member failed: %w", err)
 		}
 		m.DisplayID = sqlutil.ScanNullString(displayID)
 		m.Name = sqlutil.ScanNullString(name)
 		m.Email = sqlutil.ScanNullString(email)
-		m.SubRole = sqlutil.ScanNullString(subRole)
+		m.SubRoles = parseSubRoles(sqlutil.ScanNullString(subRoles))
 		m.PlatformRole = sqlutil.ScanNullString(platformRole)
 		if m.PlatformRole == "" {
 			m.PlatformRole = string(identity.PlatformRoleUser)
@@ -104,27 +145,27 @@ func (s *DBWorkspaceService) GetMemberRole(workspaceID, userID string) (string, 
 	return role, nil
 }
 
-// GetMemberSubRole 返回指定用户在工作空间中的职能子角色。
-func (s *DBWorkspaceService) GetMemberSubRole(ctx context.Context, workspaceID, userID string) (string, error) {
-	var subRole sql.NullString
+// GetMemberSubRoles 返回指定用户在工作空间中的职能子角色列表。
+func (s *DBWorkspaceService) GetMemberSubRoles(ctx context.Context, workspaceID, userID string) ([]string, error) {
+	var subRoles sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT sub_role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2
-	`, workspaceID, userID).Scan(&subRole)
+	`, workspaceID, userID).Scan(&subRoles)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("%w", common.ErrMemberNotFound)
+		return nil, fmt.Errorf("%w", common.ErrMemberNotFound)
 	}
 	if err != nil {
-		return "", fmt.Errorf("get member sub role failed: %w", err)
+		return nil, fmt.Errorf("get member sub roles failed: %w", err)
 	}
-	return sqlutil.ScanNullString(subRole), nil
+	return parseSubRoles(sqlutil.ScanNullString(subRoles)), nil
 }
 
 // UpdateMemberRole 更新工作空间成员的角色与职能。
-func (s *DBWorkspaceService) UpdateMemberRole(workspaceID, userID, role, subRole string) error {
+func (s *DBWorkspaceService) UpdateMemberRole(workspaceID, userID, role string, subRoles []string) error {
 	res, err := s.db.Exec(`
 		UPDATE workspace_members SET role = $1, sub_role = $2
 		WHERE workspace_id = $3 AND user_id = $4
-	`, role, sqlutil.NullString(subRole), workspaceID, userID)
+	`, role, sqlutil.NullString(formatSubRoles(subRoles)), workspaceID, userID)
 	if err != nil {
 		return fmt.Errorf("update member role failed: %w", err)
 	}

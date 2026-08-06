@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/productspace/object"
-	"github.com/google/uuid"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
 // ServeFile 按相对路径从产品空间文件系统读取文件，返回内容（不修改）与 MIME 类型。
@@ -124,7 +124,7 @@ func (s *DBProductSpaceService) CreatePrototypeShare(ctx context.Context, worksp
 	_, err = s.db.Exec(
 		`INSERT INTO product_prototype_shares (id, token, workspace_id, user_id, product_folder, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		uuid.NewString(), token, workspaceID, userID, folder, now,
+		idutil.GenerateID(), token, workspaceID, userID, folder, now,
 	)
 	if err != nil {
 		return object.PrototypeShare{}, fmt.Errorf("create prototype share failed: %w", err)

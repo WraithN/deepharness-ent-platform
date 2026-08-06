@@ -1,9 +1,9 @@
 import React from 'react';
-import { Bot, CheckCircle2, FileCheck, FileText, Layers, Users } from 'lucide-react';
+import { ArrowLeft, Bot, CheckCircle2, ChevronRight, FileCheck, FileText, Layers, Users } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { FlowGraph } from '@/components/FlowGraph';
 import {
   STAGE_NAMES,
@@ -15,7 +15,7 @@ import {
 
 // ── 类型定义 ──
 
-type TemplateType = 'ai_dev' | 'auto_test' | 'product';
+type TemplateType = 'ai_dev' | 'auto_test_asset' | 'auto_test_execution' | 'product';
 
 interface StageDetail {
   name: string;
@@ -205,22 +205,19 @@ const AI_DEV_TEMPLATE: FlowTemplate = {
   ],
 };
 
-// ── 智能化测试流程模板 ──
+// ── 智能化测试资产流程模板 ──
 
-const AUTO_TEST_TEMPLATE: FlowTemplate = {
-  id: 'auto_test',
-  name: '智能化需求测试流程',
-  description: '从测试需求到准入评审的智能化测试流水线，AI 负责测试计划、用例生成与自动执行，人工负责关键评审与缺陷确认。',
-  type: 'auto_test',
+const AUTO_TEST_ASSET_TEMPLATE: FlowTemplate = {
+  id: 'auto_test_asset',
+  name: '智能化测试资产流程',
+  description: '聚焦测试资产产出：从测试需求到测试用例评审，AI 负责测试计划设计与用例生成，人工负责关键方案与用例评审。',
+  type: 'auto_test_asset',
   stages: [
     buildHumanStage(STAGE_NAMES.TEST_REQUIREMENT, '测试需求'),
     buildAIStage(STAGE_NAMES.TEST_PLAN_DESIGN, '测试计划设计', '测试助理'),
     buildJudgeStage(STAGE_NAMES.TEST_PLAN_REVIEW, '测试计划评审'),
     buildAIStage(STAGE_NAMES.TEST_CASE_GEN, '测试用例生成', '测试助理'),
     buildJudgeStage(STAGE_NAMES.TEST_CASE_REVIEW, '用例评审'),
-    buildAIStage(STAGE_NAMES.TEST_AUTO_EXEC, '自动化执行', '测试助理'),
-    buildAIStage(STAGE_NAMES.TEST_DEFECT_VERIFY, '缺陷验证', '测试助理'),
-    buildJudgeStage(STAGE_NAMES.TEST_ADMISSION_REVIEW, '准入评审'),
     buildHumanStage(STAGE_NAMES.TEST_COMPLETE, '测试完成'),
   ],
   stageDetails: [
@@ -263,11 +260,60 @@ const AUTO_TEST_TEMPLATE: FlowTemplate = {
       deliverables: '评审结论：通过 / 不通过',
     },
     {
+      name: STAGE_NAMES.TEST_COMPLETE,
+      description: '测试资产已就绪，可交付测试执行流程。',
+      responsibleRule: '测试负责人归档确认',
+      admission: '测试计划与用例已通过评审',
+      deliverables: '最终测试资产包',
+    },
+  ],
+  responsibleRules: [
+    { role: '产品经理/测试负责人', items: ['测试需求确认'] },
+    { role: 'AI 测试助理 + 人工', items: ['测试计划与用例生成及评审'] },
+    { role: '测试负责人', items: ['测试资产归档'] },
+  ],
+  aiCapabilities: [
+    { role: 'AI 测试助理', items: ['自动生成测试计划与用例'] },
+  ],
+  admissions: [
+    '已具备待测需求或可测代码',
+    '测试计划与用例已通过评审',
+  ],
+  deliverables: [
+    '测试计划',
+    '测试用例集合',
+  ],
+};
+
+// ── 智能化测试执行流程模板 ──
+
+const AUTO_TEST_EXECUTION_TEMPLATE: FlowTemplate = {
+  id: 'auto_test_execution',
+  name: '智能化测试执行流程',
+  description: '聚焦测试执行与闭环：在测试资产就绪后，AI 自动执行测试、分析缺陷并生成报告，人工负责准入评审。',
+  type: 'auto_test_execution',
+  stages: [
+    buildHumanStage(STAGE_NAMES.TEST_REQUIREMENT, '测试需求'),
+    buildAIStage(STAGE_NAMES.TEST_AUTO_EXEC, '自动化执行', '测试助理'),
+    buildAIStage(STAGE_NAMES.TEST_DEFECT_VERIFY, '缺陷验证', '测试助理'),
+    buildJudgeStage(STAGE_NAMES.TEST_ADMISSION_REVIEW, '准入评审'),
+    buildHumanStage(STAGE_NAMES.TEST_COMPLETE, '测试完成'),
+  ],
+  stageDetails: [
+    {
+      name: STAGE_NAMES.TEST_REQUIREMENT,
+      description: '明确本次执行的测试范围与目标。',
+      responsibleRule: '测试负责人确认需求',
+      aiCapability: '测试点与验收条件提取',
+      admission: '已具备测试资产或可测代码',
+      deliverables: '测试执行需求清单',
+    },
+    {
       name: STAGE_NAMES.TEST_AUTO_EXEC,
       description: 'AI 自动执行测试并收集结果。',
       responsibleRule: 'AI 测试助理执行',
       aiCapability: '自动化测试、日志采集、覆盖率',
-      admission: '用例已通过评审',
+      admission: '测试资产已通过评审',
       deliverables: '测试执行报告',
     },
     {
@@ -282,34 +328,30 @@ const AUTO_TEST_TEMPLATE: FlowTemplate = {
       name: STAGE_NAMES.TEST_ADMISSION_REVIEW,
       description: '人工评估是否满足发布准入条件。',
       responsibleRule: '测试/发布负责人审批',
-      admission: '报告已产出',
+      admission: '缺陷已分析',
       deliverables: '准入评审结论',
     },
     {
       name: STAGE_NAMES.TEST_COMPLETE,
-      description: '测试结束，输出完整产物。',
+      description: '测试执行结束，输出完整报告。',
       responsibleRule: '测试负责人归档确认',
       admission: '准入评审通过',
       deliverables: '最终测试报告',
     },
   ],
   responsibleRules: [
-    { role: '产品经理/测试负责人', items: ['测试需求确认'] },
-    { role: 'AI 测试助理 + 人工', items: ['测试计划与用例生成及评审'] },
-    { role: 'AI 测试助理', items: ['测试执行与缺陷分析'] },
+    { role: '产品经理/测试负责人', items: ['测试执行需求确认'] },
+    { role: 'AI 测试助理', items: ['自动化测试执行', '缺陷分析与定位'] },
     { role: '测试负责人/发布负责人', items: ['准入评审'] },
   ],
   aiCapabilities: [
-    { role: 'AI 测试助理', items: ['自动生成测试计划与用例', '自动化执行测试并采集结果', '失败分析与缺陷定位'] },
+    { role: 'AI 测试助理', items: ['自动化执行测试并采集结果', '失败分析与缺陷定位'] },
   ],
   admissions: [
-    '已具备待测需求或可测代码',
-    '测试计划与用例已通过评审',
+    '已具备测试资产或可测代码',
     '自动化执行完成且缺陷已分析',
   ],
   deliverables: [
-    '测试计划',
-    '测试用例集合',
     '测试执行报告',
     '缺陷分析报告',
     '最终测试报告',
@@ -343,17 +385,17 @@ const PRODUCT_TEMPLATE: FlowTemplate = {
       aiCapability: '需求发散、要点提取、结构化',
       admission: '已提出原始需求',
       deliverables: '结构化需求要点文档',
-      command: '/brainstorm',
+      command: '/grill-me',
     },
     {
       name: STAGE_NAMES.PRODUCT_RESEARCH,
-      description: 'AI 进行方案调研与选型，输出备选方案对比。',
-      input: '已确认的结构化需求要点。',
-      processing: 'AI 检索业务方案、识别约束、对比备选方案。',
+      description: '输入目标网址，AI 自动爬取网站并产出产品分析、功能列表、UI 设计与高仿原型。',
+      input: '目标网站 URL + 可选登录凭证。',
+      processing: 'AI 爬取网站内容，分析产品功能与 UI 设计，生成分析文档与原型工程。',
       responsibleRule: 'AI 产品助理执行，产品经理审核',
-      aiCapability: '方案检索、约束识别、选型对比',
-      admission: '需求要点已确认',
-      deliverables: '业务方案、技术约束、备选方案对比',
+      aiCapability: '网站爬取、产品分析、UI 还原、原型生成',
+      admission: '用户提供目标网址',
+      deliverables: '产品分析文档、功能列表、design.md、原型工程',
       command: '/prd-research',
     },
     {
@@ -445,17 +487,12 @@ const PRODUCT_TEMPLATE: FlowTemplate = {
 
 const TEMPLATES: Record<TemplateType, FlowTemplate> = {
   ai_dev: AI_DEV_TEMPLATE,
-  auto_test: AUTO_TEST_TEMPLATE,
+  auto_test_asset: AUTO_TEST_ASSET_TEMPLATE,
+  auto_test_execution: AUTO_TEST_EXECUTION_TEMPLATE,
   product: PRODUCT_TEMPLATE,
 };
 
-const TEMPLATE_ORDER: TemplateType[] = ['product', 'ai_dev', 'auto_test'];
-
-const TEMPLATE_TAB_LABELS: Record<TemplateType, string> = {
-  ai_dev: '研发流程',
-  auto_test: '测试流程',
-  product: '产品流程',
-};
+const TEMPLATE_ORDER: TemplateType[] = ['product', 'ai_dev', 'auto_test_asset', 'auto_test_execution'];
 
 // ── 子组件 ──
 
@@ -509,7 +546,9 @@ function TemplateOverview({ template }: { template: FlowTemplate }) {
     <Card className="border border-border/50 soft-shadow mb-6">
       <CardHeader>
         <div className="flex items-center gap-2 mb-1">
-          <Badge variant="secondary">{template.type === 'ai_dev' ? '研发人员' : template.type === 'auto_test' ? '测试人员' : '产品经理'}</Badge>
+          <Badge variant="secondary">
+            {template.type === 'ai_dev' ? '研发人员' : template.type.startsWith('auto_test') ? '测试人员' : '产品经理'}
+          </Badge>
         </div>
         <CardTitle className="text-lg">{template.name}</CardTitle>
         <CardDescription>{template.description}</CardDescription>
@@ -586,7 +625,52 @@ function TemplateStageTable({ template, selectedStage }: { template: FlowTemplat
   );
 }
 
-function TemplateDetail({ template }: { template: FlowTemplate }) {
+function TemplateList({ templates, onSelect }: { templates: FlowTemplate[]; onSelect: (t: FlowTemplate) => void }) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {templates.map(template => (
+        <Card
+          key={template.id}
+          className="border border-border/50 soft-shadow cursor-pointer transition-shadow hover:shadow-md"
+          onClick={() => onSelect(template)}
+        >
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between gap-2">
+              <Badge variant="secondary">
+                {template.type === 'ai_dev' ? '研发人员' : template.type.startsWith('auto_test') ? '测试人员' : '产品经理'}
+              </Badge>
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <CardTitle className="text-lg mt-2">{template.name}</CardTitle>
+            <CardDescription className="line-clamp-2">{template.description}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-2 text-sm text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <Users className="h-3.5 w-3.5 text-emerald-500" />
+                <span>{template.responsibleRules.length} 个责任角色</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Bot className="h-3.5 w-3.5 text-blue-500" />
+                <span>{template.aiCapabilities.length} 项 AI 能力</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <FileCheck className="h-3.5 w-3.5 text-amber-500" />
+                <span>{template.admissions.length} 条准入条件</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <FileText className="h-3.5 w-3.5 text-purple-500" />
+                <span>{template.deliverables.length} 个交付物</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function TemplateDetail({ template, onBack }: { template: FlowTemplate; onBack: () => void }) {
   const [selectedStage, setSelectedStage] = React.useState<string | undefined>();
 
   const handleStageClick = (name: string) => {
@@ -597,6 +681,16 @@ function TemplateDetail({ template }: { template: FlowTemplate }) {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <Button variant="outline" size="sm" className="gap-1" onClick={onBack}>
+          <ArrowLeft className="h-4 w-4" />
+          返回列表
+        </Button>
+        <div>
+          <h3 className="text-lg font-semibold">{template.name}</h3>
+          <p className="text-sm text-muted-foreground">{template.description}</p>
+        </div>
+      </div>
       <TemplateOverview template={template} />
       <Card className="border border-border/50 soft-shadow">
         <CardHeader>
@@ -615,23 +709,13 @@ function TemplateDetail({ template }: { template: FlowTemplate }) {
 // ── 页面组件 ──
 
 export const FlowTemplateMarketContent: React.FC = () => {
-  const [activeTab, setActiveTab] = React.useState<TemplateType>('product');
+  const [selectedTemplate, setSelectedTemplate] = React.useState<TemplateType | null>(null);
 
-  return (
-    <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TemplateType)} className="w-full">
-      <TabsList className="mb-4">
-        {TEMPLATE_ORDER.map(type => (
-          <TabsTrigger key={type} value={type}>
-            {TEMPLATE_TAB_LABELS[type]}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-      {/* 仅渲染当前激活的 Tab，避免非激活流程图在隐藏容器内初始化导致渲染异常。 */}
-      <TabsContent value={activeTab}>
-        <TemplateDetail template={TEMPLATES[activeTab]} />
-      </TabsContent>
-    </Tabs>
-  );
+  if (selectedTemplate) {
+    return <TemplateDetail template={TEMPLATES[selectedTemplate]} onBack={() => setSelectedTemplate(null)} />;
+  }
+
+  return <TemplateList templates={TEMPLATE_ORDER.map(type => TEMPLATES[type])} onSelect={t => setSelectedTemplate(t.id)} />;
 };
 
 export const FlowTemplateMarket: React.FC = () => {
@@ -640,7 +724,7 @@ export const FlowTemplateMarket: React.FC = () => {
       <div className="border-b border-border/50 pb-4">
         <h2 className="text-2xl font-bold tracking-tight">流程模板市场</h2>
         <p className="text-muted-foreground mt-1">
-          标准流水线知识库：浏览平台预置的智能化需求产品 / 研发 / 测试流程模板，无需发起任务即可查看完整链路与节点说明。
+          标准流水线知识库：浏览平台预置的智能化需求产品 / 研发 / 测试流程模板，点击卡片查看完整链路与节点说明。
         </p>
       </div>
       <FlowTemplateMarketContent />

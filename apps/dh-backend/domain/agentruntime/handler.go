@@ -55,6 +55,13 @@ func ReportStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 校验上报的 user_id 是否为平台注册用户，非平台用户直接拒绝。
+	if req.UserID != "" && !identity.UserExists(req.UserID) {
+		handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden,
+			"user not registered on platform: "+req.UserID)
+		return
+	}
+
 	rt, err := defaultAgentRuntimeService.ReportStatus(runtimeID, req)
 	if err != nil {
 		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
