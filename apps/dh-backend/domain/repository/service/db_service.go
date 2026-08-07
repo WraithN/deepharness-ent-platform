@@ -249,11 +249,24 @@ func (s *DBRepositoryService) Delete(workspaceID, repoID string) error {
 	return nil
 }
 
-// Sync 手动触发仓库同步，使用操作者的 SSH Key。
+// Sync 手动触发仓库同步，重新从用户 profile 解析 SSH Key（确保配置后即时生效）。
 func (s *DBRepositoryService) Sync(workspaceID, repoID, userID string) error {
 	r, err := s.Get(workspaceID, repoID)
 	if err != nil {
 		return err
+	}
+	// 重新解析 SSH Key 并更新仓库记录，修复创建时未配置 Key 的场景
+	sshKey, _ := s.resolveSSHKey(userID)
+	if sshKey != "" {
+		r.SSHKey = sshKey
+		if encKey, encErr := crypto.Encrypt(sshKey, s.encryptionKey); encErr == nil {
+			s.db.Exec(`UPDATE repositories SET ssh_key = $1, updated_at = $2 WHERE id = $3`, encKey, time.Now().UTC(), r.ID)
+		}
+	}
+	// 修复 local_path 为空（创建时缺少 Auth 中间件导致 userID 为空，DefaultLocalPath 返回空）
+	if r.LocalPath == "" && userID != "" {
+		r.LocalPath = s.gitClient.DefaultLocalPath(userID, workspaceID, r.Name)
+		s.db.Exec(`UPDATE repositories SET local_path = $1, updated_at = $2 WHERE id = $3`, r.LocalPath, time.Now().UTC(), r.ID)
 	}
 	safego.Go("repo-sync-manual", func() { s.syncRepository(r, r.SSHKey) })
 	return nil
