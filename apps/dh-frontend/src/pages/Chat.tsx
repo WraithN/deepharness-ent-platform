@@ -93,6 +93,7 @@ import { SUB_ROLE, type SubRole } from '@/lib/role-constants';
 import { teamApi } from '@/lib/team-api';
 import { cn } from '@/lib/utils';
 import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
+import { addSessionToHistory, getSessionHistory, removeSessionFromHistory, syncSessionHistory } from '@/lib/session-history-cache';
 import { workspaceApi } from '@/lib/workspace-api';
 import type { AvailableAgent, PromptCategory, Skill, WorkspaceAgent, WorkspaceAgentConfig, WorkspacePrompt } from '@/types';
 
@@ -1177,10 +1178,13 @@ export const Chat: React.FC = () => {
   const detailOpen = detailType !== null;
   const kanbanOpen = kanbanType !== null;
 
-  // Auto-scroll: scroll to bottom when new messages arrive (if locked)
+  // Auto-scroll: scroll to bottom when new messages arrive (if locked).
+  // 直接操作 ScrollArea viewport，避免 scrollIntoView 波及外层容器导致输入框位移。
   useEffect(() => {
-    if (isAtBottom && messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
+    if (!isAtBottom) return;
+    const viewport = document.querySelector('#chat-scroll-area [data-radix-scroll-area-viewport]') as HTMLDivElement | null;
+    if (viewport) {
+      viewport.scrollTop = viewport.scrollHeight;
     }
   }, [messages, isAtBottom]);
 
@@ -2227,7 +2231,7 @@ export const Chat: React.FC = () => {
     const workspaceId = getCurrentWorkspaceId();
     try {
       const list = await api.get<(AgentSessionDTO & { context?: Record<string, unknown> })[]>(`/v1/sessions?workspaceId=${encodeURIComponent(workspaceId)}`);
-      setHistoryList(list.map(s => {
+      const mapped = list.map(s => {
         const pluginKey = typeof s.context?.pluginKey === 'string' ? s.context.pluginKey : (s.agentId || 'claude-code');
         const instanceId = typeof s.context?.instanceId === 'string' ? s.context.instanceId : undefined;
         return {
@@ -2238,7 +2242,16 @@ export const Chat: React.FC = () => {
           pluginKey,
           instanceId,
         };
-      }));
+      });
+      setHistoryList(mapped);
+      // 同步会话缓存，供方向键快速切换使用
+      syncSessionHistory(workspaceId, list.map(s => ({
+        sessionId: s.id,
+        pluginKey: typeof s.context?.pluginKey === 'string' ? s.context.pluginKey : (s.agentId || 'claude-code'),
+        title: formatSessionTitle(s, availableAgentOptions),
+        instanceId: typeof s.context?.instanceId === 'string' ? s.context.instanceId : undefined,
+        updatedAt: s.updatedAt ? new Date(s.updatedAt).getTime() : Date.now(),
+      })));
     } catch (err) {
       console.warn('[Chat] load history failed:', err);
     }
@@ -2264,6 +2277,41 @@ export const Chat: React.FC = () => {
 
     const finish = () => setIsInitializingChat(false);
 
+    // 新建默认会话流程：先尝试恢复 localStorage session，再创建新 session
+    const initNewSession = async () => {
+      const defaultKey = resolveDefaultAgentKey(workspaceAgentConfigs, availableAgentOptions);
+      if (!defaultKey) {
+        toast.error('空间管理员没有配置智能体，请联系空间管理员。');
+        return;
+      }
+      const savedId = await tryRestoreSession();
+      if (savedId) {
+        const tab: AgentTab = {
+          sessionId: savedId,
+          pluginKey: defaultKey,
+          title: getAgentLabel(defaultKey, availableAgentOptions),
+          instanceId: '',
+          status: 'idle',
+        };
+        setAgentTabs([tab]);
+        setActiveAgentTabId(savedId);
+        return;
+      }
+      const result = await createSession(defaultKey);
+      if (result) {
+        const tab: AgentTab = {
+          sessionId: result.sessionId,
+          pluginKey: defaultKey,
+          title: getAgentLabel(defaultKey, availableAgentOptions),
+          instanceId: result.instanceId,
+          status: 'idle',
+        };
+        setAgentTabs([tab]);
+        setActiveAgentTabId(result.sessionId);
+      }
+    };
+
+    // 优先从 localStorage 恢复已保存的 tab 列表；会话失效时清除旧 tab 并新建
     if (savedTabsRaw) {
       try {
         const savedTabs = JSON.parse(savedTabsRaw) as AgentTab[];
@@ -2275,7 +2323,12 @@ export const Chat: React.FC = () => {
               : validTabs[0].sessionId;
             setAgentTabs(validTabs);
             setActiveAgentTabId(activeId);
-            switchSession(activeId).catch(() => {}).finally(finish);
+            switchSession(activeId).catch(() => {
+              // 会话不存在（后端重启等），清除旧 tab 并新建会话
+              localStorage.removeItem(getChatTabsStorageKey(workspaceId));
+              localStorage.removeItem(getChatActiveTabStorageKey(workspaceId));
+              return initNewSession();
+            }).finally(finish);
             return;
           }
         }
@@ -2284,44 +2337,7 @@ export const Chat: React.FC = () => {
       }
     }
 
-    const defaultKey = resolveDefaultAgentKey(workspaceAgentConfigs, availableAgentOptions);
-    if (!defaultKey) {
-      toast.error('空间管理员没有配置智能体，请联系空间管理员。');
-      finish();
-      return;
-    }
-
-    tryRestoreSession().then(savedId => {
-      if (savedId) {
-        const tab: AgentTab = {
-          sessionId: savedId,
-          pluginKey: defaultKey,
-          title: getAgentLabel(defaultKey, availableAgentOptions),
-          instanceId: '',
-          status: 'idle',
-        };
-        setAgentTabs([tab]);
-        setActiveAgentTabId(savedId);
-        finish();
-        return;
-      }
-      createSession(defaultKey).then(result => {
-        if (!result) {
-          finish();
-          return;
-        }
-        const tab: AgentTab = {
-          sessionId: result.sessionId,
-          pluginKey: defaultKey,
-          title: getAgentLabel(defaultKey, availableAgentOptions),
-          instanceId: result.instanceId,
-          status: 'idle',
-        };
-        setAgentTabs([tab]);
-        setActiveAgentTabId(result.sessionId);
-        finish();
-      });
-    });
+    initNewSession().finally(finish);
   }, [availableAgentsLoaded, availableAgentOptions, switchSession, workspaceAgentConfigs, createSession, tryRestoreSession]);
 
   const sessionFromQuery = searchParams.get('session');
@@ -2429,6 +2445,7 @@ export const Chat: React.FC = () => {
     const doClose = async () => {
       const remaining = agentTabs.filter(t => t.sessionId !== tab.sessionId);
       setAgentTabs(remaining);
+      removeSessionFromHistory(getCurrentWorkspaceId(), tab.sessionId);
       api.delete(`/v1/sessions/${tab.sessionId}`)
         .then(() => loadHistory())
         .catch(err => {
@@ -2503,6 +2520,78 @@ export const Chat: React.FC = () => {
       loadHistory();
     }, `新增：${getAgentLabel(pluginKey, availableAgentOptions)}`);
   }, [createSession, loadHistory, runIfIdleOrConfirm]);
+
+  // 按 sessionId 打开会话：已开为 tab 则切换，否则新建 tab 并切换。
+  // 供历史下拉点击和方向键快捷切换复用。
+  const openSessionById = useCallback((sid: string, pluginKey: string, title: string, instanceId?: string) => {
+    const existing = agentTabs.find(t => t.sessionId === sid);
+    if (existing) {
+      switchAgentTab(existing);
+      return;
+    }
+    runIfIdleOrConfirm(() => {
+      const tab: AgentTab = { sessionId: sid, pluginKey, title, instanceId, status: 'idle' };
+      setAgentTabs(prev => [...prev, tab]);
+      setActiveAgentTabId(sid);
+      switchSession(sid);
+    }, `切换到：${title}`);
+  }, [agentTabs, runIfIdleOrConfirm, switchAgentTab, switchSession]);
+
+  // 方向键快捷切换：从缓存读取最近 20 条会话，按 ↑/↓ 导航。
+  const navigateSession = useCallback((direction: 'up' | 'down') => {
+    const workspaceId = getCurrentWorkspaceId();
+    const history = getSessionHistory(workspaceId);
+    if (history.length === 0) return;
+    const currentIdx = history.findIndex(h => h.sessionId === sessionId);
+    let nextIdx: number;
+    if (currentIdx === -1) {
+      nextIdx = 0;
+    } else if (direction === 'up') {
+      nextIdx = currentIdx > 0 ? currentIdx - 1 : history.length - 1;
+    } else {
+      nextIdx = currentIdx < history.length - 1 ? currentIdx + 1 : 0;
+    }
+    const target = history[nextIdx];
+    openSessionById(target.sessionId, target.pluginKey, target.title, target.instanceId);
+  }, [sessionId, openSessionById]);
+
+  // 全局方向键监听：非输入态、无弹窗时 ↑/↓ 切换会话。
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        navigateSession('up');
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        navigateSession('down');
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [navigateSession]);
+
+  // 当前会话变更时记录到缓存（供方向键导航和历史排序）。
+  useEffect(() => {
+    if (!sessionId) return;
+    const tab = agentTabs.find(t => t.sessionId === sessionId);
+    if (!tab) return;
+    try {
+      addSessionToHistory(getCurrentWorkspaceId(), {
+        sessionId: tab.sessionId,
+        pluginKey: tab.pluginKey,
+        title: tab.title,
+        instanceId: tab.instanceId,
+        updatedAt: Date.now(),
+      });
+    } catch {
+      // workspaceId 未就绪时忽略
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
 
   // Derive task counts
   const allTasks = [...requirements, ...defects, ...cases];
@@ -3048,6 +3137,7 @@ export const Chat: React.FC = () => {
                           autoFocus
                         />
                       </div>
+                      <div className="mt-1 px-1 text-[10px] text-muted-foreground">↑↓ 快速切换会话</div>
                     </div>
                     <div className="max-h-60 overflow-y-auto p-1">
                       {filteredHistory.length === 0 && (
@@ -3059,25 +3149,7 @@ export const Chat: React.FC = () => {
                           className="group relative w-full flex items-center px-3 py-2 text-sm rounded-lg hover:bg-accent text-left transition-colors cursor-pointer"
                           onClick={() => {
                             setHistoryOpen(false);
-                            const existing = agentTabs.find(t => t.sessionId === h.id);
-                            if (existing) {
-                              switchAgentTab(existing);
-              return;
-                            }
-                            const pluginKey = h.pluginKey || 'claude-code';
-                            runIfIdleOrConfirm(() => {
-                              const tab: AgentTab = {
-                                sessionId: h.id,
-                                pluginKey,
-                                title: getAgentLabel(pluginKey, availableAgentOptions),
-                                instanceId: h.instanceId,
-                                status: 'idle',
-                              };
-                              setAgentTabs(prev => [...prev, tab]);
-                              setActiveAgentTabId(h.id);
-                              switchSession(h.id);
-
-                            }, `打开历史：${h.title}`);
+                            openSessionById(h.id, h.pluginKey || 'claude-code', h.title, h.instanceId);
                           }}
                         >
                           <div className="flex-1 min-w-0">

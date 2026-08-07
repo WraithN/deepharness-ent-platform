@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/orchestrator/prompts"
 	workitemservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/orchestrator/prompts"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workitem"
 )
 
@@ -242,7 +242,13 @@ func applyPromptCommonToMessages(messages []agui.Message, workspacePath string) 
 // applyCommandConfig 将单个指令配置应用到指定用户消息索引上。
 // 统一处理模板渲染、任务卡片注入与代码库注入，供 interceptCommands 与意图识别路径复用。
 func applyCommandConfig(messages []agui.Message, idx int, cfg CommandConfig, args, workspacePath, workspaceID string, ctxItems []agui.ContextItem, workItemSvc workitemservice.WorkItemService) (bool, error) {
-	rendered, err := renderTemplate(cfg.Template, args, workspacePath)
+	// comet_flow 开关启用且指令配置了 cometTemplate 时，走 Comet Classic 工作流模板；否则走原 Template。
+	tmpl := cfg.Template
+	if IsCometFlowEnabled() && cfg.CometTemplate != "" {
+		tmpl = cfg.CometTemplate
+		log.Printf("[AGUIHandler] comet flow enabled, using cometTemplate for %s", cfg.Cmd)
+	}
+	rendered, err := renderTemplate(tmpl, args, workspacePath)
 	if err != nil {
 		return false, err
 	}
@@ -332,6 +338,7 @@ func tryInjectTaskCard(messages []agui.Message, idx int, rawText string, ctxItem
 //   - allowTask=true 且有任务卡片 → 注入任务信息
 //   - allowRepos=true 且有代码库 → 注入代码库信息
 //   - allowRepos=false → 忽略代码库（即使前端传了也不注入）
+//
 // workspacePath 用于替换模板中的 {WORKSPACE_PATH}，确保 AI 输出到正确的用户隔离目录。
 // 返回 (true, nil) 表示匹配到了已知斜杠指令；(false, nil) 表示未匹配；
 // 返回 error 表示上下文解析或模板渲染失败，调用方应终止本次 run 并返回错误。
@@ -366,13 +373,20 @@ func interceptCommands(messages []agui.Message, ctxItems []agui.ContextItem, wor
 	return false, nil
 }
 
-// CommandsHandler 处理 GET /api/v1/commands 请求。
-// 返回指令配置列表，供前端动态渲染指令菜单和约束校验。
+// CommandsHandler 处理 /api/v1/commands 请求。
+// GET 返回指令配置列表；POST 创建自定义指令（超管）。
 func CommandsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(GetCommandConfigs()); err != nil {
-		log.Printf("[CommandsHandler] encode failed: %v", err)
-		http.Error(w, `{"code":1,"message":"failed to encode commands"}`, http.StatusInternalServerError)
+	switch r.Method {
+	case http.MethodGet:
+		SetJSONHeader(w)
+		if err := json.NewEncoder(w).Encode(GetCommandConfigs()); err != nil {
+			log.Printf("[CommandsHandler] encode failed: %v", err)
+			WriteJSONError(w, http.StatusInternalServerError, ErrCodeGeneral, "failed to encode commands")
+		}
+	case http.MethodPost:
+		handleCreateCommand(w, r)
+	default:
+		WriteJSONError(w, http.StatusMethodNotAllowed, ErrCodeGeneral, "method not allowed")
 	}
 }
 

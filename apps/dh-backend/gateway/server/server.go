@@ -14,6 +14,8 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	session "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat/session"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/provisioner"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/provisioner/directhost"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/sessionmanager"
 	sessionmanagerservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/sessionmanager/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
@@ -22,13 +24,11 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig"
 	agentconfigservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentruntime"
-	crawlerhandler "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/crawler/handler"
-	crawlerservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/crawler/service"
 	agentruntimeservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentruntime/service"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/provisioner"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/provisioner/directhost"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit"
 	auditservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/audit/service"
+	crawlerhandler "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/crawler/handler"
+	crawlerservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/crawler/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/feishu"
 	feishuservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/feishu/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity"
@@ -139,6 +139,9 @@ const (
 	ROUTE_STATS_TRAILS_BY_SESSION_ID_MESSAGES                                          = API_V1_PREFIX + "/stats/trails/{sessionId}/messages"
 	ROUTE_STATS_REQUIREMENTS                                                           = API_V1_PREFIX + "/stats/requirements"
 	ROUTE_COMMANDS                                                                     = API_V1_PREFIX + "/commands"
+	ROUTE_COMMANDS_BY_CMD                                                              = API_V1_PREFIX + "/commands/{cmd}"
+	ROUTE_FEATURE_FLAGS                                                                = API_V1_PREFIX + "/platform/feature-flags"
+	ROUTE_FEATURE_FLAGS_BY_KEY                                                         = API_V1_PREFIX + "/platform/feature-flags/{key}"
 	ROUTE_PERSONAL_ASSISTANTS                                                          = API_V1_PREFIX + "/personal-assistants"
 	ROUTE_PERSONAL_ASSISTANTS_BY_ID                                                    = API_V1_PREFIX + "/personal-assistants/{id}"
 	ROUTE_PERSONAL_ASSISTANTS_BY_ID_SESSIONS                                           = API_V1_PREFIX + "/personal-assistants/{id}/sessions"
@@ -190,7 +193,7 @@ const (
 	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_STATUS                              = API_V1_PREFIX + "/workspaces/{id}/repositories/{repoId}/status"
 	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_REMOTE                              = API_V1_PREFIX + "/workspaces/{id}/repositories/{repoId}/remote"
 	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_PUSH                                = API_V1_PREFIX + "/workspaces/{id}/repositories/{repoId}/push"
-	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_UNPUSHED                          = API_V1_PREFIX + "/workspaces/{id}/repositories/{repoId}/unpushed"
+	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_UNPUSHED                            = API_V1_PREFIX + "/workspaces/{id}/repositories/{repoId}/unpushed"
 	ROUTE_WORKSPACES_BY_ID_PRODUCT_DOCS                                                = API_V1_PREFIX + "/workspaces/{id}/product-docs"
 	ROUTE_WORKSPACES_BY_ID_PRODUCT_DOCS_BY_DOC_ID                                      = API_V1_PREFIX + "/workspaces/{id}/product-docs/{docId}"
 	ROUTE_WORKSPACES_BY_ID_PRODUCT_DOCS_BY_DOC_ID_VERSIONS                             = API_V1_PREFIX + "/workspaces/{id}/product-docs/{docId}/versions"
@@ -315,6 +318,11 @@ func New(cfg config.Config) (http.Handler, func()) {
 	workspaceHandler := workspace.NewHandler(workspaceService, workspaceService, workspaceService, workspaceService, workspaceService, workspaceService, workspaceService, workspaceService, userService)
 	initPlatformTemplateService(db)
 	initPrototypeTemplateService(db, cfg.WorkspaceRoot)
+	// 注入功能开关 DB 连接，供 comet_flow 开关运行时读取与后台管理。
+	handler.SetFeatureFlagDB(db)
+	// 注入指令 DB 存储与超管校验，供指令 CRUD 管理使用。
+	handler.SetCommandStore(handler.NewCommandStore(db))
+	handler.SetSuperAdminChecker(identity.RequireSuperAdmin)
 	agentRuntimeSvc := initAgentRuntimeService(db, cfg.WorkspaceRoot)
 
 	prov, err := provisioner.NewProvisioner(cfg.AgentProvisioner)
@@ -531,7 +539,11 @@ func New(cfg config.Config) (http.Handler, func()) {
 	mux.Handle(ROUTE_STATS_TRAILS, middleware.Auth(http.HandlerFunc(statsHandler.Trails)))
 	mux.Handle(ROUTE_STATS_TRAILS_BY_SESSION_ID_MESSAGES, middleware.Auth(http.HandlerFunc(statsHandler.TrailMessages)))
 	mux.Handle(ROUTE_STATS_REQUIREMENTS, middleware.Auth(http.HandlerFunc(statsHandler.WorkItemSummary)))
-	mux.HandleFunc(ROUTE_COMMANDS, handler.CommandsHandler)
+	mux.Handle(ROUTE_COMMANDS, middleware.Auth(http.HandlerFunc(handler.CommandsHandler)))
+	mux.Handle(ROUTE_COMMANDS_BY_CMD, middleware.Auth(http.HandlerFunc(handler.CommandByCmdHandler)))
+	// 平台级功能开关（如 comet 流程开关），供后台指令管理页切换。
+	mux.Handle(ROUTE_FEATURE_FLAGS, middleware.Auth(http.HandlerFunc(handler.FeatureFlagsHandler)))
+	mux.Handle(ROUTE_FEATURE_FLAGS_BY_KEY, middleware.Auth(http.HandlerFunc(handler.FeatureFlagByKeyHandler)))
 
 	// Personal assistant module
 	mux.HandleFunc(ROUTE_PERSONAL_ASSISTANTS, personalassistant.Assistants)

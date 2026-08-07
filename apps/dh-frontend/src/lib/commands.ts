@@ -18,6 +18,10 @@ export interface CommandConfig {
   enabled: boolean;
   /** 指令对应的提示词模板（管理端展示用，前端会话页不使用）。 */
   template?: string;
+  /** Comet Classic 工作流模板；comet_flow 开关启用时替代 template。为空表示不接入 Comet。 */
+  cometTemplate?: string;
+  /** 是否为系统内置指令（来自 commands.yaml）；内置指令核心字段不可修改，仅可切换 enabled。 */
+  isBuiltin: boolean;
 }
 
 /** 指令分类（用于按角色分组展示）；other 为未配置分类的兜底。 */

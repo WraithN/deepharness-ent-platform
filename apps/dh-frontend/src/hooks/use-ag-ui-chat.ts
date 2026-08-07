@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useExternalStoreRuntime, useExternalStoreSharedOptions } from '@assistant-ui/core/react';
 import type { AssistantRuntime, ThreadMessageLike } from '@assistant-ui/react';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 import { parseUserStoryFromText } from '@/components/chat/UserStoryCard';
 import { parseRequirementBreakdownFromText } from '@/components/chat/RequirementBreakdownCard';
@@ -1180,15 +1180,21 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
       await restoreSessionMessages(targetSessionId);
       maybeRestoreActiveRun(targetSessionId);
     } catch (err) {
-      console.error('[useAgUiChat] load messages failed:', err);
-      // 会话不属于当前工作区或当前用户时，静默清除旧 session 并创建新会话，不弹窗报错
+      const isSessionNotFound = err instanceof ApiError && err.status === 404 && err.message.includes('session not found');
       const isWorkspaceMismatch = err instanceof Error && err.message.includes('session not in this workspace');
       const isAccessDenied = err instanceof Error && err.message.includes('not allowed to access this session');
+      // 会话不存在（后端重启导致内存会话丢失）：清除旧 session 并重新抛出，让调用方创建新会话
+      if (isSessionNotFound) {
+        const wsId = getCurrentWorkspaceId();
+        localStorage.removeItem(getSessionIdKey(wsId));
+        setMessages([]);
+        throw err;
+      }
+      console.error('[useAgUiChat] load messages failed:', err);
       if (!isWorkspaceMismatch && !isAccessDenied) {
         toast.error('加载会话历史失败');
       }
       if (isAccessDenied) {
-        // 清除属于其他用户的旧 session，避免后续重复触发 403
         const wsId = getCurrentWorkspaceId();
         localStorage.removeItem(getSessionIdKey(wsId));
       }

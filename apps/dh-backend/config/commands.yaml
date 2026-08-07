@@ -372,6 +372,17 @@ commands:
 
       【需求描述】
       {ARGS}
+    cometTemplate: |
+      【语言要求】
+      你的所有回复必须使用中文。
+
+      使用 skill 工具加载 comet-classic skill，将以下任务作为 Comet Classic 工作流输入，交由 comet intent route 判断走 full 流程（open -> design -> build -> verify -> archive）。遵循 comet 状态机与阶段守护脚本，不得跳过验证即声称完成。
+
+      【任务需求】
+      {ARGS}
+
+      【工作目录】
+      {WORKSPACE_PATH}
 
   - cmd: "/debug"
     label: "解BUG"
@@ -399,6 +410,17 @@ commands:
 
       【缺陷描述】
       {ARGS}
+    cometTemplate: |
+      【语言要求】
+      你的所有回复必须使用中文。
+
+      使用 skill 工具加载 comet-hotfix skill，按 Comet Classic 快速修复预设路径（open -> build -> verify -> archive，跳过 brainstorming）处理以下缺陷。遵循 comet 状态机与阶段守护脚本。
+
+      【缺陷描述】
+      {ARGS}
+
+      【工作目录】
+      {WORKSPACE_PATH}
 
   - cmd: "/review"
     label: "智能评审"
@@ -438,6 +460,17 @@ commands:
 
       【审查目标】
       {ARGS}
+    cometTemplate: |
+      【语言要求】
+      你的所有回复必须使用中文。
+
+      使用 skill 工具加载 comet-verify skill，对当前活跃 change 执行验证。若无活跃 change，则回退为普通代码审查，直接按下方需求输出审查结果，不强制走 comet 流程。
+
+      【审查目标】
+      {ARGS}
+
+      【工作目录】
+      {WORKSPACE_PATH}
 
   - cmd: "/unit-test"
     label: "生成单测"
@@ -465,6 +498,17 @@ commands:
 
       【目标代码/需求】
       {ARGS}
+    cometTemplate: |
+      【语言要求】
+      你的所有回复必须使用中文。
+
+      使用 skill 工具加载 comet-verify skill，为当前活跃 change 补充单元测试验证。若无活跃 change，则回退为普通单测生成，直接按下方需求输出测试代码，不强制走 comet 流程。
+
+      【目标代码/需求】
+      {ARGS}
+
+      【工作目录】
+      {WORKSPACE_PATH}
 
   - cmd: "/refactor"
     label: "重构代码"
@@ -507,6 +551,17 @@ commands:
 
       【重构目标】
       {ARGS}
+    cometTemplate: |
+      【语言要求】
+      你的所有回复必须使用中文。
+
+      使用 skill 工具加载 comet-tweak skill，按 Comet Classic 轻量路径（open -> build -> verify -> archive，跳过 brainstorming 和完整 plan）重构以下功能。遵循 comet 状态机与阶段守护脚本，保持外部行为兼容。
+
+      【重构目标】
+      {ARGS}
+
+      【工作目录】
+      {WORKSPACE_PATH}
 
   - cmd: "/test-case"
     label: "生成测试用例"
@@ -757,6 +812,17 @@ commands:
 
       【需求描述】
       {ARGS}
+    cometTemplate: |
+      【语言要求】
+      你的所有回复必须使用中文。
+
+      使用 skill 工具加载 comet-open skill，按 Comet Classic 第一阶段（Open：提案、设计、任务分解）处理以下需求，产出 proposal.md、design.md、tasks.md。
+
+      【需求描述】
+      {ARGS}
+
+      【工作目录】
+      {WORKSPACE_PATH}
 
   - cmd: "/data-analysis"
     label: "数据分析"
@@ -884,3 +950,14 @@ commands:
 
       【用户需求】
       {ARGS}
+    cometTemplate: |
+      【语言要求】
+      你的所有回复必须使用中文。
+
+      使用 skill 工具加载 comet-design skill，按 Comet Classic 第二阶段（Deep Design：头脑风暴、设计文档）对以下需求进行深度设计。
+
+      【用户需求】
+      {ARGS}
+
+      【工作目录】
+      {WORKSPACE_PATH}

@@ -57,7 +57,8 @@ interface NavItem {
 }
 
 const globalNavItems: NavItem[] = [
-  { path: '/market/skills', label: '技能市场', icon: Store },
+  // 技能市场暂时屏蔽，侧边栏不展示。
+  // { path: '/market/skills', label: '技能市场', icon: Store },
   { path: '/market/prompts', label: '提示词市场', icon: MessageSquare },
 ];
 
