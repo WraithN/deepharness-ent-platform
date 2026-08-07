@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/service"
@@ -267,6 +268,10 @@ func RepositoryFileTree(w http.ResponseWriter, r *http.Request) {
 
 	tree, err := defaultService.GetFileTree(workspaceID, repoID, branch, userID)
 	if err != nil {
+		if strings.Contains(err.Error(), "not cloned yet") {
+			handler.WriteJSONError(w, http.StatusConflict, handler.ErrCodeGeneral, "repository not cloned yet")
+			return
+		}
 		handler.HandleServiceError(w, err, "repository not found", "failed to get file tree")
 		return
 	}

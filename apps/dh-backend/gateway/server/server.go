@@ -594,7 +594,7 @@ func New(cfg config.Config) (http.Handler, func()) {
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_BRANCHES, repository.RepositoryBranches)
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_BRANCHES_REFRESH, repository.RefreshBranches)
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_SWITCH_BRANCH, repository.SwitchBranch)
-	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_TREE, repository.RepositoryFileTree)
+	mux.Handle(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_TREE, middleware.Auth(http.HandlerFunc(repository.RepositoryFileTree)))
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_CONTENT, repository.RepositoryFileContent)
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_SAVE, repository.SaveFileContent)
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID_COMMIT, repository.GitCommit)
