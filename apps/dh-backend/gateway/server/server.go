@@ -582,7 +582,7 @@ func New(cfg config.Config) (http.Handler, func()) {
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_PROMPT_CATEGORIES, middleware.Auth(http.HandlerFunc(workspace.PromptCategories)))
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_PROMPT_CATEGORIES_BY_CATEGORY_ID, middleware.Auth(http.HandlerFunc(workspace.PromptCategoryByID)))
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES, repository.Repositories)
-	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_SCAN, repository.ScanRepositories)
+	mux.Handle(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_SCAN, middleware.Auth(http.HandlerFunc(repository.ScanRepositories)))
 	// 用户级仓库操作（需登录态，userID 由 auth 中间件注入）
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_USER_REPOS, containerMW(http.HandlerFunc(repository.UserRepos)))
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_USER_REPOS_BY_REPO_ID_SYNC, containerMW(http.HandlerFunc(repository.SyncUserRepo)))

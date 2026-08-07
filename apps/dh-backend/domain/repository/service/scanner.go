@@ -44,11 +44,11 @@ func (s *DBRepositoryService) Scan(workspaceID, userID string) ([]object.Scanned
 		}
 	}
 
-	// RepositoryService 接口未定义 ctx 参数，使用 context.Background() 作为根 context。
+	// 目录不存在时返回空列表，不报错（用户尚未创建任何工程）
 	ctx := context.Background()
 	entries, err := sc.ListDir(ctx, devJobsDir)
 	if err != nil {
-		return nil, fmt.Errorf("list dev-jobs dir failed: %w", err)
+		return []object.ScannedRepository{}, nil
 	}
 
 	result := []object.ScannedRepository{}
