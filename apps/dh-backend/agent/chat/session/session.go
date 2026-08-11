@@ -20,20 +20,23 @@ const (
 	reaperInterval = 1 * time.Hour
 )
 
+// workitemIndex 维护 sessionID -> workitemID 的映射（内存实现专用，PG 实现走数据库列）。
 type SessionStore struct {
-	mu          sync.RWMutex
-	sessions    map[string]chat.Session
-	maxSessions int
-	ttl         time.Duration
-	done        chan struct{}
+	mu            sync.RWMutex
+	sessions      map[string]chat.Session
+	maxSessions   int
+	ttl           time.Duration
+	done          chan struct{}
+	workitemIndex map[string]string
 }
 
 func NewSessionStore() *SessionStore {
 	s := &SessionStore{
-		sessions:    make(map[string]chat.Session),
-		maxSessions: defaultMaxSessions,
-		ttl:         defaultSessionTTL,
-		done:        make(chan struct{}),
+		sessions:      make(map[string]chat.Session),
+		maxSessions:   defaultMaxSessions,
+		ttl:           defaultSessionTTL,
+		done:          make(chan struct{}),
+		workitemIndex: make(map[string]string),
 	}
 	safego.Go("session-reaper", s.reaper)
 	return s
@@ -117,6 +120,7 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, id)
+	delete(s.workitemIndex, id)
 	return nil
 }
 
@@ -206,4 +210,25 @@ func (s *SessionStore) GetSessionTrails(ctx context.Context, workspaceID string,
 		})
 	}
 	return result, nil
+}
+
+// UpdateWorkitemID 仅在当前会话未关联需求时写入，首条引用锁定。
+func (s *SessionStore) UpdateWorkitemID(ctx context.Context, sessionID, workitemID string) error {
+	if workitemID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing := s.workitemIndex[sessionID]; existing != "" {
+		return nil
+	}
+	s.workitemIndex[sessionID] = workitemID
+	return nil
+}
+
+// GetWorkitemID 返回会话关联的需求 ID，未关联时返回空字符串。
+func (s *SessionStore) GetWorkitemID(ctx context.Context, sessionID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.workitemIndex[sessionID], nil
 }

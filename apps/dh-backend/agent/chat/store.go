@@ -35,6 +35,10 @@ type SessionStore interface {
 	GetSessionTrend(ctx context.Context, workspaceID string, days int) ([]DateCount, error)
 	// GetSessionTrails 返回指定工作空间最近的会话轨迹（含消息数量），按更新时间倒序。
 	GetSessionTrails(ctx context.Context, workspaceID string, limit int) ([]SessionTrailInfo, error)
+	// UpdateWorkitemID 持久化会话关联的需求 ID（仅首次设置时写入，避免关联漂移）。
+	UpdateWorkitemID(ctx context.Context, sessionID, workitemID string) error
+	// GetWorkitemID 查询会话关联的需求 ID。
+	GetWorkitemID(ctx context.Context, sessionID string) (string, error)
 }
 
 type MessageStore interface {

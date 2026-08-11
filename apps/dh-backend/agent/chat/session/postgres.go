@@ -283,3 +283,32 @@ func (s *PostgresStore) MigrateMessages(ctx context.Context, oldSessionID, newSe
 	}
 	return nil
 }
+
+// ── WorkitemID ──
+
+// UpdateWorkitemID 仅在当前 workitem_id 为空时写入，首条引用锁定，避免关联漂移。
+func (s *PostgresStore) UpdateWorkitemID(ctx context.Context, sessionID, workitemID string) error {
+	if workitemID == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE agent_sessions SET workitem_id = $1
+		WHERE id = $2 AND (workitem_id IS NULL OR workitem_id = '')
+	`, workitemID, sessionID)
+	if err != nil {
+		return fmt.Errorf("update session workitem_id failed: %w", err)
+	}
+	return nil
+}
+
+// GetWorkitemID 返回会话关联的需求 ID，未关联时返回空字符串。
+func (s *PostgresStore) GetWorkitemID(ctx context.Context, sessionID string) (string, error) {
+	var workitemID sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT workitem_id FROM agent_sessions WHERE id = $1`, sessionID,
+	).Scan(&workitemID)
+	if err != nil {
+		return "", fmt.Errorf("get session workitem_id failed: %w", err)
+	}
+	return workitemID.String, nil
+}
