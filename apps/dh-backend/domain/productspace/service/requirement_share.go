@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"path/filepath"
 	"strings"
@@ -118,6 +119,10 @@ func (s *DBProductSpaceService) createRequirementShareInternal(ctx context.Conte
 				existing.AllowComments = req.AllowComments
 			}
 		}
+		// 老数据兼容：幂等返回已有分享时，若快照缺失则补写。
+		if existing.DocID != "" {
+			s.ensureDocSnapshot(ctx, existing.Token, existing.DocID)
+		}
 		return existing, nil
 	}
 	if !errors.Is(queryErr, sql.ErrNoRows) {
@@ -146,6 +151,10 @@ func (s *DBProductSpaceService) createRequirementShareInternal(ctx context.Conte
 	)
 	if err != nil {
 		return object.RequirementShare{}, fmt.Errorf("create requirement share failed: %w", err)
+	}
+	// 创建分享时锁定文档版本快照，后续文档上下线不影响已发出的分享。
+	if share.DocID != "" {
+		s.writeDocSnapshot(ctx, share.Token, share.DocID)
 	}
 	return share, nil
 }
@@ -519,4 +528,56 @@ func (s *DBProductSpaceService) ListRequirementShareDocComments(token string) ([
 		return nil, fmt.Errorf("iterate requirement share doc comments failed: %w", err)
 	}
 	return comments, nil
+}
+
+// writeDocSnapshot 查询文档当前最新已发布版本，写入分享快照表。
+// 文档不存在或非 published 状态时跳过（不阻断分享创建）。
+func (s *DBProductSpaceService) writeDocSnapshot(ctx context.Context, shareToken, docID string) {
+	if docID == "" {
+		return
+	}
+	var (
+		doc           object.SharedDocInfo
+		createdByName sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT v.title, v.content, v.version, v.created_at, COALESCE(u.name, '')
+		FROM product_docs d
+		JOIN product_doc_versions v ON v.doc_id = d.id
+		LEFT JOIN users u ON u.id = COALESCE(NULLIF(d.created_by, ''), v.created_by)
+		WHERE d.id = $1 AND d.status = 'published'
+		ORDER BY v.version DESC
+		LIMIT 1
+	`, docID).Scan(&doc.Title, &doc.Content, &doc.Version, &doc.PublishedAt, &createdByName)
+	if err != nil {
+		log.Printf("[RequirementShare] writeDocSnapshot skip (doc=%s): %v", docID, err)
+		return
+	}
+	doc.CreatedByName = createdByName.String
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO requirement_share_doc_snapshots
+			(share_token, doc_id, doc_title, doc_content, doc_version, published_at, created_by_name, snapshot_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+		ON CONFLICT (share_token) DO UPDATE SET
+			doc_id = EXCLUDED.doc_id, doc_title = EXCLUDED.doc_title,
+			doc_content = EXCLUDED.doc_content, doc_version = EXCLUDED.doc_version,
+			published_at = EXCLUDED.published_at, created_by_name = EXCLUDED.created_by_name,
+			snapshot_at = NOW()
+	`, shareToken, docID, doc.Title, doc.Content, doc.Version, doc.PublishedAt, doc.CreatedByName)
+	if err != nil {
+		log.Printf("[RequirementShare] writeDocSnapshot insert failed (token=%s): %v", shareToken, err)
+	}
+}
+
+// ensureDocSnapshot 仅在快照不存在时补写，用于兼容老数据。
+func (s *DBProductSpaceService) ensureDocSnapshot(ctx context.Context, shareToken, docID string) {
+	var exists bool
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM requirement_share_doc_snapshots WHERE share_token = $1)`,
+		shareToken,
+	).Scan(&exists)
+	if exists {
+		return
+	}
+	s.writeDocSnapshot(ctx, shareToken, docID)
 }
