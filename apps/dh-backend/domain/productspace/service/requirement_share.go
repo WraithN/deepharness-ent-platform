@@ -205,24 +205,9 @@ func (s *DBProductSpaceService) GetSharedRequirement(token string) (object.Share
 	view.Title = title
 	view.AllowComments = allowComments
 
-	// 文档：仅取已发布状态的最新版本
+	// 文档：优先读快照（文档后续上下线不影响分享）；快照缺失时回退查 product_docs（兼容老数据）。
 	if docID != "" {
-		var doc object.SharedDocInfo
-		var createdByName sql.NullString
-		err := s.db.QueryRow(`
-			SELECT v.title, v.content, v.version, v.created_at, COALESCE(u.name, '')
-			FROM product_docs d
-			JOIN product_doc_versions v ON v.doc_id = d.id
-			LEFT JOIN users u ON u.id = COALESCE(NULLIF(d.created_by, ''), v.created_by)
-			WHERE d.id = $1 AND d.status = 'published'
-			ORDER BY v.version DESC
-			LIMIT 1
-		`, docID).Scan(&doc.Title, &doc.Content, &doc.Version, &doc.PublishedAt, &createdByName)
-		if err == nil {
-			doc.CreatedByName = createdByName.String
-			view.Doc = &doc
-		}
-		// 文档不存在或不是已发布状态时，不返回错误，仅不展示文档
+		view.Doc = s.loadDocSnapshotOrFallback(token, docID)
 	}
 
 	// 原型：复用 GetSharedPrototype 的页面列表逻辑
@@ -257,6 +242,36 @@ func (s *DBProductSpaceService) GetSharedRequirement(token string) (object.Share
 		return object.SharedRequirementView{}, fmt.Errorf("%w: 分享内容不存在", ErrNotFound)
 	}
 	return view, nil
+}
+
+// loadDocSnapshotOrFallback 优先读分享文档快照；快照缺失时回退查 product_docs 已发布版本（兼容老数据）。
+func (s *DBProductSpaceService) loadDocSnapshotOrFallback(token, docID string) *object.SharedDocInfo {
+	// 1. 读快照
+	var doc object.SharedDocInfo
+	var createdByName sql.NullString
+	err := s.db.QueryRow(`
+		SELECT doc_title, doc_content, doc_version, published_at, created_by_name
+		FROM requirement_share_doc_snapshots WHERE share_token = $1
+	`, token).Scan(&doc.Title, &doc.Content, &doc.Version, &doc.PublishedAt, &createdByName)
+	if err == nil {
+		doc.CreatedByName = createdByName.String
+		return &doc
+	}
+	// 2. 快照缺失：回退查 product_docs（兼容快照机制上线前的老分享）
+	err = s.db.QueryRow(`
+		SELECT v.title, v.content, v.version, v.created_at, COALESCE(u.name, '')
+		FROM product_docs d
+		JOIN product_doc_versions v ON v.doc_id = d.id
+		LEFT JOIN users u ON u.id = COALESCE(NULLIF(d.created_by, ''), v.created_by)
+		WHERE d.id = $1 AND d.status = 'published'
+		ORDER BY v.version DESC
+		LIMIT 1
+	`, docID).Scan(&doc.Title, &doc.Content, &doc.Version, &doc.PublishedAt, &createdByName)
+	if err != nil {
+		return nil
+	}
+	doc.CreatedByName = createdByName.String
+	return &doc
 }
 
 // ServeSharedRequirementFile 免登录 serve 需求分享中的原型文件。
