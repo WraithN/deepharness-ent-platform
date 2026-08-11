@@ -114,6 +114,7 @@ const (
 	ROUTE_WORKITEMS_BY_ID_DOC_LINKS                                                    = API_V1_PREFIX + "/workitems/{id}/doc-links"
 	ROUTE_WORKITEMS_BY_ID_DOC_LINKS_BY_ITEM_ID                                         = API_V1_PREFIX + "/workitems/{id}/doc-links/{itemId}"
 	ROUTE_WORKITEMS_BY_ID_DESIGN_VERSIONS                                              = API_V1_PREFIX + "/workitems/{id}/design-versions"
+	ROUTE_WORKITEMS_BY_ID_COMMITS                                                      = API_V1_PREFIX + "/workitems/{id}/commits"
 	ROUTE_WORKSPACES_BY_ID_WORKITEMS_WITH_DESIGN_ITEMS                                 = API_V1_PREFIX + "/workspaces/{id}/workitems-with-design-items"
 	ROUTE_REVIEW_REVIEW                                                                = API_V1_PREFIX + "/review/review"
 	ROUTE_AUDIT_EVENTS                                                                 = API_V1_PREFIX + "/audit/events"
@@ -511,6 +512,7 @@ func New(cfg config.Config) (http.Handler, func()) {
 	mux.Handle(ROUTE_WORKITEMS_BY_ID_DOC_LINKS, middleware.Auth(http.HandlerFunc(workitem.DocLinks)))
 	mux.Handle(ROUTE_WORKITEMS_BY_ID_DOC_LINKS_BY_ITEM_ID, middleware.Auth(http.HandlerFunc(workitem.DocLinkByID)))
 	mux.Handle(ROUTE_WORKITEMS_BY_ID_DESIGN_VERSIONS, middleware.Auth(http.HandlerFunc(workitem.ListDesignVersions)))
+	mux.Handle(ROUTE_WORKITEMS_BY_ID_COMMITS, middleware.Auth(http.HandlerFunc(workitem.WorkItemCommits)))
 	// 按工作空间聚合需求及其关联的文档/原型，供智能会话「设计」按钮下拉菜单使用
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_WORKITEMS_WITH_DESIGN_ITEMS, middleware.Auth(http.HandlerFunc(workitem.ListRequirementsWithDesignItems)))
 	mux.HandleFunc(ROUTE_REVIEW_REVIEW, pragent.Reviews)

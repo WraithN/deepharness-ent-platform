@@ -277,6 +277,31 @@ func ListDesignVersions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(object.ListDesignVersionsResponse{Versions: versions})
 }
 
+// WorkItemCommits 处理 GET /api/v1/workitems/{id}/commits：返回需求关联的开发提交列表。
+func WorkItemCommits(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if defaultWorkItemService == nil {
+		http.Error(w, `{"code":1,"message":"workitem service not initialized"}`, http.StatusInternalServerError)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"code":1,"message":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	workitemID := r.PathValue("id")
+	if workitemID == "" {
+		http.Error(w, `{"code":1,"message":"missing workitem id"}`, http.StatusBadRequest)
+		return
+	}
+	commits, err := defaultWorkItemService.ListCommits(workitemID)
+	if err != nil {
+		log.Printf("[WorkItem] ListCommits failed: %v", err)
+		http.Error(w, `{"code":1,"message":"failed to list commits"}`, http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"commits": commits})
+}
+
 // ListRequirementsWithDesignItems 处理 GET /api/v1/workspaces/{id}/workitems-with-design-items。
 // 返回工作空间下包含文档或原型关联的需求列表，按需求更新时间倒序，
 // 每个需求聚合最新的一篇文档与最新的一个原型。
