@@ -14,6 +14,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
+	workitemservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
@@ -71,6 +72,8 @@ type agentRunStream struct {
 	maxTimer      *time.Timer
 	// workitemID 当前 run 关联的需求 ID（从 quotedCard 提取），供 commit 记录使用
 	workitemID    string
+	// workspaceID 当前 run 的工作空间 ID，供 commit 记录使用
+	workspaceID   string
 }
 
 // AgentRun 是 POST /api/v1/agent 处理器。
@@ -180,6 +183,7 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		finishTimer: finishTimer,
 		maxTimer:    maxTimer,
 		workitemID:  runWorkitemID,
+		workspaceID: workspaceID,
 	}
 	stream.run(r, events)
 }
@@ -821,18 +825,47 @@ func (s *agentRunStream) processEvent(ev agui.Event) []agui.Event {
 		// 从 endedToolCallIDs 移除（RESULT 已到达，无需补发）
 		removeToolCallID(&s.state.endedToolCallIDs, ev.ToolCallID)
 		if ev.ToolCallID != "" {
+			var argsText, toolName string
 			s.state.bufMu.Lock()
 			for i := len(s.state.runParts) - 1; i >= 0; i-- {
 				if s.state.runParts[i].Type == "tool-call" && s.state.runParts[i].ToolCallID == ev.ToolCallID {
 					s.state.runParts[i].Result = ev.Content
+					argsText = s.state.runParts[i].ArgsText
+					toolName = s.state.runParts[i].ToolName
 					break
 				}
 			}
 			s.state.bufMu.Unlock()
+			// 检测 bash/shell 工具执行 git commit，自动记录到需求提交列表。
+			if s.workitemID != "" && (toolName == toolNameBash || toolName == toolNameShell) {
+				s.tryRecordCommit(argsText, ev.Content)
+			}
 			s.checkpointRun()
 		}
 	}
 	return []agui.Event{ev}
+}
+
+// tryRecordCommit 解析 git commit 输出并记录到需求提交列表。
+// 解析失败或 service 未就绪时静默跳过，不阻塞 agent 流程。
+func (s *agentRunStream) tryRecordCommit(argsText, resultContent string) {
+	hash, message, ok := tryParseGitCommit(argsText, resultContent)
+	if !ok {
+		return
+	}
+	if s.h == nil || s.h.workItemSvc == nil {
+		return
+	}
+	if err := s.h.workItemSvc.RecordCommit(s.bgCtx, workitemservice.RecordCommitRequest{
+		WorkitemID:    s.workitemID,
+		WorkspaceID:   s.workspaceID,
+		SessionID:     s.sessionID,
+		CommitHash:    hash,
+		CommitMessage: message,
+	}); err != nil {
+		log.Printf("[AGUIHandler] run=%s record commit failed (workitem=%s): %v",
+			s.input.RunID, s.workitemID, err)
+	}
 }
 
 // emitProtoFallbackMarker 在 /proto-make run 完成且 agent 未输出 [[PROJECT:...]] 标记时，

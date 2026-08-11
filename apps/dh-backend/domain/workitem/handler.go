@@ -28,6 +28,11 @@ func Init(svc service.WorkItemService) {
 	defaultWorkItemService = svc
 }
 
+// GetDefaultService 返回全局 workitem service（供其他 handler 包调用，如 commit 记录）。
+func GetDefaultService() service.WorkItemService {
+	return defaultWorkItemService
+}
+
 // WorkItems 处理工作项集合请求：GET 列表、POST 创建（当前仅实现 GET）。
 func WorkItems(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

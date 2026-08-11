@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/object"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/workitem"
 )
@@ -39,4 +41,10 @@ type WorkItemService interface {
 	// ListRequirementsWithDesignItems 按工作空间查询包含文档或原型关联的需求列表，
 	// 每个需求聚合其最新的一篇文档与最新的一个原型（若存在）。
 	ListRequirementsWithDesignItems(workspaceID string) ([]object.RequirementWithDesignItems, error)
+
+	// 需求开发提交记录
+	// RecordCommit 幂等记录一条需求开发提交（workitem_id+commit_hash 唯一，重复忽略）。
+	RecordCommit(ctx context.Context, req RecordCommitRequest) error
+	// ListCommits 按需求 ID 查询开发提交列表，按提交时间倒序。
+	ListCommits(workitemID string) ([]WorkItemCommit, error)
 }

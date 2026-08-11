@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
@@ -404,4 +405,36 @@ func injectCardForChat(messages []agui.Message, ctxItems []agui.ContextItem, wor
 		}
 		break
 	}
+}
+
+// gitCommitCmdRegexp 检测命令字符串是否为 git commit。
+var gitCommitCmdRegexp = regexp.MustCompile(`git\s+commit`)
+
+// gitCommitHashRegexp 匹配 git commit 输出中的短/长 commit hash，如 [main abc1234] message。
+var gitCommitHashRegexp = regexp.MustCompile(`\[[^\]]*\s([0-9a-f]{7,40})\]`)
+
+// gitCommitMessageRegexp 匹配 git commit 输出中的提交消息。
+var gitCommitMessageRegexp = regexp.MustCompile(`\]\s*(.+)`)
+
+// bash/shell 工具名常量，用于检测 agent 是否执行了命令行工具。
+const (
+	toolNameBash  = "bash"
+	toolNameShell = "shell"
+)
+
+// tryParseGitCommit 从 bash 工具的命令参数与输出中解析 commit hash 与消息。
+// 返回 hash, message, ok；非 git commit 命令或解析失败时 ok=false。
+func tryParseGitCommit(argsText, resultContent string) (hash, message string, ok bool) {
+	if !gitCommitCmdRegexp.MatchString(argsText) {
+		return "", "", false
+	}
+	m := gitCommitHashRegexp.FindStringSubmatch(resultContent)
+	if len(m) < 2 {
+		return "", "", false
+	}
+	hash = m[1]
+	if mm := gitCommitMessageRegexp.FindStringSubmatch(resultContent); len(mm) >= 2 {
+		message = mm[1]
+	}
+	return hash, message, true
 }
