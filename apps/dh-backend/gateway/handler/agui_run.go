@@ -13,6 +13,7 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
@@ -68,6 +69,8 @@ type agentRunStream struct {
 	state         *runState
 	finishTimer   *time.Timer
 	maxTimer      *time.Timer
+	// workitemID 当前 run 关联的需求 ID（从 quotedCard 提取），供 commit 记录使用
+	workitemID    string
 }
 
 // AgentRun 是 POST /api/v1/agent 处理器。
@@ -120,7 +123,7 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 阶段8：调用 gatewayd 执行 agent run，获取事件流。
-	actualThreadID, events, ok := h.executeAgentRun(r.Context(), w, flusher, input, reqStart, commandApplied)
+	actualThreadID, events, ok := h.executeAgentRun(r.Context(), w, flusher, input, reqStart, commandApplied, workspaceID)
 	if !ok {
 		return
 	}
@@ -137,6 +140,18 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 	// 新 session 的实际 threadId 已确定，保存用户原始输入消息。
 	if !savedEarly {
 		h.saveUserMessages(r.Context(), sessionID, originalMessages, input.Context)
+	}
+
+	// 从本次 run 的 context 提取 quotedCard，持久化会话关联的需求 ID（首条引用锁定）。
+	// 提取失败或持久化失败均不阻断主流程，仅记录日志：需求关联为增强信息，不影响 run 正常执行。
+	runWorkitemID := ""
+	if card, hasCard, cardErr := extractQuotedCard(input.Context); cardErr != nil {
+		log.Printf("[AGUIHandler] run=%s extract quotedCard failed: %v", input.RunID, cardErr)
+	} else if hasCard && card.ID != "" {
+		runWorkitemID = card.ID
+		if err := h.sessions.UpdateWorkitemID(r.Context(), sessionID, runWorkitemID); err != nil {
+			log.Printf("[AGUIHandler] run=%s persist workitem_id failed: %v", input.RunID, err)
+		}
 	}
 
 	// 阶段10：事件流消费与 SSE 转发（含超时兜底、断连缓冲、心跳保活）。
@@ -164,6 +179,7 @@ func (h *AGUIHandler) AgentRun(w http.ResponseWriter, r *http.Request) {
 		state:       &runState{pendingToolCallIDs: []string{}},
 		finishTimer: finishTimer,
 		maxTimer:    maxTimer,
+		workitemID:  runWorkitemID,
 	}
 	stream.run(r, events)
 }
@@ -407,11 +423,16 @@ func (h *AGUIHandler) abortIfGatewaydUnreachable(ctx context.Context, w http.Res
 // 使用 background context 调用 gatewayd，确保前端断连后 gatewayd 继续运行。
 // ctx 用于解析用户容器的 gatewayd 地址；实际 Run 调用使用 context.Background() 以超越 HTTP 请求生命周期。
 // 失败时已写入 RUN_ERROR 事件，返回 ok=false，调用方应直接返回。
-func (h *AGUIHandler) executeAgentRun(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, input agui.RunAgentInput, reqStart time.Time, commandApplied bool) (string, <-chan agui.Event, bool) {
+func (h *AGUIHandler) executeAgentRun(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, input agui.RunAgentInput, reqStart time.Time, commandApplied bool, workspaceID string) (string, <-chan agui.Event, bool) {
 	aguiClient := h.resolveAGUIClient(ctx)
+	// attach 完成后同步空间级 agent 配置（模型、watchdog 超时等）。
+	// 仅 CreateSession 时同步会在 gatewayd 重启后失效，因此每次 run attach 后都重新同步。
+	onAttached := func(threadID, instanceID string) error {
+		return h.syncAgentConfigToGatewayd(ctx, aguiClient, workspaceID, input, threadID, instanceID)
+	}
 	log.Printf("[AGUIHandler] run=%s >>> aguiClient.Run ENTER input.ThreadId=%q workspace=%q commandApplied=%v messageCount=%d",
 		input.RunID, input.ThreadID, input.Workspace, commandApplied, len(input.Messages))
-	actualThreadID, events, err := aguiClient.Run(context.Background(), input)
+	actualThreadID, events, err := aguiClient.RunWithOnAttached(context.Background(), input, onAttached)
 	if err != nil {
 		log.Printf("[AGUIHandler] run=%s <<< aguiClient.Run FAILED after %v: %v", input.RunID, time.Since(reqStart), err)
 		h.writeEvent(w, flusher, agui.RunErrorEvent(FormatGatewaydError(err), "RUN_FAILED"))
@@ -420,6 +441,71 @@ func (h *AGUIHandler) executeAgentRun(ctx context.Context, w http.ResponseWriter
 	log.Printf("[AGUIHandler] run=%s <<< aguiClient.Run OK actualThreadId=%s after %v",
 		input.RunID, actualThreadID, time.Since(reqStart))
 	return actualThreadID, events, true
+}
+
+// syncAgentConfigToGatewayd 将空间级 agent 配置同步到 gatewayd 指定实例。
+// 主要解决 gatewayd 重启后复用旧 thread 时 watchdog 回退默认 120s 的问题。
+func (h *AGUIHandler) syncAgentConfigToGatewayd(ctx context.Context, aguiClient *client.AGUIClient, workspaceID string, input agui.RunAgentInput, threadID, instanceID string) error {
+	if h.agentConfigSvc == nil || aguiClient == nil || workspaceID == "" || threadID == "" || instanceID == "" {
+		return nil
+	}
+	pluginKey := resolveRunPluginKey(h.pluginKey, input)
+	if pluginKey == "" {
+		return nil
+	}
+	cfg, err := h.agentConfigSvc.GetWorkspaceConfig(workspaceID, pluginKey)
+	if err != nil {
+		log.Printf("[AGUIHandler] get workspace agent config failed: %v", err)
+		return nil
+	}
+	req := client.UpdateAgentConfigRequest{
+		Model:     cfg.Model,
+		ModelType: cfg.ModelSource,
+		BaseURL:   cfg.BaseURL,
+		APIKey:    cfg.APIKey,
+	}
+	if cfg.Temperature != nil {
+		req.Temperature = cfg.Temperature
+	}
+	if cfg.AdvancedConfig != nil && cfg.AdvancedConfig.MaxTokens != nil {
+		req.MaxTokens = cfg.AdvancedConfig.MaxTokens
+	}
+	if cfg.Timeout != nil {
+		secs := uint64(*cfg.Timeout)
+		req.WatchdogTimeoutSecs = &secs
+	}
+	syncCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := aguiClient.UpdateAgentConfig(syncCtx, threadID, instanceID, req); err != nil {
+		log.Printf("[AGUIHandler] sync agent config failed: %v", err)
+		return nil
+	}
+	var watchdogSecs uint64
+	if cfg.Timeout != nil {
+		watchdogSecs = uint64(*cfg.Timeout)
+	}
+	log.Printf("[AGUIHandler] synced agent config to gatewayd: threadId=%s instanceId=%s pluginKey=%s watchdog=%ds",
+		threadID, instanceID, pluginKey, watchdogSecs)
+	return nil
+}
+
+// resolveRunPluginKey 与 AGUIClient.Run 内的插件 key 解析逻辑保持一致。
+func resolveRunPluginKey(defaultKey string, input agui.RunAgentInput) string {
+	if input.AgentKey != "" {
+		return input.AgentKey
+	}
+	if input.AgentPluginKey != "" {
+		return input.AgentPluginKey
+	}
+	if len(input.ForwardedProps) > 0 {
+		var forwarded struct {
+			AgentPluginKey string `json:"agentPluginKey"`
+		}
+		if err := json.Unmarshal(input.ForwardedProps, &forwarded); err == nil && forwarded.AgentPluginKey != "" {
+			return forwarded.AgentPluginKey
+		}
+	}
+	return defaultKey
 }
 
 // migrateThreadIfNeeded 在 gatewayd 返回的 threadId 与请求不一致时，
