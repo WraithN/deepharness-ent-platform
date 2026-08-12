@@ -399,33 +399,92 @@ apps/dh-frontend/src/
 
 ---
 
-## 13. 亮色弹窗规范
+## 14. 弹窗设计规范
 
-亮色模式下弹窗强调「轻、透、干净」的浮层质感，避免厚重白底和灰色脏边框。
+所有模态弹窗必须基于共享组件实现（`ui/dialog`、`ui/alert-dialog`、`ui/sheet`、`ui/sonner`），**禁止手写 `fixed inset-0` + 居中卡片的自实现模态**。弹窗容器为**实色不透明**（不使用半透明/毛玻璃），保证任何背景下内容清晰可读。
 
-### 13.1 容器
+### 14.1 组件选型
 
-- 遮罩层：`bg-[rgba(15,23,42,0.08)] backdrop-blur-[8px]`（暗色模式下保持 `bg-black/80`）。
-- 弹窗盒：
-  - 背景 `bg-white/88` + `backdrop-blur-xl`
-  - 边框 `border-[rgba(148,163,184,0.18)]`
-  - 阴影 `shadow-[0_10px_32px_rgba(15,23,42,0.12),0_0_0_1px_rgba(255,255,255,0.6)_inset]`
-  - 圆角 `rounded-2xl`（16px）
-- 关闭按钮：`absolute right-4 top-4`，`text-[#64748B]`，`hover:bg-[#F1F5F9] hover:text-[#1E293B]`，`rounded-lg`。
+| 场景 | 组件 | 说明 |
+|------|------|------|
+| 操作确认（删除/作废/跳转/切换等需显式确认） | `AlertDialog` | 无右上角 X，必须通过底部按钮作出选择 |
+| 表单、详情、预览等复杂内容 | `Dialog` | 带右上角 X，可点遮罩/Esc 关闭 |
+| 侧滑详情、评论面板 | `Sheet` | `side="right"` 详情、`side="bottom"` 评论 |
+| 轻量结果反馈（成功/失败/警告） | `toast`（sonner） | 不阻断流程，禁止用弹窗做结果提示 |
 
-### 13.2 表单控件
+### 14.2 遮罩与容器
+
+- 遮罩层：`bg-[rgba(15,23,42,0.08)]`（亮色浅调、无模糊；暗色模式 `dark:bg-black/80`）。
+- 弹窗盒（**实色不透明**，禁止 `bg-white/xx` 半透明与 `backdrop-blur`）：
+  - 背景 `bg-white`（暗色 `dark:bg-[#1E293B]`）
+  - 边框 `border-[rgba(148,163,184,0.18)]`（暗色 `dark:border-[rgba(148,163,184,0.15)]`）
+  - 阴影 `shadow-[0_10px_32px_rgba(15,23,42,0.12)]`（暗色 `dark:shadow-[0_8px_32px_rgba(0,0,0,0.35)]`）
+  - 圆角 `rounded-2xl`（16px，移动端同样保持圆角）
+- 关闭按钮（X）：`absolute right-4 top-4 rounded-lg p-1.5`，`text-muted-foreground`，`hover:bg-muted hover:text-foreground`。
+- 进出动画：fade + zoom/slide，`duration-200` 以内，不使用弹性/回弹动效。
+
+### 14.3 标准结构
+
+- **常规弹窗**：`DialogHeader`（`DialogTitle` `text-lg font-semibold` + `DialogDescription` `text-sm text-muted-foreground`）→ 内容区 → `DialogFooter`（`sm:justify-end sm:space-x-2`）。
+- **大弹窗/详情弹窗**（`p-0` 自定义结构）：头部 `px-6 py-4 border-b`（图标 + 标题 + 关闭/操作）→ 内容区 `px-6 py-4 overflow-y-auto` → 底部 `px-6 py-3.5 border-t bg-muted/30`。
+- Footer 按钮一律右对齐（`justify-end`），顺序为「取消在左、主按钮在右」；禁止使用 `justify-between` 拆分主操作。
+
+### 14.4 宽度分级
+
+| 类型 | 宽度 | 移动端保护 |
+|------|------|-----------|
+| 确认/极简表单 | `sm:max-w-md` | `max-w-[calc(100%-2rem)]` |
+| 标准表单 | `sm:max-w-lg` | 同上 |
+| 复杂表单/中等详情 | `sm:max-w-2xl` | — |
+| 大详情/预览 | `max-w-[760px]`（内容复杂时 `max-w-3xl`/`max-w-4xl`）+ `max-h-[85vh]` | — |
+
+- 新增弹窗按上表就近取档，禁止发明新的任意宽度值（如 `max-w-[440px]`、`max-w-[680px]`）。
+- `Dialog` 默认宽度 `max-w-[760px]` 面向大详情场景，表单/确认类必须显式覆写宽度。
+
+### 14.5 底部按钮
+
+- 取消按钮：`variant="outline"`（`bg-muted`、`text-muted-foreground`、`hover:bg-border`、`hover:text-foreground`）。
+- 主按钮：`variant="default"` 蓝紫渐变 + hover 发光 + active 缩放。
+- **危险按钮（删除/作废/驳回/退出等不可逆操作）**：`variant="destructive"`；在 `AlertDialogAction` 等不支持 variant 的组件上，统一写 `className="bg-destructive text-destructive-foreground hover:bg-destructive/90"`，三个类缺一不可。
+
+### 14.6 危险操作确认
+
+- 不可逆操作一律使用 `AlertDialog`，标题为「确认 + 动词」（如「确认删除」），描述说明影响与不可撤销性，主按钮为 destructive 危险按钮并重复动作词（如「删除」）。
+- 可逆的跳转/切换类确认使用默认主按钮（渐变蓝），不使用 destructive。
+
+### 14.7 抽屉（Sheet）
+
+- 右侧详情抽屉：`side="right"`，`w-full sm:max-w-lg md:max-w-xl lg:max-w-2xl p-0`；底部评论抽屉：`side="bottom"`，`h-[60vh] p-0`。
+- 抽屉与弹窗共用 14.2 的遮罩规范；页面级局部抽屉（如图画布节点详情）可使用 `absolute inset-0` 手写实现，但遮罩色与面板样式须与 Sheet 一致。
+- `ui/drawer`（vaul）为未启用组件，新增需求一律使用 `Sheet`。
+
+### 14.8 Toast 轻提示
+
+- 统一 `import { toast } from 'sonner'`，挂载点为 `App.tsx` 的 `<Toaster />`（跟随 next-themes，样式定制见 `ui/sonner.tsx`）。
+- 位置默认 bottom-right；`toast.success` 成功、`toast.error` 失败、`toast.warning` 警告，文案以动词开头、一句话说清结果，不堆砌技术错误堆栈。
+
+### 14.9 表单控件
 
 - 输入框：`bg-background`（`#F8FAFC`）底，`border-input`（`#E2E8F0`）边框；focus 时背景变白、边框变为品牌蓝并产生 `0 0 0 3px primary/15` 光晕。
 - 下拉框：与输入框保持一致的浅色底和焦点态，右侧箭头弱化（`opacity-50`）。
 
-### 13.3 底部按钮
+### 14.10 现状偏差与整改记录
 
-- 取消按钮：`variant="outline"`，`bg-muted`（`#F1F5F9`）、`text-muted-foreground`（`#475569`）、`hover:bg-border`（`#E2E8F0`）、`hover:text-foreground`。
-- 主按钮：保持 default  variant 的蓝紫渐变 + hover 发光 + active 缩放。
+2026-08-11 首轮排查发现的 7 类偏差**已全部整改完成**：
+
+1. 危险按钮误用主按钮：删除仓库（`Settings.tsx`）、作废文档（`FileView.tsx`、`InlineFilePreview.tsx`）已改 destructive；`Settings.tsx` 删除分类/成员两处补齐 `text-destructive-foreground`。
+2. 确认弹窗选型分裂：退出登录（`Layout.tsx`/`AdminLayout.tsx`）、删除租户（`AdminPage.tsx`）已统一为 `AlertDialog`；`NotificationCenter.tsx` 驳回原因弹窗含 Textarea 表单项，按 14.1 规范属于表单弹窗，保留 `Dialog` 为正确选型。
+3. 基础组件已对齐：`ui/dialog.tsx` 遮罩与容器改为毛玻璃规范；`ui/sheet.tsx` 遮罩统一。
+4. 宽度已收敛：任意值（425/440/480/500/620/680/800px）全部归入 14.4 四档；`Settings.tsx` 仓库设置弹窗补 `sm:max-w-md`。
+5. 圆角已统一：`AlertDialog` 全端 `rounded-2xl`；`Sheet` 按方向补圆角。
+6. `PersonalAssistantPage.tsx` 动态 Tailwind 类名 Bug 已修复（改为完整字面量条件类名）。
+7. `KanbanWorkspace.tsx` Footer `justify-between` 已改为右对齐。
+
+新增弹窗须对照本章自查；发现新的偏差时补充到本节。
 
 ---
 
-## 14. IDE / 代码编辑器规范（暗色/亮色自适应）
+## 15. IDE / 代码编辑器规范（暗色/亮色自适应）
 
 代码编辑器采用与普通后台**相反**的分层逻辑：核心编辑区最深，周围容器稍亮，形成「编辑区凹陷、面板环绕浮起」的专业 IDE 空间感。
 
@@ -433,7 +492,7 @@ apps/dh-frontend/src/
 - **亮色模式**：使用主题变量（`bg-background` 代码区、`bg-panel` 容器、`bg-accent` 高亮），配合 `vs` 浅色语法高亮。
 - 所有硬编码色值已替换为 CSS 变量，确保切换主题时无需额外维护两套代码。
 
-### 13.1 分层色值
+### 15.1 分层色值
 
 | 层级 | 区域 | 色值 | 说明 |
 |------|------|------|------|
@@ -442,18 +501,18 @@ apps/dh-frontend/src/
 | L2 高亮 | 选中文件、激活标签、悬停行 | `#2A374B` | 交互态提亮 |
 | L3 交互 | 搜索框、按钮 | `#334155` | 可点击元素再提亮一级 |
 
-### 13.2 边框与分割线
+### 15.2 边框与分割线
 
 - 编辑器内部所有分割线统一使用 `rgba(148, 163, 184, 0.15)`，避免中性灰在深底上发雾发脏。
 - 外层编辑器容器使用 `1px solid rgba(148, 163, 184, 0.15)` + `rounded-xl`。
 
-### 13.3 焦点态
+### 15.3 焦点态
 
 - **左侧选中文件**：`bg-[#2A374B] text-[#F1F5F9] border-l-2 border-primary`。
 - **顶部激活标签**：`bg-[#0F172A] text-[#F1F5F9] border-b-2 border-primary`，背景与代码区连通。
 - **模式切换按钮组**：容器 `bg-[#1E293B]`，选中项 `bg-[#0F172A]` + 底部品牌色边框。
 
-### 13.4 代码高亮（Aurora 语法 Token）
+### 15.4 代码高亮（Aurora 语法 Token）
 
 | Token | 色值 | 用途 |
 |-------|------|------|
@@ -468,14 +527,14 @@ apps/dh-frontend/src/
 
 实现位于 `CodeBlock.tsx` 的 `auroraDark` Prism 主题，编辑器模式通过 `variant="editor"` 启用无边框圆角、L0/L1 分层背景与顶部内阴影凹陷效果。
 
-### 13.5 动效
+### 15.5 动效
 
 - 可点击文件行、标签、按钮统一使用 `transition-all duration-150` / `duration-200`。
 - 悬停状态从 `text-[#94A3B8]` 过渡到 `bg-[#2A374B] text-[#F1F5F9]`。
 
 ---
 
-## 15. 变更记录
+## 16. 变更记录
 
 | 日期 | 变更内容 | 作者 |
 |------|----------|------|
@@ -520,3 +579,6 @@ apps/dh-frontend/src/
 | 2026-07-13 | 修复模板管理创建模板后条目消失并自动跳转到下一分类的问题：分类切换器由 Radix `Tabs` 改为自定义按钮组，避免弹窗关闭时的焦点/事件冲突；新增租户行操作「复制」：点击后弹出「复制租户」弹框，自动清空租户名称与成员，保留原租户智能体策略等其他配置，名称必填 | Agent |
 | 2026-07-15 | 平台模板持久化到 PostgreSQL：新增 `platformtemplate` 后端模块与 `platform_templates` 表，超管模板管理页通过 `/api/v1/templates` CRUD 管理三类模板（产品规范/设计规范/研发规范），首次启动自动 seed 默认模板；前端移除 `localStorage` 模板存储，新增 `template-api.ts` 与 `useTemplates` hook，`MarkdownEditor`、`空间设置`、`仓库规范弹窗` 均从后端读取；租户编辑弹框新增「添加成员」功能，可输入邮箱/姓名添加租户成员并指定管理员，默认密码 123456 | Agent |
 | 2026-07-14 | 表格行操作下拉菜单极光玻璃化：统一 `DropdownMenuContent` 为 `bg-popover/95 backdrop-blur-xl border-border/50 rounded-lg shadow-lg`；`DropdownMenuItem` 统一高度 32px、图标+文字、hover 浅蓝底高亮；危险项（删除）使用 `text-destructive focus:bg-destructive/10 focus:text-destructive` 并与普通项用分隔线区隔；触发按钮 `ghost` 增加 hover/open 浅蓝高亮；技能/提示词/租户管理下拉菜单补充图标；DESIGN.md 5.7 行操作规范更新 | Agent |
+| 2026-08-11 | 弹窗设计规范系统化：全面排查约 60 处弹窗（Dialog/AlertDialog/Sheet/toast），将原「亮色弹窗规范」扩充为「弹窗设计规范」（组件选型/遮罩容器/标准结构/宽度分级/底部按钮/危险确认/抽屉/Toast），明确危险操作一律 AlertDialog + destructive 按钮、宽度按四档收敛、禁止手写 fixed 模态；现存 7 类偏差记录在 14.10 待整改；章节重编号（弹窗→14、IDE→15、变更记录→16，修正原双 13 编号冲突与 IDE 子节编号） | Agent |
+| 2026-08-11 | 弹窗规范 7 类偏差全部整改：三处危险确认（删除仓库/作废文档）改 destructive 红色按钮；退出登录与删除租户确认由 Dialog 迁移至 AlertDialog；`ui/dialog.tsx` 与 `ui/sheet.tsx` 遮罩/容器对齐毛玻璃规范（亮色轻透模糊、暗色深遮罩），Sheet 按方向补 `rounded-*-2xl`，AlertDialog 移动端补圆角；任意宽度值（425/440/480/500/620/680/800px）收敛至四档，仓库设置弹窗补 `sm:max-w-md`；修复创建助手弹窗动态 Tailwind 类名失效 Bug；看板引导弹窗 Footer 改右对齐 | Agent |
+| 2026-08-11 | 弹窗容器改为实色不透明：应产品要求去除弹窗半透明/毛玻璃效果，`ui/dialog.tsx`、`ui/alert-dialog.tsx` 容器改实色白底（暗色实色 `#1E293B`），三个组件遮罩统一为无模糊浅调 `bg-[rgba(15,23,42,0.08)]`；DESIGN.md 14.2 规范同步更新 | Agent |

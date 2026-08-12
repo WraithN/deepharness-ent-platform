@@ -17,8 +17,9 @@ const AlertDialogOverlay = React.forwardRef<
   <AlertDialogPrimitive.Overlay
     className={cn(
       "fixed inset-0 z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-      "bg-[rgba(15,23,42,0.08)] backdrop-blur-[8px]",
-      "dark:bg-black/80 dark:backdrop-blur-none",
+      // 遮罩（DESIGN.md 14.2）：亮色浅调无模糊，暗色深遮罩；弹窗容器为实色不透明。
+      "bg-[rgba(15,23,42,0.08)]",
+      "dark:bg-black/80",
       className
     )}
     {...props}
@@ -36,9 +37,9 @@ const AlertDialogContent = React.forwardRef<
     <AlertDialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 p-6 duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-2xl",
-        "bg-white/88 backdrop-blur-xl border border-[rgba(148,163,184,0.18)] shadow-[0_10px_32px_rgba(15,23,42,0.12),0_0_0_1px_rgba(255,255,255,0.6)_inset]",
-        "dark:bg-[#1E293B]/80 dark:border-[rgba(148,163,184,0.15)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.35)]",
+        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 p-6 duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] rounded-2xl",
+        "bg-white border border-[rgba(148,163,184,0.18)] shadow-[0_10px_32px_rgba(15,23,42,0.12)]",
+        "dark:bg-[#1E293B] dark:border-[rgba(148,163,184,0.15)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.35)]",
         className
       )}
       {...props}

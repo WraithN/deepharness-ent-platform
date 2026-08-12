@@ -24,8 +24,10 @@ type Repository struct {
 type RepoType string
 
 const (
-	RepoTypeDev  RepoType = "dev"
-	RepoTypeCase RepoType = "case"
+	RepoTypeDev     RepoType = "dev"
+	RepoTypeArch    RepoType = "arch"
+	RepoTypeProduct RepoType = "product"
+	RepoTypeCase    RepoType = "case"
 )
 
 // CloneStatus 表示本地克隆状态。

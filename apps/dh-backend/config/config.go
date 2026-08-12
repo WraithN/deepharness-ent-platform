@@ -31,7 +31,7 @@ type Config struct {
 	// personal-stub 部署在 WORKSPACE_ROOT 所在的服务器上，直接操作文件系统和 git。
 	PersonalStubURL string
 
-	// CrawlerServiceURL 是 crawler-service 服务地址，用于 /prd-analysis 等网站爬取场景。
+	// CrawlerServiceURL 是 crawler-service 服务地址，用于 /prd-research 等网站爬取场景。
 	CrawlerServiceURL string
 	// CrawlerServiceTimeout 是调用 crawler-service 的最大超时时间。
 	CrawlerServiceTimeout time.Duration
@@ -161,6 +161,9 @@ type DirectHostConfig struct {
 	StubPort        int      `yaml:"stub_port"`
 	PortStep        int      `yaml:"port_step"`
 	MaxUsersPerHost int      `yaml:"max_users_per_host"`
+	// WorkspaceRoot 是用户工作区根目录。
+	// 由上层 Config.WorkspaceRoot 注入，决定 direct-host 模式下 personal-stub/gatewayd 的磁盘根路径。
+	WorkspaceRoot string `yaml:"workspace_root"`
 	// GatewaydBin 是 gatewayd 二进制文件路径，传递给 personal-stub 由其启动和管理。
 	GatewaydBin string `yaml:"gatewayd_bin"`
 	// StubBin 是 personal-stub 二进制文件路径。
@@ -466,6 +469,7 @@ func Load() (Config, error) {
 			StubPort:        yc.AgentProvisioner.DirectHost.StubPort,
 			PortStep:        yc.AgentProvisioner.DirectHost.PortStep,
 			MaxUsersPerHost: yc.AgentProvisioner.DirectHost.MaxUsersPerHost,
+			WorkspaceRoot:   cfg.WorkspaceRoot,
 			GatewaydBin:     yc.AgentProvisioner.DirectHost.GatewaydBin,
 			StubBin:         yc.AgentProvisioner.DirectHost.StubBin,
 			BearerToken:     yc.AgentProvisioner.DirectHost.BearerToken,

@@ -1557,6 +1557,11 @@ export function useAgUiChat(options: UseAgUiChatOptions = {}): UseAgUiChatReturn
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          // 任何流式数据（包括 SSE 注释心跳 ": heartbeat"）都视为连接活跃，
+          // 不能只依赖 parseSSE 出的 data 事件；否则长工具执行期间会因心跳不被识别而误超时。
+          if (value && value.byteLength > 0) {
+            lastEventAt = Date.now();
+          }
           sseBuffer += decoder.decode(value, { stream: true });
           const parts = sseBuffer.split(/\n\n/);
           sseBuffer = parts.pop() ?? '';

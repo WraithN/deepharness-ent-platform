@@ -46,7 +46,7 @@ workspace:
 personal_stub:
   url: "http://127.0.0.1:8090"
 
-# crawler-service 服务地址，用于 /prd-analysis 等网站爬取场景
+# crawler-service 服务地址，用于 /prd-research 等网站爬取场景
 crawler_service:
   url: "http://127.0.0.1:8091"
   timeout: "60s"

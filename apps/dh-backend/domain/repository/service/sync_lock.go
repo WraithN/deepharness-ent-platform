@@ -11,6 +11,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/pathutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/workspacepath"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/repository"
 	gitrepo "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/repository"
 )
 
@@ -28,6 +29,36 @@ func (s *DBRepositoryService) userProjectPath(workspaceID, userID, repoName stri
 	}
 	safeName := gitrepo.SanitizePathSegment(repoName)
 	return filepath.Join(base, workspacepath.DirDevJobs, safeName)
+}
+
+// resolveUserLocalPath 返回当前用户应使用的仓库本地路径。
+//
+// 工作空间级仓库在 DB 中记录的是创建者目录（{root}/{creatorID}/{ws}/dev-jobs/{name}）。
+// 当当前操作用户不是创建者时，应使用其自己的用户目录，避免多用户互相看到/修改同一份本地代码。
+// 如果当前用户就是创建者，则继续使用 DB 中记录的 local_path。
+func (s *DBRepositoryService) resolveUserLocalPath(repo repository.Repository, userID string) string {
+	if userID == "" || repo.LocalPath == "" {
+		return repo.LocalPath
+	}
+	creatorID := extractCreatorUserIDFromLocalPath(repo.LocalPath)
+	if creatorID != "" && creatorID == userID {
+		return repo.LocalPath
+	}
+	return s.userProjectPath(repo.WorkspaceID, userID, repo.Name)
+}
+
+// extractCreatorUserIDFromLocalPath 从仓库 local_path 中解析创建者 userID。
+// 路径格式：{root}/{creatorID}/{workspaceID}/dev-jobs/{repoName}。
+func extractCreatorUserIDFromLocalPath(localPath string) string {
+	if localPath == "" {
+		return ""
+	}
+	parts := strings.Split(filepath.ToSlash(localPath), "/")
+	// 倒数第三段必须是 dev-jobs，倒数第四段即为创建者 userID。
+	if len(parts) >= 4 && parts[len(parts)-3] == workspacepath.DirDevJobs {
+		return parts[len(parts)-4]
+	}
+	return ""
 }
 
 // userSyncLockPath 构建用户仓库同步锁文件的路径。

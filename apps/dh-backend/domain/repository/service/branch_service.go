@@ -11,7 +11,6 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/gitutil"
-	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/repository"
 )
 
@@ -31,19 +30,19 @@ func (s *DBRepositoryService) GetBranches(workspaceID, repoID, userID string) ([
 			return branches, nil
 		}
 	}
-	return s.fetchAndCacheBranches(ctx, workspaceID, repoID)
+	return s.fetchAndCacheBranches(ctx, workspaceID, repoID, userID)
 }
 
 // RefreshBranches 强制从 git 远端刷新分支列表并更新缓存。
 func (s *DBRepositoryService) RefreshBranches(workspaceID, repoID, userID string) ([]object.BranchInfo, error) {
 	// RepositoryService 接口未定义 ctx 参数，使用 context.Background() 作为根 context。
 	ctx := context.Background()
-	return s.fetchAndCacheBranches(ctx, workspaceID, repoID)
+	return s.fetchAndCacheBranches(ctx, workspaceID, repoID, userID)
 }
 
 // fetchAndCacheBranches 执行 git fetch + branch 解析，并将结果写入缓存。
-func (s *DBRepositoryService) fetchAndCacheBranches(ctx context.Context, workspaceID, repoID string) ([]object.BranchInfo, error) {
-	branches, err := s.fetchBranchesFromGit(ctx, workspaceID, repoID)
+func (s *DBRepositoryService) fetchAndCacheBranches(ctx context.Context, workspaceID, repoID, userID string) ([]object.BranchInfo, error) {
+	branches, err := s.fetchBranchesFromGit(ctx, workspaceID, repoID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -54,15 +53,16 @@ func (s *DBRepositoryService) fetchAndCacheBranches(ctx context.Context, workspa
 }
 
 // fetchBranchesFromGit 执行 git fetch origin 并解析分支列表。
-func (s *DBRepositoryService) fetchBranchesFromGit(ctx context.Context, workspaceID, repoID string) ([]object.BranchInfo, error) {
+func (s *DBRepositoryService) fetchBranchesFromGit(ctx context.Context, workspaceID, repoID, userID string) ([]object.BranchInfo, error) {
 	repo, err := s.Get(workspaceID, repoID)
 	if err != nil {
 		return nil, err
 	}
 
-	if repo.LocalPath == "" {
-		log.Printf("[Repository] local path empty for repo %s (status=%s, error=%s), returning fallback branches",
-			repoID, repo.CloneStatus, repo.ErrorMessage)
+	localPath := s.resolveUserLocalPath(repo, userID)
+	if localPath == "" {
+		log.Printf("[Repository] user local path empty for repo %s user=%s (status=%s, error=%s), returning fallback branches",
+			repoID, userID, repo.CloneStatus, repo.ErrorMessage)
 		return s.fallbackBranches(repo), nil
 	}
 
@@ -70,19 +70,19 @@ func (s *DBRepositoryService) fetchBranchesFromGit(ctx context.Context, workspac
 	if sc == nil {
 		return s.fallbackBranches(repo), nil
 	}
-	if ok, err := sc.FileExists(ctx, repo.LocalPath); err != nil || !ok {
-		// DB 显示已克隆但本地目录不存在（可能被清理或磁盘迁移），
-		// 标记为 pending 并触发异步重新克隆，返回默认分支作为降级。
-		log.Printf("[Repository] local path missing for repo %s (path=%s), triggering re-clone", repoID, repo.LocalPath)
-		s.updateStatus(repo.ID, repository.CloneStatusPending, "local path missing, re-cloning")
-		safego.Go("repo-sync-reclone", func() { s.syncRepository(repo, repo.SSHKey) })
+	if ok, err := sc.FileExists(ctx, localPath); err != nil || !ok {
+		// 用户目录尚未同步，触发异步克隆并返回默认分支作为降级。
+		log.Printf("[Repository] user local path missing for repo %s user=%s (path=%s), triggering sync", repoID, userID, localPath)
+		if syncErr := s.SyncUserRepo(repo.WorkspaceID, repo.ID, userID); syncErr != nil {
+			log.Printf("[Repository] trigger SyncUserRepo failed: %v", syncErr)
+		}
 		return s.fallbackBranches(repo), nil
 	}
 
 	// Fetch latest from remote first
-	_, _ = gitutil.Exec(ctx, repo.LocalPath, "fetch", "origin")
+	_, _ = gitutil.Exec(ctx, localPath, "fetch", "origin")
 
-	currentBranch, err := gitutil.Exec(ctx, repo.LocalPath, "rev-parse", "--abbrev-ref", "HEAD")
+	currentBranch, err := gitutil.Exec(ctx, localPath, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current branch: %w", err)
 	}
@@ -90,7 +90,7 @@ func (s *DBRepositoryService) fetchBranchesFromGit(ctx context.Context, workspac
 
 	// List all local and remote branches
 	// 使用逗号分隔，避免分号被 personal-stub 的 gitShellUnsafeChars 校验拒绝
-	branchesOut, err := gitutil.Exec(ctx, repo.LocalPath, "branch", "-av", "--format=%(refname:short),%(objectname),%(committerdate:iso8601)")
+	branchesOut, err := gitutil.Exec(ctx, localPath, "branch", "-av", "--format=%(refname:short),%(objectname),%(committerdate:iso8601)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list branches: %w", err)
 	}
@@ -146,21 +146,24 @@ func (s *DBRepositoryService) fallbackBranches(repo repository.Repository) []obj
 	}
 }
 
-// ensureLocalPath 检查仓库本地目录是否存在。若不存在则触发异步重新克隆，
-// 返回 error 表示目录当前不可用。调用方应根据返回的 error 决定降级策略。
-func (s *DBRepositoryService) ensureLocalPath(ctx context.Context, repo repository.Repository) error {
-	if repo.LocalPath == "" {
+// ensureLocalPath 检查当前用户应使用的仓库本地目录是否存在。
+// 若不存在则触发用户级同步，返回 error 表示目录当前不可用，调用方应降级或等待同步完成。
+func (s *DBRepositoryService) ensureLocalPath(ctx context.Context, repo repository.Repository, userID string) error {
+	localPath := s.resolveUserLocalPath(repo, userID)
+	if localPath == "" {
 		return fmt.Errorf("repository not cloned yet")
 	}
 	sc := stubclient.FromContext(ctx)
 	if sc == nil {
 		return nil
 	}
-	if ok, err := sc.FileExists(ctx, repo.LocalPath); err != nil || !ok {
-		log.Printf("[Repository] local path missing for repo %s (path=%s), triggering re-clone", repo.ID, repo.LocalPath)
-		s.updateStatus(repo.ID, repository.CloneStatusPending, "local path missing, re-cloning")
-		safego.Go("repo-sync-reclone", func() { s.syncRepository(repo, repo.SSHKey) })
-		return fmt.Errorf("repository local path missing, re-cloning in background")
+	if ok, err := sc.FileExists(ctx, localPath); err != nil || !ok {
+		log.Printf("[Repository] user local path missing for repo %s user=%s (path=%s), triggering sync", repo.ID, userID, localPath)
+		// 触发用户级同步；创建者目录缺失时同样复用 SyncUserRepo，它会走用户目录。
+		if syncErr := s.SyncUserRepo(repo.WorkspaceID, repo.ID, userID); syncErr != nil {
+			log.Printf("[Repository] trigger SyncUserRepo failed: %v", syncErr)
+		}
+		return fmt.Errorf("repository local path missing, syncing in background")
 	}
 	return nil
 }
@@ -175,33 +178,35 @@ func (s *DBRepositoryService) SwitchBranch(workspaceID, repoID, branchName, user
 	// RepositoryService 接口未定义 ctx 参数，使用 context.Background() 作为根 context。
 	ctx := context.Background()
 
-	if err := s.ensureLocalPath(ctx, repo); err != nil {
+	if err := s.ensureLocalPath(ctx, repo, userID); err != nil {
 		return err
 	}
 
+	localPath := s.resolveUserLocalPath(repo, userID)
+
 	// Fetch latest from remote
-	_, _ = gitutil.Exec(ctx, repo.LocalPath, "fetch", "origin")
+	_, _ = gitutil.Exec(ctx, localPath, "fetch", "origin")
 
 	// Check if branch exists locally
 	localBranchExists := false
-	if branchesOut, err := gitutil.Exec(ctx, repo.LocalPath, "branch", "--list", branchName); err == nil {
+	if branchesOut, err := gitutil.Exec(ctx, localPath, "branch", "--list", branchName); err == nil {
 		localBranchExists = strings.TrimSpace(branchesOut) != ""
 	}
 
 	var checkoutErr error
 	if localBranchExists {
 		// Branch exists locally, just checkout
-		_, checkoutErr = gitutil.Exec(ctx, repo.LocalPath, "checkout", branchName)
+		_, checkoutErr = gitutil.Exec(ctx, localPath, "checkout", branchName)
 	} else {
 		// Branch doesn't exist locally, checkout tracking branch from remote
-		_, checkoutErr = gitutil.Exec(ctx, repo.LocalPath, "checkout", "-t", "origin/"+branchName)
+		_, checkoutErr = gitutil.Exec(ctx, localPath, "checkout", "-t", "origin/"+branchName)
 	}
 	if checkoutErr != nil {
 		return fmt.Errorf("failed to checkout branch %s: %w", branchName, checkoutErr)
 	}
 
 	// Pull latest changes
-	if _, err := gitutil.Exec(ctx, repo.LocalPath, "pull"); err != nil {
+	if _, err := gitutil.Exec(ctx, localPath, "pull"); err != nil {
 		// Pull may fail if no remote tracking configured, but checkout succeeded
 		log.Printf("[Repository] pull failed (non-critical): %v", err)
 	}
@@ -229,12 +234,14 @@ func (s *DBRepositoryService) GitCommit(workspaceID, repoID, message, userID str
 	// RepositoryService 接口未定义 ctx 参数，使用 context.Background() 作为根 context。
 	ctx := context.Background()
 
-	if err := s.ensureLocalPath(ctx, repo); err != nil {
+	if err := s.ensureLocalPath(ctx, repo, userID); err != nil {
 		return "", err
 	}
 
+	localPath := s.resolveUserLocalPath(repo, userID)
+
 	// Add all changes
-	if _, err := gitutil.Exec(ctx, repo.LocalPath, "add", "."); err != nil {
+	if _, err := gitutil.Exec(ctx, localPath, "add", "."); err != nil {
 		return "", fmt.Errorf("failed to add changes: %w", err)
 	}
 
@@ -243,7 +250,7 @@ func (s *DBRepositoryService) GitCommit(workspaceID, repoID, message, userID str
 	if commitMsg == "" {
 		commitMsg = "Update files via web interface"
 	}
-	if _, err := gitutil.Exec(ctx, repo.LocalPath, "commit", "-m", commitMsg); err != nil {
+	if _, err := gitutil.Exec(ctx, localPath, "commit", "-m", commitMsg); err != nil {
 		// git 返回 "nothing to commit" 时使用类型化错误，避免调用方做字符串匹配。
 		if strings.Contains(err.Error(), "nothing to commit") {
 			return "", ErrNoChangesToCommit
@@ -252,7 +259,7 @@ func (s *DBRepositoryService) GitCommit(workspaceID, repoID, message, userID str
 	}
 
 	// Get commit hash
-	hash, err := gitutil.Exec(ctx, repo.LocalPath, "rev-parse", "HEAD")
+	hash, err := gitutil.Exec(ctx, localPath, "rev-parse", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("failed to get commit hash: %w", err)
 	}
@@ -270,11 +277,13 @@ func (s *DBRepositoryService) GitStatus(workspaceID, repoID, userID string) (str
 	// RepositoryService 接口未定义 ctx 参数，使用 context.Background() 作为根 context。
 	ctx := context.Background()
 
-	if err := s.ensureLocalPath(ctx, repo); err != nil {
+	if err := s.ensureLocalPath(ctx, repo, userID); err != nil {
 		return "", err
 	}
 
-	status, err := gitutil.Exec(ctx, repo.LocalPath, "status", "--porcelain")
+	localPath := s.resolveUserLocalPath(repo, userID)
+
+	status, err := gitutil.Exec(ctx, localPath, "status", "--porcelain")
 	if err != nil {
 		return "", fmt.Errorf("failed to get status: %w", err)
 	}

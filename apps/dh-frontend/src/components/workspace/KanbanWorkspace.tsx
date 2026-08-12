@@ -18,6 +18,7 @@ import {
 import { MarkdownView } from '@/components/chat/MarkdownView';
 import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
+import { formatDateTime } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -37,7 +38,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { workItemDocApi } from '@/lib/workitem-doc-api';
 import { workItemApi } from '@/lib/workitem-api';
 import { productSpaceApi, requirementShareApi, findPrototypeProductName } from '@/lib/productspace-api';
-import type { WorkItemDTO } from '@/lib/api-types';
+import type { WorkItemDTO, WorkItemCommitDTO } from '@/lib/api-types';
 import {
   type KanbanViewMode,
   MAX_KANBAN_DEPTH,
@@ -188,6 +189,9 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
   const [detailItem, setDetailItem] = useState<WorkItemDTO | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [productDesignLoading, setProductDesignLoading] = useState(false);
+  const [commitsOpen, setCommitsOpen] = useState(false);
+  const [commits, setCommits] = useState<WorkItemCommitDTO[]>([]);
+  const [commitsLoading, setCommitsLoading] = useState(false);
 
   const [designInfoMap, setDesignInfoMap] = useState<Record<string, { hasDoc: boolean; hasPrototype: boolean }>>({});
   // 无设计引导弹窗：分配/评审时发现需求无设计，询问是否先进行 AI 设计
@@ -320,6 +324,20 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
       toast.error(err instanceof ApiError ? err.message : '打开产品设计失败');
     } finally {
       setProductDesignLoading(false);
+    }
+  };
+
+  const handleOpenCodeRepo = async () => {
+    if (!detailItem) return;
+    setCommitsOpen(true);
+    setCommitsLoading(true);
+    try {
+      const data = await workItemApi.listCommits(detailItem.id);
+      setCommits(data);
+    } catch {
+      toast.error('获取提交记录失败');
+    } finally {
+      setCommitsLoading(false);
     }
   };
 
@@ -699,7 +717,7 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
                       loading={productDesignLoading}
                       onClick={detailItem ? () => openProductDesignShare(detailItem) : undefined}
                     />
-                    <ResourceCard icon={<Github className="h-4 w-4 text-orange-500" />} label="代码仓库" />
+                    <ResourceCard icon={<Github className="h-4 w-4 text-orange-500" />} label="代码仓库" onClick={handleOpenCodeRepo} />
                     <ResourceCard icon={<FileText className="h-4 w-4 text-primary" />} label="测试用例" />
                   </div>
                 </section>
@@ -718,9 +736,55 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
         </DialogContent>
       </Dialog>
 
+      {/* 开发提交记录弹窗 */}
+      <Dialog open={commitsOpen} onOpenChange={setCommitsOpen}>
+        <DialogContent className="sm:max-w-lg p-0 flex flex-col overflow-hidden">
+          <DialogHeader className="px-6 py-4 border-b border-border/50">
+            <div className="flex items-center gap-3">
+              <Github className="h-5 w-5 text-orange-500" />
+              <div className="text-left">
+                <DialogTitle className="text-base font-semibold">开发提交记录</DialogTitle>
+                <DialogDescription className="text-sm text-muted-foreground mt-0.5">
+                  {detailItem?.title ?? '-'}
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="px-6 py-4 max-h-[360px] overflow-y-auto">
+            {commitsLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : commits.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">暂无提交记录</p>
+            ) : (
+              <div className="space-y-2">
+                {commits.map((c) => (
+                  <div key={c.id} className="flex flex-col gap-1 border border-border/50 rounded-lg px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <code className="text-xs font-mono text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/20 px-1.5 py-0.5 rounded">
+                        {c.commitHash.slice(0, 7)}
+                      </code>
+                      <span className="text-sm text-foreground truncate">{c.commitMessage || '-'}</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      {c.author && <span>{c.author}</span>}
+                      <span>{formatDateTime(c.committedAt)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter className="px-6 py-4 border-t border-border/50">
+            <Button variant="outline" size="sm" onClick={() => setCommitsOpen(false)}>关闭</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* 无设计引导弹窗：分配/评审时发现需求无设计，引导用户先进行 AI 设计 */}
       <Dialog open={noDesignDialog.open} onOpenChange={(open) => setNoDesignDialog(prev => ({ ...prev, open }))}>
-        <DialogContent className="sm:max-w-[440px] p-0 flex flex-col overflow-hidden">
+        <DialogContent className="sm:max-w-md p-0 flex flex-col overflow-hidden">
           <DialogHeader className="px-6 py-4 border-b border-border/50">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/20 flex items-center justify-center shrink-0">
@@ -741,7 +805,7 @@ export const KanbanWorkspace: React.FC<KanbanWorkspaceProps> = ({ onNavigateToDe
             </p>
           </div>
 
-          <DialogFooter className="px-6 py-3.5 border-t border-border/50 bg-muted/30 flex justify-between">
+          <DialogFooter className="px-6 py-3.5 border-t border-border/50 bg-muted/30 flex justify-end gap-2">
             <Button
               variant="outline"
               onClick={() => setNoDesignDialog({ open: false, req: null })}

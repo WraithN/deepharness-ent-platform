@@ -22,12 +22,14 @@ func (s *DBRepositoryService) GetFileTree(workspaceID, repoID, branch, userID st
 	// RepositoryService 接口未定义 ctx 参数，使用 context.Background() 作为根 context。
 	ctx := context.Background()
 
-	if err := s.ensureLocalPath(ctx, repo); err != nil {
+	if err := s.ensureLocalPath(ctx, repo, userID); err != nil {
 		return nil, err
 	}
 
+	localPath := s.resolveUserLocalPath(repo, userID)
+
 	// Load .gitignore patterns
-	ignorePatterns := loadGitignorePatterns(ctx, repo.LocalPath)
+	ignorePatterns := loadGitignorePatterns(ctx, localPath)
 
 	// Collect all file paths with directory info
 	type pathInfo struct {
@@ -39,8 +41,8 @@ func (s *DBRepositoryService) GetFileTree(workspaceID, repoID, branch, userID st
 	if treeSC == nil {
 		return nil, fmt.Errorf("stubclient not initialized")
 	}
-	err = walkDir(ctx, treeSC, repo.LocalPath, func(path string, entry stubclient.DirEntry) error {
-		relPath, _ := filepath.Rel(repo.LocalPath, path)
+	err = walkDir(ctx, treeSC, localPath, func(path string, entry stubclient.DirEntry) error {
+		relPath, _ := filepath.Rel(localPath, path)
 		isGitDir := relPath == ".git" || strings.HasPrefix(relPath, ".git"+string(filepath.Separator))
 		if isGitDir || isIgnored(relPath, ignorePatterns) {
 			if entry.IsDir {
@@ -231,12 +233,14 @@ func (s *DBRepositoryService) GetFileContent(workspaceID, repoID, branch, path, 
 	// RepositoryService 接口未定义 ctx 参数，使用 context.Background() 作为根 context。
 	ctx := context.Background()
 
-	if err := s.ensureLocalPath(ctx, repo); err != nil {
+	if err := s.ensureLocalPath(ctx, repo, userID); err != nil {
 		return nil, err
 	}
 
+	localPath := s.resolveUserLocalPath(repo, userID)
+
 	// 优先读取本地工作区文件（以便显示编辑后的内容）
-	fullPath := filepath.Join(repo.LocalPath, path)
+	fullPath := filepath.Join(localPath, path)
 	sc := stubclient.FromContext(ctx)
 	var content string
 	if sc != nil {
@@ -250,7 +254,7 @@ func (s *DBRepositoryService) GetFileContent(workspaceID, repoID, branch, path, 
 		if targetBranch == "" {
 			targetBranch = repo.DefaultBranch
 		}
-		gitContent, err := gitutil.Exec(ctx, repo.LocalPath, "show", fmt.Sprintf("%s:%s", targetBranch, path))
+		gitContent, err := gitutil.Exec(ctx, localPath, "show", fmt.Sprintf("%s:%s", targetBranch, path))
 		if err != nil {
 			return nil, fmt.Errorf("failed to get file content: %w", err)
 		}
@@ -308,11 +312,12 @@ func (s *DBRepositoryService) SaveFileContent(workspaceID, repoID, path, content
 	// RepositoryService 接口未定义 ctx 参数，使用 context.Background() 作为根 context。
 	ctx := context.Background()
 
-	if err := s.ensureLocalPath(ctx, repo); err != nil {
+	if err := s.ensureLocalPath(ctx, repo, userID); err != nil {
 		return err
 	}
 
-	fullPath := filepath.Join(repo.LocalPath, path)
+	localPath := s.resolveUserLocalPath(repo, userID)
+	fullPath := filepath.Join(localPath, path)
 
 	// 架构合规：通过 stubclient 写入文件（自动创建父目录），不直接操作共享目录
 	sc := stubclient.FromContext(ctx)

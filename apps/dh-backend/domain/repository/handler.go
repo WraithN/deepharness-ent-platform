@@ -163,7 +163,7 @@ func SyncRepository(w http.ResponseWriter, r *http.Request) {
 
 func isValidRepoType(t string) bool {
 	switch repository.RepoType(t) {
-	case repository.RepoTypeDev, repository.RepoTypeCase:
+	case repository.RepoTypeDev, repository.RepoTypeArch, repository.RepoTypeProduct, repository.RepoTypeCase:
 		return true
 	default:
 		return false

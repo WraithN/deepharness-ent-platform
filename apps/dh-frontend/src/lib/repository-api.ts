@@ -32,6 +32,7 @@ export interface UserRepoStatus {
   synced: boolean;
   syncStatus: string;
   progress: number;
+  errorMessage?: string;
 }
 
 /** 仓库规范文件（AGENTS.md / DESIGN.md）状态与内容。 */

@@ -356,7 +356,7 @@ export const FileView: React.FC = () => {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} disabled={deleting}>
+            <AlertDialogAction onClick={handleDelete} disabled={deleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               {deleting && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}确认作废
             </AlertDialogAction>
           </AlertDialogFooter>

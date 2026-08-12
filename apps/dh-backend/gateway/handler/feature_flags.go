@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 )
@@ -16,6 +17,30 @@ const (
 	// cometFlowCacheTTL 是开关缓存有效期，避免指令渲染热路径每次查库。
 	cometFlowCacheTTL = 30 * time.Second
 )
+
+// cometFlowDefaultEnabled 返回 comet_flow 开关在数据库不可用时的默认值。
+// 开发环境未启动 PostgreSQL 时，默认启用 comet 流程以便实际走 comet 验证；
+// 生产环境应初始化 DB 并通过 /api/v1/platform/feature-flags 管理开关。
+// 也可通过环境变量 COMET_FLOW_DEFAULT_ENABLED 显式覆盖。
+func cometFlowDefaultEnabled() bool {
+	v := os.Getenv("COMET_FLOW_DEFAULT_ENABLED")
+	if v == "false" || v == "0" {
+		return false
+	}
+	if v == "true" || v == "1" {
+		return true
+	}
+	// 未显式设置时，默认启用，确保 dev 环境无 DB 也能走 comet。
+	return true
+}
+
+// defaultEnabledForFlag 返回指定开关在数据库不可用时的安全回退值。
+func defaultEnabledForFlag(flagKey string) bool {
+	if flagKey == FlagKeyCometFlow {
+		return cometFlowDefaultEnabled()
+	}
+	return false
+}
 
 // FeatureFlag 表示一个平台级功能开关。
 type FeatureFlag struct {
@@ -38,7 +63,8 @@ func SetFeatureFlagDB(db *sql.DB) {
 }
 
 // IsCometFlowEnabled 返回 Comet 流程开关是否启用。
-// 带 TTL 缓存，查库失败时安全回退为 false（关闭），确保开关不可用时退回原指令流程。
+// 带 TTL 缓存，查库失败时 comet_flow 默认启用，其他开关回退 false；
+// 可通过 COMET_FLOW_DEFAULT_ENABLED 环境变量覆盖默认行为。
 // 供 applyCommandConfig 在指令渲染时调用，决定是否使用 cometTemplate。
 func IsCometFlowEnabled() bool {
 	if v, ok := readCometFlowCache(); ok {
@@ -78,17 +104,21 @@ func invalidateCometFlowCache() {
 	cometFlowCachedAt = time.Time{}
 }
 
-// queryFlagEnabled 查询指定开关的启用状态，查库失败（表不存在/行不存在）回退 false。
+// queryFlagEnabled 查询指定开关的启用状态。
+// 数据库未初始化或查询失败时，comet_flow 默认启用（便于 dev 环境测试），
+// 其他开关安全回退为 false；调用方可通过 COMET_FLOW_DEFAULT_ENABLED 环境变量覆盖。
 func queryFlagEnabled(flagKey string) bool {
 	if featureFlagDB == nil {
-		return false
+		log.Printf("[FeatureFlags] DB not initialized, using default for %s", flagKey)
+		return defaultEnabledForFlag(flagKey)
 	}
 	var enabled bool
 	err := featureFlagDB.QueryRow(
 		`SELECT enabled FROM platform_feature_flags WHERE flag_key = $1`, flagKey,
 	).Scan(&enabled)
 	if err != nil {
-		return false
+		log.Printf("[FeatureFlags] query %s failed: %v, using default", flagKey, err)
+		return defaultEnabledForFlag(flagKey)
 	}
 	return enabled
 }
@@ -104,17 +134,26 @@ func FeatureFlagsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(flags)
 }
 
-// listFeatureFlags 查询全部开关，查库失败返回空列表（容错）。
+// listFeatureFlags 查询全部开关。
+// 数据库未初始化时，至少返回 comet_flow 的默认值，保证前端管理页能看到开关状态。
 func listFeatureFlags() []FeatureFlag {
 	if featureFlagDB == nil {
-		return []FeatureFlag{}
+		return []FeatureFlag{{
+			FlagKey:   FlagKeyCometFlow,
+			Enabled:   cometFlowDefaultEnabled(),
+			UpdatedAt: time.Now(),
+		}}
 	}
 	rows, err := featureFlagDB.Query(
 		`SELECT flag_key, enabled, updated_at FROM platform_feature_flags ORDER BY flag_key`,
 	)
 	if err != nil {
 		log.Printf("[FeatureFlags] query failed: %v", err)
-		return []FeatureFlag{}
+		return []FeatureFlag{{
+			FlagKey:   FlagKeyCometFlow,
+			Enabled:   cometFlowDefaultEnabled(),
+			UpdatedAt: time.Now(),
+		}}
 	}
 	defer rows.Close()
 	flags := make([]FeatureFlag, 0)
@@ -183,10 +222,12 @@ func updateFeatureFlag(key string, enabled bool) error {
 	return err
 }
 
-// getFeatureFlag 查询单个开关，不存在返回零值。
+// getFeatureFlag 查询单个开关；数据库不可用时返回默认值。
 func getFeatureFlag(key string) FeatureFlag {
 	var f FeatureFlag
 	if featureFlagDB == nil {
+		f.FlagKey = key
+		f.Enabled = defaultEnabledForFlag(key)
 		return f
 	}
 	_ = featureFlagDB.QueryRow(

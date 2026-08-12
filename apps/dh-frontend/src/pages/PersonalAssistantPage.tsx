@@ -198,7 +198,9 @@ export const PersonalAssistantPage: React.FC = () => {
 
       {/* Create Dialog */}
       <Dialog open={createOpen} onOpenChange={(open) => !isLoading && setCreateOpen(open)}>
-        <DialogContent className={`sm:max-w-[${step === 2 ? '600px' : '425px'}] transition-all duration-300`}>
+        {/* 宽度按弹窗规范取档：步骤1 标准表单 sm:max-w-md，步骤2 宽表 sm:max-w-2xl；
+            注意必须用完整字面量类名（Tailwind 无法编译动态拼接的任意值类）。 */}
+        <DialogContent className={`transition-all duration-300 ${step === 2 ? 'sm:max-w-2xl' : 'sm:max-w-md'}`}>
           {isLoading ? (
             <div className="flex flex-col items-center justify-center py-12 space-y-4">
               <div className="relative">

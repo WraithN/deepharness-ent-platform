@@ -41,15 +41,17 @@ func PreviewStart(w http.ResponseWriter, r *http.Request) {
 	// 代码模式的文件浏览功能仍可正常使用。
 	AddAllowedRoot(req.Path)
 
-	isFrontend := IsNodeFrontendProject(req.Path)
+	// monorepo 工程的前端可能在子目录（如 apps/web），dev server 必须在前端
+	// 目录中启动；servers 表也以该目录为键，Stop/Status 需做同样的换算。
+	frontendDir, isFrontend := FindFrontendDir(req.Path)
 	resp := previewStartResponse{
 		IsFrontend: isFrontend,
 	}
 
 	if isFrontend {
-		port, err := devServerMgr.Start(req.Path)
+		port, err := devServerMgr.Start(frontendDir)
 		if err != nil {
-			log.Printf("[Preview] start failed: path=%s err=%v", req.Path, err)
+			log.Printf("[Preview] start failed: path=%s frontendDir=%s err=%v", req.Path, frontendDir, err)
 			http.Error(w, fmt.Sprintf("failed to start dev server: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -60,6 +62,15 @@ func PreviewStart(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// resolveServerKey 将请求中的工程根目录换算为 dev server 的实际启动目录
+//（monorepo 时为前端子目录），与 PreviewStart 中的键保持一致。
+func resolveServerKey(path string) string {
+	if dir, ok := FindFrontendDir(path); ok {
+		return dir
+	}
+	return path
+}
+
 // PreviewStop 处理 POST /api/v1/preview/stop。
 func PreviewStop(w http.ResponseWriter, r *http.Request) {
 	var req previewStartRequest
@@ -67,17 +78,36 @@ func PreviewStop(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	devServerMgr.Stop(req.Path)
+	devServerMgr.Stop(resolveServerKey(req.Path))
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // PreviewStatus 处理 GET /api/v1/preview/status?path=...。
 func PreviewStatus(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
-	port, running := devServerMgr.GetPort(path)
+	port, running := devServerMgr.GetPort(resolveServerKey(path))
 	resp := map[string]any{
 		"running": running,
 		"port":    port,
+	}
+	SetJSONHeader(w)
+	json.NewEncoder(w).Encode(resp)
+}
+
+// PreviewErrors 处理 GET /api/v1/preview/errors?path=...。
+// 分析 dev server 进程输出，返回当前是否处于报错状态及错误摘要，
+// 供前端轮询并在报错时展示"修复"入口。server 未运行时 hasError 恒为 false。
+func PreviewErrors(w http.ResponseWriter, r *http.Request) {
+	key := resolveServerKey(r.URL.Query().Get("path"))
+	_, running := devServerMgr.GetPort(key)
+	hasError, excerpt := false, ""
+	if running {
+		hasError, excerpt = devServerMgr.AnalyzeOutput(key)
+	}
+	resp := map[string]any{
+		"running":  running,
+		"hasError": hasError,
+		"excerpt":  excerpt,
 	}
 	SetJSONHeader(w)
 	json.NewEncoder(w).Encode(resp)

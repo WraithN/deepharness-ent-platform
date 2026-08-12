@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Bot, Box, FileCode2, ListTodo, CheckCircle2, Wrench, X, Copy, RefreshCw, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import type { MessageState, TextMessagePart, ReasoningMessagePart, DataMessagePart, ToolCallMessagePart } from '@assistant-ui/react';
 import { useThread } from '@assistant-ui/react';
@@ -27,8 +27,10 @@ import {
   parseReqName,
 } from '@/lib/markers';
 
-const TEXT_COLLAPSE_LINE_THRESHOLD = 12;
-const TEXT_COLLAPSE_CHAR_THRESHOLD = 800;
+// 折叠判定阈值：与 index.css 中 .chat-bubble-text-closed 的 max-height 保持一致。
+// 是否展示折叠按钮以渲染后的真实高度为准，避免用原始文本长度误判
+// （原始文本含 [[FILE:..]]/[[PROJECT:..]] 等标记，渲染时会被剥离，导致短内容误判为超长）。
+const TEXT_COLLAPSE_MAX_HEIGHT_PX = 215;
 const PROTOTYPE_DIR_SEGMENT = '/products/prototypes/';
 // 匹配需求拆分相关文件：路径中包含 req-breakdown 且以 .md/.json 结尾。
 const REQ_BREAKDOWN_FILE_REGEX = /req-breakdown.*\.(md|json)$/i;
@@ -83,6 +85,9 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
   const thread = useThread();
   const content = Array.isArray(message.content) ? message.content : [];
   const [textExpanded, setTextExpanded] = useState(false);
+  // 输出文本区的测量节点与"内容是否超出折叠高度"状态，见下方 useLayoutEffect。
+  const textContentRef = useRef<HTMLDivElement | null>(null);
+  const [textOverflows, setTextOverflows] = useState(false);
 
   const isUserStoryActive = (data: UserStoryData) =>
     activeUserStoryData != null &&
@@ -258,8 +263,19 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     return requirements.find(r => r.title.trim().toLowerCase() === normalized)?.id;
   }, [workitemId, requirements, prototypeRequirementTitle]);
 
-  const textLineCount = textContent.split('\n').length;
-  const shouldCollapseText = textLineCount > TEXT_COLLAPSE_LINE_THRESHOLD || textContent.length > TEXT_COLLAPSE_CHAR_THRESHOLD;
+  // 折叠判定基于渲染后的真实高度：scrollHeight 不受 max-height 截断影响，
+  // 即使内容当前处于折叠状态也能测出完整高度。ResizeObserver 覆盖图片、
+  // Mermaid 等异步渲染导致的高度变化；textContent 变化时重新测量以覆盖流式增长。
+  useLayoutEffect(() => {
+    const el = textContentRef.current;
+    if (!el) return;
+    const updateOverflow = () => setTextOverflows(el.scrollHeight > TEXT_COLLAPSE_MAX_HEIGHT_PX);
+    updateOverflow();
+    const observer = new ResizeObserver(updateOverflow);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [textContent]);
+
   const isStreaming = isRunning || isThinkingRunning;
 
   // 将 /proto-make 等指令生成的原型工程路径按一级产品目录去重，
@@ -342,7 +358,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     }
   }, [hasUserStoryFromMarker, hasUserStoryFromLegacy, hasReqBreakdownFromMarker, hasReqBreakdownFromLegacy, reviewReportData]);
 
-  const showCollapsed = shouldCollapseText && !textExpanded && !isStreaming;
+  const showCollapsed = textOverflows && !textExpanded && !isStreaming;
 
   const toolCallCount = thinkingItems.filter((i) => i.type === 'tool-call').length;
 
@@ -452,22 +468,27 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
             <div className="min-w-0 w-full overflow-hidden">
               <div className="relative min-w-0">
                 <div className={showCollapsed ? 'chat-bubble-text chat-bubble-text-closed' : 'chat-bubble-text chat-bubble-text-open'}>
-                  {outputParts.map((part, idx) => {
-                    if (!part.text) return null;
-                    const cleanText = stripAllMarkers(part.text);
-                    if (!cleanText) return null;
-                    return (
-                      <div key={idx} className="px-5 py-1.5 text-sm break-words min-w-0">
-                        <MarkdownView content={cleanText} collapsible={false} />
-                      </div>
-                    );
-                  })}
+                  {/* 内层测量节点：不做 max-height 截断，scrollHeight 恒为完整内容高度 */}
+                  <div ref={textContentRef}>
+                    {outputParts.map((part, idx) => {
+                      if (!part.text) return null;
+                      const cleanText = stripAllMarkers(part.text);
+                      if (!cleanText) return null;
+                      return (
+                        <div key={idx} className="px-5 py-1.5 text-sm break-words min-w-0">
+                          <MarkdownView content={cleanText} collapsible={false} />
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
                 {showCollapsed && (
                   <div className="chat-bubble-fade absolute bottom-0 left-0 right-0 h-16 pointer-events-none z-10" />
                 )}
               </div>
-              {shouldCollapseText && (
+              {/* 仅当渲染后内容真实超出折叠高度且非流式输出时才展示折叠按钮，
+                  避免短内容出现无效按钮；流式期间内容持续完整展开，折叠不适用。 */}
+              {textOverflows && !isStreaming && (
                 <div className="flex justify-center py-1.5">
                   <button
                     className="chat-bubble-toggle"

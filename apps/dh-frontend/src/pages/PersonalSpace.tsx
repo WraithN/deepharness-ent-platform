@@ -1,8 +1,9 @@
 import React, { useMemo } from 'react';
-import { Code2, ClipboardCheck, Palette } from 'lucide-react';
+import { Code2, ClipboardCheck, Network, Palette } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { SUB_ROLE } from '@/lib/role-constants';
 import { ProductWorkspace, type ExtraTab } from '@/components/workspace/ProductWorkspace';
+import { ArchDesignWorkspace } from '@/components/workspace/ArchDesignWorkspace';
 import { DevWorkspace } from '@/components/workspace/DevWorkspace';
 import { DesignWorkspace } from '@/components/workspace/DesignWorkspace';
 import { TestCaseDesign } from '@/components/workspace/TestCaseDesign';
@@ -13,7 +14,8 @@ import { TestCaseDesign } from '@/components/workspace/TestCaseDesign';
  * 所有角色统一使用 ProductWorkspace，顶部 Tab 为：
  * - 需求追踪（始终显示）
  * - 需求设计（PM 角色）
- * - 工程代码（研发角色）
+ * - 架构设计（研发角色，位于工程仓库前）
+ * - 工程仓库（研发角色）
  * - 用例设计（测试角色）
  * - UI设计（UI设计师角色）
  *
@@ -28,7 +30,8 @@ export const PersonalSpace: React.FC = () => {
   const extraTabs = useMemo<ExtraTab[]>(() => {
     const tabs: ExtraTab[] = [];
     if (subRoles.includes(SUB_ROLE.DEVELOPER)) {
-      tabs.push({ key: 'code', label: '工程代码', icon: Code2, render: () => <DevWorkspace /> });
+      tabs.push({ key: 'arch', label: '架构设计', icon: Network, render: () => <ArchDesignWorkspace /> });
+      tabs.push({ key: 'code', label: '工程仓库', icon: Code2, render: () => <DevWorkspace /> });
     }
     if (subRoles.includes(SUB_ROLE.TESTER)) {
       tabs.push({ key: 'testcase', label: '用例设计', icon: ClipboardCheck, render: () => <TestCaseDesign /> });

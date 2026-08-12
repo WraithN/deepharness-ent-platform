@@ -177,6 +177,7 @@ const (
 	ROUTE_WORKSPACES_BY_ID_PROMPT_CATEGORIES_BY_CATEGORY_ID                            = API_V1_PREFIX + "/workspaces/{id}/prompt-categories/{categoryId}"
 	ROUTE_WORKSPACES_BY_ID_REPOSITORIES                                                = API_V1_PREFIX + "/workspaces/{id}/repositories"
 	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_SCAN                                           = API_V1_PREFIX + "/workspaces/{id}/repositories/scan"
+	ROUTE_WORKSPACES_BY_ID_ARCH_GRAPH                                                  = API_V1_PREFIX + "/workspaces/{id}/arch/graph"
 	ROUTE_WORKSPACES_BY_ID_USER_REPOS                                                  = API_V1_PREFIX + "/workspaces/{id}/user-repos"
 	ROUTE_WORKSPACES_BY_ID_USER_REPOS_BY_REPO_ID_SYNC                                  = API_V1_PREFIX + "/workspaces/{id}/user-repos/{repoId}/sync"
 	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID                                     = API_V1_PREFIX + "/workspaces/{id}/repositories/{repoId}"
@@ -338,6 +339,8 @@ func New(cfg config.Config) (http.Handler, func()) {
 			_ = db.QueryRow("SELECT workspace_id FROM workspace_members WHERE user_id = $1 LIMIT 1", userID).Scan(&wsID)
 			return wsID
 		})
+		// personal-stub 存活巡检：进程死亡或僵死时自动重启（nil = 随进程生命周期持续运行）。
+		dm.StartReconcileLoop(nil)
 	}
 	agentStatusTracker := provisioner.NewStatusTracker()
 	agentController := provisioner.NewController(prov, cfg.AgentProvisioner)
@@ -361,7 +364,7 @@ func New(cfg config.Config) (http.Handler, func()) {
 	initTeamService(db, userService)
 	initFeishuService(db, cfg, sessions, messages)
 
-	// Crawler cookie 服务：按 workspace + domain 持久化浏览器 cookie，供 /prd-analysis 使用。
+	// Crawler cookie 服务：按 workspace + domain 持久化浏览器 cookie，供 /prd-research 使用。
 	crawlerCookieSvc := crawlerservice.NewCrawlerCookieService(cfg.WorkspaceRoot)
 	crawlerHandler := crawlerhandler.NewCrawlerHandler(crawlerCookieSvc)
 
@@ -387,6 +390,9 @@ func New(cfg config.Config) (http.Handler, func()) {
 	// 注入配置文件中启用的需求管理平台列表，供空间设置的平台下拉框读取。
 	workitem.InitPlatforms(cfg.WorkitemPlatformWhitelist)
 	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, cfg.WorkspaceRoot, sessions, messages, sseBuffer, workItemSvc, crawlerCookieSvc, cfg.CrawlerServiceURL, cfg.CrawlerServiceTimeout, cfg.CrawlerMCPName)
+	// 注入空间级智能体配置服务，确保每次 agent run attach 后都能同步模型/看门狗配置，
+	// 避免 gatewayd 重启后复用旧会话时回退到默认 120s watchdog。
+	aguiHandler.SetAgentConfigService(defaultAgentConfigService)
 	// 为 workspace 模块注入同步补全能力，用于规范的智能生成。
 	workspace.InitStandardCompleter(aguiHandler.QuickComplete)
 	sseReplayHandler := handler.NewSSEReplayHandler(sseBuffer)
@@ -585,6 +591,7 @@ func New(cfg config.Config) (http.Handler, func()) {
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_PROMPT_CATEGORIES_BY_CATEGORY_ID, middleware.Auth(http.HandlerFunc(workspace.PromptCategoryByID)))
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_REPOSITORIES, middleware.Auth(http.HandlerFunc(repository.Repositories)))
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_SCAN, middleware.Auth(http.HandlerFunc(repository.ScanRepositories)))
+	mux.Handle(ROUTE_WORKSPACES_BY_ID_ARCH_GRAPH, containerMW(http.HandlerFunc(repository.ArchGraph)))
 	// 用户级仓库操作（需登录态，userID 由 auth 中间件注入）
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_USER_REPOS, containerMW(http.HandlerFunc(repository.UserRepos)))
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_USER_REPOS_BY_REPO_ID_SYNC, containerMW(http.HandlerFunc(repository.SyncUserRepo)))

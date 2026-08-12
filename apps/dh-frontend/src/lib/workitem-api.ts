@@ -3,7 +3,7 @@
  * 后端模块：apps/dh-backend/domain/workitem
  */
 import { api } from './api';
-import type { WorkItemDTO, WorkItemStatus } from './api-types';
+import type { WorkItemDTO, WorkItemCommitDTO, WorkItemStatus } from './api-types';
 
 /** 需求关联的产品空间条目（文档或原型） */
 export interface LinkedProductSpaceItem {
@@ -47,4 +47,8 @@ export const workItemApi = {
   /** 列出工作空间下包含文档或原型关联的需求（按需求更新时间倒序） */
   listRequirementsWithDesignItems: (workspaceId: string) =>
     api.get<RequirementWithDesignItems[]>(`/v1/workspaces/${workspaceId}/workitems-with-design-items`),
+
+  /** 按需求 ID 查询开发提交列表，按提交时间倒序 */
+  listCommits: (workitemId: string) =>
+    api.get<{ commits: WorkItemCommitDTO[] }>(`/v1/workitems/${workitemId}/commits`).then(res => res.commits),
 };

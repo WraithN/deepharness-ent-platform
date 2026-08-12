@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/repository"
 	gitrepo "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/repository"
 )
 
@@ -116,6 +118,8 @@ func (s *DBRepositoryService) SyncUserRepo(workspaceID, repoID, userID string) e
 			log.Printf("[Repository] user repo sync failed for %s: %v", r.Name, err)
 			return
 		}
+		now := time.Now().UTC()
+		s.updateStatusAndSyncTime(r.ID, repository.CloneStatusCloned, &now)
 		log.Printf("[Repository] user repo sync completed: %s -> %s", r.Name, dest)
 	})
 

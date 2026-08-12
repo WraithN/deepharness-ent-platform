@@ -2,32 +2,16 @@ import React from 'react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { MermaidBlock } from './MermaidBlock';
+import { isMermaidDiagramCode } from '@/lib/mermaid-utils';
 
 interface ChatCodeBlockProps {
   code: string;
   language?: string;
 }
 
-// 简单的 Mermaid 语法检测，作为 MarkdownView 检测失败后的兜底。
-const MERMAID_KEYWORDS = [
-  'graph', 'flowchart', 'sequenceDiagram', 'classDiagram', 'stateDiagram',
-  'erDiagram', 'gantt', 'pie', 'journey', 'gitGraph', 'mindmap', 'timeline',
-  'quadrantChart', 'xychart-beta', 'architecture-beta', 'block-beta',
-  'packet-beta', 'sankey-beta', 'treemap-beta', 'requirementDiagram',
-  'kanban', 'C4Context', 'C4Container', 'C4Component', 'C4Dynamic', 'C4Deployment',
-];
-const MERMAID_ARROW_PATTERN = /(-->|--\.|==>|-.->|\.->|\|\|)/;
-
-function looksLikeMermaid(code: string): boolean {
-  const firstLine = code.trim().split('\n')[0]?.trim() ?? '';
-  if (MERMAID_KEYWORDS.some(kw => firstLine.startsWith(kw))) return true;
-  if (MERMAID_ARROW_PATTERN.test(code)) return true;
-  return false;
-}
-
 export const ChatCodeBlock: React.FC<ChatCodeBlockProps> = ({ code, language = 'typescript' }) => {
   // 兜底：如果代码块被识别为普通语言但内容是 Mermaid，直接渲染 MermaidBlock。
-  if (looksLikeMermaid(code)) {
+  if (language !== 'mermaid' && isMermaidDiagramCode(code)) {
     return <MermaidBlock code={code} />;
   }
 

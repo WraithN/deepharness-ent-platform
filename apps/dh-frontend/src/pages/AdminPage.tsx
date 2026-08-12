@@ -779,20 +779,20 @@ export const AdminPage: React.FC = () => {
             </DialogContent>
           </Dialog>
 
-          <Dialog open={deleteTenantOpen} onOpenChange={setDeleteTenantOpen}>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>删除租户</DialogTitle>
-              </DialogHeader>
-              <p className="text-sm text-muted-foreground py-2">
-                确定要删除租户 <span className="font-medium text-foreground">{deletingTenant?.name}</span> 吗？删除后不可恢复，该租户下所有空间和数据将受影响。
-              </p>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setDeleteTenantOpen(false)}>取消</Button>
-                <Button variant="destructive" onClick={handleDeleteTenant}>删除</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <AlertDialog open={deleteTenantOpen} onOpenChange={setDeleteTenantOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>确认删除</AlertDialogTitle>
+                <AlertDialogDescription>
+                  确定要删除租户 <span className="font-medium text-foreground">{deletingTenant?.name}</span> 吗？删除后不可恢复，该租户下所有空间和数据将受影响。
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>取消</AlertDialogCancel>
+                <AlertDialogAction onClick={handleDeleteTenant} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">删除</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </>
       )}
 

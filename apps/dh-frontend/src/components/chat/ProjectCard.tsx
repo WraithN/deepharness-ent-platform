@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { FolderGit2, GitCompareArrows, Eye, Code2, GitCommit, Loader2, ExternalLink } from 'lucide-react';
 import { projectApi, type ProjectCheckResponse } from '@/lib/project-api';
 import { repositoryApi } from '@/lib/repository-api';
+import { REPO_TYPE_DEV } from '@/lib/repository-constants';
 import { profileApi } from '@/lib/profile-api';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
@@ -134,7 +135,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ path, onPreview }) => 
 
     if (result.pushed && !matchedRepo && !registeredRepoId) {
       try {
-        const repoType = (checkResult?.htmlCount ?? 0) > 0 ? 'dev' as const : 'dev' as const;
+        const repoType = REPO_TYPE_DEV;
         const created = await repositoryApi.create(workspaceId, {
           url,
           type: repoType,

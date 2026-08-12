@@ -252,8 +252,10 @@ func (h *AGUIHandler) fallbackRunForRespond(w http.ResponseWriter, r *http.Reque
 	// gatewayd/opencode 的 question 工具会结束当前 run，respond 后 fallback 启动新 run。
 	// 新 run 中 agent 可能把用户回答当作最终指令而提前开始生成文档、探索代码或忘记使用 question 工具。
 	// 用最强制的 developer 提示重申当前所处阶段、输出格式和绝对禁止事项。
+	// 提问约束与前端提问卡片渲染约定对齐：每轮一问、全程中文、必须附 2~3 个参考选项
+	// （question 工具的 options 与文本 "A. xxx" 选项均需给出，供前端解析为可点选按钮）。
 	continueReminder := `【系统强制指令 - 最高优先级】
-你当前处于 /grill-me 需求澄清流程的“继续提问”阶段。
+你当前处于需求澄清流程的“继续提问”阶段。
 上一条消息是用户对上一个问题的回答， ONLY 用于澄清需求，不是新任务，不是开发指令，不是要求你立即实现或探索代码。
 你的唯一任务是：根据用户回答，继续提出下一个澄清问题。
 
@@ -265,9 +267,9 @@ func (h *AGUIHandler) fallbackRunForRespond(w http.ResponseWriter, r *http.Reque
 
 输出必须严格遵循：
 1. 先用一句中文确认用户回答。
-2. 然后输出下一个问题正文（必须以 ? 或 ？ 结尾）。
+2. 然后输出下一个问题正文（必须以 ? 或 ？ 结尾），提问与选项全程使用中文，禁止英文提问。
 3. 然后输出 2-3 个选项，每个选项一行，格式为：A. 选项说明。
-4. 最后立即调用 question 工具，参数 questions[0].question 只填问题正文，questions[0].options 填空数组 []。
+4. 最后立即调用 question 工具，参数 questions[0].question 只填问题正文，questions[0].options 必须填 2~3 个参考选项（与上面的文本选项一致），禁止空数组。
 
 示例：
 收到，核心场景已明确。

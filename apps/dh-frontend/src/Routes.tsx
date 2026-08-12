@@ -76,7 +76,7 @@ export const routes: RouteObject[] = [
       { path: "personal/flow", element: <FlowTracking /> },
       { path: "personal/flow/:id", element: <ProcessDetail /> },
       { path: "personal/flow/:id/review-report", element: <ReviewReportPage /> },
-      { path: "code", element: <Navigate to="/personal-space" replace /> },
+      { path: "code", element: <Navigate to="/personal-space?tab=code" replace /> },
       { path: "prd", element: <PrdView /> },
       { path: "dashboard", element: <PermissionRoute perm="canViewDashboard"><Dashboard /></PermissionRoute> },
       { path: "market/skills", element: <SkillMarket /> },

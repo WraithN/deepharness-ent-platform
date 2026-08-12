@@ -128,7 +128,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, o
                 <GitBranch className="h-4 w-4 text-primary shrink-0" />
                 <div className="flex-1 min-w-0 text-left">
                   <p className="text-xs font-medium text-foreground truncate">{repo.name}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">工程代码</p>
+                  <p className="text-[10px] text-muted-foreground truncate">工程仓库</p>
                 </div>
               </div>
             ))}

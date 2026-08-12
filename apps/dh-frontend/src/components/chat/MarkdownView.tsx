@@ -6,53 +6,11 @@ import { ChatCodeBlock } from './ChatCodeBlock';
 import { MermaidBlock } from './MermaidBlock';
 import { TreeDirBlock, isTreeDirContent } from './TreeDirBlock';
 import { sanitizeWorkspacePaths } from '@/lib/utils';
+import { isMermaidDiagramCode } from '@/lib/mermaid-utils';
 
 const COLLAPSE_LINE_THRESHOLD = 12;
 const COLLAPSE_CHAR_THRESHOLD = 600;
 const MERMAID_LANGUAGE = 'mermaid';
-
-/**
- * 已知 Mermaid 图表类型关键字，用于在代码块未声明语言时启发式识别 Mermaid 内容。
- */
-const MERMAID_KEYWORDS = [
-  'graph', 'flowchart', 'sequenceDiagram', 'classDiagram', 'stateDiagram',
-  'stateDiagram-v2', 'erDiagram', 'gantt', 'pie', 'journey', 'gitGraph', 'mindmap', 'timeline',
-  'quadrantChart', 'xychart-beta', 'architecture-beta', 'block-beta',
-  'packet-beta', 'sankey-beta', 'treemap-beta', 'requirementDiagram',
-  'kanban', 'C4Context', 'C4Container', 'C4Component', 'C4Dynamic', 'C4Deployment',
-  'subgraph', 'direction', 'classDef', 'linkStyle', 'style', 'click', 'call',
-];
-
-/**
- * 启发式判断代码块是否为 Mermaid 图表内容。
- * 当代码块未显式声明 language-mermaid 时，检查前若干行是否包含 Mermaid 关键字
- * 或典型的 Mermaid 箭头语法（-->、-.->、==> 等）。
- * 兼容以 %%{init:...}%% 指令或注释开头的 Mermaid 代码。
- */
-const MERMAID_MAX_SCAN_LINES = 10;
-const MERMAID_ARROW_PATTERN = /(-->|--\.|==>|-.->|\.->|\|\|)/;
-// Mermaid 节点语法要求 ID 紧跟形状括号（如 A[Label]、A(Label)），中间无空格。
-// 旧正则 \w+\s*\(.*?\) 会误匹配普通文本中的 "word (desc)" 模式（如 "lg (12px)"）。
-const MERMAID_NODE_PATTERN = /\w+\[.*?\]|\w+\(.*?\)|\w+\{.*?\}|\w+\(\(.*?\)\)/;
-
-/**
- * 检测代码块的前若干行是否包含编程语言特征（import、export、变量声明等），
- * 用于排除被误判为 Mermaid 的 TypeScript/JavaScript 代码。
- */
-const NON_MERMAID_LINE_PATTERN = /^(import\s|export\s|const\s|let\s|var\s|function\s|return\s|if\s*\(|for\s*\(|while\s*\(|switch\s*\()/;
-
-function isMermaidContent(code: string): boolean {
-  const lines = code.trim().split('\n');
-  for (let i = 0; i < Math.min(lines.length, MERMAID_MAX_SCAN_LINES); i++) {
-    const line = lines[i].trim();
-    if (!line || line.startsWith('%%')) continue;
-    if (NON_MERMAID_LINE_PATTERN.test(line)) continue;
-    if (MERMAID_KEYWORDS.some(kw => line.startsWith(kw))) return true;
-    if (MERMAID_ARROW_PATTERN.test(line)) return true;
-    if (MERMAID_NODE_PATTERN.test(line)) return true;
-  }
-  return false;
-}
 
 /** HTML 实体解码，用于将 WangEditor 等保存的 HTML 还原为可读代码。 */
 function decodeHtmlEntities(html: string): string {
@@ -79,7 +37,7 @@ function normalizeCodeBlocks(content: string): string {
     const lang = groups?.lang ?? '';
     const rawCode = groups?.code ?? '';
     const code = decodeHtmlEntities(rawCode);
-    if (lang === MERMAID_LANGUAGE || isMermaidContent(code)) {
+    if (lang === MERMAID_LANGUAGE || isMermaidDiagramCode(code)) {
       return `\n\`\`\`mermaid\n${code}\n\`\`\`\n`;
     }
     return `\n\`\`\`${lang || 'text'}\n${code}\n\`\`\`\n`;
@@ -90,10 +48,21 @@ function normalizeCodeBlocks(content: string): string {
 const TEXT_FLOW_ARROW_PATTERN = /(?:→|⟶|⇒|➜|->|-->|=>|==>|➡|⇨|→|〜|~>)/;
 const TEXT_FLOW_ARROW_SPLIT_PATTERN = /(?:\s*(?:→|⟶|⇒|➜|->|-->|-\.->|=>|==>|➡|⇨|〜|~>)\s*)/;
 
+// 文本流程不应包含的代码特征行：注释行或常见编程语言关键字行。
+// 这些行中的箭头（如 "→"）只是说明文字，若当作文本流程会误把 TS/JS 注释渲染成图表。
+const TEXT_FLOW_CODE_LINE_PATTERN = /^(?:\/\/|#|\/\*|\*|import\s|export\s|const\s|let\s|var\s|function\s|return\s|if\s*\(|for\s*\(|while\s*\(|switch\s*\()/;
+
 function isTextFlow(code: string): boolean {
   const trimmed = code.trim();
   if (!trimmed) return false;
   const lines = trimmed.split('\n');
+
+  // 排除包含代码注释或编程语言特征的代码块，避免把 TS/JS/Python 等注释说明当流程图。
+  const codeLikeLines = lines.filter(line => TEXT_FLOW_CODE_LINE_PATTERN.test(line.trim()));
+  if (codeLikeLines.length > 0) {
+    return false;
+  }
+
   // 单行或多行，只要包含至少两个箭头分隔的步骤。
   const arrows = trimmed.match(TEXT_FLOW_ARROW_PATTERN) || [];
   if (arrows.length < 1) return false;
@@ -130,7 +99,7 @@ function containsMermaid(content: string): boolean {
   const codeBlocks = normalized.match(/```([\s\S]*?)```/g) ?? [];
   return codeBlocks.some(block => {
     const code = block.replace(/```/g, '');
-    return isMermaidContent(code) || isTextFlow(code);
+    return isMermaidDiagramCode(code) || isTextFlow(code);
   });
 }
 
@@ -168,7 +137,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, collapsible
 
               // Mermaid 图表：优先检测，避免含 / <br/> 等字符的 Mermaid 代码被
               // isTreeDirContent 误判为目录树结构。
-              const isMermaid = isBlock && (match?.[1] === MERMAID_LANGUAGE || isMermaidContent(codeString));
+              const isMermaid = isBlock && (match?.[1] === MERMAID_LANGUAGE || isMermaidDiagramCode(codeString));
               if (isMermaid) {
                 return <MermaidBlock code={codeString} />;
               }

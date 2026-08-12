@@ -80,6 +80,7 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("/api/v1/preview/start", handler.PreviewStart)
 	mux.HandleFunc("/api/v1/preview/stop", handler.PreviewStop)
 	mux.HandleFunc("/api/v1/preview/status", handler.PreviewStatus)
+	mux.HandleFunc("/api/v1/preview/errors", handler.PreviewErrors)
 	mux.HandleFunc("/api/v1/preview/proxy/", handler.PreviewProxy)
 
 	// 技能模板

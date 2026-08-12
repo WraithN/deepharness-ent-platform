@@ -316,17 +316,8 @@ func (h *AGUIHandler) applyCommandsAndIntent(
 	slashCmdOut = slashCommand
 	var err error
 
-	// /prd-analysis 指令预处理：先抓取目标网站，再把结果追加到用户消息参数中，
-	// 后续 interceptCommands 即可按普通斜杠指令模板渲染。
-	if matched, fatal := h.tryAugmentPRDAnalysisMessage(r, input.Messages, workspaceID, input.RunID); fatal {
-		abort = true
-		return
-	} else if matched {
-		log.Printf("[AGUIHandler] run=%s prd-analysis message augmented", input.RunID)
-	}
-
-	// /prd-research 指令预处理：与 /prd-analysis 同类流程，
-	// 先抓取目标网站，再把结果追加到用户消息参数中。
+	// /prd-research 指令预处理：参数中含有效产品链接时先抓取目标网站，
+	// 再把结果追加到用户消息参数中；仅产品名称时直接渲染模板。
 	if matched, fatal := h.tryAugmentPRDResearchMessage(r, input.Messages, workspaceID, input.RunID); fatal {
 		abort = true
 		return

@@ -44,6 +44,8 @@ type AGUIClient struct {
 	// attachedThreads 记录已成功 attach 过 agent 实例的 threadId。
 	// 后续消息跳过 attach 调用，避免 force=true 误杀运行中的 agent 进程。
 	attachedThreads sync.Map
+	// attachedInstances 记录 threadId 对应的 agent instanceId，用于 attach 后同步模型/看门狗配置。
+	attachedInstances sync.Map
 }
 
 // NewAGUIClient 创建 AG-UI client。
@@ -105,13 +107,15 @@ func (c *AGUIClient) CreateThread(ctx context.Context, preferredID string) (stri
 // gatewayd 会阻塞直到 agent 进程 ready，调用方需保证上下文有足够超时。
 // force=true 时会强制创建新 instance；force=false 时若 session 已有 instance 则复用。
 func (c *AGUIClient) AttachAgent(ctx context.Context, threadID string, force bool, workspace string) error {
-	return c.attachAgentWithKey(ctx, threadID, force, c.pluginKey, workspace)
+	_, err := c.attachAgentWithKey(ctx, threadID, force, c.pluginKey, workspace)
+	return err
 }
 
 // attachAgentWithKey 向指定 thread 挂载指定插件的 agent 实例。
 // gatewayd 会阻塞直到 agent 进程 ready，调用方需保证上下文有足够超时。
 // force=true 时会强制创建新 instance；force=false 时若 session 已有 instance 则复用。
-func (c *AGUIClient) attachAgentWithKey(ctx context.Context, threadID string, force bool, pluginKey string, workspace string) error {
+// 返回 gatewayd 分配的 instance_id（若响应中携带），供后续同步 agent 配置使用。
+func (c *AGUIClient) attachAgentWithKey(ctx context.Context, threadID string, force bool, pluginKey string, workspace string) (string, error) {
 	body, _ := json.Marshal(map[string]any{
 		"agent_key":      pluginKey,
 		"name":           pluginKey + "-" + idutil.GenerateShortID(),
@@ -122,22 +126,34 @@ func (c *AGUIClient) attachAgentWithKey(ctx context.Context, threadID string, fo
 	url := fmt.Sprintf("%s/sessions/%s/agents", c.adminURL, threadID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create attach request: %w", err)
+		return "", fmt.Errorf("create attach request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("attach agent: %w", err)
+		return "", fmt.Errorf("attach agent: %w", err)
 	}
 	defer resp.Body.Close()
 
+	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("attach agent status %d: %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("attach agent status %d: %s", resp.StatusCode, string(respBody))
 	}
-	return nil
+
+	// 解析 instance_id（兼容 instanceId 驼峰命名），失败不致命。
+	var parsed struct {
+		InstanceID   string `json:"instance_id"`
+		InstanceIDCamel string `json:"instanceId"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err == nil {
+		if parsed.InstanceID != "" {
+			return parsed.InstanceID, nil
+		}
+		return parsed.InstanceIDCamel, nil
+	}
+	return "", nil
 }
 
 // Respond 向 gatewayd 指定 session/agent 发送用户响应，用于继续被 question 工具中断的 agent 运行。
@@ -174,12 +190,48 @@ func (c *AGUIClient) Respond(ctx context.Context, threadID, instanceID, message 
 // 用于 gatewayd 实例已死亡需要重建 session 的回退场景。
 func (c *AGUIClient) ForgetThread(threadID string) {
 	c.attachedThreads.Delete(threadID)
+	c.attachedInstances.Delete(threadID)
+}
+
+// UpdateAgentConfig 向 gatewayd 推送指定 session/agent 的模型配置。
+// 与 GatewaydClient.UpdateAgentConfig 行为一致，供 AG-UI 客户端在 attach 后复用。
+func (c *AGUIClient) UpdateAgentConfig(ctx context.Context, sessionID, instanceID string, req UpdateAgentConfigRequest) error {
+	if sessionID == "" || instanceID == "" {
+		return fmt.Errorf("session id and instance id are required")
+	}
+	body, _ := json.Marshal(req)
+	url := fmt.Sprintf("%s/sessions/%s/agents/%s/config", c.adminURL, sessionID, instanceID)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create update config request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("update agent config: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("update agent config status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
 }
 
 // Run 向 gatewayd 发送 RunAgentInput 并返回 AG-UI 事件流。
 // 如果 input.ThreadID 为空或 session 已失效，会先创建新 thread 并挂载 agent。
 // 返回实际使用的 threadID、事件流和错误。
 func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string, <-chan agui.Event, error) {
+	return c.RunWithOnAttached(ctx, input, nil)
+}
+
+// RunWithOnAttached 与 Run 相同，但允许在 agent attach 完成后、chat 请求发送前
+// 通过 onAttached 回调同步 agent 配置（模型、watchdog 超时等）。
+// onAttached 为空时与 Run 行为一致。
+func (c *AGUIClient) RunWithOnAttached(ctx context.Context, input agui.RunAgentInput, onAttached func(threadID, instanceID string) error) (string, <-chan agui.Event, error) {
 	runStart := time.Now()
 	if input.RunID == "" {
 		input.RunID = idutil.GenerateID()
@@ -223,15 +275,22 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 	// 若 gatewayd 因重启等原因丢失 session，自动创建新 session 并重试。
 	// 优化：已 attach 过的 thread 跳过 attach 调用，直接进入 chat。
 	// 这避免了 force=false 失败后误触发 force=true 重建，保持 agent 进程和 session_id 不中断。
+	var attachedInstanceID string
 	_, alreadyAttached := c.attachedThreads.Load(input.ThreadID)
 	if alreadyAttached {
 		log.Printf("[AGUIClient] run=%s SKIP AttachAgent (thread already attached) threadId=%s", input.RunID, input.ThreadID)
+		if cached, ok := c.attachedInstances.Load(input.ThreadID); ok {
+			if id, ok := cached.(string); ok {
+				attachedInstanceID = id
+			}
+		}
 	} else {
 		attachCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		attachStart := time.Now()
 		log.Printf("[AGUIClient] run=%s >>> AttachAgent START threadId=%s pluginKey=%s workspace=%q",
 			input.RunID, input.ThreadID, pluginKey, workspace)
-		if err := c.attachWithReuse(attachCtx, input.ThreadID, pluginKey, workspace); err != nil {
+		instanceID, err := c.attachWithReuse(attachCtx, input.ThreadID, pluginKey, workspace)
+		if err != nil {
 			if isSessionNotFound(err) {
 				log.Printf("[AGUIClient] run=%s session %s not found, creating new thread (preferredID=%s)", input.RunID, input.ThreadID, input.ThreadID)
 				newThreadID, createErr := c.CreateThread(ctx, input.ThreadID)
@@ -247,13 +306,15 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 				input.ThreadID = newThreadID
 				// 重试时使用全新的 attach 超时上下文，避免第一次调用已消耗大部分超时预算。
 				retryAttachCtx, retryCancel := context.WithTimeout(ctx, 2*time.Minute)
-				if attachErr := c.attachWithReuse(retryAttachCtx, input.ThreadID, pluginKey, workspace); attachErr != nil {
+				retryInstanceID, attachErr := c.attachWithReuse(retryAttachCtx, input.ThreadID, pluginKey, workspace)
+				if attachErr != nil {
 					retryCancel()
 					cancel()
 					log.Printf("[AGUIClient] run=%s <<< AttachAgent (retry) FAILED after %v: %v", input.RunID, time.Since(attachStart), attachErr)
 					return "", nil, fmt.Errorf("attach agent after recreate: %w", attachErr)
 				}
 				retryCancel()
+				instanceID = retryInstanceID
 				log.Printf("[AGUIClient] run=%s AttachAgent OK (after recreate) newThreadId=%s after %v", input.RunID, newThreadID, time.Since(attachStart))
 			} else {
 				cancel()
@@ -264,8 +325,20 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 			log.Printf("[AGUIClient] run=%s AttachAgent OK (reuse-first) after %v", input.RunID, time.Since(attachStart))
 		}
 		cancel()
+		attachedInstanceID = instanceID
 		// 标记此 thread 已 attach，后续消息跳过 attach 调用。
 		c.attachedThreads.Store(input.ThreadID, true)
+		if attachedInstanceID != "" {
+			c.attachedInstances.Store(input.ThreadID, attachedInstanceID)
+		}
+	}
+
+	// attach 完成后、chat 请求发送前同步 agent 配置（模型、watchdog 超时等），
+	// 避免 gatewayd 重启后回退到默认 120s 看门狗导致长工具调用被误杀。
+	if onAttached != nil && attachedInstanceID != "" {
+		if err := onAttached(input.ThreadID, attachedInstanceID); err != nil {
+			log.Printf("[AGUIClient] run=%s onAttached callback failed: %v", input.RunID, err)
+		}
 	}
 
 	if input.State == nil {
@@ -317,13 +390,24 @@ func (c *AGUIClient) Run(ctx context.Context, input agui.RunAgentInput) (string,
 		if alreadyAttached {
 			log.Printf("[AGUIClient] run=%s chat failed after skip-attach, retrying with full attach: %v", input.RunID, err)
 			c.attachedThreads.Delete(input.ThreadID)
+			c.attachedInstances.Delete(input.ThreadID)
 			retryAttachCtx, retryCancel := context.WithTimeout(ctx, 2*time.Minute)
-			if attachErr := c.attachWithReuse(retryAttachCtx, input.ThreadID, pluginKey, workspace); attachErr != nil {
+			retryInstanceID, attachErr := c.attachWithReuse(retryAttachCtx, input.ThreadID, pluginKey, workspace)
+			if attachErr != nil {
 				retryCancel()
 				return "", nil, fmt.Errorf("attach agent (chat retry): %w", attachErr)
 			}
 			retryCancel()
 			c.attachedThreads.Store(input.ThreadID, true)
+			if retryInstanceID != "" {
+				c.attachedInstances.Store(input.ThreadID, retryInstanceID)
+			}
+			// chat 重试前重新 attach 成功，同样需要同步 agent 配置。
+			if onAttached != nil && retryInstanceID != "" {
+				if cbErr := onAttached(input.ThreadID, retryInstanceID); cbErr != nil {
+					log.Printf("[AGUIClient] run=%s onAttached callback (chat retry) failed: %v", input.RunID, cbErr)
+				}
+			}
 			resp, err = c.doChatRequest(ctx, url, body, input.RunID)
 			if err != nil {
 				return "", nil, fmt.Errorf("run request (after retry): %w", err)
@@ -391,6 +475,18 @@ func isInstanceAlreadyExists(err error) bool {
 	return strings.Contains(msg, "already has") && strings.Contains(msg, "agent instance")
 }
 
+// isWorkspaceNotReady 判断 attach 错误是否因为 gatewayd workspace readiness gate 尚未确认。
+// gatewayd 刚启动时会先等待平台确认 workspace path，此时直接 chat 会得到 RUN_ERROR，
+// 因此对这类错误做有限重试，而不是立即放行到 chat。
+func isWorkspaceNotReady(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "workspace_path not ready") ||
+		strings.Contains(msg, "waiting for platform to confirm")
+}
+
 // attachWithReuse 优先以 force=false 复用已有 agent instance，保持 claude/opencode 子进程
 // 的 stdin 长连接和进程内 session_id 不被中断。
 //
@@ -401,24 +497,56 @@ func isInstanceAlreadyExists(err error) bool {
 //   - 其他错误：不再回退 force=true。force=true 会杀掉正在运行的 agent 进程并启动新进程，
 //     新进程不传 --resume session_id，导致多轮对话失忆。改为直接放行到 chat，
 //     如果实例确实不存在，chat 端点会返回明确错误。
-func (c *AGUIClient) attachWithReuse(ctx context.Context, threadID, pluginKey, workspace string) error {
-	err := c.attachAgentWithKey(ctx, threadID, false, pluginKey, workspace)
+//
+// 返回复用/新建成功的 instance_id（若可获取），供调用方同步 agent 配置。
+func (c *AGUIClient) attachWithReuse(ctx context.Context, threadID, pluginKey, workspace string) (string, error) {
+	instanceID, err := c.attachAgentWithKey(ctx, threadID, false, pluginKey, workspace)
 	if err == nil {
 		log.Printf("[AGUIClient] attachWithReuse force=false OK threadId=%s", threadID)
-		return nil
+		return instanceID, nil
 	}
 	if isInstanceAlreadyExists(err) {
 		log.Printf("[AGUIClient] attachWithReuse reuse existing instance for threadId=%s", threadID)
-		return nil
+		if cached, ok := c.attachedInstances.Load(threadID); ok {
+			if id, ok := cached.(string); ok {
+				return id, nil
+			}
+		}
+		return "", nil
 	}
 	if isSessionNotFound(err) {
 		log.Printf("[AGUIClient] attachWithReuse session not found threadId=%s err=%v", threadID, err)
-		return err
+		return "", err
+	}
+	if isWorkspaceNotReady(err) {
+		// gatewayd 刚启动时 workspace readiness gate 尚未就绪，等待平台确认后重试，
+		// 避免首次 run 直接 RUN_ERROR "workspace_path not ready"。
+		for attempt := 0; attempt < 15; attempt++ {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+			instanceID, err = c.attachAgentWithKey(ctx, threadID, false, pluginKey, workspace)
+			if err == nil {
+				log.Printf("[AGUIClient] attachWithReuse force=false OK after workspace-ready retry threadId=%s attempt=%d", threadID, attempt+1)
+				return instanceID, nil
+			}
+			if !isWorkspaceNotReady(err) {
+				break
+			}
+		}
+		log.Printf("[AGUIClient] attachWithReuse workspace still not ready after retries threadId=%s err=%v", threadID, err)
 	}
 	// force=false 返回未知错误时，不回退 force=true（会杀掉运行中的 agent 进程导致失忆）。
 	// 实例可能仍在运行，直接放行到 chat。如果实例确实不存在，chat 端点会返回明确错误。
 	log.Printf("[AGUIClient] attachWithReuse force=false failed (err=%v), proceeding to chat WITHOUT rebuild to preserve agent session threadId=%s", err, threadID)
-	return nil
+	if cached, ok := c.attachedInstances.Load(threadID); ok {
+		if id, ok := cached.(string); ok {
+			return id, nil
+		}
+	}
+	return "", nil
 }
 
 // readSSE 从 gatewayd SSE 响应中解析 AG-UI 事件。

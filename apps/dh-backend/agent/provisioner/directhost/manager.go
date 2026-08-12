@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,21 @@ import (
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
 )
+
+// 等待 personal-stub HTTP 服务就绪的最大时间。
+const stubReadyTimeout = 45 * time.Second
+
+// reconcileInterval 是槽位存活 reconcile 的周期。
+const reconcileInterval = 30 * time.Second
+
+// restartCooldown 是同一槽位自动重启的最小间隔，防止进程持续崩溃时崩溃循环刷爆端口/日志。
+const restartCooldown = 60 * time.Second
+
+// unhealthyThreshold 是 /health 连续探测失败多少次后才判定僵死并重启（按 reconcile 周期计）。
+const unhealthyThreshold = 2
+
+// stubHealthProbeTimeout 是单次 /health 探测的超时。
+const stubHealthProbeTimeout = 2 * time.Second
 
 // ProviderName 供给器类型名称。
 const ProviderName = "direct-host"
@@ -88,6 +104,10 @@ type slotState struct {
 	stubPort    int
 	// 进程管理（仅 procCfg 启用时使用）。
 	stubCmd *exec.Cmd // personal-stub 进程（gatewayd 由 personal-stub 启动和管理）
+	// 自动重启冷却起点；零值表示从未自动重启过。
+	lastRestartAt time.Time
+	// /health 连续探测失败次数（僵死判定用），探测成功时清零。
+	healthFailCount int
 }
 
 // Config direct-host 管理器的配置参数。
@@ -182,6 +202,7 @@ func NewManagerFromConfig(cfg config.DirectHostConfig) *Manager {
 		StubPort:        cfg.StubPort,
 		PortStep:        cfg.PortStep,
 		MaxUsersPerHost: cfg.MaxUsersPerHost,
+		WorkspaceRoot:   cfg.WorkspaceRoot,
 		GatewaydBin:     cfg.GatewaydBin,
 		StubBin:         cfg.StubBin,
 		BearerToken:     cfg.BearerToken,
@@ -586,10 +607,51 @@ func (m *Manager) startProcessesLocked(s *slotState) error {
 		return fmt.Errorf("start personal-stub failed: %w", err)
 	}
 	s.stubCmd = stubCmd
+
+	// 启动 personal-stub 子进程后，必须等待其 HTTP 监听就绪再返回；
+	// 否则后续请求立即通过反向代理访问该端口，会得到 502 Bad Gateway。
+	if err := waitForStubReady(host, s.stubPort, stubReadyTimeout); err != nil {
+		_ = stubCmd.Process.Kill()
+		_ = stubCmd.Wait()
+		stubLogFP.Close()
+		s.stubCmd = nil
+		return fmt.Errorf("personal-stub not ready for user=%s on port=%d: %w", s.userID, s.stubPort, err)
+	}
+
 	log.Printf("[DirectHost] personal-stub started for user=%s runtimeID=%s pid=%d port=%d log=%s (gatewayd managed by personal-stub, mode=%s)",
 		s.userID, s.runtimeID, stubCmd.Process.Pid, s.stubPort, stubLog, gatewaydMode)
 
+	// 收割协程：Wait 等待进程退出并设置 ProcessState。否则进程死亡后无人 Wait，
+	// ProcessState 永远为 nil，slotProcessesRunning 持续误判为存活，
+	// Manager 会把死进程当存活路由（请求 502），且残留僵尸进程。
+	go func() { _ = stubCmd.Wait() }()
+
 	return nil
+}
+
+// waitForStubReady 轮询 personal-stub 的 /health 端点，直到其 HTTP 服务就绪或超时。
+// 直接拨 TCP 端口无法保证 HTTP handler 已注册，因此使用 GET /health 真正确认服务可用。
+func waitForStubReady(host string, port int, timeout time.Duration) error {
+	if port <= 0 {
+		return fmt.Errorf("invalid stub port %d", port)
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	addr := fmt.Sprintf("http://%s:%d/health", host, port)
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 1 * time.Second}
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(addr)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("personal-stub health not ready at %s after %v", addr, timeout)
 }
 
 // resolveWorkspaceRoot 计算用户的工作空间根目录。
@@ -675,6 +737,111 @@ func (m *Manager) stopProcess(cmd *exec.Cmd) {
 		_ = cmd.Process.Kill()
 		<-done
 	}
+}
+
+// StartReconcileLoop 启动 personal-stub 存活 reconcile 循环。
+// 背景：Acquire/Provision 的"进程死了就重启"依赖 ProcessState 可见（由收割协程保证），
+// 且只在有请求到达时触发；本循环提供主动巡检，并覆盖"进程在但服务僵死"的场景：
+//   - 进程已退出（ProcessState 非 nil）→ 立即重启；
+//   - 进程在但 /health 连续 unhealthyThreshold 个周期探测失败 → 判定僵死，杀死后重启；
+//   - 探测成功 → 失败计数清零。
+// 同一槽位重启间隔不小于 restartCooldown，防止持续崩溃时崩溃循环。
+// stop 传入 nil 时循环永不退出（dh-backend 进程生命周期内持续运行）。
+func (m *Manager) StartReconcileLoop(stop <-chan struct{}) {
+	if !m.procEnabled() {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(reconcileInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				m.reconcileSlots()
+			}
+		}
+	}()
+}
+
+func (m *Manager) reconcileSlots() {
+	for _, h := range m.hosts {
+		for _, s := range h.slots {
+			m.reconcileSlot(s)
+		}
+	}
+}
+
+func (m *Manager) reconcileSlot(s *slotState) {
+	m.mu.Lock()
+	if s.status == agent.InstanceStatusUnbound || s.stubCmd == nil {
+		m.mu.Unlock()
+		return
+	}
+	if time.Since(s.lastRestartAt) < restartCooldown {
+		m.mu.Unlock()
+		return
+	}
+	procAlive := s.stubCmd.ProcessState == nil
+	host := m.findHostBySlot(s)
+	port := s.stubPort
+	failCount := s.healthFailCount
+	m.mu.Unlock()
+
+	// 进程在：探测 /health，未连续失败则仅计数（探测在锁外执行，避免阻塞请求路由）。
+	if procAlive {
+		if stubHealthy(host, port) {
+			m.mu.Lock()
+			s.healthFailCount = 0
+			m.mu.Unlock()
+			return
+		}
+		m.mu.Lock()
+		s.healthFailCount++
+		m.mu.Unlock()
+		if failCount+1 < unhealthyThreshold {
+			log.Printf("[DirectHost] personal-stub health probe failed for user=%s port=%d (%d/%d)",
+				s.userID, port, failCount+1, unhealthyThreshold)
+			return
+		}
+	}
+
+	// 需要重启：重新持锁并校验状态，避免与并发 Release/resetSlot 竞争。
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s.status == agent.InstanceStatusUnbound || s.stubCmd == nil || time.Since(s.lastRestartAt) < restartCooldown {
+		return
+	}
+	s.lastRestartAt = time.Now()
+	s.healthFailCount = 0
+	if procAlive {
+		log.Printf("[DirectHost] personal-stub unhealthy (process alive but /health failing) for user=%s port=%d, killing and restarting", s.userID, port)
+		m.stopProcess(s.stubCmd)
+		s.stubCmd = nil
+	} else {
+		log.Printf("[DirectHost] personal-stub process dead for user=%s port=%d, restarting", s.userID, port)
+	}
+	if err := m.startProcessesLocked(s); err != nil {
+		log.Printf("[DirectHost] reconcile restart failed for user=%s: %v", s.userID, err)
+	}
+}
+
+// stubHealthy 探测 personal-stub 的 /health 是否可用（僵死判定用）。
+func stubHealthy(host string, port int) bool {
+	if port <= 0 {
+		return false
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	client := &http.Client{Timeout: stubHealthProbeTimeout}
+	resp, err := client.Get(fmt.Sprintf("http://%s:%d/health", host, port))
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 func (m *Manager) slotToContainerInfo(s *slotState) *agent.ContainerInfo {

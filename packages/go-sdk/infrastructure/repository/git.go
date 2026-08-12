@@ -2,6 +2,7 @@ package repository
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -232,7 +233,44 @@ func (c *GitClient) cloneWithGoGit(rawURL, dest, sshKey, branch string) error {
 	}
 	if err != nil {
 		_ = os.RemoveAll(dest)
+		if errors.Is(err, transport.ErrEmptyRemoteRepository) {
+			return c.initEmptyRepo(rawURL, dest, auth, branch)
+		}
 		return fmt.Errorf("git clone failed: %w", err)
+	}
+	return nil
+}
+
+// initEmptyRepo 初始化空仓库：PlainInit + 设置 remote origin + fetch。
+// 空仓库（无提交）无法克隆，需要走 init + fetch 路径。
+func (c *GitClient) initEmptyRepo(rawURL, dest string, auth transport.AuthMethod, branch string) error {
+	_ = os.RemoveAll(dest)
+	repo, err := git.PlainInit(dest, false)
+	if err != nil {
+		return fmt.Errorf("init empty repo failed: %w", err)
+	}
+
+	remoteName := "origin"
+	_, err = repo.CreateRemote(&config.RemoteConfig{
+		Name: remoteName,
+		URLs: []string{rawURL},
+	})
+	if err != nil {
+		return fmt.Errorf("create remote for empty repo failed: %w", err)
+	}
+
+	fetchOpts := &git.FetchOptions{
+		Auth: auth,
+	}
+	if branch != "" {
+		fetchOpts.RefSpecs = []config.RefSpec{
+			config.RefSpec(fmt.Sprintf("+refs/heads/%s:refs/remotes/%s/%s", branch, remoteName, branch)),
+		}
+	}
+	if fetchErr := repo.Fetch(fetchOpts); fetchErr != nil {
+		if !errors.Is(fetchErr, transport.ErrEmptyRemoteRepository) {
+			return fmt.Errorf("fetch empty repo failed: %w", fetchErr)
+		}
 	}
 	return nil
 }

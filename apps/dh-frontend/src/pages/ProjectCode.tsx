@@ -12,7 +12,8 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
-import type { RepositoryDTO, FileNodeDTO, FileContentDTO, ScannedRepositoryDTO, RepositoryDetailsDTO, BranchInfoDTO } from '@/lib/api-types';
+import type { RepositoryDTO, FileNodeDTO, FileContentDTO, ScannedRepositoryDTO, RepositoryDetailsDTO, BranchInfoDTO, RepoType } from '@/lib/api-types';
+import { REPO_TYPE_DEV, REPO_TYPE_ARCH, REPO_TYPE_PRODUCT, REPO_TYPE_CASE, REPO_TYPE_LABELS, ENGINEERING_REPO_TYPES } from '@/lib/repository-constants';
 import { LivePreview } from '@/components/chat/LivePreview';
 import { MarkdownView } from '@/components/chat/MarkdownView';
 import { displayFilePath } from '@/components/chat/ReviewReportCard';
@@ -1257,7 +1258,7 @@ export const ProjectCode: React.FC = () => {
   const [fileSystem, setFileSystem] = useState<Record<string, FileNode[]>>({});
   const [selectedRepoId, setSelectedRepoId] = useState<string>('');
   const [selectedBranch, setSelectedBranch] = useState<string>('');
-  const [repoType, setRepoType] = useState<'dev' | 'case'>('dev');
+  const [repoType, setRepoType] = useState<RepoType>(REPO_TYPE_DEV);
   const [loadingRepos, setLoadingRepos] = useState(false);
   const [loadingTree, setLoadingTree] = useState(false);
 
@@ -1389,9 +1390,9 @@ export const ProjectCode: React.FC = () => {
         );
         setRepositories(repos);
         if (repos.length > 0) {
-          const first = repos.find(r => r.type === 'dev') ?? repos[0];
+          const first = repos.find(r => ENGINEERING_REPO_TYPES.includes(r.type)) ?? repos[0];
           setSelectedRepoId(first.id);
-          setRepoType(first.type as 'dev' | 'case');
+          setRepoType(first.type);
 
           // Load branches for first repo
           const branchList = await api.get<BranchInfoDTO[]>(
@@ -1493,10 +1494,10 @@ export const ProjectCode: React.FC = () => {
 
       // Auto-select first repo and load branches
       if (repos.length > 0) {
-        const first = repos.find(r => r.type === 'dev') ?? repos[0];
+        const first = repos.find(r => ENGINEERING_REPO_TYPES.includes(r.type)) ?? repos[0];
         setSelectedRepoId(first.id);
         setSelectedBranch(first.defaultBranch ?? '');
-        setRepoType(first.type as 'dev' | 'case');
+        setRepoType(first.type);
         loadBranches(first.id);
       }
     } catch {
@@ -1545,7 +1546,7 @@ export const ProjectCode: React.FC = () => {
   // 当检测到当前仓库为非前端项目时，若当前处于预览模式则自动切换到代码模式。
   useEffect(() => {
     console.log('[ProjectCode] frontend detect effect', { repoType, isFrontendProject, viewMode });
-    if (repoType === 'dev' && isFrontendProject === false && viewMode === 'preview') {
+    if (ENGINEERING_REPO_TYPES.includes(repoType) && isFrontendProject === false && viewMode === 'preview') {
       console.log('[ProjectCode] auto switch preview -> code');
       setViewMode('code');
     }
@@ -1584,8 +1585,8 @@ export const ProjectCode: React.FC = () => {
     const repo = repositories.find(r => r.id === val);
     if (repo) {
       setSelectedBranch(repo.defaultBranch ?? '');
-      setRepoType(repo.type as 'dev' | 'case');
-      if (repo.type === 'case' && viewMode === 'preview') setViewMode('doc');
+      setRepoType(repo.type);
+      if (repo.type === REPO_TYPE_CASE && viewMode === 'preview') setViewMode('doc');
       loadRepositoryDetails(val);
       loadBranches(val);
     }
@@ -1784,10 +1785,10 @@ export const ProjectCode: React.FC = () => {
 
 
   return (
-    <div className="flex flex-col h-[calc(100vh-6rem)] md:h-[calc(100vh-8rem)] min-h-[500px] gap-4 w-full pb-8">
+    <div className="flex flex-col h-full min-h-0 gap-4 w-full">
       {/* Top Header - Repository Selection (Level-1 Aurora tabs) */}
       <div className="aurora-tab-bar level-1">
-        <Select value={repoType} onValueChange={(val: 'dev' | 'case') => {
+        <Select value={repoType} onValueChange={(val: RepoType) => {
           setRepoType(val);
           const nextRepos = repositories.filter(r => r.type === val);
           if (nextRepos.length > 0) {
@@ -1802,7 +1803,7 @@ export const ProjectCode: React.FC = () => {
             setBranches([]);
             setRepoDetails(null);
           }
-          if (val === 'case' && viewMode === 'preview') {
+          if (val === REPO_TYPE_CASE && viewMode === 'preview') {
             setViewMode('code');
           }
         }}>
@@ -1811,8 +1812,9 @@ export const ProjectCode: React.FC = () => {
             <SelectValue className="flex-1 min-w-0" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="dev">开发库</SelectItem>
-            <SelectItem value="case">用例库</SelectItem>
+            {ENGINEERING_REPO_TYPES.map(type => (
+              <SelectItem key={type} value={type}>{REPO_TYPE_LABELS[type]}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
 
@@ -1943,7 +1945,7 @@ export const ProjectCode: React.FC = () => {
       <div className="flex items-center w-full justify-between gap-2 self-start flex-wrap">
         <div className="aurora-tab-bar level-2">
           {tabs.map(tab => {
-            if (tab.key === 'preview' && (repoType === 'case' || isFrontendProject === false)) return null;
+            if (tab.key === 'preview' && (repoType === REPO_TYPE_CASE || repoType === REPO_TYPE_PRODUCT || isFrontendProject === false)) return null;
             const Icon = tab.icon;
             const isActive = viewMode === tab.key;
             return (

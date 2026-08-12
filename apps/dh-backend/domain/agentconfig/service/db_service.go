@@ -32,7 +32,9 @@ const (
 	defaultModelVendorGroupKey  = "default"
 	defaultModelVendorGroupName = "内置模型"
 	// defaultAgentTimeoutSeconds 是 SSE 看门狗无事件超时阈值默认值（秒）。
-	defaultAgentTimeoutSeconds = 120
+	// Comet Classic 工作流会触发较长时间的 LLM 调用与工具执行（如 comet/openspec CLI），
+	// 120 秒容易在合法工具静默期被误判为 agent stalled；因此默认值放大到 10 分钟。
+	defaultAgentTimeoutSeconds = 600
 )
 
 // DBAgentConfigService 是基于 PostgreSQL 的 AgentConfigService 实现。
@@ -234,7 +236,7 @@ func (p workspaceAgentPolicy) isAgentLocked(key string) bool {
 func (p workspaceAgentPolicy) applyDefaultConfig(cfg agent.WorkspaceAgentConfig) agent.WorkspaceAgentConfig {
 	defaultCfg, ok := p.defaultConfigs[cfg.AgentKey]
 	if !ok {
-		return cfg
+		return ensureDefaultTimeout(cfg)
 	}
 	if cfg.Model == "" {
 		cfg.Model = defaultCfg.Model
@@ -258,6 +260,17 @@ func (p workspaceAgentPolicy) applyDefaultConfig(cfg agent.WorkspaceAgentConfig)
 	}
 	if cfg.AdvancedConfig == nil && defaultCfg.AdvancedConfig != nil {
 		cfg.AdvancedConfig = defaultCfg.AdvancedConfig
+	}
+	return ensureDefaultTimeout(cfg)
+}
+
+// ensureDefaultTimeout 确保 WorkspaceAgentConfig.Timeout 有值；为 nil 时使用服务级默认值。
+// 这是 Comet Classic 等长工具调用流程的防线：gatewayd 若未收到 timeout 会回退到 120 秒，
+// 在合法工具静默期容易被误判为 stalled。
+func ensureDefaultTimeout(cfg agent.WorkspaceAgentConfig) agent.WorkspaceAgentConfig {
+	if cfg.Timeout == nil {
+		t := defaultAgentTimeoutSeconds
+		cfg.Timeout = &t
 	}
 	return cfg
 }

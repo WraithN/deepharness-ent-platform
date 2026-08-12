@@ -8,6 +8,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/provisioner"
+	agentconfigservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/service"
 	crawlerservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/crawler/service"
 	workitemservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/workspacepath"
@@ -47,6 +48,9 @@ type AGUIHandler struct {
 	crawlerServiceTimeout time.Duration
 	crawlerMCPName        string
 	workspaceRoot         string
+	// agentConfigSvc 用于在 agent attach 后同步空间级模型/看门狗配置到 gatewayd。
+	// 仅创建 session 时同步会在 gatewayd 重启后失效，因此每次 run attach 后都需重新同步。
+	agentConfigSvc       agentconfigservice.AgentConfigService
 }
 
 // NewAGUIHandler 创建 AG-UI handler。
@@ -65,6 +69,11 @@ func NewAGUIHandler(adminURL, pluginKey, workspaceRoot string, sessions chat.Ses
 		crawlerMCPName:        crawlerMCPName,
 		workspaceRoot:         workspaceRoot,
 	}
+}
+
+// SetAgentConfigService 注入空间级智能体配置服务，用于 run 时同步 gatewayd 配置。
+func (h *AGUIHandler) SetAgentConfigService(svc agentconfigservice.AgentConfigService) {
+	h.agentConfigSvc = svc
 }
 
 // resolveAGUIClient 根据请求 context 中的 ContainerInfo 解析 AGUIClient。
@@ -86,7 +95,6 @@ var LONG_TASK_COMMANDS = map[string]bool{
 	"/user-story":    true,
 	"/prd-write":     true,
 	"/prd-research":  true,
-	"/prd-analysis":  true,
 	"/ui-kit":        true,
 	"/test-case":     true,
 	"/auto-test":     true,

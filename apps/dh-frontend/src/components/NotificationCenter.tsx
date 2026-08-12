@@ -634,7 +634,7 @@ export const NotificationCenter: React.FC = () => {
 
     {/* ── 批准 AI 开发对话框 ── */}
     <Dialog open={showApproveDialog} onOpenChange={setShowApproveDialog}>
-      <DialogContent className="sm:max-w-[440px] p-0 flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-md p-0 flex flex-col overflow-hidden">
         <DialogHeader className="px-6 py-4 border-b border-border/50">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -734,7 +734,7 @@ export const NotificationCenter: React.FC = () => {
 
     {/* ── 代码优化审批对话框 ── */}
     <Dialog open={showOptimizeDialog} onOpenChange={setShowOptimizeDialog}>
-      <DialogContent className="sm:max-w-[500px] p-0 flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-lg p-0 flex flex-col overflow-hidden">
         <DialogHeader className="px-6 py-4 border-b border-border/50">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
@@ -787,7 +787,7 @@ export const NotificationCenter: React.FC = () => {
 
     {/* ── 驳回原因对话框 ── */}
     <Dialog open={showRejectDialog} onOpenChange={setShowRejectDialog}>
-      <DialogContent className="sm:max-w-[440px] p-0 flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-md p-0 flex flex-col overflow-hidden">
         <DialogHeader className="px-6 py-4 border-b border-border/50">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-900/30 flex items-center justify-center">

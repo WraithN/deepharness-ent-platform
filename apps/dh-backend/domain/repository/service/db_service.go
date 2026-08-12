@@ -349,7 +349,9 @@ func (s *DBRepositoryService) Push(workspaceID, repoID, userID string) error {
 	if err != nil {
 		return err
 	}
-	if repo.LocalPath == "" || repo.CloneStatus != repository.CloneStatusCloned {
+
+	localPath := s.resolveUserLocalPath(repo, userID)
+	if localPath == "" || repo.CloneStatus != repository.CloneStatusCloned {
 		return fmt.Errorf("repository not cloned yet")
 	}
 	if repo.URL == "" {
@@ -360,7 +362,7 @@ func (s *DBRepositoryService) Push(workspaceID, repoID, userID string) error {
 	if keyErr != nil {
 		return fmt.Errorf("resolve ssh key failed: %w", keyErr)
 	}
-	if err := s.gitClient.Push(repo.LocalPath, repo.URL, sshKey); err != nil {
+	if err := s.gitClient.Push(localPath, repo.URL, sshKey); err != nil {
 		return fmt.Errorf("git push failed: %w", err)
 	}
 	return nil
@@ -372,12 +374,14 @@ func (s *DBRepositoryService) GetUnpushedCommits(workspaceID, repoID, userID str
 	if err != nil {
 		return 0, err
 	}
-	if repo.LocalPath == "" || repo.CloneStatus != repository.CloneStatusCloned {
+
+	localPath := s.resolveUserLocalPath(repo, userID)
+	if localPath == "" || repo.CloneStatus != repository.CloneStatusCloned {
 		return 0, nil
 	}
 
 	ctx := context.Background()
-	out, err := gitutil.Exec(ctx, repo.LocalPath, "rev-list", "--count", "HEAD", "--not", "--remotes")
+	out, err := gitutil.Exec(ctx, localPath, "rev-list", "--count", "HEAD", "--not", "--remotes")
 	if err != nil {
 		return 0, fmt.Errorf("count unpushed commits failed: %w", err)
 	}

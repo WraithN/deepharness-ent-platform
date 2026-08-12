@@ -406,7 +406,7 @@ export const AgentRuntimePage: React.FC = () => {
 
       {/* 详情弹窗 */}
       <Dialog open={drawerOpen} onOpenChange={setDrawerOpen}>
-        <DialogContent className="w-full max-w-[800px] p-0 flex flex-col max-h-[85vh] overflow-hidden">
+        <DialogContent className="w-full max-w-3xl p-0 flex flex-col max-h-[85vh] overflow-hidden">
           {selectedRuntime && (
             <>
               <DialogHeader className="px-6 py-5 border-b border-border/50">

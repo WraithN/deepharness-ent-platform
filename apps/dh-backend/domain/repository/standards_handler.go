@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
+	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/workspacepath"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/repository"
 )
 
@@ -47,8 +50,9 @@ func StandardFiles(w http.ResponseWriter, r *http.Request) {
 		handler.HandleServiceError(w, err, "repository not found", "failed to get repository")
 		return
 	}
+	userID, _ := middleware.UserIDFromContext(r.Context())
 	handler.SetJSONHeader(w)
-	json.NewEncoder(w).Encode(buildStandardFilesResponse(repo))
+	json.NewEncoder(w).Encode(buildStandardFilesResponse(repo, userID))
 }
 
 // StandardFilesInit 处理 POST /api/v1/workspaces/{id}/repositories/{repoId}/standard-files/init。
@@ -68,7 +72,8 @@ func StandardFilesInit(w http.ResponseWriter, r *http.Request) {
 		handler.HandleServiceError(w, err, "repository not found", "failed to get repository")
 		return
 	}
-	resp := buildStandardFilesResponse(repo)
+	userID, _ := middleware.UserIDFromContext(r.Context())
+	resp := buildStandardFilesResponse(repo, userID)
 	resp.Warnings = []string{
 		"标准文件初始化已迁移到聊天会话：请通过 /code 指令让 agent 生成 AGENTS.md 和 DESIGN.md",
 		"agent 在 gatewayd 容器中执行，文件写入共享目录后本接口可读取",
@@ -90,28 +95,61 @@ func parseWorkspaceAndRepo(w http.ResponseWriter, r *http.Request) (string, stri
 	return workspaceID, repoID, true
 }
 
-// buildStandardFilesResponse 读取仓库本地目录中的规范文件，组装状态响应。
+// buildStandardFilesResponse 读取当前用户仓库本地目录中的规范文件，组装状态响应。
 // 架构合规：通过 stubclient 委托 personal-stub 读取文件，不直接访问文件系统。
-func buildStandardFilesResponse(repo repository.Repository) *standardFilesResponse {
+func buildStandardFilesResponse(repo repository.Repository, userID string) *standardFilesResponse {
 	resp := &standardFilesResponse{}
-	if repo.LocalPath == "" || repo.CloneStatus != repository.CloneStatusCloned {
+
+	localPath := resolveUserLocalPathStatic(repo, userID)
+	if localPath == "" || repo.CloneStatus != repository.CloneStatusCloned {
 		return resp
 	}
 	sc := stubclient.FromContext(context.Background())
 	if sc == nil {
 		return resp
 	}
-	fi, err := sc.FileInfo(context.Background(), repo.LocalPath)
+	fi, err := sc.FileInfo(context.Background(), localPath)
 	if err != nil || !fi.Exists || !fi.IsDir {
 		return resp
 	}
 	resp.Cloned = true
-	resp.HasFrontend = detectFrontend(repo.LocalPath)
-	resp.AgentsMd = readStandardFile(repo.LocalPath, agentsMdFileName)
-	resp.DesignMd = readStandardFile(repo.LocalPath, designMdFileName)
+	resp.HasFrontend = detectFrontend(localPath)
+	resp.AgentsMd = readStandardFile(localPath, agentsMdFileName)
+	resp.DesignMd = readStandardFile(localPath, designMdFileName)
 	resp.HasAgentsMd = resp.AgentsMd != ""
 	resp.HasDesignMd = resp.DesignMd != ""
 	return resp
+}
+
+// resolveUserLocalPathStatic 解析当前用户应使用的仓库本地路径。
+// 与 service 层 resolveUserLocalPath 逻辑保持一致，供 handler 层只读场景使用。
+func resolveUserLocalPathStatic(repo repository.Repository, userID string) string {
+	if userID == "" || repo.LocalPath == "" {
+		return repo.LocalPath
+	}
+	creatorID := extractCreatorUserIDFromLocalPath(repo.LocalPath)
+	if creatorID != "" && creatorID == userID {
+		return repo.LocalPath
+	}
+	// 路径格式：{root}/{creatorID}/{workspaceID}/dev-jobs/{repoName}
+	parts := strings.Split(filepath.ToSlash(repo.LocalPath), "/")
+	if len(parts) < 4 || parts[len(parts)-3] != workspacepath.DirDevJobs {
+		return repo.LocalPath
+	}
+	parts[len(parts)-4] = userID
+	return strings.Join(parts, "/")
+}
+
+// extractCreatorUserIDFromLocalPath 从仓库 local_path 中解析创建者 userID。
+func extractCreatorUserIDFromLocalPath(localPath string) string {
+	if localPath == "" {
+		return ""
+	}
+	parts := strings.Split(filepath.ToSlash(localPath), "/")
+	if len(parts) >= 4 && parts[len(parts)-3] == workspacepath.DirDevJobs {
+		return parts[len(parts)-4]
+	}
+	return ""
 }
 
 // readStandardFile 读取仓库根目录下的规范文件，不存在时返回空字符串。

@@ -1,4 +1,4 @@
-import { Bot, Box, Camera, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Code2, Copy, Download, FileText, ListTodo, Loader2, Lock, MessageSquareQuote, MoreHorizontal, Palette, Plus, Puzzle, Save, Search, Settings as SettingsIcon, Share2, Shield, SlidersHorizontal, Star, Trash2, Upload, UserCircle, UserPlus, Users, Wand2, X } from 'lucide-react';
+import { AlertTriangle, Bot, Box, Camera, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Code2, Copy, Download, FileText, ListTodo, Loader2, Lock, MessageSquareQuote, MoreHorizontal, Palette, Plus, Puzzle, Save, Search, Settings as SettingsIcon, Share2, Shield, SlidersHorizontal, Star, Trash2, Upload, UserCircle, UserPlus, Users, Wand2, X } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -37,6 +37,7 @@ import { agentConfigApi } from '@/lib/agent-config-api';
 import { ApiError } from '@/lib/api';
 import { isBuiltinPromptCategoryName, sortPromptCategoriesByBuiltin } from '@/lib/prompt-categories';
 import { repositoryApi } from '@/lib/repository-api';
+import { REPO_TYPES, REPO_TYPE_LABELS, REPO_TYPE_DEV, REPO_TYPE_CASE } from '@/lib/repository-constants';
 import { getPlatformRoleLabel, getSubRoleLabel, PLATFORM_ROLE, type PlatformRole, SPACE_ROLE, type SpaceRole, SUB_ROLE, type SubRole } from '@/lib/role-constants';
 import { useTemplates } from '@/hooks/use-templates';
 import { teamApi } from '@/lib/team-api';
@@ -1025,7 +1026,7 @@ export const Settings: React.FC = () => {
       workspaceId: workspace?.id || '',
       name: '',
       url: '',
-      type: 'dev',
+      type: REPO_TYPE_DEV,
       defaultBranch: 'main',
       cloneStatus: 'pending',
       createdAt: '',
@@ -1180,17 +1181,21 @@ export const Settings: React.FC = () => {
   const handleCloseRepoSettings = () => {
     setRepoSettingsRepo(null);
     setRepoSettingsBranch('');
-    setRepoSettingsType('dev');
+    setRepoSettingsType(REPO_TYPE_DEV);
   };
   const handleConfirmRepoSettings = () => {
     if (!repoSettingsRepo) return;
+    const updatedRepo: WorkspaceRepository = {
+      ...repoSettingsRepo,
+      defaultBranch: repoSettingsBranch,
+      type: repoSettingsType,
+    };
     setGitRepos(repos => repos.map(r =>
-      r.id === repoSettingsRepo.id
-        ? { ...r, defaultBranch: repoSettingsBranch, type: repoSettingsType }
-        : r
+      r.id === updatedRepo.id ? updatedRepo : r
     ));
-    markRepoDirty(repoSettingsRepo.id);
+    markRepoDirty(updatedRepo.id);
     handleCloseRepoSettings();
+    handleSaveRepo(updatedRepo);
   };
 
   const handleSaveStandards = async () => {
@@ -1407,6 +1412,16 @@ export const Settings: React.FC = () => {
         <p className="text-sm text-muted-foreground mt-1">配置当前空间的基础能力与运行规则</p>
       </div>
 
+      {isReadOnly && (
+        <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50/70 dark:border-blue-900 dark:bg-blue-950/30 px-4 py-3">
+          <Lock className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-blue-700 dark:text-blue-300">当前空间仅超管可编辑配置</p>
+            <p className="text-xs text-muted-foreground mt-0.5">你不是超管，空间配置仅可查看不可修改。如需调整，请联系空间超管。</p>
+          </div>
+        </div>
+      )}
+
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="aurora-tab-bar level-1 mb-6">
           <TabsTrigger value="basic" className="aurora-tab-item level-1">
@@ -1537,7 +1552,7 @@ export const Settings: React.FC = () => {
                           {repo.defaultBranch || 'main'}
                         </div>
                         <div className="truncate">
-                          {repo.type === 'dev' ? '开发库' : '用例库'}
+                          {REPO_TYPE_LABELS[repo.type] ?? repo.type}
                         </div>
                         <div className="flex items-center justify-end gap-1">
                           <Button
@@ -1597,7 +1612,7 @@ export const Settings: React.FC = () => {
                                   </AlertDialogHeader>
                                   <AlertDialogFooter>
                                     <AlertDialogCancel>取消</AlertDialogCancel>
-                                    <AlertDialogAction onClick={() => handleRemoveRepo(repo.id)}>删除</AlertDialogAction>
+                                    <AlertDialogAction onClick={() => handleRemoveRepo(repo.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">删除</AlertDialogAction>
                                   </AlertDialogFooter>
                                 </AlertDialogContent>
                               </AlertDialog>
@@ -1618,7 +1633,7 @@ export const Settings: React.FC = () => {
 
               {/* 仓库设置弹窗：统一设置默认分支与仓库类型。 */}
               <Dialog open={!!repoSettingsRepo} onOpenChange={open => !open && handleCloseRepoSettings()}>
-                <DialogContent>
+                <DialogContent className="sm:max-w-md max-w-[calc(100%-2rem)]">
                   <DialogHeader>
                     <DialogTitle>仓库设置</DialogTitle>
                   </DialogHeader>
@@ -1638,10 +1653,17 @@ export const Settings: React.FC = () => {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="dev">开发库</SelectItem>
-                          <SelectItem value="case">用例库</SelectItem>
+                          {REPO_TYPES.map(type => (
+                            <SelectItem key={type} value={type}>{REPO_TYPE_LABELS[type]}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
+                      {repoSettingsRepo && !repoSettingsRepo.id.startsWith(LOCAL_REPO_ID_PREFIX) && (
+                        <p className="flex items-start gap-1.5 text-xs text-destructive mt-2">
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                          修改仓库类型会显著影响该库可用的功能（如工程仓库、用例设计、智能评审等），请谨慎操作。
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="flex justify-end gap-2 mt-4">
@@ -2248,7 +2270,7 @@ export const Settings: React.FC = () => {
                     executeDeletePromptCategory(categoryToDelete.id);
                   }
                 }}
-                className="bg-destructive hover:bg-destructive/90"
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
                 确认删除
               </AlertDialogAction>
@@ -2513,7 +2535,7 @@ export const Settings: React.FC = () => {
                   <AlertDialogAction
                     onClick={confirmDeleteMember}
                     disabled={isProcessing}
-                    className="bg-destructive hover:bg-destructive/90"
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                   >
                     {isProcessing && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                     确认删除
@@ -2590,7 +2612,7 @@ export const Settings: React.FC = () => {
 
       {/* 技能市场弹窗 */}
       <Dialog open={skillMarketOpen} onOpenChange={setSkillMarketOpen}>
-        <DialogContent className="sm:max-w-[680px] max-h-[85vh] overflow-hidden flex flex-col p-0">
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="px-6 py-4 border-b shrink-0">
             <DialogTitle className="text-xl font-semibold">去市场添加技能</DialogTitle>
           </DialogHeader>
@@ -2765,7 +2787,7 @@ export const Settings: React.FC = () => {
 
       {/* 提示词市场弹窗 -- 用于从市场添加已上架提示词到当前空间 */}
       <Dialog open={promptMarketOpen} onOpenChange={setPromptMarketOpen}>
-        <DialogContent className="sm:max-w-[620px] max-h-[85vh] overflow-hidden flex flex-col p-0">
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="px-6 py-4 border-b shrink-0">
             <DialogTitle className="text-xl font-semibold">添加提示词</DialogTitle>
           </DialogHeader>

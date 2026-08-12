@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "独立网站抓取服务：Playwright 登录 + Firecrawl 爬取，为 /prd-analysis 提供内容",
+  "description": "独立网站抓取服务：Playwright 登录 + Firecrawl 爬取，为 /prd-research 提供内容",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",

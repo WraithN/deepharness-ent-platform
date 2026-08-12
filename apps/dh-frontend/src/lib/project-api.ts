@@ -57,6 +57,13 @@ export interface ProjectSyncResponse {
   pushed?: boolean;
 }
 
+/** 工程预览报错信息 */
+export interface PreviewErrorInfo {
+  running: boolean;
+  hasError: boolean;
+  excerpt: string;
+}
+
 export const projectApi = {
   /** 获取工程文件树 */
   tree: (path: string) =>
@@ -88,4 +95,8 @@ export const projectApi = {
   /** 查询项目预览状态 */
   previewStatus: (path: string) =>
     api.get<{ running: boolean; port: number }>(`/v1/preview/status?path=${encodeURIComponent(path)}`),
+
+  /** 查询预览 dev server 的报错状态与摘要 */
+  previewErrors: (path: string) =>
+    api.get<PreviewErrorInfo>(`/v1/preview/errors?path=${encodeURIComponent(path)}`),
 };

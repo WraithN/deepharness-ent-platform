@@ -3,8 +3,8 @@ import { Button } from '@/components/ui/button';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued';
-import { Loader2, RefreshCw, Code2, Eye, ExternalLink, Monitor, Tablet, Smartphone, GitCompareArrows, X, FileText } from 'lucide-react';
-import { projectApi, type ProjectFileNode, type FileDiffEntry } from '@/lib/project-api';
+import { Loader2, RefreshCw, Code2, Eye, ExternalLink, Monitor, Tablet, Smartphone, GitCompareArrows, X, FileText, AlertTriangle } from 'lucide-react';
+import { projectApi, type ProjectFileNode, type FileDiffEntry, type PreviewErrorInfo } from '@/lib/project-api';
 import { fileApi } from '@/lib/file-api';
 import { ApiError } from '@/lib/api';
 import { toast } from 'sonner';
@@ -18,6 +18,8 @@ interface LivePreviewProps {
   mode?: PreviewMode;
   /** 是否仅展示页面预览，隐藏 Diff/代码 模式切换。 */
   previewOnly?: boolean;
+  /** 预览报错时点击「修复」的回调：携带工程路径与错误摘要，由上层注入会话。 */
+  onFixRequest?: (info: { path: string; excerpt: string }) => void;
   onClose?: () => void;
   onModeChange?: (mode: PreviewMode) => void;
 }
@@ -26,6 +28,10 @@ type DeviceSize = 'desktop' | 'tablet' | 'mobile';
 
 const DEFAULT_PREVIEW_MODE: PreviewMode = 'preview';
 const DEFAULT_DEVICE_SIZE: DeviceSize = 'desktop';
+/** 预览报错轮询间隔（毫秒）。 */
+const PREVIEW_ERROR_POLL_MS = 4000;
+/** 报错横幅中展示的错误首行最大字符数。 */
+const PREVIEW_ERROR_TITLE_CHARS = 200;
 
 const DEVICE_WIDTHS: Record<DeviceSize, string> = {
   desktop: '100%',
@@ -71,7 +77,7 @@ function getLanguage(filename: string): string {
  * - code: 文件树 + 文件内容（带语法高亮）
  * - preview: dev server iframe 实时预览（仅前端工程）
  */
-export const LivePreview: React.FC<LivePreviewProps> = ({ projectPath, mode, previewOnly = false, onClose, onModeChange }) => {
+export const LivePreview: React.FC<LivePreviewProps> = ({ projectPath, mode, previewOnly = false, onFixRequest, onClose, onModeChange }) => {
   // 诊断日志：记录组件挂载/更新时的关键 props
   console.log('[LivePreview] render', { projectPath, mode, previewOnly, hasOnModeChange: !!onModeChange });
   const [internalMode, setInternalMode] = useState<PreviewMode>(DEFAULT_PREVIEW_MODE);
@@ -106,6 +112,8 @@ export const LivePreview: React.FC<LivePreviewProps> = ({ projectPath, mode, pre
   // 预览模式状态
   const [starting, setStarting] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // 预览报错状态（dev server 输出分析结果，仅 preview 模式轮询）
+  const [previewError, setPreviewError] = useState<PreviewErrorInfo | null>(null);
 
   // 检测前端工程类型；若当前处于 preview 模式则同时启动 dev server。
   useEffect(() => {
@@ -193,6 +201,30 @@ export const LivePreview: React.FC<LivePreviewProps> = ({ projectPath, mode, pre
       loadDiff();
     }
   }, [activeMode, loadFileTree, loadDiff, fileTree.length]);
+
+  // 预览模式下轮询 dev server 输出，检测构建/运行报错；
+  // 离开预览或卸载时停止轮询并清空报错状态。
+  useEffect(() => {
+    if (activeMode !== 'preview' || !previewUrl) {
+      setPreviewError(null);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const info = await projectApi.previewErrors(projectPath);
+        if (!cancelled) setPreviewError(info);
+      } catch {
+        // 轮询失败（如 personal-stub 重启中）保持当前状态，下一轮自然重试。
+      }
+    };
+    poll();
+    const timer = setInterval(poll, PREVIEW_ERROR_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeMode, previewUrl, projectPath]);
 
   const handleRefresh = () => {
     if (iframeRef.current) {
@@ -290,6 +322,14 @@ export const LivePreview: React.FC<LivePreviewProps> = ({ projectPath, mode, pre
           </Button>
         )}
       </div>
+
+      {/* 预览报错横幅：dev server 输出检测到报错时展示，提供一键修复入口 */}
+      {previewError?.hasError && (
+        <PreviewErrorBanner
+          excerpt={previewError.excerpt}
+          onFix={onFixRequest ? () => onFixRequest({ path: projectPath, excerpt: previewError.excerpt }) : undefined}
+        />
+      )}
 
       {/* 内容区 */}
       <div className="flex-1 min-h-0 overflow-hidden">
@@ -401,6 +441,34 @@ const DiffView: React.FC<{
           />
         </div>
       </div>
+    </div>
+  );
+};
+
+// ──────────────── 预览报错横幅 ────────────────
+
+/** 预览报错横幅：展示错误首行摘要，并在上层提供回调时显示「复制并修复」按钮。 */
+const PreviewErrorBanner: React.FC<{ excerpt: string; onFix?: () => void }> = ({ excerpt, onFix }) => {
+  const firstLine = excerpt.split('\n').find(l => l.trim().length > 0) || '未知错误';
+  const title = firstLine.length > PREVIEW_ERROR_TITLE_CHARS
+    ? `${firstLine.slice(0, PREVIEW_ERROR_TITLE_CHARS)}…`
+    : firstLine;
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 border-b border-amber-500/30 bg-amber-50/60 dark:bg-amber-950/30 shrink-0 animate-in fade-in">
+      <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+      <span className="text-xs text-amber-800 dark:text-amber-200 flex-1 truncate" title={excerpt}>
+        预览报错：{title}
+      </span>
+      {onFix && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-6 text-xs border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-100/60 dark:hover:bg-amber-900/40"
+          onClick={onFix}
+        >
+          复制并修复
+        </Button>
+      )}
     </div>
   );
 };

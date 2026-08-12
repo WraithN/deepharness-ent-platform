@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -90,6 +90,7 @@ const SIDEBAR_STATUS_DOT: Record<string, string> = {
 
 type ProductTopTab = string;
 type ProductSubTab = 'doc' | 'prototype' | 'history';
+type ProductTopSubTab = { topTab: ProductTopTab; subTab: ProductSubTab };
 
 /** 额外 Tab 配置：由父组件根据用户角色注入（工程代码 / 用例设计 / UI设计 等）。 */
 export interface ExtraTab {
@@ -439,13 +440,14 @@ const VersionHistoryDialog: React.FC<VersionHistoryDialogProps> = ({ open, onOpe
 /**
  * 个人工作台 - 统一工作台视图。
  *
- * 顶部 Tab：需求追踪（始终） + 需求设计（PM） + 角色专属 Tab（工程代码 / 用例设计 / UI设计）。
+ * 顶部 Tab：需求追踪（始终） + 需求设计（PM） + 角色专属 Tab（架构设计 / 工程仓库 / 用例设计 / UI设计）。
  * 需求设计下二级 Tab：文档 / 原型 / 版本历史。
  * Tab 列表根据用户职能子角色动态构建，支持多角色同时展示多个 Tab。
  */
 export const ProductWorkspace: React.FC<ProductWorkspaceProps> = ({ showDesignTab = true, extraTabs = [] }) => {
-  // 支持深链直达指定 Tab（如分享原型链接 ?tab=prototype&prototype=<itemId>）。
-  const [{ topTab, subTab }, setTabs] = useState(() => {
+  const STORAGE_KEY = 'workspace_last_tab';
+
+  const getInitialTab = () => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab') ?? '';
     const validSubTabs: ProductSubTab[] = ['doc', 'prototype', 'history'];
@@ -454,10 +456,45 @@ export const ProductWorkspace: React.FC<ProductWorkspaceProps> = ({ showDesignTa
     }
     const extraKeys = extraTabs.map(t => t.key);
     if (tab === 'kanban' || tab === 'design' || extraKeys.includes(tab)) {
-      return { topTab: tab as ProductTopTab, subTab: (params.get('subtab') as ProductSubTab) ?? 'doc' };
+      return { topTab: tab as ProductTopTab, subTab: (params.get('subtab') as ProductSubTab) ?? 'doc' as ProductSubTab };
+    }
+    // URL 无有效 tab 时，从 sessionStorage 恢复上次 Tab
+    const saved = sessionStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.topTab === 'kanban' || parsed.topTab === 'design' || extraKeys.includes(parsed.topTab)) {
+          return { topTab: parsed.topTab as ProductTopTab, subTab: (parsed.subTab as ProductSubTab) ?? 'doc' as ProductSubTab };
+        }
+      } catch { /* ignore parse errors */ }
     }
     return { topTab: 'kanban' as ProductTopTab, subTab: 'doc' as ProductSubTab };
-  });
+  };
+
+  // 支持深链直达指定 Tab（如分享原型链接 ?tab=prototype&prototype=<itemId>）。
+  // 同时从 sessionStorage 恢复上次离开时的 Tab，实现跨页面导航的 Tab 记忆。
+  const [{ topTab, subTab }, setTabs] = useState<ProductTopSubTab>(getInitialTab);
+
+  // 每次 tab 变化时持久化到 sessionStorage
+  useEffect(() => {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ topTab, subTab }));
+  }, [topTab, subTab]);
+
+  // 页内导航（如架构设计抽屉「跳转至工程仓库」navigate 到 ?tab=code）仅改变 ?tab= 参数时同步顶部 Tab；
+  // useState 初始化只覆盖首次进入，此处覆盖组件已挂载后的参数变化。
+  const location = useLocation();
+  useEffect(() => {
+    const tab = new URLSearchParams(location.search).get('tab') ?? '';
+    const validSubTabs: ProductSubTab[] = ['doc', 'prototype', 'history'];
+    if (validSubTabs.includes(tab as ProductSubTab)) {
+      setTabs(prev => (prev.topTab === 'design' && prev.subTab === tab) ? prev : { topTab: 'design', subTab: tab as ProductSubTab });
+      return;
+    }
+    const extraKeys = extraTabs.map(t => t.key);
+    if (tab === 'kanban' || tab === 'design' || extraKeys.includes(tab)) {
+      setTabs(prev => prev.topTab === tab ? prev : { ...prev, topTab: tab as ProductTopTab });
+    }
+  }, [location.search, extraTabs]);
 
   const { membership } = useAuth();
   const workspaceId = membership?.workspaceId ?? '';
@@ -539,6 +576,9 @@ export const ProductWorkspace: React.FC<ProductWorkspaceProps> = ({ showDesignTa
 
   const handleTopChange = (value: ProductTopTab) => {
     setTabs(prev => ({ topTab: value, subTab: prev.subTab }));
+    const params = new URLSearchParams(location.search);
+    params.set('tab', value);
+    navigate({ search: params.toString() }, { replace: true });
   };
 
   // 从看板进入需求设计视图：若已有关联设计则直接切换；否则弹出 AI 设计引导。
@@ -870,7 +910,7 @@ export const ProductWorkspace: React.FC<ProductWorkspaceProps> = ({ showDesignTa
   }, [selectedWorkitemId, docLink, prototypeLink]);
 
   return (
-    <div className="flex flex-col h-[calc((100vh-6rem)*2)] md:h-[calc((100vh-8rem)*2)] min-h-[1000px] gap-4 w-full pb-8">
+    <div className="flex flex-col h-full min-h-0 gap-4 w-full">
       <Tabs value={topTab} onValueChange={value => handleTopChange(value as ProductTopTab)} className="w-full">
         <TabsList className="aurora-tab-bar level-1 mb-0">
           {topTabs.map(tab => {
@@ -1012,7 +1052,12 @@ export const ProductWorkspace: React.FC<ProductWorkspaceProps> = ({ showDesignTa
         {/* 主区域：上方子 Tab + 下方内容 */}
         <div className="flex-1 flex flex-col gap-4 min-h-0 min-w-0">
           {topTab === 'design' && !hasNoDesign && !!selectedWorkitemId && (
-            <Tabs value={subTab} onValueChange={value => setTabs(prev => ({ ...prev, subTab: value as ProductSubTab }))} className="w-full">
+            <Tabs value={subTab} onValueChange={value => {
+              setTabs(prev => ({ ...prev, subTab: value as ProductSubTab }));
+              const params = new URLSearchParams(location.search);
+              params.set('tab', value);
+              navigate({ search: params.toString() }, { replace: true });
+            }} className="w-full">
               <TabsList className="aurora-tab-bar level-2 mb-0">
                 {subTabs.map(tab => {
                   const Icon = tab.icon;
@@ -1073,7 +1118,7 @@ export const ProductWorkspace: React.FC<ProductWorkspaceProps> = ({ showDesignTa
 
       {/* 需求无设计关联时，引导使用 AI 写 PRD */}
       <Dialog open={aiDesignDialog.open} onOpenChange={open => setAiDesignDialog(prev => ({ ...prev, open }))}>
-        <DialogContent className="sm:max-w-[440px] p-0 flex flex-col overflow-hidden">
+        <DialogContent className="sm:max-w-md p-0 flex flex-col overflow-hidden">
           <DialogHeader className="px-6 py-4 border-b border-border/50">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/20 flex items-center justify-center shrink-0">

@@ -1,13 +1,22 @@
 {
-  "name": "@repo/dh-backend",
-  "version": "0.0.1",
+  "name": "perfect-chinese-name",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "build": "make build",
-    "dev": "make run",
-    "start": "make run",
-    "test": "make test",
+    "build": "go build -o dist/dh-backend .",
+    "dev": "go run .",
     "lint": "go vet ./...",
-    "check-types": "echo 'Go is statically typed'"
-  }
+    "type-check": "go build ./..."
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "packageManager": "bun@1.1.0"
 }

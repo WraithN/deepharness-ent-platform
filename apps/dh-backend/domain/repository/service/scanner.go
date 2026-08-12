@@ -136,7 +136,8 @@ func (s *DBRepositoryService) GetDetails(workspaceID, repoID, userID string) (*o
 		Repository: repo,
 	}
 
-	if repo.LocalPath == "" {
+	localPath := s.resolveUserLocalPath(repo, userID)
+	if localPath == "" {
 		return details, nil
 	}
 
@@ -147,36 +148,36 @@ func (s *DBRepositoryService) GetDetails(workspaceID, repoID, userID string) (*o
 	// RepositoryService 接口未定义 ctx 参数，使用 context.Background() 作为根 context。
 	ctx := context.Background()
 
-	if exists, err := sc.FileExists(ctx, repo.LocalPath); err != nil || !exists {
+	if exists, err := sc.FileExists(ctx, localPath); err != nil || !exists {
 		return details, nil
 	}
 
-	if total, err := gitExecInt(ctx, repo.LocalPath, "rev-list", "--count", "HEAD"); err == nil {
+	if total, err := gitExecInt(ctx, localPath, "rev-list", "--count", "HEAD"); err == nil {
 		details.CommitStats.TotalCommits = total
 	}
 
-	if lastWeek, err := gitExecInt(ctx, repo.LocalPath, "rev-list", "--count", "--since=1.week", "HEAD"); err == nil {
+	if lastWeek, err := gitExecInt(ctx, localPath, "rev-list", "--count", "--since=1.week", "HEAD"); err == nil {
 		details.CommitStats.LastWeek = lastWeek
 	}
 
-	if lastMonth, err := gitExecInt(ctx, repo.LocalPath, "rev-list", "--count", "--since=1.month", "HEAD"); err == nil {
+	if lastMonth, err := gitExecInt(ctx, localPath, "rev-list", "--count", "--since=1.month", "HEAD"); err == nil {
 		details.CommitStats.LastMonth = lastMonth
 	}
 
-	if t, err := gitutil.Exec(ctx, repo.LocalPath, "log", "-1", "--pretty=%ci"); err == nil {
+	if t, err := gitutil.Exec(ctx, localPath, "log", "-1", "--pretty=%ci"); err == nil {
 		if pt, err := time.Parse("2006-01-02 15:04:05 -0700", strings.TrimSpace(t)); err == nil {
 			details.CommitStats.LastCommit = &pt
 		}
 	}
 
-	if t, err := gitutil.Exec(ctx, repo.LocalPath, "log", "--reverse", "-1", "--pretty=%ci"); err == nil {
+	if t, err := gitutil.Exec(ctx, localPath, "log", "--reverse", "-1", "--pretty=%ci"); err == nil {
 		if pt, err := time.Parse("2006-01-02 15:04:05 -0700", strings.TrimSpace(t)); err == nil {
 			details.CommitStats.FirstCommit = &pt
 		}
 	}
 
-	if branches, err := gitutil.Exec(ctx, repo.LocalPath, "branch", "-v", "--format=%(refname:short);%(objectname);%(committerdate:iso8601)"); err == nil {
-		currentBranch, _ := gitutil.Exec(ctx, repo.LocalPath, "rev-parse", "--abbrev-ref", "HEAD")
+	if branches, err := gitutil.Exec(ctx, localPath, "branch", "-v", "--format=%(refname:short);%(objectname);%(committerdate:iso8601)"); err == nil {
+		currentBranch, _ := gitutil.Exec(ctx, localPath, "rev-parse", "--abbrev-ref", "HEAD")
 		currentBranch = strings.TrimSpace(currentBranch)
 
 		for _, line := range strings.Split(branches, "\n") {
@@ -201,7 +202,7 @@ func (s *DBRepositoryService) GetDetails(workspaceID, repoID, userID string) (*o
 		}
 	}
 
-	if contributors, err := gitutil.Exec(ctx, repo.LocalPath, "shortlog", "-sn", "HEAD"); err == nil {
+	if contributors, err := gitutil.Exec(ctx, localPath, "shortlog", "-sn", "HEAD"); err == nil {
 		for _, line := range strings.Split(contributors, "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
@@ -213,19 +214,19 @@ func (s *DBRepositoryService) GetDetails(workspaceID, repoID, userID string) (*o
 		}
 	}
 
-	if out, err := gitutil.Exec(ctx, repo.LocalPath, "ls-files", "-z"); err == nil {
+	if out, err := gitutil.Exec(ctx, localPath, "ls-files", "-z"); err == nil {
 		details.FileCount = strings.Count(out, "\000")
 	}
 
 	// Calculate total file size from git ls-files
-	if fileList, err := gitutil.Exec(ctx, repo.LocalPath, "ls-files"); err == nil {
+	if fileList, err := gitutil.Exec(ctx, localPath, "ls-files"); err == nil {
 		var totalSize int64 = 0
 		for _, file := range strings.Split(fileList, "\n") {
 			file = strings.TrimSpace(file)
 			if file == "" {
 				continue
 			}
-			fullPath := filepath.Join(repo.LocalPath, file)
+			fullPath := filepath.Join(localPath, file)
 			if fi, err := sc.FileInfo(ctx, fullPath); err == nil {
 				totalSize += fi.Size
 			}
@@ -234,15 +235,15 @@ func (s *DBRepositoryService) GetDetails(workspaceID, repoID, userID string) (*o
 	}
 
 	// 使用 go-enry 统计语言分布，并计算有效代码行数（均基于 git ls-files，天然尊重 .gitignore）。
-	languageStats, effectiveLines := analyzeRepoLanguagesAndLines(ctx, repo.LocalPath)
+	languageStats, effectiveLines := analyzeRepoLanguagesAndLines(ctx, localPath)
 	details.LanguageStats = languageStats
 	details.EffectiveLinesOfCode = effectiveLines
 	if len(languageStats) > 0 {
 		details.Language = languageStats[0].Name
 	}
 
-	details.CommitterStats = loadCommitterStats(ctx, repo.LocalPath)
-	details.WeeklyCommits = loadWeeklyCommits(ctx, repo.LocalPath)
+	details.CommitterStats = loadCommitterStats(ctx, localPath)
+	details.WeeklyCommits = loadWeeklyCommits(ctx, localPath)
 
 	return details, nil
 }

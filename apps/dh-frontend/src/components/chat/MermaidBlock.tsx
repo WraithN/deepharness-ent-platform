@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState, useId } from 'react';
 import { Loader2, AlertCircle } from 'lucide-react';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 interface MermaidBlockProps {
   code: string;
@@ -7,6 +9,16 @@ interface MermaidBlockProps {
 
 // mermaid 库动态导入缓存，避免重复加载。
 let mermaidLoader: Promise<typeof import('mermaid')> | null = null;
+
+// HTML 实体，用于在 Mermaid 节点标签内部安全地表示引号。
+const HTML_QUOT_ENTITY = '&quot;';
+const HTML_APOSTROPHE_ENTITY = '&#39;';
+
+// 节点标签中若包含这些字符，未加引号时会导致 Mermaid 解析失败。
+const NODE_LABEL_SPECIAL_CHARS = /[()\[\]{}\\/,"'&]/;
+
+// 矩形节点定义：ID[label]，label 中不能包含换行或嵌套方括号。
+const RECT_NODE_PATTERN = /([A-Za-z0-9_\u4e00-\u9fa5]+)\s*\[([^\[\]\n]*)\]/g;
 
 function initializeMermaid() {
   if (!mermaidLoader) {
@@ -35,18 +47,63 @@ function initializeMermaid() {
 }
 
 /**
+ * 自动为 graph/flowchart 矩形节点标签添加双引号。
+ *
+ * Mermaid 的矩形节点语法 A[label] 中，若 label 包含括号、方括号、斜杠、
+ * 逗号、& 等特殊字符，必须用引号包裹，否则解析器会将其误认为节点形状
+ * 结束符。本函数仅对未加引号且包含特殊字符的矩形节点标签做处理。
+ */
+function quoteMermaidNodeLabels(code: string): string {
+  const lines = code.split('\n');
+  const processedLines = lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('%%')) {
+      return line;
+    }
+
+    // 跳过指令、样式、类定义等行，避免误替换。
+    if (/^(classDef|style|linkStyle|class|click|subgraph|end|direction)\s/i.test(trimmed)) {
+      return line;
+    }
+
+    return line.replace(RECT_NODE_PATTERN, (match, idPart, label) => {
+      const trimmedLabel = label.trim();
+      if (!trimmedLabel) {
+        return match;
+      }
+      // 已加引号的 label 不再处理，防止重复转义。
+      if (/^["'].*["']$/.test(trimmedLabel)) {
+        return match;
+      }
+      // 只有包含特殊字符时才需要加引号。
+      if (!NODE_LABEL_SPECIAL_CHARS.test(trimmedLabel)) {
+        return match;
+      }
+
+      // label 内部的双引号用 HTML 实体表示，避免破坏外层引号。
+      const escaped = trimmedLabel.replace(/"/g, HTML_QUOT_ENTITY);
+      return `${idPart}["${escaped}"]`;
+    });
+  });
+  return processedLines.join('\n');
+}
+
+/**
  * 预处理 Mermaid 代码，修复 AI 生成时常见的语法问题。
  *
- * Mermaid 不支持反斜杠转义引号（\"），但 AI 经常在 ER 图属性注释、
- * 流程图节点标签等位置生成转义引号，导致解析失败。
- * 将转义双引号替换为单引号，既消除反斜杠又避免双引号嵌套冲突。
+ * 1. 将反斜杠转义的引号统一替换为 HTML 实体，Mermaid 在引号 label 内支持
+ *    HTML 实体但不支持反斜杠转义。
+ * 2. 为包含特殊字符但未加引号的矩形节点标签自动添加双引号，避免解析器
+ *    把 label 中的括号、斜杠等误判为节点形状结束符。
  */
 function preprocessMermaidCode(code: string): string {
-  return code
-    .replace(/\\"/g, "'")     // 转义双引号 -> 单引号
-    .replace(/\\'/g, "'")     // 转义单引号 -> 单引号
-    .replace(/&quot;/g, "'")  // HTML 实体双引号 -> 单引号
-    .replace(/&#34;/g, "'");  // 数字 HTML 实体双引号 -> 单引号
+  return quoteMermaidNodeLabels(
+    code
+      .replace(/\\"/g, HTML_QUOT_ENTITY)
+      .replace(/\\'/g, HTML_APOSTROPHE_ENTITY)
+      .replace(/&quot;/g, HTML_QUOT_ENTITY)
+      .replace(/&#34;/g, HTML_QUOT_ENTITY)
+  );
 }
 
 /**
@@ -123,12 +180,21 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({ code }) => {
 
   if (error) {
     return (
-      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+      <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 my-2">
         <div className="flex items-center gap-1.5 text-destructive text-xs mb-2">
           <AlertCircle className="h-3.5 w-3.5" />
-          <span>图表渲染失败：{error}</span>
+          <span>图表渲染失败，已回退为代码块：{error}</span>
         </div>
-        <div className="text-xs text-muted-foreground overflow-auto font-mono whitespace-pre-wrap">{code}</div>
+        <div className="rounded overflow-x-auto border border-border/50">
+          <SyntaxHighlighter
+            language="mermaid"
+            style={vscDarkPlus}
+            customStyle={{ margin: 0, borderRadius: 0, fontSize: '13px', maxHeight: '400px' }}
+            showLineNumbers
+          >
+            {code}
+          </SyntaxHighlighter>
+        </div>
       </div>
     );
   }

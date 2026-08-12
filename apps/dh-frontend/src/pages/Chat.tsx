@@ -87,6 +87,7 @@ import { PROTO_MAKE_PENDING_KEY } from '@/lib/constants';
 import { fileApi } from '@/lib/file-api';
 import { type ProductDoc, productDocApi } from '@/lib/productdoc-api';
 import { sortPromptCategoriesByBuiltin } from '@/lib/prompt-categories';
+import { getCommandSystemPrompts, SYSTEM_PROMPT_CATEGORY_NAME, type SystemPrompt } from '@/lib/system-prompts';
 import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
 import { workItemApi, type RequirementWithDesignItems, type LinkedProductSpaceItem } from '@/lib/workitem-api';
 import { SUB_ROLE, type SubRole } from '@/lib/role-constants';
@@ -94,6 +95,7 @@ import { teamApi } from '@/lib/team-api';
 import { cn } from '@/lib/utils';
 import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
 import { addSessionToHistory, getSessionHistory, removeSessionFromHistory, syncSessionHistory } from '@/lib/session-history-cache';
+import { addInputHistory, getInputHistory } from '@/lib/input-history-cache';
 import { workspaceApi } from '@/lib/workspace-api';
 import type { AvailableAgent, PromptCategory, Skill, WorkspaceAgent, WorkspaceAgentConfig, WorkspacePrompt } from '@/types';
 
@@ -139,6 +141,8 @@ function resolveWorkitemIdByTitle(title: string | undefined, requirements: ReqIt
 // 用户输入排队上限。
 const MAX_INPUT_QUEUE = 3;
 const CHAT_SYNC_POLL_INTERVAL_MS = 2000;
+/** 预览报错注入会话时错误摘要的最大字符数（过长截断，完整版在剪贴板）。 */
+const PREVIEW_FIX_EXCERPT_CHARS = 1500;
 
 // 需求拆分优先级映射与约束：子需求优先级不得高于父需求。
 const SPLIT_PRIORITY_TO_API: Record<string, WorkItemDTO['priority']> = { P0: 'high', P1: 'medium', P2: 'low' };
@@ -213,7 +217,6 @@ function parseInlineOptions(rawText: string): { questionText: string; options: {
 const COMMAND_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   '/prd-write': FileText,
   '/prd-research': Globe,
-  '/prd-analysis': Globe,
   '/proto-make': LayoutTemplate,
   '/code': Code2,
   '/debug': Bug,
@@ -667,6 +670,17 @@ export const Chat: React.FC = () => {
 
   const { runtime, sessionId, wsConnected, messages, isRunning, runPhase, sendMessage, switchSession, createSession, cancelRun, tryRestoreSession, pendingQuestion, respondToQuestion, dismissQuestion } = useAgUiChat({ agentPluginKey: activePluginKey });
 
+  // 输入框历史消息回溯：按 ↑/↓ 切换当前工作区内最近发送的用户消息。
+  const workspaceIdForHistory = useMemo(() => getCurrentWorkspaceId(), []);
+  const [inputHistory, setInputHistory] = useState<string[]>(() => getInputHistory(workspaceIdForHistory));
+  const [inputHistoryIndex, setInputHistoryIndex] = useState(-1);
+  const inputHistoryDraftRef = useRef('');
+  useEffect(() => {
+    setInputHistory(getInputHistory(workspaceIdForHistory));
+    setInputHistoryIndex(-1);
+    inputHistoryDraftRef.current = '';
+  }, [workspaceIdForHistory]);
+
   // Auto-scroll state
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [hasNewMessage, setHasNewMessage] = useState(false);
@@ -870,6 +884,24 @@ export const Chat: React.FC = () => {
     setReferencedReports(prev => [...prev.filter(r => r.fileName !== fileName), { fileName, fullPath: reportPath }]);
     const fixPrompt = `根据评审报告 ${token}修复 ${projectName} 工程中的所有问题，按严重程度从高到低逐一修复。`;
     setInput(`/code ${fixPrompt}`);
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      }
+    });
+  }, []);
+
+  // 预览报错修复：把错误摘要与工程路径填入输入框（走 /debug 流程），完整错误复制到剪贴板。
+  const handlePreviewFix = useCallback(({ path, excerpt }: { path: string; excerpt: string }) => {
+    const projectName = path.split('/').pop() || path;
+    const trimmed = excerpt.length > PREVIEW_FIX_EXCERPT_CHARS
+      ? `${excerpt.slice(0, PREVIEW_FIX_EXCERPT_CHARS)}\n...（过长已截断，完整错误在剪贴板）`
+      : excerpt;
+    setInput(`/debug 工程 ${projectName}（路径：${path}）预览 dev server 报错，请定位并修复。错误摘要：\n${trimmed}`);
+    navigator.clipboard.writeText(`工程：${projectName}（${path}）\n${excerpt}`).catch(() => {});
+    toast.success('错误信息已复制并填入会话，确认后发送');
     requestAnimationFrame(() => {
       const ta = textareaRef.current;
       if (ta) {
@@ -1379,17 +1411,84 @@ export const Chat: React.FC = () => {
     Puzzle,
   };
 
+  // 插入提示词后将光标定位到第一个 {{参数}} 块并整体选中，用户可直接输入替换；
+  // 无参数块时定位到文本末尾。配合 handleInputKeyDown 的左右方向键在参数块间切换。
+  const focusFirstParamBlock = (text: string) => {
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.focus();
+      const ranges = findParamBlockRanges(text);
+      const pos = ranges.length > 0 ? ranges[0] : { start: text.length, end: text.length };
+      ta.setSelectionRange(pos.start, pos.end);
+    });
+  };
+
   // 插入提示词到输入框，并上报使用次数（空间提示词 +1；市场来源则市场提示词同步 +1）。
   // 上报为 fire-and-forget：失败不影响插入动作本身。
   const insertPrompt = (p: WorkspacePrompt) => {
     const c = p.content || p.description;
-    setInput(prev => prev.trimEnd() ? prev.trimEnd() + '\n' + c : c);
+    const next = input.trimEnd() ? input.trimEnd() + '\n' + c : c;
+    setInput(next);
     setPromptMenuOpen(false); setCompactPlusSubmenu(null); setCompactPlusOpen(false);
+    focusFirstParamBlock(next);
     const workspaceId = getCurrentWorkspaceId();
     workspaceApi.recordPromptUsage(workspaceId, p.id)
       .then(updated => setAvailablePrompts(prev => prev.map(item => item.id === updated.id ? updated : item)))
       .catch(err => console.warn('上报提示词使用次数失败:', err));
   };
+
+  // 输入框行首指令（与 handleSend 的解析口径一致）：仅当是已配置的指令时生效。
+  const activeInputCommand = useMemo(() => {
+    const match = input.trimStart().match(/^(\/\S+)/);
+    if (!match) return '';
+    return commandConfigs.some(c => c.cmd === match[1]) ? match[1] : '';
+  }, [input, commandConfigs]);
+
+  // 当前行首指令绑定的系统提示词；为空时提示词面板不展示「系统」分类、按钮不显示角标。
+  const activeSystemPrompts = useMemo(
+    () => (activeInputCommand ? getCommandSystemPrompts(activeInputCommand) : []),
+    [activeInputCommand],
+  );
+
+  // 插入系统提示词到输入框。系统提示词为前端内置模板，无后端 id，不上报使用次数。
+  const insertSystemPrompt = (p: SystemPrompt) => {
+    const next = input.trimEnd() ? input.trimEnd() + '\n' + p.content : p.content;
+    setInput(next);
+    setPromptMenuOpen(false); setCompactPlusSubmenu(null); setCompactPlusOpen(false);
+    focusFirstParamBlock(next);
+  };
+
+  // 输入框行首指令变为带系统提示词的指令时，自动展开提示词面板并选中「系统」分类。
+  // 首次挂载仅记录不弹出，避免恢复草稿/历史输入时打扰。
+  const prevInputCommandRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevInputCommandRef.current;
+    prevInputCommandRef.current = activeInputCommand;
+    if (prev === null || !activeInputCommand || activeInputCommand === prev || activeSystemPrompts.length === 0) return;
+    setPromptMenuCategory(SYSTEM_PROMPT_CATEGORY_NAME);
+    setPromptMenuOpen(true);
+    setCmdMenuOpen(false); setRepoMenuOpen(false); setTaskMenuOpen(false); setSkillPopoverOpen(false);
+    setCompactPlusOpen(false); setCompactPlusSubmenu(null);
+  }, [activeInputCommand, activeSystemPrompts]);
+
+  // 「系统」分类随指令从输入框移除而失效时，回退到「全部」，避免停留在已消失的分类上。
+  useEffect(() => {
+    if (promptMenuCategory === SYSTEM_PROMPT_CATEGORY_NAME && activeSystemPrompts.length === 0) {
+      setPromptMenuCategory('全部');
+    }
+  }, [promptMenuCategory, activeSystemPrompts]);
+
+  // 「系统」分类的提示词列表：仅按搜索词过滤，不参与空间提示词的分类匹配。
+  const filteredSystemPrompts = useMemo(() => {
+    const term = promptMenuSearch.toLowerCase().trim();
+    return activeSystemPrompts.filter(p =>
+      !term ||
+      p.name.toLowerCase().includes(term) ||
+      p.content.toLowerCase().includes(term) ||
+      p.description.toLowerCase().includes(term)
+    );
+  }, [activeSystemPrompts, promptMenuSearch]);
 
   const filteredAvailablePrompts = useMemo(() => {
     const term = promptMenuSearch.toLowerCase().trim();
@@ -1747,6 +1846,40 @@ export const Chat: React.FC = () => {
         return;
       }
     }
+    // 输入框历史消息回溯：无菜单打开时，↑/↓ 切换最近发送的用户消息。
+    // 触发条件：已在历史浏览态、输入框为空、或光标位于文本最开头（如 Ctrl+Home 后），避免干扰正常多行文本上下移动。
+    const isMenuOpen = (slashMenuOpen && filteredSlashCommands.length > 0) || (!!docMention && filteredDocs.length > 0);
+    if (!isMenuOpen && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && inputHistory.length > 0) {
+      const ta = e.currentTarget;
+      if (e.key === 'ArrowUp') {
+        const canRecall = inputHistoryIndex >= 0 || (input.trim() === '') || (ta.selectionStart === 0 && ta.selectionEnd === 0);
+        if (canRecall) {
+          e.preventDefault();
+          if (inputHistoryIndex === -1) {
+            inputHistoryDraftRef.current = input;
+          }
+          const nextIndex = Math.min(inputHistoryIndex + 1, inputHistory.length - 1);
+          setInputHistoryIndex(nextIndex);
+          setInput(inputHistory[nextIndex]);
+          requestAnimationFrame(() => ta.setSelectionRange(ta.value.length, ta.value.length));
+          return;
+        }
+      } else {
+        if (inputHistoryIndex >= 0) {
+          e.preventDefault();
+          if (inputHistoryIndex === 0) {
+            setInputHistoryIndex(-1);
+            setInput(inputHistoryDraftRef.current);
+          } else {
+            const nextIndex = inputHistoryIndex - 1;
+            setInputHistoryIndex(nextIndex);
+            setInput(inputHistory[nextIndex]);
+          }
+          requestAnimationFrame(() => ta.setSelectionRange(ta.value.length, ta.value.length));
+          return;
+        }
+      }
+    }
     // 模板参数块键盘导航：左右方向键在相邻参数块之间快速跳转。
     if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && paramTokens.length > 0) {
       const ta = e.currentTarget;
@@ -1922,6 +2055,12 @@ export const Chat: React.FC = () => {
     } else {
       sendMessage(finalInput, context);
     }
+
+    // 记录用户输入历史，供输入框内 ↑/↓ 回溯；同时退出历史浏览态。
+    addInputHistory(workspaceIdForHistory, trimmedInput);
+    setInputHistory(getInputHistory(workspaceIdForHistory));
+    setInputHistoryIndex(-1);
+    inputHistoryDraftRef.current = '';
 
     setInput('');
     setQuotedCard(null);
@@ -2772,7 +2911,22 @@ export const Chat: React.FC = () => {
     </div>
   );
 
-  const renderPromptMenu = (onSelect: (prompt: WorkspacePrompt) => void) => (
+  const renderPromptMenu = (onSelect: (prompt: WorkspacePrompt) => void) => {
+    // 「系统」分类仅在当前输入框指令绑定了系统提示词时出现，固定排在最前；
+    // 空间分类中同名的「系统」被过滤，避免重复标签（系统分类为前端内置语义）。
+    const categoryTabs = [
+      ...(activeSystemPrompts.length > 0 ? [SYSTEM_PROMPT_CATEGORY_NAME] : []),
+      '全部',
+      ...sortPromptCategoriesByBuiltin(promptCategories)
+        .map(c => c.name)
+        .filter(name => name !== SYSTEM_PROMPT_CATEGORY_NAME),
+    ];
+    // 列表项统一为 { id, name, preview, onSelect }：系统分类取内置模板，其余取空间提示词。
+    const isSystemCategory = promptMenuCategory === SYSTEM_PROMPT_CATEGORY_NAME && activeSystemPrompts.length > 0;
+    const promptItems = isSystemCategory
+      ? filteredSystemPrompts.map(p => ({ id: p.id, name: p.name, preview: p.content, onSelect: () => insertSystemPrompt(p) }))
+      : filteredAvailablePrompts.map(p => ({ id: p.id, name: p.name, preview: p.content || p.description, onSelect: () => onSelect(p) }));
+    return (
     <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
       <div className="p-2 border-b space-y-2 shrink-0">
         <div className="relative">
@@ -2785,7 +2939,7 @@ export const Chat: React.FC = () => {
           />
         </div>
         <div className="flex gap-1 overflow-x-auto pb-1">
-          {['全部', ...sortPromptCategoriesByBuiltin(promptCategories).map(c => c.name)].map(cat => (
+          {categoryTabs.map(cat => (
             <Button
               key={cat}
               variant={promptMenuCategory === cat ? 'secondary' : 'ghost'}
@@ -2799,18 +2953,19 @@ export const Chat: React.FC = () => {
         </div>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto p-1">
-        {filteredAvailablePrompts.length === 0 && (
+        {promptItems.length === 0 && (
           <div className="px-3 py-6 text-center text-xs text-muted-foreground">暂无匹配提示词</div>
         )}
-        {filteredAvailablePrompts.map(p => (
-          <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={() => onSelect(p)}>
+        {promptItems.map(p => (
+          <div key={p.id} className="flex flex-col w-full px-3 py-2 hover:bg-accent cursor-pointer text-foreground rounded-md transition-colors" onClick={p.onSelect}>
             <span className="font-medium text-sm mb-1">{p.name}</span>
-            <span className="text-xs text-muted-foreground line-clamp-2">{p.content || p.description}</span>
+            <span className="text-xs text-muted-foreground line-clamp-2">{p.preview}</span>
           </div>
         ))}
       </div>
     </div>
-  );
+    );
+  };
 
   const renderSkillMenu = (onSelect: (skill: Skill) => void) => (
     <div className="absolute bottom-full left-0 mb-2 w-80 bg-popover border shadow-xl rounded-xl flex flex-col z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 h-[360px]">
@@ -2971,8 +3126,8 @@ export const Chat: React.FC = () => {
                       key={projectPreview.path}
                       projectPath={projectPreview.path}
                       mode={projectPreview.mode}
-                      previewOnly
                       onModeChange={(nextMode) => setProjectPreview({ path: projectPreview.path, mode: nextMode })}
+                      onFixRequest={handlePreviewFix}
                       onClose={closePreview}
                     />
                   )}
@@ -3352,7 +3507,7 @@ export const Chat: React.FC = () => {
                     <GitBranch className="h-4 w-4 text-primary shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-foreground truncate">{repo.name}</p>
-                      <p className="text-[10px] text-muted-foreground truncate">引用工程代码</p>
+                      <p className="text-[10px] text-muted-foreground truncate">引用工程仓库</p>
                     </div>
                     <button
                       className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-primary/20 text-muted-foreground transition-colors shrink-0 -mr-1"
@@ -3636,8 +3791,25 @@ export const Chat: React.FC = () => {
                   if (type === 'prompt') {
                     return (
                       <div className="relative" key="prompt" ref={promptMenuRef}>
-                        <Button variant="outline" size="sm" className={cn('rounded-full text-xs hover:bg-muted', toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3')} onClick={() => { setPromptMenuOpen(!promptMenuOpen); setRepoMenuOpen(false); setSkillPopoverOpen(false); setTaskMenuOpen(false); setCmdMenuOpen(false); }}>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className={cn(
+                            'relative rounded-full text-xs hover:bg-muted',
+                            toolbarLevel === 0 ? 'h-7 px-2' : 'h-8 px-3',
+                            // 当前指令有系统提示词时按钮高亮为紫色，与输入框中指令块的颜色语义一致。
+                            activeSystemPrompts.length > 0 && 'border-violet-500/50 bg-violet-500/10 text-violet-600 hover:bg-violet-500/20 dark:text-violet-400',
+                          )}
+                          onClick={() => {
+                            // 打开面板且当前指令有系统提示词时，默认选中「系统」分类。
+                            if (!promptMenuOpen && activeSystemPrompts.length > 0) setPromptMenuCategory(SYSTEM_PROMPT_CATEGORY_NAME);
+                            setPromptMenuOpen(!promptMenuOpen); setRepoMenuOpen(false); setSkillPopoverOpen(false); setTaskMenuOpen(false); setCmdMenuOpen(false);
+                          }}
+                        >
                           <FileText className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '提示词'}
+                          {activeSystemPrompts.length > 0 && (
+                            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-violet-500" />
+                          )}
                         </Button>
                         {promptMenuOpen && renderPromptMenu(p => insertPrompt(p))}
                       </div>
@@ -3716,11 +3888,18 @@ export const Chat: React.FC = () => {
                             return (
                               <button
                                 key="prompt"
-                                className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
+                                className="relative h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center transition-colors"
                                 title="提示词"
-                                onClick={() => setCompactPlusSubmenu('prompt')}
+                                onClick={() => {
+                                  // 与工具栏提示词按钮一致：打开子菜单时默认选中「系统」分类。
+                                  if (activeSystemPrompts.length > 0) setPromptMenuCategory(SYSTEM_PROMPT_CATEGORY_NAME);
+                                  setCompactPlusSubmenu('prompt');
+                                }}
                               >
                                 <FileText className="h-4 w-4 text-muted-foreground" />
+                                {activeSystemPrompts.length > 0 && (
+                                  <span className="absolute top-0.5 right-0.5 h-2 w-2 rounded-full bg-violet-500" />
+                                )}
                               </button>
                             );
                           }
@@ -4193,9 +4372,9 @@ export const Chat: React.FC = () => {
         <AlertDialog open={codeJumpOpen} onOpenChange={setCodeJumpOpen}>
           <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md">
             <AlertDialogHeader>
-              <AlertDialogTitle>跳转到工程代码</AlertDialogTitle>
+              <AlertDialogTitle>跳转到工程仓库</AlertDialogTitle>
               <AlertDialogDescription>
-                是否要跳转到代码库窗口，查看完整的工程代码？
+                是否要跳转到代码库窗口，查看完整的工程仓库？
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

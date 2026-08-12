@@ -49,6 +49,19 @@ export interface WorkItemDTO {
   steps?: string[];
 }
 
+// ── WorkItem Commit ──
+export interface WorkItemCommitDTO {
+  id: string;
+  workitemId: string;
+  workspaceId: string;
+  sessionId: string;
+  repositoryId?: string;
+  commitHash: string;
+  commitMessage?: string;
+  author?: string;
+  committedAt: string;
+}
+
 // ── Repository Scan & Details ──
 export interface ScannedRepositoryDTO {
   name: string;
@@ -165,7 +178,7 @@ export interface UserProfileDTO {
 }
 
 // ── Project ──
-export type RepoType = "dev" | "case";
+export type RepoType = "dev" | "arch" | "product" | "case";
 
 export interface RepositoryDTO {
   id: string;
