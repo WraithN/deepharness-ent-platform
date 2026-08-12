@@ -456,7 +456,9 @@ func New(cfg config.Config) (http.Handler, func()) {
 	mux.Handle(ROUTE_AGENT, containerMW(http.HandlerFunc(aguiHandler.AgentRun)))
 	mux.Handle(ROUTE_AGENT_RESPOND, containerMW(http.HandlerFunc(aguiHandler.RespondToAgent)))
 	// 会话创建、删除、消息查询均需登录态：handler 内 UserIDFromContext 依赖 auth 中间件注入的 userID
-	mux.Handle(ROUTE_SESSIONS, middleware.Auth(http.HandlerFunc(sessionHandler.Sessions)))
+	// 会话创建走 containerMW：containerMW 内含 Auth，并为请求注入 per-user ContainerInfo + stubclient，
+	// 使 ensureWorkspaceDir 能路由到用户专属 stub 而非 default slot 0（修复 slot 0 未启动时 500）。
+	mux.Handle(ROUTE_SESSIONS, containerMW(http.HandlerFunc(sessionHandler.Sessions)))
 	mux.Handle(ROUTE_SESSIONS_BY_ID, middleware.Auth(http.HandlerFunc(sessionHandler.DeleteSession)))
 	mux.Handle(ROUTE_SESSIONS_BY_ID_MESSAGES, middleware.Auth(http.HandlerFunc(sessionHandler.GetMessages)))
 	mux.HandleFunc(ROUTE_SESSIONS_BY_ID_SSE, sseReplayHandler.ServeSSE)

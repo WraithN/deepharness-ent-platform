@@ -100,7 +100,8 @@ func (h *AGUIHandler) scrapeWebsiteViaMCP(ctx context.Context, targetURL string,
 		return scrapeResponse{}, fmt.Errorf("marshal mcp scrape request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/mcp/tools/%s:scrape", h.gatewaydAdminURL, h.crawlerMCPName)
+	// gatewayd 的 MCP 工具调用路由为 POST /mcp/tools/{server}:{tool}/call（见 gatewayd server.rs）。
+	url := fmt.Sprintf("%s/mcp/tools/%s:scrape/call", h.gatewaydAdminURL, h.crawlerMCPName)
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(bodyData))
 	if err != nil {
 		return scrapeResponse{}, fmt.Errorf("create mcp scrape request: %w", err)

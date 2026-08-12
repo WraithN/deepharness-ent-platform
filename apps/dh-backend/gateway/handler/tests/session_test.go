@@ -14,6 +14,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/config"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 )
 
 func TestMain(m *testing.M) {
@@ -35,12 +36,24 @@ func TestCreateSession_Success(t *testing.T) {
 	messages := session.NewMessageStore(0)
 	h := handler.NewSessionHandler(sessions, messages, client.NewGatewaydClient("http://127.0.0.1:2346", "claude-code"), nil, nil, testConfig(), memory.New())
 
+	// 模拟 personal-stub 的 mkdir 端点，确保 ensureWorkspaceDir 能成功创建目录。
+	// 回归测试：ensureWorkspaceDir 现在从请求 ctx 取 stubclient（经 containerMW 注入），
+	// 而非用 context.Background() 降级到 default slot 0。
+	stubSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer stubSrv.Close()
+
 	reqBody, _ := json.Marshal(map[string]any{
-		"agentType": "chat",
-		"model":     "claude-3-7",
+		"agentType":   "chat",
+		"model":       "claude-3-7",
+		"workspaceId": "test-ws",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewReader(reqBody))
 	req.Header.Set("Authorization", "Bearer test-user")
+	// 注入 per-user stubclient，模拟 containerMW 的行为
+	req = req.WithContext(stubclient.WithClient(req.Context(), stubclient.New(stubSrv.URL)))
 	w := httptest.NewRecorder()
 
 	middleware.Auth(http.HandlerFunc(h.CreateSession)).ServeHTTP(w, req)

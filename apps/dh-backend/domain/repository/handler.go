@@ -450,7 +450,7 @@ func UserRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repos, err := defaultService.ListUserRepos(workspaceID, userID)
+	repos, err := defaultService.ListUserRepos(r.Context(), workspaceID, userID)
 	if err != nil {
 		handler.HandleServiceError(w, err, "failed to list user repos", "failed to list user repos")
 		return
@@ -477,7 +477,7 @@ func SyncUserRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := defaultService.SyncUserRepo(workspaceID, repoID, userID); err != nil {
+	if err := defaultService.SyncUserRepo(r.Context(), workspaceID, repoID, userID); err != nil {
 		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, err.Error())
 		return
 	}

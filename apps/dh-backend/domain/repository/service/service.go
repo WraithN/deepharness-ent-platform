@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/object"
@@ -38,9 +39,9 @@ type RepositoryService interface {
 
 	// 用户级仓库操作 —— 将工作空间配置的仓库同步到用户自己的 projects 目录下。
 	// ListUserRepos 返回工作空间下所有配置仓库在用户 projects 目录中的同步状态。
-	ListUserRepos(workspaceID, userID string) ([]object.UserRepoStatus, error)
+	ListUserRepos(ctx context.Context, workspaceID, userID string) ([]object.UserRepoStatus, error)
 	// SyncUserRepo 将指定仓库克隆到用户 projects 目录，异步执行。
-	SyncUserRepo(workspaceID, repoID, userID string) error
+	SyncUserRepo(ctx context.Context, workspaceID, repoID, userID string) error
 }
 
 // ParseRepoName 从仓库 URL 解析仓库名称（取最后一段路径并去除 .git 后缀）。

@@ -109,9 +109,10 @@ func resolveProjectPath(r *http.Request) (string, int, string) {
 	info, err := os.Stat(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", http.StatusNotFound, "project directory not found"
+			// 返回 absPath 供 ProjectCheck 用于提取项目名（目录不存在时作为"新建工程"返回 200）。
+			return absPath, http.StatusNotFound, "project directory not found"
 		}
-		return "", http.StatusInternalServerError, "failed to stat project directory"
+		return absPath, http.StatusInternalServerError, "failed to stat project directory"
 	}
 	if !info.IsDir() {
 		return "", http.StatusBadRequest, "path is not a directory"
@@ -650,6 +651,16 @@ func detectBaseBranch(dir string) string {
 func ProjectCheck(w http.ResponseWriter, r *http.Request) {
 	absPath, status, msg := resolveProjectPath(r)
 	if status != 0 {
+		// 目录不存在时返回 200 + isNew=true，避免浏览器控制台 404 噪音。
+		// ProjectCard 收到 isNew=true 后展示为"新建工程"卡片（绿色主题）。
+		if status == http.StatusNotFound {
+			SetJSONHeader(w)
+			json.NewEncoder(w).Encode(ProjectCheckResponse{
+				IsNew:       true,
+				ProjectName: filepath.Base(absPath),
+			})
+			return
+		}
 		WriteJSONError(w, status, 1, msg)
 		return
 	}

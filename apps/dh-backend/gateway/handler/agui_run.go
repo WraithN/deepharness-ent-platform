@@ -253,7 +253,7 @@ func (h *AGUIHandler) resolveRunWorkspace(r *http.Request, runID, workspaceID st
 	if workspaceID == "" || userID == "" || h.workspaceRoot == "" {
 		return ""
 	}
-	resolved, err := resolveWorkspacePath(workspaceID, userID, h.workspaceRoot)
+	resolved, err := resolveWorkspacePath(r.Context(), workspaceID, userID, h.workspaceRoot)
 	if err != nil {
 		log.Printf("[AGUIHandler] run=%s resolve workspace path failed: %v", runID, err)
 		return ""

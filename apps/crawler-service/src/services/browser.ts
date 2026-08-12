@@ -5,14 +5,41 @@ import { Cookie } from "../types.js";
 let browserPromise: Promise<Browser> | null = null;
 
 /**
+ * 伪装用的 User-Agent，去除 HeadlessChrome 标记。
+ * Playwright 默认 UA 含 "HeadlessChrome/xxx"，被反爬脚本直接识别。
+ */
+const STEALTH_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+/**
+ * 反检测 init script：在每个页面加载前注入，覆盖 navigator 指纹。
+ * - navigator.webdriver: true -> false（最关键，Apifox 等站点据此跳转登录页）
+ * - navigator.plugins: [] -> 3 个模拟插件（真实浏览器有插件）
+ * - navigator.languages: ["en-US"] -> ["zh-CN","zh","en-US","en"]
+ */
+const STEALTH_INIT_SCRIPT = `
+Object.defineProperty(navigator, 'webdriver', { get: () => false });
+Object.defineProperty(navigator, 'plugins', {
+  get: () => [{ name: 'Chrome PDF Plugin' }, { name: 'Chrome PDF Viewer' }, { name: 'Native Client' }],
+});
+Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
+window.chrome = { runtime: {} };
+`;
+
+/**
  * 获取全局复用的 Browser 实例。
  * 本地开发建议用 browserless/playwright 镜像；若无，首次启动会下载 Chromium。
+ * --disable-blink-features=AutomationControlled 移除 navigator.webdriver 标记（配合 init script 双保险）。
  */
 export async function getBrowser(): Promise<Browser> {
   if (!browserPromise) {
     browserPromise = chromium.launch({
       headless: config.browserHeadless,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-blink-features=AutomationControlled",
+      ],
     });
   }
   return browserPromise;
@@ -42,7 +69,13 @@ export async function openPageWithCookies(
   },
 ): Promise<PageResult> {
   const browser = await getBrowser();
-  const context = await browser.newContext();
+  const context = await browser.newContext({
+    userAgent: STEALTH_USER_AGENT,
+    locale: "zh-CN",
+  });
+
+  // 注入反检测脚本，在每个页面的 JS 执行前覆盖 navigator 指纹。
+  await context.addInitScript(STEALTH_INIT_SCRIPT);
 
   try {
     if (cookies.length > 0) {

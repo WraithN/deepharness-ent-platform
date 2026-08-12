@@ -220,7 +220,8 @@ func (c *GitClient) cloneWithGoGit(rawURL, dest, sshKey, branch string) error {
 	}
 
 	_, err = git.PlainClone(dest, false, opts)
-	if err != nil && branch == "" {
+	// 仅在非空仓库错误时按 main/master 重试；空仓库直接走 init 兜底，避免无效往返。
+	if err != nil && branch == "" && !isEmptyRemoteError(err) {
 		_ = os.RemoveAll(dest)
 		opts.ReferenceName = plumbing.NewBranchReferenceName("main")
 		opts.SingleBranch = true
@@ -233,12 +234,27 @@ func (c *GitClient) cloneWithGoGit(rawURL, dest, sshKey, branch string) error {
 	}
 	if err != nil {
 		_ = os.RemoveAll(dest)
-		if errors.Is(err, transport.ErrEmptyRemoteRepository) {
+		if isEmptyRemoteError(err) {
 			return c.initEmptyRepo(rawURL, dest, auth, branch)
 		}
 		return fmt.Errorf("git clone failed: %w", err)
 	}
 	return nil
+}
+
+// isEmptyRemoteError 判断克隆/拉取错误是否表示远程仓库为空（尚无任何提交）。
+// go-git 客户端自身不会返回 transport.ErrEmptyRemoteRepository（该哨兵错误仅在
+// go-git 作为服务端的 server.go 中产生）；真实场景下错误文本来自远程服务器
+// （如 Gitea/GitLab 在协议层返回的 "remote repository is empty"），
+// 因此除 errors.Is 外还需按哨兵错误文本做兜底匹配。
+func isEmptyRemoteError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
+		return true
+	}
+	return strings.Contains(err.Error(), transport.ErrEmptyRemoteRepository.Error())
 }
 
 // initEmptyRepo 初始化空仓库：PlainInit + 设置 remote origin + fetch。
@@ -268,7 +284,8 @@ func (c *GitClient) initEmptyRepo(rawURL, dest string, auth transport.AuthMethod
 		}
 	}
 	if fetchErr := repo.Fetch(fetchOpts); fetchErr != nil {
-		if !errors.Is(fetchErr, transport.ErrEmptyRemoteRepository) {
+		// 空仓库 fetch 同样可能只返回文本错误，复用 isEmptyRemoteError 兜底。
+		if !isEmptyRemoteError(fetchErr) {
 			return fmt.Errorf("fetch empty repo failed: %w", fetchErr)
 		}
 	}

@@ -117,16 +117,58 @@ func parsePRDResearchArgs(args string) (targetURL string, inlineCookies []object
 }
 
 // extractLabeledLine 返回多行文本中首个以指定标签开头的行的标签后内容（去空白）。
+// 若标签所在行的内容为空（如「登录Cookie：」后换行才写值），回退取后续首个
+// 非空且非参数标签的行作为值，避免值写在下一行时解析为空。
 func extractLabeledLine(text string, labels []string) string {
-	for _, line := range strings.Split(text, "\n") {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
 		line = strings.TrimSpace(line)
+		matched := false
 		for _, label := range labels {
 			if strings.HasPrefix(line, label) {
-				return strings.TrimSpace(strings.TrimPrefix(line, label))
+				matched = true
+				if rest := strings.TrimSpace(strings.TrimPrefix(line, label)); rest != "" {
+					return rest
+				}
+				break
 			}
+		}
+		if matched {
+			return nextValueLine(lines[i+1:])
 		}
 	}
 	return ""
+}
+
+// nextValueLine 返回后续行中首个非空、且不以已知参数标签开头的行。
+// 用于「标签：」后换行写值的场景；若先遇到其他参数标签行，说明该参数没有值。
+func nextValueLine(lines []string) string {
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if hasAnyParamLabel(line) {
+			return ""
+		}
+		return line
+	}
+	return ""
+}
+
+// hasAnyParamLabel 判断一行是否以任一已知参数标签（调研链接/登录Cookie）开头。
+func hasAnyParamLabel(line string) bool {
+	for _, label := range researchLinkLabels {
+		if strings.HasPrefix(line, label) {
+			return true
+		}
+	}
+	for _, label := range researchCookieLabels {
+		if strings.HasPrefix(line, label) {
+			return true
+		}
+	}
+	return false
 }
 
 // normalizeResearchURL 校验并归一化目标链接：无 scheme 时补 https://；

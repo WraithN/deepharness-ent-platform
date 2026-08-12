@@ -13,6 +13,7 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/agui"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/chat"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common"
 )
@@ -197,7 +198,12 @@ func (h *AGUIHandler) fallbackRunForRespond(w http.ResponseWriter, r *http.Reque
 	userID, _ := middleware.UserIDFromContext(r.Context())
 
 	// 原请求上下文可能已经超时，回退流程使用独立后台上下文，避免 DB 操作被取消。
+	// 但需保留原请求中 containerMW 注入的 per-user stubclient，否则 ensureWorkspaceDir
+	// 会降级到 default stubclient（slot 0），在 direct-host 模式下可能因 slot 0 未启动而失败。
 	ctx := context.Background()
+	if sc := stubclient.FromContext(r.Context()); sc != nil {
+		ctx = stubclient.WithClient(ctx, sc)
+	}
 
 	oldSess, sessErr := h.sessions.Get(ctx, req.ThreadID)
 	workspaceID := ""
@@ -213,7 +219,7 @@ func (h *AGUIHandler) fallbackRunForRespond(w http.ResponseWriter, r *http.Reque
 
 	workspacePath := ""
 	if workspaceID != "" && userID != "" {
-		resolved, resolveErr := resolveWorkspacePath(workspaceID, userID, h.workspaceRoot)
+		resolved, resolveErr := resolveWorkspacePath(ctx, workspaceID, userID, h.workspaceRoot)
 		if resolveErr == nil {
 			workspacePath = resolved
 		} else {

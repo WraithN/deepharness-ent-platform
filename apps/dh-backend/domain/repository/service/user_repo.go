@@ -16,9 +16,8 @@ import (
 )
 
 // ListUserRepos 列出工作空间下所有配置仓库在用户 projects 目录中的同步状态。
-func (s *DBRepositoryService) ListUserRepos(workspaceID, userID string) ([]object.UserRepoStatus, error) {
-	// RepositoryService 接口未定义 ctx 参数，使用 context.Background() 作为根 context。
-	ctx := context.Background()
+// ctx 应携带 per-user stubclient（由 containerMW 注入），确保文件检查与用户容器一致。
+func (s *DBRepositoryService) ListUserRepos(ctx context.Context, workspaceID, userID string) ([]object.UserRepoStatus, error) {
 	repos, err := s.List(workspaceID)
 	if err != nil {
 		return nil, err
@@ -51,9 +50,9 @@ func (s *DBRepositoryService) ListUserRepos(workspaceID, userID string) ([]objec
 
 // SyncUserRepo 将指定仓库异步克隆到用户 projects 目录。
 // SSH Key 取自当前用户的 Profile，若未配置则返回错误提示。
-func (s *DBRepositoryService) SyncUserRepo(workspaceID, repoID, userID string) error {
-	// RepositoryService 接口未定义 ctx 参数，使用 context.Background() 作为根 context。
-	ctx := context.Background()
+// ctx 应携带 per-user stubclient（由 containerMW 注入），确保同步写入与 ArchGraph 检查
+// 指向同一个 personal-stub 实例，避免"同步一直没效果"的问题。
+func (s *DBRepositoryService) SyncUserRepo(ctx context.Context, workspaceID, repoID, userID string) error {
 	r, err := s.Get(workspaceID, repoID)
 	if err != nil {
 		return err
@@ -90,8 +89,10 @@ func (s *DBRepositoryService) SyncUserRepo(workspaceID, repoID, userID string) e
 	}
 
 	safego.Go("repo-sync-user", func() {
-		// 异步 goroutine 无调用方 context，使用 context.Background() 作为根 context。
-		bgCtx := context.Background()
+		// 异步 goroutine 不能使用请求 context（请求结束后 ctx 取消），
+		// 但必须复用请求 context 中的 per-user stubclient，否则会降级到 defaultClient，
+		// 导致同步写入与 ArchGraph 检查指向不同的 personal-stub 实例。
+		bgCtx := stubclient.WithClient(context.Background(), stubclient.FromContext(ctx))
 		defer s.deleteSyncLock(bgCtx, workspaceID, userID, r.Name)
 
 		// 清理上次同步残留的错误信息

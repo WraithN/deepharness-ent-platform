@@ -331,13 +331,13 @@ export const CommandManagement: React.FC = () => {
         <p className="text-muted-foreground mt-1 text-sm">{COMMAND_MANAGEMENT_DESC}</p>
       </div>
 
-      {/* Comet 流程开关：控制代码类指令底层是否走 Comet Classic 工作流 */}
+      {/* SDD研发流程开关：控制代码类指令底层是否走 superpowers+openspec 开发流程 */}
       <div className="flex items-center justify-between rounded-xl border border-border/50 bg-card p-4">
         <div className="flex items-center gap-3">
           <Workflow className="h-5 w-5 text-primary" />
           <div>
-            <div className="text-sm font-medium">Comet 流程</div>
-            <div className="text-xs text-muted-foreground">开启后，代码类指令底层走 Comet Classic 工作流；关闭则使用原有指令流程</div>
+            <div className="text-sm font-medium">SDD研发流程开关</div>
+            <div className="text-xs text-muted-foreground">底层走superpowers+openspec开发流程</div>
           </div>
         </div>
         <Switch checked={cometFlowEnabled} disabled={cometFlowLoading} onCheckedChange={toggleCometFlow} />

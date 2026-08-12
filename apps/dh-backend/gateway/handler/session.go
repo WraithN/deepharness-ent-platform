@@ -149,7 +149,7 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 根据当前登录用户、workspaceID 与配置根目录计算 gatewayd 工作目录，并确保目录存在。
-	workspacePath, err := resolveWorkspacePath(workspaceID, userID, h.cfg.WorkspaceRoot)
+	workspacePath, err := resolveWorkspacePath(r.Context(), workspaceID, userID, h.cfg.WorkspaceRoot)
 	if err != nil {
 		WriteJSONError(w, http.StatusInternalServerError, ErrCodeGeneral, err.Error())
 		return

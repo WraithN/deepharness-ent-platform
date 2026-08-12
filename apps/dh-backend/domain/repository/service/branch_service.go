@@ -73,7 +73,7 @@ func (s *DBRepositoryService) fetchBranchesFromGit(ctx context.Context, workspac
 	if ok, err := sc.FileExists(ctx, localPath); err != nil || !ok {
 		// 用户目录尚未同步，触发异步克隆并返回默认分支作为降级。
 		log.Printf("[Repository] user local path missing for repo %s user=%s (path=%s), triggering sync", repoID, userID, localPath)
-		if syncErr := s.SyncUserRepo(repo.WorkspaceID, repo.ID, userID); syncErr != nil {
+		if syncErr := s.SyncUserRepo(ctx, repo.WorkspaceID, repo.ID, userID); syncErr != nil {
 			log.Printf("[Repository] trigger SyncUserRepo failed: %v", syncErr)
 		}
 		return s.fallbackBranches(repo), nil
@@ -160,7 +160,7 @@ func (s *DBRepositoryService) ensureLocalPath(ctx context.Context, repo reposito
 	if ok, err := sc.FileExists(ctx, localPath); err != nil || !ok {
 		log.Printf("[Repository] user local path missing for repo %s user=%s (path=%s), triggering sync", repo.ID, userID, localPath)
 		// 触发用户级同步；创建者目录缺失时同样复用 SyncUserRepo，它会走用户目录。
-		if syncErr := s.SyncUserRepo(repo.WorkspaceID, repo.ID, userID); syncErr != nil {
+		if syncErr := s.SyncUserRepo(ctx, repo.WorkspaceID, repo.ID, userID); syncErr != nil {
 			log.Printf("[Repository] trigger SyncUserRepo failed: %v", syncErr)
 		}
 		return fmt.Errorf("repository local path missing, syncing in background")

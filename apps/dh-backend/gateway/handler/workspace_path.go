@@ -17,15 +17,17 @@ func validateWorkspaceID(id string) error {
 
 // ensureWorkspaceDir 保证 gatewayd 工作目录存在；创建失败返回错误。
 // 架构合规：通过 stubclient 在共享目录创建目录，不直接操作文件系统。
-func ensureWorkspaceDir(path string) error {
+// ctx 必须是请求上下文（经 containerMW 注入 per-user stubclient），
+// 否则会降级到 default stubclient（slot 0），在 direct-host 模式下可能因 slot 0 未启动而失败。
+func ensureWorkspaceDir(ctx context.Context, path string) error {
 	if path == "" {
 		return nil
 	}
-	sc := stubclient.FromContext(context.Background())
+	sc := stubclient.FromContext(ctx)
 	if sc == nil {
-		return errors.New("personal-stub client not initialized")
+		return errors.New("personal-stub client not initialized in request context")
 	}
-	if err := sc.MkdirAll(context.Background(), path); err != nil {
+	if err := sc.MkdirAll(ctx, path); err != nil {
 		log.Printf("[ensureWorkspaceDir] failed to create workspace dir %s: %v", path, err)
 		return err
 	}
@@ -36,12 +38,13 @@ func ensureWorkspaceDir(path string) error {
 // 产品空间与研发空间均要求目录所有者为当前登录用户，因此使用请求上下文中的 userID。
 // workspaceRoot 由 config.yaml 的 workspace.root 提供，为空时返回错误。
 // 目录结构：{workspaceRoot}/{userID}/{workspaceID}
-func resolveWorkspacePath(workspaceID, userID, workspaceRoot string) (string, error) {
+// ctx 透传给 ensureWorkspaceDir，确保使用 per-user stubclient 而非 default。
+func resolveWorkspacePath(ctx context.Context, workspaceID, userID, workspaceRoot string) (string, error) {
 	p, err := pathutil.ResolveWorkspaceRoot(workspaceRoot, userID, workspaceID)
 	if err != nil {
 		return "", err
 	}
-	if err := ensureWorkspaceDir(p); err != nil {
+	if err := ensureWorkspaceDir(ctx, p); err != nil {
 		return "", err
 	}
 	return p, nil
