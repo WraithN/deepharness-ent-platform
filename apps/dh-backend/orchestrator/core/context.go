@@ -40,6 +40,7 @@ type FlowContext struct {
 	WorkitemDesc  string
 	RepositoryID  string
 	ProjectName   string
+	DocPath       string
 
 	WorkspacePath string
 
@@ -74,14 +75,19 @@ type FlowContext struct {
 	TestAdmissionReviewResult string
 
 	// 产品流程数据
-	BrainstormResult         string
-	ResearchResult           string
-	DraftResult              string
-	PRDResult                string
-	ProtoResult              string
-	ProductReviewResult      string // "pass" / "reject"
-	ProductProtoReviewResult string // "pass" / "reject"
-	ProductFinalReviewResult string // "pass" / "reject"
+	BrainstormResult           string
+	BreakdownResult            string // 功能拆解清单
+	ResearchResult             string
+	DraftResult                string
+	AIDraftReviewResult        string // AI 草案复核报告文本
+	ProductAIDraftReviewResult string // "pass" / "reject"
+	PRDResult                  string
+	ProtoResult                string
+	ProductReviewResult        string // "pass" / "reject"
+	ProductProtoReviewResult   string // "pass" / "reject"
+	ProductFinalReviewResult   string // "pass" / "reject"
+	AIGatewayResult            string // AI 网关决策文本
+	NeedProto                  bool   // 是否需要原型
 
 	PausedNode     string
 	NotificationID string
@@ -117,11 +123,12 @@ func (fc *FlowContext) CreateProcess(proc *processobject.Process) *processobject
 		return proc
 	}
 	created, err := processSvc.Create(fc.Ctx, processobject.CreateProcessRequest{
-		WorkspaceID: proc.WorkspaceID,
-		WorkitemID:  proc.WorkitemID,
-		Title:       proc.Title,
-		Type:        proc.Type,
-		Stages:      proc.Stages,
+		WorkspaceID:   proc.WorkspaceID,
+		WorkitemID:    proc.WorkitemID,
+		Title:         proc.Title,
+		SourceDocPath: proc.SourceDocPath,
+		Type:          proc.Type,
+		Stages:        proc.Stages,
 	})
 	if err != nil {
 		log.Printf("[Flow] create process failed: %v", err)
