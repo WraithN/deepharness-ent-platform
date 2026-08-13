@@ -27,14 +27,17 @@ const (
 	StageTestComplete        = "test_complete"         // 测试结束
 
 	// 产品流程阶段
-	StageProductBrainstorm   = "product_brainstorm"   // 需求头脑风暴
-	StageProductResearch     = "product_research"     // 方案调研与选型
-	StageProductDraft        = "product_draft"        // 方案草案输出
-	StageProductReview       = "product_review"       // 方案自主复核
-	StageProductPRDWrite     = "product_prd_write"    // PRD初稿生成
-	StageProductProtoMake    = "product_proto_make"   // 原型生成
-	StageProductProtoReview  = "product_proto_review" // 原型交互复核
-	StageProductFinalReview  = "product_final_review" // 需求评审
+	StageProductBrainstorm    = "product_brainstorm"    // 需求头脑风暴
+	StageProductBreakdown     = "product_breakdown"     // 需求拆解
+	StageProductResearch      = "product_research"      // 方案调研与选型
+	StageProductDraft         = "product_draft"         // 方案草案输出
+	StageProductAIDraftReview = "product_ai_draft_review" // AI 草案复核
+	StageProductReview        = "product_review"        // 方案自主复核
+	StageProductAIGateway     = "product_ai_gateway"    // AI 网关（并行分叉）
+	StageProductPRDWrite      = "product_prd_write"     // PRD初稿生成
+	StageProductProtoMake     = "product_proto_make"    // 原型生成
+	StageProductProtoReview   = "product_proto_review"  // 原型交互复核
+	StageProductFinalReview   = "product_final_review"  // 需求评审
 )
 
 // 流程阶段展示标签
@@ -60,14 +63,17 @@ var StageLabels = map[string]string{
 	StageTestAdmissionReview: "测试准入评审",
 	StageTestComplete:        "测试结束",
 
-	StageProductBrainstorm:  "需求头脑风暴",
-	StageProductResearch:    "方案调研与选型",
-	StageProductDraft:       "方案草案输出",
-	StageProductReview:      "方案自主复核",
-	StageProductPRDWrite:    "PRD初稿生成",
-	StageProductProtoMake:   "原型生成",
-	StageProductProtoReview: "原型交互复核",
-	StageProductFinalReview: "需求评审",
+	StageProductBrainstorm:    "需求头脑风暴",
+	StageProductBreakdown:     "需求拆解",
+	StageProductResearch:      "方案调研与选型",
+	StageProductDraft:         "方案草案输出",
+	StageProductAIDraftReview: "AI 草案复核",
+	StageProductReview:        "方案自主复核",
+	StageProductAIGateway:     "AI 网关",
+	StageProductPRDWrite:      "PRD初稿生成",
+	StageProductProtoMake:     "原型生成",
+	StageProductProtoReview:   "原型交互复核",
+	StageProductFinalReview:   "需求评审",
 }
 
 // 阶段状态常量
@@ -76,6 +82,8 @@ const (
 	StageStatusInProgress = "in_progress"
 	StageStatusCompleted  = "completed"
 	StageStatusFailed     = "failed"
+	StageStatusTerminated = "terminated"
+	StageStatusSkipped    = "skipped" // 跳过（条件分支未执行）
 )
 
 // 操作者类型常量
@@ -86,8 +94,9 @@ const (
 
 // 阶段类型常量
 const (
-	StageTypeAction = "action" // 操作节点：输出某个交付物
-	StageTypeJudge  = "judge"  // 判断节点：输出通过或不通过
+	StageTypeAction  = "action"  // 操作节点：输出某个交付物
+	StageTypeJudge   = "judge"   // 判断节点：输出通过或不通过
+	StageTypeGateway = "gateway" // 网关节点：并行分叉
 )
 
 // stageMeta 定义每个阶段的执行主体和节点类型
@@ -119,14 +128,17 @@ var StageMetaMap = map[string]stageMeta{
 	StageTestAdmissionReview: {OperatorTypeHuman, StageTypeJudge},
 	StageTestComplete:        {OperatorTypeHuman, StageTypeAction},
 
-	StageProductBrainstorm:  {OperatorTypeAI, StageTypeAction},
-	StageProductResearch:    {OperatorTypeAI, StageTypeAction},
-	StageProductDraft:       {OperatorTypeAI, StageTypeAction},
-	StageProductReview:      {OperatorTypeHuman, StageTypeJudge},
-	StageProductPRDWrite:    {OperatorTypeAI, StageTypeAction},
-	StageProductProtoMake:   {OperatorTypeAI, StageTypeAction},
-	StageProductProtoReview: {OperatorTypeHuman, StageTypeJudge},
-	StageProductFinalReview: {OperatorTypeHuman, StageTypeAction},
+	StageProductBrainstorm:    {OperatorTypeAI, StageTypeAction},
+	StageProductBreakdown:     {OperatorTypeAI, StageTypeAction},
+	StageProductResearch:      {OperatorTypeAI, StageTypeAction},
+	StageProductDraft:         {OperatorTypeAI, StageTypeAction},
+	StageProductAIDraftReview: {OperatorTypeAI, StageTypeJudge},
+	StageProductReview:        {OperatorTypeHuman, StageTypeJudge},
+	StageProductAIGateway:     {OperatorTypeAI, StageTypeGateway},
+	StageProductPRDWrite:      {OperatorTypeAI, StageTypeAction},
+	StageProductProtoMake:     {OperatorTypeAI, StageTypeAction},
+	StageProductProtoReview:   {OperatorTypeHuman, StageTypeJudge},
+	StageProductFinalReview:   {OperatorTypeHuman, StageTypeJudge},
 }
 
 // AI 角色常量
@@ -172,23 +184,25 @@ type ProcessStage struct {
 
 // Process 流程实体
 type Process struct {
-	ID          string         `json:"id"`
-	WorkspaceID string         `json:"workspaceId"`
-	WorkitemID  string         `json:"workitemId"`
-	Title       string         `json:"title"`
-	Type        string         `json:"type"`
-	Stages      []ProcessStage `json:"stages"`
-	CreatedAt   time.Time      `json:"createdAt"`
-	UpdatedAt   time.Time      `json:"updatedAt"`
+	ID            string         `json:"id"`
+	WorkspaceID   string         `json:"workspaceId"`
+	WorkitemID    string         `json:"workitemId"`
+	Title         string         `json:"title"`
+	SourceDocPath string         `json:"sourceDocPath,omitempty"`
+	Type          string         `json:"type"`
+	Stages        []ProcessStage `json:"stages"`
+	CreatedAt     time.Time      `json:"createdAt"`
+	UpdatedAt     time.Time      `json:"updatedAt"`
 }
 
 // CreateProcessRequest 创建流程请求
 type CreateProcessRequest struct {
-	WorkspaceID string           `json:"workspaceId"`
-	WorkitemID  string           `json:"workitemId"`
-	Title       string           `json:"title"`
-	Type        string           `json:"type"`
-	Stages      []ProcessStage   `json:"stages"`
+	WorkspaceID   string         `json:"workspaceId"`
+	WorkitemID    string         `json:"workitemId"`
+	Title         string         `json:"title"`
+	SourceDocPath string         `json:"sourceDocPath,omitempty"`
+	Type          string         `json:"type"`
+	Stages        []ProcessStage `json:"stages"`
 }
 
 // UpdateStageRequest 更新阶段状态请求
@@ -325,11 +339,12 @@ func NewAutoTestExecutionProcess(workspaceID, workitemID, title string) *Process
 }
 
 // NewProductProcess 创建产品流程（含预定义阶段）
-func NewProductProcess(workspaceID, workitemID, title string) *Process {
+func NewProductProcess(workspaceID, workitemID, title, docPath string) *Process {
 	now := time.Now()
 	productStages := []string{
-		StageProductBrainstorm, StageProductResearch, StageProductDraft,
-		StageProductReview, StageProductPRDWrite, StageProductProtoMake,
+		StageProductBrainstorm, StageProductBreakdown, StageProductResearch,
+		StageProductDraft, StageProductAIDraftReview, StageProductReview,
+		StageProductAIGateway, StageProductPRDWrite, StageProductProtoMake,
 		StageProductProtoReview, StageProductFinalReview,
 	}
 	stages := make([]ProcessStage, 0, len(productStages))
@@ -344,13 +359,14 @@ func NewProductProcess(workspaceID, workitemID, title string) *Process {
 		})
 	}
 	return &Process{
-		ID:          "",
-		WorkspaceID: workspaceID,
-		WorkitemID:  workitemID,
-		Title:       title,
-		Type:        ProcessTypeProduct,
-		Stages:      stages,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:            "",
+		WorkspaceID:   workspaceID,
+		WorkitemID:    workitemID,
+		Title:         title,
+		SourceDocPath: docPath,
+		Type:          ProcessTypeProduct,
+		Stages:        stages,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 }
