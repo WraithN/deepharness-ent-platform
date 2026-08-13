@@ -100,7 +100,7 @@ product_research: |
 
   【需求信息】
   标题: {{.Title}}
-  {{if .Description}}描述: {{.Description}}{{end}}
+  {{if .BreakdownResult}}功能拆解清单: {{.BreakdownResult}}{{end}}
 
 product_draft: |
   你是一位资深产品经理。请根据以下调研结论，输出一份初步业务方案草案。
@@ -173,8 +173,8 @@ product_proto_make: |
   务必使用真实的文件系统绝对路径，不要使用占位符。
   同时根据需求标题或 PRD 内容，总结一个简短的中文需求名，并用 [[REQ_NAME:需求名]] 标记输出。
 
-  【PRD】
-  {{.PRDResult}}
+  【定稿方案】
+  {{.DraftResult}}
 
   【需求标题】
   {{.Title}}

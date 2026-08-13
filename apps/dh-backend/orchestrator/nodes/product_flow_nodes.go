@@ -168,7 +168,7 @@ func NewProductResearchNode(deps *core.FlowDeps) *ProductResearchNode {
 		CodeWriteNode: CodeWriteNode{
 			BaseNode: core.NewBaseNode(processobject.StageProductResearch, core.NodeTypeAI, deps),
 			BuildPrompt: func(fc *core.FlowContext) string {
-				return prompts.BuildProductResearchPrompt(fc.WorkitemTitle, fc.BrainstormResult, fc.WorkspacePath)
+				return prompts.BuildProductResearchPrompt(fc.WorkitemTitle, fc.BreakdownResult, fc.WorkspacePath)
 			},
 			SessionTitlePrefix: "[产品调研]",
 			AfterComplete: func(fc *core.FlowContext) error {
@@ -194,7 +194,7 @@ func (n *ProductResearchNode) Input(fc *core.FlowContext) error {
 		OperatorType: processobject.OperatorTypeAI,
 		OperatorName: fc.UserName,
 		AgentRole:    processobject.AgentRoleProduct,
-		InputDesc:    "结构化需求要点",
+		InputDesc:    "功能拆解清单",
 		OutputDesc:   "业务方案、技术约束、备选方案对比",
 	})
 	return nil
@@ -331,15 +331,16 @@ func (n *ProductReviewNode) Processor(fc *core.FlowContext) error {
 		ActionType:  notificationobject.ActionApproveCodeOptimize,
 		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
 		Data: map[string]any{
-			"notificationType": notificationobject.TypeProductReviewRequired,
-			"workitemId":       fc.WorkitemID,
-			"workitemTitle":    fc.WorkitemTitle,
-			"processId":        fc.ProcessID,
-			"workspacePath":    fc.WorkspacePath,
-			"workspaceId":      fc.WorkspaceID,
-			"tenantId":         fc.TenantID,
-			"userName":         fc.UserName,
-			"draftResult":      fc.DraftResult,
+			"notificationType":    notificationobject.TypeProductReviewRequired,
+			"workitemId":          fc.WorkitemID,
+			"workitemTitle":       fc.WorkitemTitle,
+			"processId":           fc.ProcessID,
+			"workspacePath":       fc.WorkspacePath,
+			"workspaceId":         fc.WorkspaceID,
+			"tenantId":            fc.TenantID,
+			"userName":            fc.UserName,
+			"draftResult":         fc.DraftResult,
+			"aiDraftReviewResult": fc.AIDraftReviewResult,
 		},
 	})
 	if err != nil {
@@ -349,7 +350,7 @@ func (n *ProductReviewNode) Processor(fc *core.FlowContext) error {
 }
 
 func (n *ProductReviewNode) Output(fc *core.FlowContext) error {
-	outputDesc := "复核通过，进入 PRD 生成"
+	outputDesc := "复核通过，进入 AI 网关决策"
 	if fc.ProductReviewResult != "pass" {
 		outputDesc = "复核不通过，返回方案草案输出"
 	}
@@ -365,7 +366,7 @@ func (n *ProductReviewNode) Output(fc *core.FlowContext) error {
 
 func (n *ProductReviewNode) NextNode(fc *core.FlowContext) string {
 	if fc.ProductReviewResult == "pass" {
-		return processobject.StageProductPRDWrite
+		return processobject.StageProductAIGateway
 	}
 	return processobject.StageProductDraft
 }
@@ -471,7 +472,7 @@ func NewProductProtoMakeNode(deps *core.FlowDeps) *ProductProtoMakeNode {
 		CodeWriteNode: CodeWriteNode{
 			BaseNode: core.NewBaseNode(processobject.StageProductProtoMake, core.NodeTypeAI, deps),
 			BuildPrompt: func(fc *core.FlowContext) string {
-				return prompts.BuildProductProtoMakePrompt(fc.WorkitemTitle, fc.PRDResult, fc.WorkspacePath)
+				return prompts.BuildProductProtoMakePrompt(fc.WorkitemTitle, fc.DraftResult, fc.WorkspacePath)
 			},
 			SessionTitlePrefix: "[原型生成]",
 			AfterComplete: func(fc *core.FlowContext) error {
@@ -497,7 +498,7 @@ func (n *ProductProtoMakeNode) Input(fc *core.FlowContext) error {
 		OperatorType: processobject.OperatorTypeAI,
 		OperatorName: fc.UserName,
 		AgentRole:    processobject.AgentRoleProduct,
-		InputDesc:    "结构化 PRD 文档",
+		InputDesc:    "定稿方案",
 		OutputDesc:   "UI 交互原型",
 	})
 	return nil
@@ -517,7 +518,7 @@ func (n *ProductProtoReviewNode) Input(fc *core.FlowContext) error {
 		OperatorType: processobject.OperatorTypeHuman,
 		OperatorName: fc.UserName,
 		OperatorID:   fc.UserID,
-		InputDesc:    "UI 交互原型 + 结构化 PRD",
+		InputDesc:    "UI 交互原型（可选） + 结构化 PRD + 定稿方案",
 		OutputDesc:   "待复核原型",
 		Prompt:       fc.ProtoResult,
 	})
@@ -531,7 +532,7 @@ func (n *ProductProtoReviewNode) Processor(fc *core.FlowContext) error {
 		WorkspaceID: fc.WorkspaceID,
 		Type:        notificationobject.TypeProductProtoReviewRequired,
 		Title:       fmt.Sprintf("原型交互复核: %s", fc.WorkitemTitle),
-		Body:        fmt.Sprintf("需求「%s」的原型已生成，请进行交互复核。通过则进入需求评审，不通过将返回 PRD 初稿生成节点修订。", fc.WorkitemTitle),
+		Body:        fmt.Sprintf("需求「%s」的 PRD（与原型，如有）已准备就绪，请进行联合复核。通过则进入需求评审，不通过将返回方案草案重新构思。", fc.WorkitemTitle),
 		ActionType:  notificationobject.ActionApproveCodeOptimize,
 		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
 		Data: map[string]any{
@@ -556,7 +557,7 @@ func (n *ProductProtoReviewNode) Processor(fc *core.FlowContext) error {
 func (n *ProductProtoReviewNode) Output(fc *core.FlowContext) error {
 	outputDesc := "复核通过，进入需求评审"
 	if fc.ProductProtoReviewResult != "pass" {
-		outputDesc = "复核不通过，返回 PRD 初稿生成节点"
+		outputDesc = "复核不通过，返回方案草案"
 	}
 	fc.UpdateStageFull(processobject.StageProductProtoReview, processobject.UpdateStageRequest{
 		Status:       processobject.StageStatusCompleted,
@@ -572,7 +573,7 @@ func (n *ProductProtoReviewNode) NextNode(fc *core.FlowContext) string {
 	if fc.ProductProtoReviewResult == "pass" {
 		return processobject.StageProductFinalReview
 	}
-	return processobject.StageProductPRDWrite
+	return processobject.StageProductDraft
 }
 
 // ============================================================
@@ -628,7 +629,7 @@ func (n *ProductFinalReviewNode) Processor(fc *core.FlowContext) error {
 func (n *ProductFinalReviewNode) Output(fc *core.FlowContext) error {
 	outputDesc := "需求定稿，可一键启动 AI 开发"
 	if fc.ProductFinalReviewResult != "pass" {
-		outputDesc = "需求评审驳回，返回 PRD 初稿生成节点"
+		outputDesc = "需求评审驳回，返回原型+PRD联合复核"
 	}
 	fc.UpdateStageFull(processobject.StageProductFinalReview, processobject.UpdateStageRequest{
 		Status:       processobject.StageStatusCompleted,
@@ -644,5 +645,5 @@ func (n *ProductFinalReviewNode) NextNode(fc *core.FlowContext) string {
 	if fc.ProductFinalReviewResult == "pass" {
 		return "" // 流程结束
 	}
-	return processobject.StageProductPRDWrite
+	return processobject.StageProductProtoReview
 }

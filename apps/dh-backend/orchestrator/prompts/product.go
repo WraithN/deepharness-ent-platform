@@ -17,11 +17,11 @@ func BuildProductBrainstormPrompt(title, description, workspacePath string) stri
 }
 
 // BuildProductResearchPrompt 方案调研与选型
-func BuildProductResearchPrompt(title, description, workspacePath string) string {
+func BuildProductResearchPrompt(title, breakdownResult, workspacePath string) string {
 	rendered := Render("product_research", map[string]string{
-		"Title":         title,
-		"Description":   description,
-		"WorkspacePath": workspacePath,
+		"Title":           title,
+		"BreakdownResult": breakdownResult,
+		"WorkspacePath":   workspacePath,
 	})
 	return ApplyPromptCommon(rendered, workspacePath)
 }
@@ -47,10 +47,10 @@ func BuildProductPRDWritePrompt(title, draftResult, workspacePath string) string
 }
 
 // BuildProductProtoMakePrompt 原型生成
-func BuildProductProtoMakePrompt(title, prdResult, workspacePath string) string {
+func BuildProductProtoMakePrompt(title, draftResult, workspacePath string) string {
 	rendered := Render("product_proto_make", map[string]string{
 		"Title":         title,
-		"PRDResult":     prdResult,
+		"DraftResult":   draftResult,
 		"WorkspacePath": workspacePath,
 	})
 	return ApplyPromptCommon(rendered, workspacePath)
