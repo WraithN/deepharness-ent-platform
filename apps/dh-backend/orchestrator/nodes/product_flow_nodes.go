@@ -3,11 +3,21 @@ package nodes
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	notificationobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/notification/object"
 	processobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/orchestrator/core"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/orchestrator/prompts"
+)
+
+// AI 决策输出标记常量
+const (
+	aiDecisionPass      = "pass"
+	aiDecisionReject    = "reject"
+	needProtoTrueMark   = "NEED_PROTO: true"
+	needProtoFalseMark  = "NEED_PROTO: false"
+	draftReviewPassMark = "pass"
 )
 
 // ============================================================
@@ -19,13 +29,38 @@ type ProductRequirementNode struct {
 }
 
 func (n *ProductRequirementNode) Input(fc *core.FlowContext) error {
-	proc := processobject.NewProductProcess(fc.WorkspaceID, fc.WorkitemID, fc.WorkitemTitle)
+	if fc.ProcessID != "" {
+		return nil
+	}
+	proc := processobject.NewProductProcess(fc.WorkspaceID, fc.WorkitemID, fc.WorkitemTitle, fc.DocPath)
 	created := fc.CreateProcess(proc)
 	fc.ProcessID = created.ID
 	return nil
 }
 
 func (n *ProductRequirementNode) Processor(fc *core.FlowContext) error {
+	_, err := n.Deps.NotificationSvc.Create(notificationobject.CreateNotificationRequest{
+		UserID:      fc.UserID,
+		TenantID:    fc.TenantID,
+		WorkspaceID: fc.WorkspaceID,
+		Type:        notificationobject.TypeProductReviewRequired,
+		Title:       fmt.Sprintf("产品流程已受理: %s", fc.WorkitemTitle),
+		Body:        fmt.Sprintf("需求「%s」的产品 AI 托管流程已启动，正在为您进行需求头脑风暴、方案调研与方案草案输出。", fc.WorkitemTitle),
+		ActionType:  notificationobject.ActionViewReview,
+		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
+		Data: map[string]any{
+			"workitemId":    fc.WorkitemID,
+			"workitemTitle": fc.WorkitemTitle,
+			"processId":     fc.ProcessID,
+			"workspacePath": fc.WorkspacePath,
+			"workspaceId":   fc.WorkspaceID,
+			"tenantId":      fc.TenantID,
+			"userName":      fc.UserName,
+		},
+	})
+	if err != nil {
+		log.Printf("[ProductRequirementNode] create notification failed: %v", err)
+	}
 	return nil
 }
 
@@ -79,6 +114,47 @@ func (n *ProductBrainstormNode) Input(fc *core.FlowContext) error {
 		InputDesc:      fmt.Sprintf("需求「%s」", fc.WorkitemTitle),
 		ExtraInputDesc: "业务背景",
 		OutputDesc:     "结构化需求要点",
+	})
+	return nil
+}
+
+// ============================================================
+// 需求拆解（AI ACTION 节点）：功能拆解清单与模块关系图
+// ============================================================
+
+func NewProductBreakdownNode(deps *core.FlowDeps) *ProductBreakdownNode {
+	return &ProductBreakdownNode{
+		CodeWriteNode: CodeWriteNode{
+			BaseNode: core.NewBaseNode(processobject.StageProductBreakdown, core.NodeTypeAI, deps),
+			BuildPrompt: func(fc *core.FlowContext) string {
+				return prompts.BuildProductBreakdownPrompt(fc.WorkitemTitle, fc.BrainstormResult, fc.WorkspacePath)
+			},
+			SessionTitlePrefix: "[需求拆解]",
+			AfterComplete: func(fc *core.FlowContext) error {
+				fc.BreakdownResult = core.FetchLastAssistantMessage(fc, deps.Messages)
+				fc.UpdateStageFull(processobject.StageProductBreakdown, processobject.UpdateStageRequest{
+					Status:     processobject.StageStatusCompleted,
+					OutputDesc: "功能拆解清单、模块关系图",
+					Prompt:     fc.BreakdownResult,
+				})
+				return nil
+			},
+		},
+	}
+}
+
+type ProductBreakdownNode struct {
+	CodeWriteNode
+}
+
+func (n *ProductBreakdownNode) Input(fc *core.FlowContext) error {
+	fc.UpdateStageFull(processobject.StageProductBreakdown, processobject.UpdateStageRequest{
+		Status:       processobject.StageStatusInProgress,
+		OperatorType: processobject.OperatorTypeAI,
+		OperatorName: fc.UserName,
+		AgentRole:    processobject.AgentRoleProduct,
+		InputDesc:    "结构化需求要点",
+		OutputDesc:   "功能拆解清单、模块关系图",
 	})
 	return nil
 }
@@ -166,6 +242,64 @@ func (n *ProductDraftNode) Input(fc *core.FlowContext) error {
 }
 
 // ============================================================
+// AI 草案复核（AI JUDGE 节点）：自动判定 pass/reject
+// ============================================================
+
+func NewProductAIDraftReviewNode(deps *core.FlowDeps) *ProductAIDraftReviewNode {
+	return &ProductAIDraftReviewNode{
+		CodeWriteNode: CodeWriteNode{
+			BaseNode: core.NewBaseNode(processobject.StageProductAIDraftReview, core.NodeTypeAI, deps),
+			BuildPrompt: func(fc *core.FlowContext) string {
+				return prompts.BuildProductAIDraftReviewPrompt(fc.WorkitemTitle, fc.DraftResult, fc.WorkspacePath)
+			},
+			SessionTitlePrefix: "[AI草案复核]",
+			AfterComplete: func(fc *core.FlowContext) error {
+				report := core.FetchLastAssistantMessage(fc, deps.Messages)
+				fc.AIDraftReviewResult = report
+				// 解析决策：默认 pass（解析失败时交人工兜底）
+				fc.ProductAIDraftReviewResult = aiDecisionPass
+				if strings.Contains(strings.ToLower(report), aiDecisionReject) {
+					fc.ProductAIDraftReviewResult = aiDecisionReject
+				}
+				outputDesc := "AI 复核通过，进入人工复核"
+				if fc.ProductAIDraftReviewResult == aiDecisionReject {
+					outputDesc = "AI 复核不通过，返回方案草案"
+				}
+				fc.UpdateStageFull(processobject.StageProductAIDraftReview, processobject.UpdateStageRequest{
+					Status:     processobject.StageStatusCompleted,
+					OutputDesc: outputDesc,
+					Prompt:     report,
+				})
+				return nil
+			},
+		},
+	}
+}
+
+type ProductAIDraftReviewNode struct {
+	CodeWriteNode
+}
+
+func (n *ProductAIDraftReviewNode) Input(fc *core.FlowContext) error {
+	fc.UpdateStageFull(processobject.StageProductAIDraftReview, processobject.UpdateStageRequest{
+		Status:       processobject.StageStatusInProgress,
+		OperatorType: processobject.OperatorTypeAI,
+		OperatorName: fc.UserName,
+		AgentRole:    processobject.AgentRoleProduct,
+		InputDesc:    "初步业务方案",
+		OutputDesc:   "AI 复核报告（含 pass/reject）",
+	})
+	return nil
+}
+
+func (n *ProductAIDraftReviewNode) NextNode(fc *core.FlowContext) string {
+	if fc.ProductAIDraftReviewResult == aiDecisionPass {
+		return processobject.StageProductReview
+	}
+	return processobject.StageProductDraft
+}
+
+// ============================================================
 // 方案自主复核（人工 JUDGE 节点）
 // ============================================================
 
@@ -234,6 +368,57 @@ func (n *ProductReviewNode) NextNode(fc *core.FlowContext) string {
 		return processobject.StageProductPRDWrite
 	}
 	return processobject.StageProductDraft
+}
+
+// ============================================================
+// AI 网关（AI GATEWAY 节点）：决策是否需要原型
+// ============================================================
+
+func NewProductAIGatewayNode(deps *core.FlowDeps) *ProductAIGatewayNode {
+	return &ProductAIGatewayNode{
+		CodeWriteNode: CodeWriteNode{
+			BaseNode: core.NewBaseNode(processobject.StageProductAIGateway, core.NodeTypeAI, deps),
+			BuildPrompt: func(fc *core.FlowContext) string {
+				return prompts.BuildProductAIGatewayPrompt(fc.WorkitemTitle, fc.DraftResult, fc.WorkspacePath)
+			},
+			SessionTitlePrefix: "[AI网关决策]",
+			AfterComplete: func(fc *core.FlowContext) error {
+				decision := core.FetchLastAssistantMessage(fc, deps.Messages)
+				fc.AIGatewayResult = decision
+				// 解析决策：默认需要原型（解析失败时保守走完整流程）
+				fc.NeedProto = true
+				if strings.Contains(decision, needProtoFalseMark) {
+					fc.NeedProto = false
+				}
+				outputDesc := "决策：生成原型 + PRD（并行）"
+				if !fc.NeedProto {
+					outputDesc = "决策：仅生成 PRD（跳过原型）"
+				}
+				fc.UpdateStageFull(processobject.StageProductAIGateway, processobject.UpdateStageRequest{
+					Status:     processobject.StageStatusCompleted,
+					OutputDesc: outputDesc,
+					Prompt:     decision,
+				})
+				return nil
+			},
+		},
+	}
+}
+
+type ProductAIGatewayNode struct {
+	CodeWriteNode
+}
+
+func (n *ProductAIGatewayNode) Input(fc *core.FlowContext) error {
+	fc.UpdateStageFull(processobject.StageProductAIGateway, processobject.UpdateStageRequest{
+		Status:       processobject.StageStatusInProgress,
+		OperatorType: processobject.OperatorTypeAI,
+		OperatorName: fc.UserName,
+		AgentRole:    processobject.AgentRoleProduct,
+		InputDesc:    "方案复核通过结论",
+		OutputDesc:   "决策结论（输出路径）",
+	})
+	return nil
 }
 
 // ============================================================
