@@ -2,7 +2,6 @@ package nodes
 
 import (
 	"fmt"
-	"log"
 
 	notificationobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/notification/object"
 	processobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process/object"
@@ -57,7 +56,7 @@ func (n *TestRequirementNode) Output(fc *core.FlowContext) error {
 func NewTestPlanDesignNode(deps *core.FlowDeps) *TestPlanDesignNode {
 	return &TestPlanDesignNode{
 		CodeWriteNode: CodeWriteNode{
-			BaseNode:           core.NewBaseNode(processobject.StageTestPlanDesign, core.NodeTypeAI, deps),
+			BaseNode: core.NewBaseNode(processobject.StageTestPlanDesign, core.NodeTypeAI, deps),
 			BuildPrompt: func(fc *core.FlowContext) string {
 				return prompts.BuildTestPlanDesignPrompt(fc.WorkitemTitle, fc.WorkitemDesc, fc.WorkspacePath)
 			},
@@ -95,73 +94,32 @@ func (n *TestPlanDesignNode) Input(fc *core.FlowContext) error {
 // 测试方案评审（人工 JUDGE 节点）
 // ============================================================
 
-type TestPlanReviewNode struct {
-	core.BaseNode
-}
+// NewTestPlanReviewNode 创建测试方案评审人工节点（条件分支）。
+// 迁移为 core.HumanReviewNode：通过进入用例生成，不通过重新设计测试方案。
+func NewTestPlanReviewNode(deps *core.FlowDeps) *core.HumanReviewNode {
+	return core.NewHumanReviewNode(deps, core.HumanReviewConfig{
+		StageName:  processobject.StageTestPlanReview,
+		InputDesc:  "测试方案文档",
+		OutputDesc: "待评审测试方案",
+		PassDesc:   "评审通过，进入测试用例生成",
+		FailDesc:   "评审不通过，需重新设计测试方案",
 
-func (n *TestPlanReviewNode) Input(fc *core.FlowContext) error {
-	fc.UpdateStageFull(processobject.StageTestPlanReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusInProgress,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		InputDesc:    "测试方案文档",
-		OutputDesc:   "待评审测试方案",
-		Prompt:       fc.TestPlanResult,
-	})
-	return nil
-}
+		NotifType:     notificationobject.TypeTestPlanReviewRequired,
+		NotifTitleFmt: "测试方案评审: %s",
+		NotifBodyFmt:  "需求「%s」的测试方案已生成，请评审。通过则进入用例生成，不通过将重新设计测试方案。",
 
-func (n *TestPlanReviewNode) Processor(fc *core.FlowContext) error {
-	_, err := n.Deps.NotificationSvc.Create(notificationobject.CreateNotificationRequest{
-		UserID:      fc.UserID,
-		TenantID:    fc.TenantID,
-		WorkspaceID: fc.WorkspaceID,
-		Type:        notificationobject.TypeTestPlanReviewRequired,
-		Title:       fmt.Sprintf("测试方案评审: %s", fc.WorkitemTitle),
-		Body:        fmt.Sprintf("需求「%s」的测试方案已生成，请评审。通过则进入用例生成，不通过将重新设计测试方案。", fc.WorkitemTitle),
-		ActionType:  notificationobject.ActionApproveCodeOptimize,
-		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
-		Data: map[string]any{
-			"notificationType": notificationobject.TypeTestPlanReviewRequired,
-			"workitemId":       fc.WorkitemID,
-			"workitemTitle":    fc.WorkitemTitle,
-			"processId":        fc.ProcessID,
-			"sessionId":        fc.SessionID,
-			"threadId":         fc.ThreadID,
-			"workspacePath":    fc.WorkspacePath,
-			"workspaceId":      fc.WorkspaceID,
-			"tenantId":         fc.TenantID,
-			"userName":         fc.UserName,
-			"testPlanResult":   fc.TestPlanResult,
+		PromptGetter: func(fc *core.FlowContext) string { return fc.TestPlanResult },
+		ResultGetter: func(fc *core.FlowContext) string { return fc.TestPlanReviewResult },
+		ExtraData: func(fc *core.FlowContext) map[string]any {
+			return map[string]any{
+				"sessionId":      fc.SessionID,
+				"threadId":       fc.ThreadID,
+				"testPlanResult": fc.TestPlanResult,
+			}
 		},
+		PassNodeName: processobject.StageTestCaseGen,
+		FailNodeName: processobject.StageTestPlanDesign,
 	})
-	if err != nil {
-		log.Printf("[TestPlanReviewNode] create notification failed: %v", err)
-	}
-	return core.ErrPauseFlow
-}
-
-func (n *TestPlanReviewNode) Output(fc *core.FlowContext) error {
-	outputDesc := "评审通过，进入测试用例生成"
-	if fc.TestPlanReviewResult != "pass" {
-		outputDesc = "评审不通过，需重新设计测试方案"
-	}
-	fc.UpdateStageFull(processobject.StageTestPlanReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusCompleted,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		OutputDesc:   outputDesc,
-	})
-	return nil
-}
-
-func (n *TestPlanReviewNode) NextNode(fc *core.FlowContext) string {
-	if fc.TestPlanReviewResult == "pass" {
-		return processobject.StageTestCaseGen
-	}
-	return processobject.StageTestPlanDesign
 }
 
 // ============================================================
@@ -209,73 +167,32 @@ func (n *TestCaseGenNode) Input(fc *core.FlowContext) error {
 // 用例评审（人工 JUDGE 节点）
 // ============================================================
 
-type TestCaseReviewNode struct {
-	core.BaseNode
-}
+// NewTestCaseReviewNode 创建用例评审人工节点（条件分支）。
+// 迁移为 core.HumanReviewNode：通过执行自动化测试，不通过重新生成用例。
+func NewTestCaseReviewNode(deps *core.FlowDeps) *core.HumanReviewNode {
+	return core.NewHumanReviewNode(deps, core.HumanReviewConfig{
+		StageName:  processobject.StageTestCaseReview,
+		InputDesc:  "测试用例及自动化脚本",
+		OutputDesc: "待评审测试用例",
+		PassDesc:   "评审通过，进入自动化测试执行",
+		FailDesc:   "评审不通过，需重新生成测试用例",
 
-func (n *TestCaseReviewNode) Input(fc *core.FlowContext) error {
-	fc.UpdateStageFull(processobject.StageTestCaseReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusInProgress,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		InputDesc:    "测试用例及自动化脚本",
-		OutputDesc:   "待评审测试用例",
-		Prompt:       fc.TestCaseResult,
-	})
-	return nil
-}
+		NotifType:     notificationobject.TypeTestCaseReviewRequired,
+		NotifTitleFmt: "用例评审: %s",
+		NotifBodyFmt:  "需求「%s」的测试用例已生成，请评审。通过则执行自动化测试，不通过将重新生成用例。",
 
-func (n *TestCaseReviewNode) Processor(fc *core.FlowContext) error {
-	_, err := n.Deps.NotificationSvc.Create(notificationobject.CreateNotificationRequest{
-		UserID:      fc.UserID,
-		TenantID:    fc.TenantID,
-		WorkspaceID: fc.WorkspaceID,
-		Type:        notificationobject.TypeTestCaseReviewRequired,
-		Title:       fmt.Sprintf("用例评审: %s", fc.WorkitemTitle),
-		Body:        fmt.Sprintf("需求「%s」的测试用例已生成，请评审。通过则执行自动化测试，不通过将重新生成用例。", fc.WorkitemTitle),
-		ActionType:  notificationobject.ActionApproveCodeOptimize,
-		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
-		Data: map[string]any{
-			"notificationType": notificationobject.TypeTestCaseReviewRequired,
-			"workitemId":       fc.WorkitemID,
-			"workitemTitle":    fc.WorkitemTitle,
-			"processId":        fc.ProcessID,
-			"sessionId":        fc.SessionID,
-			"threadId":         fc.ThreadID,
-			"workspacePath":    fc.WorkspacePath,
-			"workspaceId":      fc.WorkspaceID,
-			"tenantId":         fc.TenantID,
-			"userName":         fc.UserName,
-			"testCaseResult":   fc.TestCaseResult,
+		PromptGetter: func(fc *core.FlowContext) string { return fc.TestCaseResult },
+		ResultGetter: func(fc *core.FlowContext) string { return fc.TestCaseReviewResult },
+		ExtraData: func(fc *core.FlowContext) map[string]any {
+			return map[string]any{
+				"sessionId":      fc.SessionID,
+				"threadId":       fc.ThreadID,
+				"testCaseResult": fc.TestCaseResult,
+			}
 		},
+		PassNodeName: processobject.StageTestAutoExec,
+		FailNodeName: processobject.StageTestCaseGen,
 	})
-	if err != nil {
-		log.Printf("[TestCaseReviewNode] create notification failed: %v", err)
-	}
-	return core.ErrPauseFlow
-}
-
-func (n *TestCaseReviewNode) Output(fc *core.FlowContext) error {
-	outputDesc := "评审通过，进入自动化测试执行"
-	if fc.TestCaseReviewResult != "pass" {
-		outputDesc = "评审不通过，需重新生成测试用例"
-	}
-	fc.UpdateStageFull(processobject.StageTestCaseReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusCompleted,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		OutputDesc:   outputDesc,
-	})
-	return nil
-}
-
-func (n *TestCaseReviewNode) NextNode(fc *core.FlowContext) string {
-	if fc.TestCaseReviewResult == "pass" {
-		return processobject.StageTestAutoExec
-	}
-	return processobject.StageTestCaseGen
 }
 
 // ============================================================
@@ -364,74 +281,33 @@ func (n *TestDefectVerifyNode) Input(fc *core.FlowContext) error {
 // 测试准入评审（人工 JUDGE 节点）
 // ============================================================
 
-type TestAdmissionReviewNode struct {
-	core.BaseNode
-}
+// NewTestAdmissionReviewNode 创建测试准入评审人工节点（条件分支）。
+// 迁移为 core.HumanReviewNode：通过结束测试，不通过重新执行测试。
+func NewTestAdmissionReviewNode(deps *core.FlowDeps) *core.HumanReviewNode {
+	return core.NewHumanReviewNode(deps, core.HumanReviewConfig{
+		StageName:  processobject.StageTestAdmissionReview,
+		InputDesc:  "缺陷分析与修复报告",
+		OutputDesc: "待评审测试准入",
+		PassDesc:   "评审通过，测试完成",
+		FailDesc:   "评审不通过，需重新执行测试",
 
-func (n *TestAdmissionReviewNode) Input(fc *core.FlowContext) error {
-	fc.UpdateStageFull(processobject.StageTestAdmissionReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusInProgress,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		InputDesc:    "缺陷分析与修复报告",
-		OutputDesc:   "待评审测试准入",
-		Prompt:       fc.TestDefectResult,
-	})
-	return nil
-}
+		NotifType:     notificationobject.TypeTestAdmissionReviewRequired,
+		NotifTitleFmt: "测试准入评审: %s",
+		NotifBodyFmt:  "需求「%s」的自动化测试与缺陷修复已完成，请评审。通过则结束测试，不通过将重新执行测试。",
 
-func (n *TestAdmissionReviewNode) Processor(fc *core.FlowContext) error {
-	_, err := n.Deps.NotificationSvc.Create(notificationobject.CreateNotificationRequest{
-		UserID:      fc.UserID,
-		TenantID:    fc.TenantID,
-		WorkspaceID: fc.WorkspaceID,
-		Type:        notificationobject.TypeTestAdmissionReviewRequired,
-		Title:       fmt.Sprintf("测试准入评审: %s", fc.WorkitemTitle),
-		Body:        fmt.Sprintf("需求「%s」的自动化测试与缺陷修复已完成，请评审。通过则结束测试，不通过将重新执行测试。", fc.WorkitemTitle),
-		ActionType:  notificationobject.ActionApproveCodeOptimize,
-		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
-		Data: map[string]any{
-			"notificationType":   notificationobject.TypeTestAdmissionReviewRequired,
-			"workitemId":         fc.WorkitemID,
-			"workitemTitle":      fc.WorkitemTitle,
-			"processId":          fc.ProcessID,
-			"sessionId":          fc.SessionID,
-			"threadId":           fc.ThreadID,
-			"workspacePath":      fc.WorkspacePath,
-			"workspaceId":        fc.WorkspaceID,
-			"tenantId":           fc.TenantID,
-			"userName":           fc.UserName,
-			"testDefectResult":   fc.TestDefectResult,
-			"testExecResult":     fc.TestExecResult,
+		PromptGetter: func(fc *core.FlowContext) string { return fc.TestDefectResult },
+		ResultGetter: func(fc *core.FlowContext) string { return fc.TestAdmissionReviewResult },
+		ExtraData: func(fc *core.FlowContext) map[string]any {
+			return map[string]any{
+				"sessionId":        fc.SessionID,
+				"threadId":         fc.ThreadID,
+				"testDefectResult": fc.TestDefectResult,
+				"testExecResult":   fc.TestExecResult,
+			}
 		},
+		PassNodeName: processobject.StageTestComplete,
+		FailNodeName: processobject.StageTestAutoExec,
 	})
-	if err != nil {
-		log.Printf("[TestAdmissionReviewNode] create notification failed: %v", err)
-	}
-	return core.ErrPauseFlow
-}
-
-func (n *TestAdmissionReviewNode) Output(fc *core.FlowContext) error {
-	outputDesc := "评审通过，测试完成"
-	if fc.TestAdmissionReviewResult != "pass" {
-		outputDesc = "评审不通过，需重新执行测试"
-	}
-	fc.UpdateStageFull(processobject.StageTestAdmissionReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusCompleted,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		OutputDesc:   outputDesc,
-	})
-	return nil
-}
-
-func (n *TestAdmissionReviewNode) NextNode(fc *core.FlowContext) string {
-	if fc.TestAdmissionReviewResult == "pass" {
-		return processobject.StageTestComplete
-	}
-	return processobject.StageTestAutoExec
 }
 
 // ============================================================

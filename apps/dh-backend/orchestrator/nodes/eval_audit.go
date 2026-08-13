@@ -13,6 +13,9 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/idutil"
 )
 
+// aiEvalSummaryTruncateLen 人工审核通知正文中 AI 评估报告的最大长度（字节截断）。
+const aiEvalSummaryTruncateLen = 500
+
 // AiEvalNode 智能评估（AI 节点）
 type AiEvalNode struct {
 	core.BaseNode
@@ -80,92 +83,46 @@ func (n *AiEvalNode) Output(fc *core.FlowContext) error {
 	return nil
 }
 
-// HumanAuditNode 人工审核（人工节点，条件分支）
-type HumanAuditNode struct {
-	core.BaseNode
-}
+// NewHumanAuditNode 创建人工审核节点（条件分支）。
+// 迁移为 core.HumanReviewNode：审批通过进入开发，不通过重新架构设计。
+func NewHumanAuditNode(deps *core.FlowDeps) *core.HumanReviewNode {
+	return core.NewHumanReviewNode(deps, core.HumanReviewConfig{
+		StageName:  processobject.StageHumanAudit,
+		InputDesc:  "智能评估报告",
+		OutputDesc: "待审核人员审批架构设计方案",
 
-func (n *HumanAuditNode) Input(fc *core.FlowContext) error {
-	fc.UpdateStageFull(processobject.StageHumanAudit, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusInProgress,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		InputDesc:    "智能评估报告",
-		OutputDesc:   "待审核人员审批架构设计方案",
-		Prompt:       fc.AIEvalResult,
-	})
-	return nil
-}
+		NotifType:     notificationobject.TypeHumanAuditRequired,
+		NotifTitleFmt: "架构设计审核: %s",
 
-func (n *HumanAuditNode) Processor(fc *core.FlowContext) error {
-	existing, _ := n.Deps.NotificationSvc.ListByTypeAndData(fc.Ctx, fc.TenantID, notificationobject.TypeHumanAuditRequired, "workitemId", fc.WorkitemID)
-	for _, notif := range existing {
-		if notif.ActionStatus == notificationobject.ActionPending {
-			log.Printf("[HumanAuditNode] workitem %s already has pending human_audit notification, skip", fc.WorkitemID)
-			return core.ErrPauseFlow
-		}
-	}
-
-	aiEvalSummary := fc.AIEvalResult
-	if len(aiEvalSummary) > 500 {
-		aiEvalSummary = aiEvalSummary[:500] + "..."
-	}
-	body := fmt.Sprintf("需求「%s」的架构设计已完成 AI 智能评估，请审核。审批通过则进入开发，审批不通过将重新进行架构设计。\n\n---\nAI 评估报告：\n%s", fc.WorkitemTitle, aiEvalSummary)
-
-	_, err := n.Deps.NotificationSvc.Create(notificationobject.CreateNotificationRequest{
-		UserID:      fc.UserID,
-		TenantID:    fc.TenantID,
-		WorkspaceID: fc.WorkspaceID,
-		Type:        notificationobject.TypeHumanAuditRequired,
-		Title:       fmt.Sprintf("架构设计审核: %s", fc.WorkitemTitle),
-		Body:        body,
-		ActionType:  notificationobject.ActionApproveCodeOptimize,
-		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
-		Data: map[string]any{
-			"notificationType": notificationobject.TypeHumanAuditRequired,
-			"workitemId":       fc.WorkitemID,
-			"workitemTitle":    fc.WorkitemTitle,
-			"processId":        fc.ProcessID,
-			"sessionId":        fc.SessionID,
-			"threadId":         fc.ThreadID,
-			"workspacePath":    fc.WorkspacePath,
-			"workspaceId":      fc.WorkspaceID,
-			"tenantId":         fc.TenantID,
-			"userName":         fc.UserName,
-			"archDesignResult": fc.ArchDesignResult,
-			"aiEvalResult":     fc.AIEvalResult,
+		PromptGetter: func(fc *core.FlowContext) string { return fc.AIEvalResult },
+		ResultGetter: func(fc *core.FlowContext) string { return fc.AuditApprovalResult },
+		ExtraData: func(fc *core.FlowContext) map[string]any {
+			return map[string]any{
+				"sessionId":        fc.SessionID,
+				"threadId":         fc.ThreadID,
+				"archDesignResult": fc.ArchDesignResult,
+				"aiEvalResult":     fc.AIEvalResult,
+			}
 		},
-	})
-	if err != nil {
-		log.Printf("[HumanAuditNode] create notification failed: %v", err)
-	}
+		OutputDescBuilder: func(fc *core.FlowContext) string {
+			if fc.AuditApprovalResult == "pass" {
+				return fmt.Sprintf("%s审核通过，进入需求开发", fc.UserName)
+			}
+			return fmt.Sprintf("%s审核不通过，需重新进行架构设计", fc.UserName)
+		},
+		PassNodeName: processobject.StageDevelopment,
+		FailNodeName: processobject.StageArchDesign,
 
-	return core.ErrPauseFlow
+		DedupCheckType: notificationobject.TypeHumanAuditRequired,
+		BodyBuilder:    buildHumanAuditBody,
+	})
 }
 
-func (n *HumanAuditNode) Output(fc *core.FlowContext) error {
-	var outputDesc string
-	if fc.AuditApprovalResult == "pass" {
-		outputDesc = fmt.Sprintf("%s审核通过，进入需求开发", fc.UserName)
-	} else {
-		outputDesc = fmt.Sprintf("%s审核不通过，需重新进行架构设计", fc.UserName)
+// buildHumanAuditBody 构造人工审核通知正文：AI 评估报告（超长截断）附于审核说明之后。
+func buildHumanAuditBody(fc *core.FlowContext) string {
+	aiEvalSummary := fc.AIEvalResult
+	if len(aiEvalSummary) > aiEvalSummaryTruncateLen {
+		aiEvalSummary = aiEvalSummary[:aiEvalSummaryTruncateLen] + "..."
 	}
-	fc.UpdateStageFull(processobject.StageHumanAudit, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusCompleted,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		InputDesc:    "智能评估报告",
-		OutputDesc:   outputDesc,
-		Prompt:       fc.AIEvalResult,
-	})
-	return nil
-}
-
-func (n *HumanAuditNode) NextNode(fc *core.FlowContext) string {
-	if fc.AuditApprovalResult == "pass" {
-		return processobject.StageDevelopment
-	}
-	return processobject.StageArchDesign
+	return fmt.Sprintf("需求「%s」的架构设计已完成 AI 智能评估，请审核。审批通过则进入开发，审批不通过将重新进行架构设计。\n\n---\nAI 评估报告：\n%s", fc.WorkitemTitle, aiEvalSummary)
 }

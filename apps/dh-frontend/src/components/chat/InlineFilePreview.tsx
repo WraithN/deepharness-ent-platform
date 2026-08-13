@@ -18,6 +18,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { cn, isProductSpaceFile } from '@/lib/utils';
 
+import { useNavigate } from 'react-router-dom';
+
 interface TocItem {
   level: number;
   text: string;
@@ -76,6 +78,7 @@ function isMarkdownFile(path: string): boolean {
  */
 export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onClose, onProtoMake, workitemId, requirementTitle }) => {
   const { user: currentUser, membership } = useAuth();
+  const navigate = useNavigate();
   const workspaceId = membership?.workspaceId ?? '';
   const [fileContent, setFileContent] = useState<FileContent | null>(null);
   const [loading, setLoading] = useState(true);
@@ -290,22 +293,25 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
     }
   };
 
-  // 发起AI产品流程：基于当前 brainstorm 结果启动产品流程。
+  // 发起AI需求设计流程：基于当前 brainstorm 结果启动产品流程。
   const handleStartProductFlow = async () => {
     if (!workspaceId || !workitemId) return;
     setStartingFlow(true);
     try {
-      await processApi.startProductFlow({
+      const res = await processApi.startProductFlow({
         workspaceId,
         workitemId,
         workitemTitle: requirementTitle || displayTitle,
         workitemDesc: '',
       });
-      toast.success('产品流程已启动');
+      toast.success('AI需求设计流程已启动');
+      if (res.processId) {
+        navigate(`/personal/flow/${res.processId}`);
+      }
     } catch (e) {
       console.error('[InlineFilePreview] start product flow failed:', e);
       const msg = e instanceof Error ? e.message : '';
-      toast.error(msg || '启动产品流程失败，请重试');
+      toast.error(msg || '启动AI需求设计流程失败，请重试');
     } finally {
       setStartingFlow(false);
     }
@@ -361,7 +367,7 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
               {adopted ? '已采纳' : '采纳到产品空间'}
             </Button>
           )}
-          {/* 发起AI产品流程（仅 brainstorm 结果） */}
+          {/* 发起AI需求设计流程（仅 brainstorm 结果） */}
           {canStartProductFlow && (
             <Button
               variant="default"
@@ -369,10 +375,10 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
               className="h-8 text-xs gap-1.5"
               onClick={handleStartProductFlow}
               disabled={startingFlow || loading || !!error}
-              title="基于此 brainstorm 结果发起 AI 产品流程"
+              title="基于此 brainstorm 结果发起 AI 需求设计流程"
             >
               {startingFlow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
-              发起AI产品流程
+              发起AI需求设计流程
             </Button>
           )}
           {/* 更多操作：提需求、做原型、作废 */}

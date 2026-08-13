@@ -303,72 +303,31 @@ func (n *ProductAIDraftReviewNode) NextNode(fc *core.FlowContext) string {
 // 方案自主复核（人工 JUDGE 节点）
 // ============================================================
 
-type ProductReviewNode struct {
-	core.BaseNode
-}
+// NewProductReviewNode 创建方案自主复核人工节点（条件分支）。
+// 迁移为 core.HumanReviewNode：通过进入 AI 网关决策，不通过返回方案草案输出。
+func NewProductReviewNode(deps *core.FlowDeps) *core.HumanReviewNode {
+	return core.NewHumanReviewNode(deps, core.HumanReviewConfig{
+		StageName:  processobject.StageProductReview,
+		InputDesc:  "初步业务方案",
+		OutputDesc: "待复核方案",
+		PassDesc:   "复核通过，进入 AI 网关决策",
+		FailDesc:   "复核不通过，返回方案草案输出",
 
-func (n *ProductReviewNode) Input(fc *core.FlowContext) error {
-	fc.UpdateStageFull(processobject.StageProductReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusInProgress,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		InputDesc:    "初步业务方案",
-		OutputDesc:   "待复核方案",
-		Prompt:       fc.DraftResult,
-	})
-	return nil
-}
+		NotifType:     notificationobject.TypeProductReviewRequired,
+		NotifTitleFmt: "方案自主复核: %s",
+		NotifBodyFmt:  "需求「%s」的业务方案草案已生成，请复核。通过则进入 AI 网关决策，不通过将返回重新输出方案。",
 
-func (n *ProductReviewNode) Processor(fc *core.FlowContext) error {
-	_, err := n.Deps.NotificationSvc.Create(notificationobject.CreateNotificationRequest{
-		UserID:      fc.UserID,
-		TenantID:    fc.TenantID,
-		WorkspaceID: fc.WorkspaceID,
-		Type:        notificationobject.TypeProductReviewRequired,
-		Title:       fmt.Sprintf("方案自主复核: %s", fc.WorkitemTitle),
-		Body:        fmt.Sprintf("需求「%s」的业务方案草案已生成，请复核。通过则进入 AI 网关决策，不通过将返回重新输出方案。", fc.WorkitemTitle),
-		ActionType:  notificationobject.ActionApproveCodeOptimize,
-		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
-		Data: map[string]any{
-			"notificationType":    notificationobject.TypeProductReviewRequired,
-			"workitemId":          fc.WorkitemID,
-			"workitemTitle":       fc.WorkitemTitle,
-			"processId":           fc.ProcessID,
-			"workspacePath":       fc.WorkspacePath,
-			"workspaceId":         fc.WorkspaceID,
-			"tenantId":            fc.TenantID,
-			"userName":            fc.UserName,
-			"draftResult":         fc.DraftResult,
-			"aiDraftReviewResult": fc.AIDraftReviewResult,
+		PromptGetter: func(fc *core.FlowContext) string { return fc.DraftResult },
+		ResultGetter: func(fc *core.FlowContext) string { return fc.ProductReviewResult },
+		ExtraData: func(fc *core.FlowContext) map[string]any {
+			return map[string]any{
+				"draftResult":         fc.DraftResult,
+				"aiDraftReviewResult": fc.AIDraftReviewResult,
+			}
 		},
+		PassNodeName: processobject.StageProductAIGateway,
+		FailNodeName: processobject.StageProductDraft,
 	})
-	if err != nil {
-		log.Printf("[ProductReviewNode] create notification failed: %v", err)
-	}
-	return core.ErrPauseFlow
-}
-
-func (n *ProductReviewNode) Output(fc *core.FlowContext) error {
-	outputDesc := "复核通过，进入 AI 网关决策"
-	if fc.ProductReviewResult != "pass" {
-		outputDesc = "复核不通过，返回方案草案输出"
-	}
-	fc.UpdateStageFull(processobject.StageProductReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusCompleted,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		OutputDesc:   outputDesc,
-	})
-	return nil
-}
-
-func (n *ProductReviewNode) NextNode(fc *core.FlowContext) string {
-	if fc.ProductReviewResult == "pass" {
-		return processobject.StageProductAIGateway
-	}
-	return processobject.StageProductDraft
 }
 
 // ============================================================
@@ -508,142 +467,61 @@ func (n *ProductProtoMakeNode) Input(fc *core.FlowContext) error {
 // 原型交互复核（人工 JUDGE 节点）：产品经理复核原型
 // ============================================================
 
-type ProductProtoReviewNode struct {
-	core.BaseNode
-}
+// NewProductProtoReviewNode 创建原型交互复核人工节点（条件分支）。
+// 迁移为 core.HumanReviewNode：通过进入需求评审，不通过返回方案草案重新构思。
+func NewProductProtoReviewNode(deps *core.FlowDeps) *core.HumanReviewNode {
+	return core.NewHumanReviewNode(deps, core.HumanReviewConfig{
+		StageName:  processobject.StageProductProtoReview,
+		InputDesc:  "UI 交互原型（可选） + 结构化 PRD + 定稿方案",
+		OutputDesc: "待复核原型",
+		PassDesc:   "复核通过，进入需求评审",
+		FailDesc:   "复核不通过，返回方案草案",
 
-func (n *ProductProtoReviewNode) Input(fc *core.FlowContext) error {
-	fc.UpdateStageFull(processobject.StageProductProtoReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusInProgress,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		InputDesc:    "UI 交互原型（可选） + 结构化 PRD + 定稿方案",
-		OutputDesc:   "待复核原型",
-		Prompt:       fc.ProtoResult,
-	})
-	return nil
-}
+		NotifType:     notificationobject.TypeProductProtoReviewRequired,
+		NotifTitleFmt: "原型交互复核: %s",
+		NotifBodyFmt:  "需求「%s」的 PRD（与原型，如有）已准备就绪，请进行联合复核。通过则进入需求评审，不通过将返回方案草案重新构思。",
 
-func (n *ProductProtoReviewNode) Processor(fc *core.FlowContext) error {
-	_, err := n.Deps.NotificationSvc.Create(notificationobject.CreateNotificationRequest{
-		UserID:      fc.UserID,
-		TenantID:    fc.TenantID,
-		WorkspaceID: fc.WorkspaceID,
-		Type:        notificationobject.TypeProductProtoReviewRequired,
-		Title:       fmt.Sprintf("原型交互复核: %s", fc.WorkitemTitle),
-		Body:        fmt.Sprintf("需求「%s」的 PRD（与原型，如有）已准备就绪，请进行联合复核。通过则进入需求评审，不通过将返回方案草案重新构思。", fc.WorkitemTitle),
-		ActionType:  notificationobject.ActionApproveCodeOptimize,
-		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
-		Data: map[string]any{
-			"notificationType": notificationobject.TypeProductProtoReviewRequired,
-			"workitemId":       fc.WorkitemID,
-			"workitemTitle":    fc.WorkitemTitle,
-			"processId":        fc.ProcessID,
-			"workspacePath":    fc.WorkspacePath,
-			"workspaceId":      fc.WorkspaceID,
-			"tenantId":         fc.TenantID,
-			"userName":         fc.UserName,
-			"prdResult":        fc.PRDResult,
-			"protoResult":      fc.ProtoResult,
+		PromptGetter: func(fc *core.FlowContext) string { return fc.ProtoResult },
+		ResultGetter: func(fc *core.FlowContext) string { return fc.ProductProtoReviewResult },
+		ExtraData: func(fc *core.FlowContext) map[string]any {
+			return map[string]any{
+				"prdResult":   fc.PRDResult,
+				"protoResult": fc.ProtoResult,
+			}
 		},
+		PassNodeName: processobject.StageProductFinalReview,
+		FailNodeName: processobject.StageProductDraft,
 	})
-	if err != nil {
-		log.Printf("[ProductProtoReviewNode] create notification failed: %v", err)
-	}
-	return core.ErrPauseFlow
-}
-
-func (n *ProductProtoReviewNode) Output(fc *core.FlowContext) error {
-	outputDesc := "复核通过，进入需求评审"
-	if fc.ProductProtoReviewResult != "pass" {
-		outputDesc = "复核不通过，返回方案草案"
-	}
-	fc.UpdateStageFull(processobject.StageProductProtoReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusCompleted,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		OutputDesc:   outputDesc,
-	})
-	return nil
-}
-
-func (n *ProductProtoReviewNode) NextNode(fc *core.FlowContext) string {
-	if fc.ProductProtoReviewResult == "pass" {
-		return processobject.StageProductFinalReview
-	}
-	return processobject.StageProductDraft
 }
 
 // ============================================================
 // 需求评审（人工 ACTION 结束节点）
 // ============================================================
 
-type ProductFinalReviewNode struct {
-	core.BaseNode
-}
+// NewProductFinalReviewNode 创建需求评审人工节点（结束节点）。
+// 迁移为 core.HumanReviewNode：通过结束流程，不通过返回原型+PRD 联合复核。
+func NewProductFinalReviewNode(deps *core.FlowDeps) *core.HumanReviewNode {
+	return core.NewHumanReviewNode(deps, core.HumanReviewConfig{
+		StageName:  processobject.StageProductFinalReview,
+		InputDesc:  "通过复查的 PRD + 原型",
+		OutputDesc: "待最终需求评审",
+		PassDesc:   "需求定稿，可一键启动 AI 开发",
+		FailDesc:   "需求评审驳回，返回原型+PRD联合复核",
 
-func (n *ProductFinalReviewNode) Input(fc *core.FlowContext) error {
-	fc.UpdateStageFull(processobject.StageProductFinalReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusInProgress,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		InputDesc:    "通过复查的 PRD + 原型",
-		OutputDesc:   "待最终需求评审",
-		Prompt:       fc.PRDResult,
-	})
-	return nil
-}
+		NotifType:     notificationobject.TypeProductFinalReviewRequired,
+		NotifTitleFmt: "需求评审: %s",
+		NotifBodyFmt:  "需求「%s」的 PRD 与原型已准备就绪，请进行最终需求评审。通过后流程结束，可一键启动 AI 开发。",
 
-func (n *ProductFinalReviewNode) Processor(fc *core.FlowContext) error {
-	_, err := n.Deps.NotificationSvc.Create(notificationobject.CreateNotificationRequest{
-		UserID:      fc.UserID,
-		TenantID:    fc.TenantID,
-		WorkspaceID: fc.WorkspaceID,
-		Type:        notificationobject.TypeProductFinalReviewRequired,
-		Title:       fmt.Sprintf("需求评审: %s", fc.WorkitemTitle),
-		Body:        fmt.Sprintf("需求「%s」的 PRD 与原型已准备就绪，请进行最终需求评审。通过后流程结束，可一键启动 AI 开发。", fc.WorkitemTitle),
-		ActionType:  notificationobject.ActionApproveCodeOptimize,
-		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
-		Data: map[string]any{
-			"notificationType": notificationobject.TypeProductFinalReviewRequired,
-			"workitemId":       fc.WorkitemID,
-			"workitemTitle":    fc.WorkitemTitle,
-			"processId":        fc.ProcessID,
-			"workspacePath":    fc.WorkspacePath,
-			"workspaceId":      fc.WorkspaceID,
-			"tenantId":         fc.TenantID,
-			"userName":         fc.UserName,
-			"prdResult":        fc.PRDResult,
-			"protoResult":      fc.ProtoResult,
+		PromptGetter: func(fc *core.FlowContext) string { return fc.PRDResult },
+		ResultGetter: func(fc *core.FlowContext) string { return fc.ProductFinalReviewResult },
+		ExtraData: func(fc *core.FlowContext) map[string]any {
+			return map[string]any{
+				"prdResult":   fc.PRDResult,
+				"protoResult": fc.ProtoResult,
+			}
 		},
+		// PassNodeName 留空表示流程结束（基类返回空串，flow 按下一序号推进至尾部）。
+		PassNodeName: "",
+		FailNodeName: processobject.StageProductProtoReview,
 	})
-	if err != nil {
-		log.Printf("[ProductFinalReviewNode] create notification failed: %v", err)
-	}
-	return core.ErrPauseFlow
-}
-
-func (n *ProductFinalReviewNode) Output(fc *core.FlowContext) error {
-	outputDesc := "需求定稿，可一键启动 AI 开发"
-	if fc.ProductFinalReviewResult != "pass" {
-		outputDesc = "需求评审驳回，返回原型+PRD联合复核"
-	}
-	fc.UpdateStageFull(processobject.StageProductFinalReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusCompleted,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		OutputDesc:   outputDesc,
-	})
-	return nil
-}
-
-func (n *ProductFinalReviewNode) NextNode(fc *core.FlowContext) string {
-	if fc.ProductFinalReviewResult == "pass" {
-		return "" // 流程结束
-	}
-	return processobject.StageProductProtoReview
 }

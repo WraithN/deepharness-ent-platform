@@ -8,7 +8,8 @@ import (
 
 // NewProductFlow 创建产品流程
 // 拓扑：需求头脑风暴 -> 需求拆解 -> 方案调研 -> 方案草案 -> AI草案复核(判定) ->
-//       方案自主复核(人工) -> AI网关(决策) -> [PRD初稿 || 原型生成] 并行 -> 原型+PRD联合复核(人工) -> 需求评审(人工) -> 结束
+//
+//	方案自主复核(人工) -> AI网关(决策) -> [PRD初稿 || 原型生成] 并行 -> 原型+PRD联合复核(人工) -> 需求评审(人工) -> 结束
 func NewProductFlow(deps *core.FlowDeps) *core.Flow {
 	return core.NewFlow("ProductFlow", deps,
 		// 1. 需求受理（人工，建流程+通知，不暂停）
@@ -24,15 +25,15 @@ func NewProductFlow(deps *core.FlowDeps) *core.Flow {
 		// 6. AI 草案复核（AI 判定：pass->人工复核，reject->草案）
 		nodes.NewProductAIDraftReviewNode(deps),
 		// 7. 方案自主复核（人工，暂停）
-		&nodes.ProductReviewNode{BaseNode: core.NewBaseNode(processobject.StageProductReview, core.NodeTypeHuman, deps)},
+		nodes.NewProductReviewNode(deps),
 		// 8. AI 网关决策（AI，决定 NeedProto）
 		nodes.NewProductAIGatewayNode(deps),
 		// 9. 并行分叉：PRD（常驻） || 原型（仅 NeedProto）
 		newProductParallelNode(deps),
 		// 10. 原型+PRD 联合复核（人工，暂停）
-		&nodes.ProductProtoReviewNode{BaseNode: core.NewBaseNode(processobject.StageProductProtoReview, core.NodeTypeHuman, deps)},
+		nodes.NewProductProtoReviewNode(deps),
 		// 11. 需求评审（人工，暂停，结束）
-		&nodes.ProductFinalReviewNode{BaseNode: core.NewBaseNode(processobject.StageProductFinalReview, core.NodeTypeHuman, deps)},
+		nodes.NewProductFinalReviewNode(deps),
 	)
 }
 

@@ -12,9 +12,10 @@ import (
 
 // 通用错误码常量，统一 WriteJSONError 的 code 字段，避免魔法数字。
 const (
-	ErrCodeGeneral      = 1
-	ErrCodeUnauthorized = 2
-	ErrCodeForbidden    = 3
+	ErrCodeGeneral               = 1
+	ErrCodeUnauthorized          = 2
+	ErrCodeForbidden             = 3
+	ErrCodeProductFlowInProgress = 40901
 )
 
 // Gatewayd 连接错误特征子串。

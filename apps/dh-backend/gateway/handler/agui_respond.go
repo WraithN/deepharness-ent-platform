@@ -30,8 +30,9 @@ type respondToAgentResponse struct {
 }
 
 // QuickComplete 将 prompt 转发给 agent 运行时做一次同步短文本补全，返回纯文本结果。
-func (h *AGUIHandler) QuickComplete(ctx context.Context, prompt string) (string, error) {
-	return h.resolveAGUIClient(ctx).QuickComplete(ctx, prompt)
+// agentKey 为空时使用 handler 默认 pluginKey（通常为 opencode）。
+func (h *AGUIHandler) QuickComplete(ctx context.Context, prompt, agentKey string) (string, error) {
+	return h.resolveAGUIClient(ctx).QuickComplete(ctx, prompt, agentKey)
 }
 
 type respondToAgentRequest struct {

@@ -7,10 +7,12 @@ import "time"
 type RuntimeStatus string
 
 const (
-	RuntimeStatusRunning        RuntimeStatus = "running"
-	RuntimeStatusError          RuntimeStatus = "error"
-	RuntimeStatusStopped        RuntimeStatus = "stopped"
+	RuntimeStatusRunning         RuntimeStatus = "running"
+	RuntimeStatusError           RuntimeStatus = "error"
+	RuntimeStatusStopped         RuntimeStatus = "stopped"
 	RuntimeStatusResourceWarning RuntimeStatus = "resource_warning"
+	// RuntimeStatusInitializing 表示运行时正在初始化（如安装 comet skill）。
+	RuntimeStatusInitializing RuntimeStatus = "initializing"
 )
 
 // AgentInstanceStatus 表示某个智能体实例的状态。
@@ -64,6 +66,8 @@ type AgentRuntime struct {
 	GatewaydURL   string          `json:"gatewaydUrl"`
 	// IP 是容器/主机的主网卡 IP 地址，由 personal-stub 采集并随状态上报。
 	IP            string          `json:"ip"`
+	// InitStatus 是运行时初始化状态信息（如"正在安装 SDD 支持"），为空表示无初始化在途。
+	InitStatus    string          `json:"initStatus"`
 	ReportedAt      time.Time       `json:"reportedAt"`
 	CreatedAt       time.Time       `json:"createdAt"`
 	UpdatedAt       time.Time       `json:"updatedAt"`
@@ -106,6 +110,9 @@ type ReportStatusRequest struct {
 	GatewaydURL   string        `json:"gatewayd_url,omitempty"`
 	// IP 是容器/主机的主网卡 IP 地址，由 personal-stub 采集并随状态上报。
 	IP            string        `json:"ip,omitempty"`
+	// InitStatus 是运行时初始化状态信息（如"正在安装 SDD 支持"），由 personal-stub 上报。
+	// 为空表示无初始化在途。上报空值会清除已有的初始化状态。
+	InitStatus    string        `json:"init_status,omitempty"`
 	ReportedAt    *time.Time    `json:"reported_at,omitempty"`
 }
 

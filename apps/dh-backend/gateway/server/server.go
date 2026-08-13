@@ -130,6 +130,7 @@ const (
 	ROUTE_POST_NOTIFICATIONS_BY_ID_ACTION                                              = http.MethodPost + " " + API_V1_PREFIX + "/notifications/{id}/action"
 	ROUTE_GET_PROCESSES                                                                = http.MethodGet + " " + API_V1_PREFIX + "/processes"
 	ROUTE_GET_PROCESSES_BY_ID                                                          = http.MethodGet + " " + API_V1_PREFIX + "/processes/{id}"
+	ROUTE_GET_PROCESSES_ACTIVE_CHECK                                                   = http.MethodGet + " " + API_V1_PREFIX + "/processes/active-check"
 	ROUTE_POST_PROCESSES                                                               = http.MethodPost + " " + API_V1_PREFIX + "/processes"
 	ROUTE_PATCH_PROCESSES_BY_ID_STAGES_BY_STAGE_NAME                                   = http.MethodPatch + " " + API_V1_PREFIX + "/processes/{id}/stages/{stageName}"
 	ROUTE_POST_PROCESSES_BY_ID_DELIVERABLES_SHARE                                      = http.MethodPost + " " + API_V1_PREFIX + "/processes/{id}/deliverables/share"
@@ -394,7 +395,10 @@ func New(cfg config.Config) (http.Handler, func()) {
 	// 避免 gatewayd 重启后复用旧会话时回退到默认 120s watchdog。
 	aguiHandler.SetAgentConfigService(defaultAgentConfigService)
 	// 为 workspace 模块注入同步补全能力，用于规范的智能生成。
-	workspace.InitStandardCompleter(aguiHandler.QuickComplete)
+	// 规范生成不绑定特定 agent，使用默认 pluginKey（agentKey 传空）。
+	workspace.InitStandardCompleter(func(ctx context.Context, prompt string) (string, error) {
+		return aguiHandler.QuickComplete(ctx, prompt, "")
+	})
 	sseReplayHandler := handler.NewSSEReplayHandler(sseBuffer)
 	statsHandler := handler.NewStatsHandler(sessions, messages, cfg.WorkspaceRoot, workspaceService, workItemSvc)
 
@@ -540,6 +544,7 @@ func New(cfg config.Config) (http.Handler, func()) {
 	// 流程追踪：列出/详情/创建/更新阶段
 	mux.Handle(ROUTE_GET_PROCESSES, middleware.Auth(http.HandlerFunc(process.List)))
 	mux.Handle(ROUTE_GET_PROCESSES_BY_ID, middleware.Auth(http.HandlerFunc(process.GetByID)))
+	mux.Handle(ROUTE_GET_PROCESSES_ACTIVE_CHECK, middleware.Auth(http.HandlerFunc(process.ActiveCheck)))
 	mux.Handle(ROUTE_POST_PROCESSES, middleware.Auth(http.HandlerFunc(process.Create)))
 	mux.Handle(ROUTE_PATCH_PROCESSES_BY_ID_STAGES_BY_STAGE_NAME, middleware.Auth(http.HandlerFunc(process.UpdateStage)))
 	// 数据大盘统计需登录并按 workspaceId 隔离

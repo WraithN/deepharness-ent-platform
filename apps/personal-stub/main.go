@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -9,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/personal-stub/config"
 	"github.com/deepharness/deepharness-ent-platform/apps/personal-stub/gateway/handler"
@@ -29,9 +33,10 @@ func main() {
 		log.Printf("[Skills] deployment warning: %v", err)
 	}
 
-	// 全局安装 Comet Classic skill（幂等，异步，不阻塞启动）。
+	// 全局安装 Comet Classic skill（幂等，同步阻塞，安装期间向 dh-backend 上报初始化状态）。
 	// 装到 ~/.config/opencode/skills/，该 personal-stub 管理的所有 gatewayd/opencode serve 复用。
-	initCometGlobal()
+	// 必须在 gatewayd 启动前完成，确保 opencode 启动时能找到 comet skill。
+	initCometGlobal(cfg.DHBackendURL, cfg.DHBackendRuntimeToken, cfg.DHBackendRuntimeID, cfg.DHPlatformUserID)
 
 	// 初始化 gatewayd 进程管理器。
 	// 若配置了 GATEWAYD_BIN，personal-stub 自动启动和管理 gatewayd 进程；
@@ -103,54 +108,128 @@ const (
 	cometOpencodeQuestionToolName = "question"
 )
 
+// comet init 状态上报相关常量。
+const (
+	// cometInitStatusChecking 是检查 SDD 环境时的状态消息。
+	cometInitStatusChecking = "正在检查 SDD 支持环境"
+	// cometInitStatusInstalling 是安装 SDD 支持时的状态消息。
+	cometInitStatusInstalling = "正在安装 SDD 支持"
+	// cometInitStatusDone 是安装完成时的状态消息。
+	cometInitStatusDone = "SDD 支持安装完成"
+	// cometInitStatusReady 是已安装跳过时的状态消息。
+	cometInitStatusReady = "SDD 支持已就绪"
+	// cometReportTimeout 是状态上报 HTTP 请求超时时间。
+	cometReportTimeout = 5 * time.Second
+)
+
 // initCometGlobal 在全局 scope 安装 Comet Classic 工作流 skill 到 opencode。
 // 幂等：已安装则跳过；comet CLI 不可用时仅告警不阻塞启动。
 // 装到 ~/.config/opencode/skills/，该 personal-stub 管理的所有 gatewayd/opencode serve 复用，
 // 与 workspace 解耦，符合"容器级一次 init、多 workspace 复用"的部署架构。
-func initCometGlobal() {
+//
+// 同步阻塞执行：安装完成前不启动 gatewayd，确保 opencode 启动时 comet skill 已就绪。
+// 安装期间通过 HTTP 上报 init_status 到 dh-backend，前端可实时展示初始化进度。
+func initCometGlobal(dhBackendURL, runtimeToken, runtimeID, userID string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		log.Printf("[Comet] cannot resolve home dir, skip global init: %v", err)
 		return
 	}
-	// 无论本次是否新装 skill，都先确保全局 comet 配置为中文（幂等）：
-	// 存量环境 marker 已存在时会跳过 comet init，但配置可能仍是英文。
+
+	// 无论本次是否新装 skill，都先确保全局 comet 配置为中文（幂等）。
 	ensureCometClassicLanguage(home)
-	// 同理，每次启动都确保决策点协议使用本环境真实的结构化提问工具名（幂等）：
-	// comet update 会覆盖已安装 skill，需在启动时重新打补丁。
+	// 同理，每次启动都确保决策点协议使用本环境真实的结构化提问工具名（幂等）。
 	ensureCometQuestionToolName(home)
-	// comet-classic skill 已存在则跳过（幂等）。
+
+	// comet-classic skill 已存在则跳过安装（幂等）。
 	marker := filepath.Join(home, cometSkillMarkerRel)
 	if _, err := os.Stat(marker); err == nil {
 		log.Printf("[Comet] global skills already installed, skip init")
+		reportInitStatus(dhBackendURL, runtimeToken, runtimeID, userID, "running", cometInitStatusReady)
 		return
 	}
+
 	// 检查 comet CLI 是否可用。
 	if _, err := exec.LookPath(cometCLIBinName); err != nil {
 		log.Printf("[Comet] comet CLI not found in PATH, skip global init (install @rpamis/comet to enable comet flow)")
 		return
 	}
-	// 异步执行，不阻塞 personal-stub 启动。
-	go func() {
-		log.Printf("[Comet] installing global Comet Classic skills for opencode...")
-		cmd := exec.Command(cometCLIBinName, "init",
-			"--scope", "global",
-			"--platform", "opencode",
-			"--workflow", "classic",
-			"--yes", "--language", "zh")
-		cmd.Env = os.Environ()
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			log.Printf("[Comet] global init failed: %v, output: %s", err, string(out))
-			return
-		}
-		log.Printf("[Comet] global init done: %s", string(out))
-		// comet init 生成的全局配置语言未必是中文，强制确保 classic.language 为 zh-CN，
-		// 否则 openspec-explore 等 skill 在需求澄清阶段会用英文向用户提问。
-		ensureCometClassicLanguage(home)
-		// 新装后同样补齐决策点协议的工具名补丁。
-		ensureCometQuestionToolName(home)
-	}()
+
+	// 上报安装中状态。
+	reportInitStatus(dhBackendURL, runtimeToken, runtimeID, userID, "initializing", cometInitStatusInstalling)
+	log.Printf("[Comet] installing global Comet Classic skills for opencode...")
+
+	cmd := exec.Command(cometCLIBinName, "init",
+		"--scope", "global",
+		"--platform", "opencode",
+		"--workflow", "classic",
+		"--yes", "--language", "zh")
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		errMsg := fmt.Sprintf("SDD 支持安装失败: %v", err)
+		log.Printf("[Comet] global init failed: %v, output: %s", err, string(out))
+		reportInitStatus(dhBackendURL, runtimeToken, runtimeID, userID, "error", errMsg)
+		return
+	}
+
+	log.Printf("[Comet] global init done: %s", string(out))
+	// comet init 生成的全局配置语言未必是中文，强制确保 classic.language 为 zh-CN。
+	ensureCometClassicLanguage(home)
+	// 新装后同样补齐决策点协议的工具名补丁。
+	ensureCometQuestionToolName(home)
+
+	// 上报安装完成，清除 init_status。
+	reportInitStatus(dhBackendURL, runtimeToken, runtimeID, userID, "running", cometInitStatusDone)
+}
+
+// reportInitStatus 向 dh-backend 上报运行时初始化状态。
+// status 为 "initializing"（安装中）、"running"（正常/完成）或 "error"（失败）。
+// initMsg 为展示给用户的状态消息，为空时清除已有初始化状态。
+// 上报失败仅打日志，不阻塞 personal-stub 启动流程。
+func reportInitStatus(dhBackendURL, runtimeToken, runtimeID, userID, status, initMsg string) {
+	if dhBackendURL == "" || runtimeID == "" {
+		log.Printf("[Comet] skip report init status: dhBackendURL or runtimeID empty")
+		return
+	}
+
+	reportURL := fmt.Sprintf("%s/api/v1/agent-runtimes/%s/status", dhBackendURL, runtimeID)
+	now := time.Now().UTC()
+	body := map[string]any{
+		"status":      status,
+		"init_status": initMsg,
+		"user_id":     userID,
+		"reported_at": now.Format(time.RFC3339),
+	}
+	bodyJSON, err := json.Marshal(body)
+	if err != nil {
+		log.Printf("[Comet] marshal init status report failed: %v", err)
+		return
+	}
+
+	req, err := http.NewRequest(http.MethodPost, reportURL, bytes.NewReader(bodyJSON))
+	if err != nil {
+		log.Printf("[Comet] create init status request failed: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if runtimeToken != "" {
+		req.Header.Set("Authorization", "Bearer "+runtimeToken)
+	}
+
+	client := &http.Client{Timeout: cometReportTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[Comet] report init status failed (status=%s msg=%s): %v", status, initMsg, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		log.Printf("[Comet] report init status got HTTP %d (status=%s msg=%s)", resp.StatusCode, status, initMsg)
+	} else {
+		log.Printf("[Comet] reported init status: %s - %s", status, initMsg)
+	}
 }
 
 // ensureCometClassicLanguage 确保 ~/.comet/config.yaml 中 classic.language 为 zh-CN。

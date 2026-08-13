@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { FileText, Eye, Download, Loader2, FolderInput, Check, Rocket } from 'lucide-react';
 import { fileApi } from '@/lib/file-api';
 import { productSpaceApi } from '@/lib/productspace-api';
@@ -38,6 +39,7 @@ function getFileType(fileName: string): string {
  */
 export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, onPreview, workitemId }) => {
   const { membership } = useAuth();
+  const navigate = useNavigate();
   const workspaceId = membership?.workspaceId ?? '';
   const fileName = path.split('/').pop() || path;
   const displayTitle = buildDisplayTitle(fileName);
@@ -135,17 +137,20 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
     if (!workspaceId || !workitemId) return;
     setStartingFlow(true);
     try {
-      await processApi.startProductFlow({
+      const res = await processApi.startProductFlow({
         workspaceId,
         workitemId,
         workitemTitle: displayTitle,
         workitemDesc: '',
       });
-      toast.success('产品流程已启动');
+      toast.success('AI需求设计流程已启动');
+      if (res.processId) {
+        navigate(`/personal/flow/${res.processId}`);
+      }
     } catch (err) {
       console.error('[FileAttachmentCard] start product flow failed:', err);
       const msg = err instanceof Error ? err.message : '';
-      toast.error(msg || '启动产品流程失败，请重试');
+      toast.error(msg || '启动AI需求设计流程失败，请重试');
     } finally {
       setStartingFlow(false);
     }
@@ -210,7 +215,7 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
               className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {startingFlow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
-              发起AI产品流程
+              发起AI需求设计流程
             </button>
           )}
         </div>

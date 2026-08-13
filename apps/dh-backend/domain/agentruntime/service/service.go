@@ -96,6 +96,7 @@ func (s *DBAgentRuntimeService) ensureTable() error {
 			gatewayd_url VARCHAR(512) NOT NULL DEFAULT '',
 			workspace_path VARCHAR(512) NOT NULL DEFAULT '',
 			ip VARCHAR(64) NOT NULL DEFAULT '',
+			init_status VARCHAR(256) NOT NULL DEFAULT '',
 			installed_agents JSONB NOT NULL DEFAULT '[]'::jsonb,
 			sessions_7d BIGINT NOT NULL DEFAULT 0,
 			sessions_1d BIGINT NOT NULL DEFAULT 0,
@@ -112,6 +113,8 @@ func (s *DBAgentRuntimeService) ensureTable() error {
 
 	// 兼容旧表：若 ip 列不存在则自动添加（ALTER TABLE IF NOT EXISTS 在 PG 11+ 可用）。
 	_, _ = s.db.Exec(`ALTER TABLE agent_runtimes ADD COLUMN IF NOT EXISTS ip VARCHAR(64) NOT NULL DEFAULT ''`)
+	// 兼容旧表：若 init_status 列不存在则自动添加。
+	_, _ = s.db.Exec(`ALTER TABLE agent_runtimes ADD COLUMN IF NOT EXISTS init_status VARCHAR(256) NOT NULL DEFAULT ''`)
 	// 兼容旧表：若 installed_agents 列不存在则自动添加。
 	_, _ = s.db.Exec(`ALTER TABLE agent_runtimes ADD COLUMN IF NOT EXISTS installed_agents JSONB NOT NULL DEFAULT '[]'::jsonb`)
 	// 兼容旧表：若 sessions_7d / sessions_1d 列不存在则自动添加。
@@ -213,8 +216,8 @@ func (s *DBAgentRuntimeService) ReportStatus(runtimeID string, req object.Report
 		INSERT INTO agent_runtimes (
 			runtime_id, tenant_id, tenant_name, workspace_id, workspace_name,
 			user_id, user_name, user_display_name, status, uptime_seconds,
-			cpu_percent, mem_percent, sandbox_spec, gatewayd_url, workspace_path, ip, installed_agents, sessions_7d, sessions_1d, last_active_at, agents, reported_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+			cpu_percent, mem_percent, sandbox_spec, gatewayd_url, workspace_path, ip, init_status, installed_agents, sessions_7d, sessions_1d, last_active_at, agents, reported_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
 		ON CONFLICT (runtime_id) DO UPDATE SET
 			tenant_id = EXCLUDED.tenant_id,
 			tenant_name = EXCLUDED.tenant_name,
@@ -231,6 +234,7 @@ func (s *DBAgentRuntimeService) ReportStatus(runtimeID string, req object.Report
 			gatewayd_url = EXCLUDED.gatewayd_url,
 			workspace_path = EXCLUDED.workspace_path,
 			ip = EXCLUDED.ip,
+			init_status = EXCLUDED.init_status,
 			installed_agents = EXCLUDED.installed_agents,
 			sessions_7d = EXCLUDED.sessions_7d,
 			sessions_1d = EXCLUDED.sessions_1d,
@@ -240,14 +244,14 @@ func (s *DBAgentRuntimeService) ReportStatus(runtimeID string, req object.Report
 		RETURNING
 			runtime_id, tenant_id, tenant_name, workspace_id, workspace_name,
 			user_id, user_name, user_display_name, status, uptime_seconds,
-			cpu_percent, mem_percent, sandbox_spec, gatewayd_url, workspace_path, ip, installed_agents, sessions_7d, sessions_1d, last_active_at, agents, reported_at,
+			cpu_percent, mem_percent, sandbox_spec, gatewayd_url, workspace_path, ip, init_status, installed_agents, sessions_7d, sessions_1d, last_active_at, agents, reported_at,
 			created_at, updated_at
 	`, runtimeID, tenantID, tenantName, req.WorkspaceID, workspaceName,
 		req.UserID, userName, userDisplayName, string(normalizedStatus), req.UptimeSeconds,
-		req.CpuPercent, req.MemPercent, req.SandboxSpec, req.GatewaydURL, workspacePath, req.IP, installedAgentsJSON, req.Sessions7d, req.Sessions1d, req.LastActiveAt, agentsJSON, reportedAt,
+		req.CpuPercent, req.MemPercent, req.SandboxSpec, req.GatewaydURL, workspacePath, req.IP, req.InitStatus, installedAgentsJSON, req.Sessions7d, req.Sessions1d, req.LastActiveAt, agentsJSON, reportedAt,
 	).Scan(&rt.RuntimeID, &rt.TenantID, &rt.TenantName, &rt.WorkspaceID, &rt.WorkspaceName,
 		&rt.UserID, &rt.UserName, &rt.UserDisplayName, &rt.Status, &rt.UptimeSeconds,
-		&rt.CpuPercent, &rt.MemPercent, &rt.SandboxSpec, &rt.GatewaydURL, &rt.WorkspacePath, &rt.IP, &returnedInstalledAgents, &rt.Sessions7d, &rt.Sessions1d, &nullLastActive, &returnedAgents, &rt.ReportedAt,
+		&rt.CpuPercent, &rt.MemPercent, &rt.SandboxSpec, &rt.GatewaydURL, &rt.WorkspacePath, &rt.IP, &rt.InitStatus, &returnedInstalledAgents, &rt.Sessions7d, &rt.Sessions1d, &nullLastActive, &returnedAgents, &rt.ReportedAt,
 		&rt.CreatedAt, &rt.UpdatedAt)
 	if err != nil {
 		return object.AgentRuntime{}, fmt.Errorf("upsert runtime status failed: %w", err)
@@ -311,7 +315,7 @@ func (s *DBAgentRuntimeService) List(filter object.ListRuntimesFilter) (object.L
 	query := `
 		SELECT runtime_id, tenant_id, tenant_name, workspace_id, workspace_name,
 		       user_id, user_name, user_display_name, status, uptime_seconds,
-		       cpu_percent, mem_percent, sandbox_spec, gatewayd_url, workspace_path, ip, installed_agents, sessions_7d, sessions_1d, last_active_at, agents, reported_at,
+		       cpu_percent, mem_percent, sandbox_spec, gatewayd_url, workspace_path, ip, init_status, installed_agents, sessions_7d, sessions_1d, last_active_at, agents, reported_at,
 		       created_at, updated_at
 		FROM agent_runtimes
 	` + whereSQL + `
@@ -380,13 +384,13 @@ func (s *DBAgentRuntimeService) Get(runtimeID string) (object.AgentRuntime, erro
 	err := s.db.QueryRow(`
 		SELECT runtime_id, tenant_id, tenant_name, workspace_id, workspace_name,
 		       user_id, user_name, user_display_name, status, uptime_seconds,
-		       cpu_percent, mem_percent, sandbox_spec, gatewayd_url, workspace_path, ip, installed_agents, sessions_7d, sessions_1d, last_active_at, agents, reported_at,
+		       cpu_percent, mem_percent, sandbox_spec, gatewayd_url, workspace_path, ip, init_status, installed_agents, sessions_7d, sessions_1d, last_active_at, agents, reported_at,
 		       created_at, updated_at
 		FROM agent_runtimes
 		WHERE runtime_id = $1
 	`, runtimeID).Scan(&rt.RuntimeID, &rt.TenantID, &rt.TenantName, &rt.WorkspaceID, &rt.WorkspaceName,
 		&rt.UserID, &rt.UserName, &rt.UserDisplayName, &rt.Status, &rt.UptimeSeconds,
-		&rt.CpuPercent, &rt.MemPercent, &rt.SandboxSpec, &rt.GatewaydURL, &rt.WorkspacePath, &rt.IP, &installedAgentsJSON, &rt.Sessions7d, &rt.Sessions1d, &nullLastActive, &agentsJSON, &rt.ReportedAt,
+		&rt.CpuPercent, &rt.MemPercent, &rt.SandboxSpec, &rt.GatewaydURL, &rt.WorkspacePath, &rt.IP, &rt.InitStatus, &installedAgentsJSON, &rt.Sessions7d, &rt.Sessions1d, &nullLastActive, &agentsJSON, &rt.ReportedAt,
 		&rt.CreatedAt, &rt.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -423,7 +427,7 @@ func scanRuntimes(rows *sql.Rows) ([]object.AgentRuntime, error) {
 		var nullLastActive sql.NullTime
 		err := rows.Scan(&rt.RuntimeID, &rt.TenantID, &rt.TenantName, &rt.WorkspaceID, &rt.WorkspaceName,
 			&rt.UserID, &rt.UserName, &rt.UserDisplayName, &rt.Status, &rt.UptimeSeconds,
-			&rt.CpuPercent, &rt.MemPercent, &rt.SandboxSpec, &rt.GatewaydURL, &rt.WorkspacePath, &rt.IP, &installedAgentsJSON, &rt.Sessions7d, &rt.Sessions1d, &nullLastActive, &agentsJSON, &rt.ReportedAt,
+			&rt.CpuPercent, &rt.MemPercent, &rt.SandboxSpec, &rt.GatewaydURL, &rt.WorkspacePath, &rt.IP, &rt.InitStatus, &installedAgentsJSON, &rt.Sessions7d, &rt.Sessions1d, &nullLastActive, &agentsJSON, &rt.ReportedAt,
 			&rt.CreatedAt, &rt.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("scan runtime failed: %w", err)

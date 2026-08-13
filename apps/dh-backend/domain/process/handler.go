@@ -111,3 +111,33 @@ func UpdateStage(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewEncoder(w).Encode(p)
 }
+
+// ActiveCheckResponse 活跃流程检测返回
+type ActiveCheckResponse struct {
+	HasActive     bool            `json:"hasActive"`
+	ActiveProcess *object.Process `json:"activeProcess"`
+}
+
+// ActiveCheck 检查是否存在进行中的流程
+func ActiveCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if defaultProcessService == nil {
+		notInitialized(w)
+		return
+	}
+	workitemID := r.URL.Query().Get("workitemId")
+	docPath := r.URL.Query().Get("docPath")
+	if workitemID == "" || docPath == "" {
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "missing workitemId or docPath")
+		return
+	}
+	p, err := defaultProcessService.HasInProgress(r.Context(), workitemID, docPath)
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
+		return
+	}
+	json.NewEncoder(w).Encode(ActiveCheckResponse{
+		HasActive:     p != nil,
+		ActiveProcess: p,
+	})
+}

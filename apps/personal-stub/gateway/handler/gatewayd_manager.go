@@ -199,6 +199,19 @@ func (m *GatewaydManager) startLocked(userID string, agentPort, adminPort int) e
 		"--attach", "opencode",
 	)
 
+	// 将 gatewayd（及其子进程 opencode）的工作目录设为用户工作区根目录。
+	// opencode 从 cwd 查找 .opencode/skills/ 和 .claude/skills/，
+	// 若不设置 cmd.Dir，进程链会继承 personal-stub 的 cwd（dh-backend 工程目录），
+	// 导致 opencode 只能读到 dh-backend 自带的 openspec-* skill，找不到用户工作区的 comet skill。
+	// 每个实例的 cwd 互不干扰：cmd.Dir 仅作用于本进程，不影响 personal-stub 主进程。
+	if m.workspaceRoot != "" {
+		if info, err := os.Stat(m.workspaceRoot); err == nil && info.IsDir() {
+			cmd.Dir = m.workspaceRoot
+		} else {
+			log.Printf("[GatewaydManager] WARNING: workspaceRoot %s not accessible, gatewayd will inherit parent cwd", m.workspaceRoot)
+		}
+	}
+
 	// 构造传递给 gatewayd 的环境变量。
 	// 注意：不再传递 DH_PLATFORM_WORKSPACE_ID，gatewayd 只感知 userId。
 	cmd.Env = append(os.Environ(),

@@ -354,7 +354,7 @@ func (h *AGUIHandler) applyCommandsAndIntent(
 	}
 	if userInput != "" {
 		var intentResult *IntentResult
-		intentResult, err = recognizeIntent(r.Context(), h.resolveAGUIClient(r.Context()), userInput)
+		intentResult, err = recognizeIntent(r.Context(), h.resolveAGUIClient(r.Context()), userInput, input.AgentKey)
 		if err != nil {
 			log.Printf("[AGUIHandler] intent recognition failed, fallback to normal run: %v", err)
 		} else if intentResult != nil {

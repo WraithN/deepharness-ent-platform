@@ -2,11 +2,14 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"sync"
 
 	notificationobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/notification/object"
 	notificationservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/notification/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process"
 	processobject "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process/object"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/orchestrator/core"
@@ -18,9 +21,14 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/safego"
 )
 
+// ErrProductFlowInProgress 表示同一工作项与源文档已存在进行中的产品流程，
+// 用于阻止重复发起，避免并发产生多份流程记录。
+var ErrProductFlowInProgress = errors.New("product flow already in progress")
+
 // Orchestrator 流程编排器
 type Orchestrator struct {
 	deps *core.FlowDeps
+	mu   sync.Mutex
 }
 
 func NewOrchestrator(
@@ -352,9 +360,45 @@ func (o *Orchestrator) StartAutoTestExecutionFlow(ctx context.Context, userID, u
 }
 
 // StartProductFlow 启动产品流程
-func (o *Orchestrator) StartProductFlow(ctx context.Context, userID, userName, workspaceID, tenantID, workitemID, workitemTitle, workitemDesc, workspacePath string) {
+func (o *Orchestrator) StartProductFlow(ctx context.Context, userID, userName, workspaceID, tenantID, workitemID, workitemTitle, workitemDesc, docPath, workspacePath string) (string, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	processSvc := process.GetService()
+	// 并发控制：同一工作项+源文档已有进行中流程时直接拒绝，避免重复发起。
+	// 仅在传入了 docPath 时校验，因为源文档路径是匹配活跃流程的关键维度。
+	if processSvc != nil && docPath != "" {
+		active, err := processSvc.HasInProgress(ctx, workitemID, docPath)
+		if err != nil {
+			return "", fmt.Errorf("check product flow in progress: %w", err)
+		}
+		if active != nil {
+			return "", ErrProductFlowInProgress
+		}
+	}
+
+	displayTitle := fmt.Sprintf("需求：%s AI需求设计流程", workitemTitle)
+	proc := processobject.NewProductProcess(workspaceID, workitemID, displayTitle, docPath)
+	created := proc
+	if processSvc != nil {
+		var err error
+		createdPtr, err := processSvc.Create(ctx, processobject.CreateProcessRequest{
+			WorkspaceID:   proc.WorkspaceID,
+			WorkitemID:    proc.WorkitemID,
+			Title:         proc.Title,
+			SourceDocPath: proc.SourceDocPath,
+			Type:          proc.Type,
+			Stages:        proc.Stages,
+		})
+		if err != nil {
+			return "", fmt.Errorf("create product process: %w", err)
+		}
+		created = &createdPtr
+	}
+
 	fc := &core.FlowContext{
 		Ctx:           ctx,
+		ProcessID:     created.ID,
 		WorkspaceID:   workspaceID,
 		TenantID:      tenantID,
 		UserID:        userID,
@@ -362,6 +406,7 @@ func (o *Orchestrator) StartProductFlow(ctx context.Context, userID, userName, w
 		WorkitemID:    workitemID,
 		WorkitemTitle: workitemTitle,
 		WorkitemDesc:  workitemDesc,
+		DocPath:       docPath,
 		WorkspacePath: workspacePath,
 	}
 
@@ -371,6 +416,8 @@ func (o *Orchestrator) StartProductFlow(ctx context.Context, userID, userName, w
 			log.Printf("[Orchestrator] product flow paused or failed: %v", err)
 		}
 	})
+
+	return created.ID, nil
 }
 
 func (o *Orchestrator) OnProductReviewResult(ctx context.Context, notificationID, userID, userName, workitemID, processID, workspacePath, workspaceID, tenantID, workitemTitle string, approved bool) {
@@ -382,18 +429,18 @@ func (o *Orchestrator) OnProductReviewResult(ctx context.Context, notificationID
 	}
 
 	fc := &core.FlowContext{
-		Ctx:            ctx,
-		ProcessID:      processID,
-		WorkspaceID:    workspaceID,
-		TenantID:       tenantID,
-		UserID:         userID,
-		UserName:       userName,
-		WorkitemID:     workitemID,
-		WorkitemTitle:  workitemTitle,
-		WorkspacePath:  workspacePath,
+		Ctx:                 ctx,
+		ProcessID:           processID,
+		WorkspaceID:         workspaceID,
+		TenantID:            tenantID,
+		UserID:              userID,
+		UserName:            userName,
+		WorkitemID:          workitemID,
+		WorkitemTitle:       workitemTitle,
+		WorkspacePath:       workspacePath,
 		ProductReviewResult: reviewResult,
-		PausedNode:     processobject.StageProductReview,
-		NotificationID: notificationID,
+		PausedNode:          processobject.StageProductReview,
+		NotificationID:      notificationID,
 	}
 
 	flow := flows.NewProductFlow(o.deps)
@@ -411,18 +458,18 @@ func (o *Orchestrator) OnProductProtoReviewResult(ctx context.Context, notificat
 	}
 
 	fc := &core.FlowContext{
-		Ctx:                    ctx,
-		ProcessID:              processID,
-		WorkspaceID:            workspaceID,
-		TenantID:               tenantID,
-		UserID:                 userID,
-		UserName:               userName,
-		WorkitemID:             workitemID,
-		WorkitemTitle:          workitemTitle,
-		WorkspacePath:          workspacePath,
+		Ctx:                      ctx,
+		ProcessID:                processID,
+		WorkspaceID:              workspaceID,
+		TenantID:                 tenantID,
+		UserID:                   userID,
+		UserName:                 userName,
+		WorkitemID:               workitemID,
+		WorkitemTitle:            workitemTitle,
+		WorkspacePath:            workspacePath,
 		ProductProtoReviewResult: protoReviewResult,
-		PausedNode:             processobject.StageProductProtoReview,
-		NotificationID:         notificationID,
+		PausedNode:               processobject.StageProductProtoReview,
+		NotificationID:           notificationID,
 	}
 
 	flow := flows.NewProductFlow(o.deps)
@@ -440,18 +487,18 @@ func (o *Orchestrator) OnProductFinalReviewResult(ctx context.Context, notificat
 	}
 
 	fc := &core.FlowContext{
-		Ctx:                    ctx,
-		ProcessID:              processID,
-		WorkspaceID:            workspaceID,
-		TenantID:               tenantID,
-		UserID:                 userID,
-		UserName:               userName,
-		WorkitemID:             workitemID,
-		WorkitemTitle:          workitemTitle,
-		WorkspacePath:          workspacePath,
+		Ctx:                      ctx,
+		ProcessID:                processID,
+		WorkspaceID:              workspaceID,
+		TenantID:                 tenantID,
+		UserID:                   userID,
+		UserName:                 userName,
+		WorkitemID:               workitemID,
+		WorkitemTitle:            workitemTitle,
+		WorkspacePath:            workspacePath,
 		ProductFinalReviewResult: finalResult,
-		PausedNode:             processobject.StageProductFinalReview,
-		NotificationID:         notificationID,
+		PausedNode:               processobject.StageProductFinalReview,
+		NotificationID:           notificationID,
 	}
 
 	flow := flows.NewProductFlow(o.deps)

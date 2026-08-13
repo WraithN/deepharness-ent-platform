@@ -81,11 +81,15 @@ function buildJudgeStage(name: string, label: string): ProcessStage {
   return buildStage(name, label, OPERATOR_TYPE.HUMAN, STAGE_TYPE.JUDGE);
 }
 
+function buildGatewayStage(name: string, label: string): ProcessStage {
+  return buildStage(name, label, OPERATOR_TYPE.HUMAN, STAGE_TYPE.GATEWAY);
+}
+
 // ── AI 开发流程模板 ──
 
 const AI_DEV_TEMPLATE: FlowTemplate = {
   id: 'ai_dev',
-  name: '智能化需求开发流程',
+  name: 'AI需求开发流程',
   description: '从研发需求受理到代码交付的全自动 AI 开发流水线，覆盖需求评估、架构设计、AI 评审、人工审核、代码开发、代码评审与优化闭环。',
   type: 'ai_dev',
   stages: [
@@ -205,11 +209,11 @@ const AI_DEV_TEMPLATE: FlowTemplate = {
   ],
 };
 
-// ── 智能化测试资产流程模板 ──
+// ── AI测试资产流程模板 ──
 
 const AUTO_TEST_ASSET_TEMPLATE: FlowTemplate = {
   id: 'auto_test_asset',
-  name: '智能化测试资产流程',
+  name: 'AI测试资产流程',
   description: '聚焦测试资产产出：从测试需求到测试用例评审，AI 负责测试计划设计与用例生成，人工负责关键方案与用例评审。',
   type: 'auto_test_asset',
   stages: [
@@ -285,11 +289,11 @@ const AUTO_TEST_ASSET_TEMPLATE: FlowTemplate = {
   ],
 };
 
-// ── 智能化测试执行流程模板 ──
+// ── AI测试执行流程模板 ──
 
 const AUTO_TEST_EXECUTION_TEMPLATE: FlowTemplate = {
   id: 'auto_test_execution',
-  name: '智能化测试执行流程',
+  name: 'AI测试执行流程',
   description: '聚焦测试执行与闭环：在测试资产就绪后，AI 自动执行测试、分析缺陷并生成报告，人工负责准入评审。',
   type: 'auto_test_execution',
   stages: [
@@ -362,17 +366,20 @@ const AUTO_TEST_EXECUTION_TEMPLATE: FlowTemplate = {
 
 const PRODUCT_TEMPLATE: FlowTemplate = {
   id: 'product',
-  name: '智能化需求设计流程',
-  description: '轻量级 AI Coding 平台适用的产品工作向导：从需求头脑风暴到需求评审结束，AI 负责发散、调研、草案、PRD 与原型，人工负责方案自主复核、原型交互复核与最终需求评审。简易链路无原型时可直接从 PRD 进入需求评审。',
+  name: 'AI需求设计流程',
+  description: '轻量级 AI Coding 平台适用的产品工作向导：从需求头脑风暴到需求评审结束，AI 负责发散、拆解、调研、草案、AI复核、PRD 与原型，人工负责方案复核、原型评审与最终需求评审（三路驳回）。',
   type: 'product',
   stages: [
     buildAIStage(STAGE_NAMES.PRODUCT_BRAINSTORM, '需求头脑风暴', '产品助理'),
+    buildAIStage(STAGE_NAMES.PRODUCT_BREAKDOWN, '功能拆解', '产品助理'),
     buildAIStage(STAGE_NAMES.PRODUCT_RESEARCH, '方案调研与选型', '产品助理'),
     buildAIStage(STAGE_NAMES.PRODUCT_DRAFT, '草案输出', '产品助理'),
+    buildJudgeStage(STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW, 'AI草案复核'),
     buildJudgeStage(STAGE_NAMES.PRODUCT_REVIEW, '方案自主复核'),
+    buildGatewayStage(STAGE_NAMES.PRODUCT_AI_GATEWAY, 'AI设计决策'),
     buildAIStage(STAGE_NAMES.PRODUCT_PRD_WRITE, 'PRD初稿生成', '产品助理'),
-    buildAIStage(STAGE_NAMES.PRODUCT_PROTO_MAKE, '原型生成', '产品助理'),
-    buildJudgeStage(STAGE_NAMES.PRODUCT_PROTO_REVIEW, '原型交互复核'),
+    buildAIStage(STAGE_NAMES.PRODUCT_PROTO_MAKE, '原型初稿生成', '产品助理'),
+    buildJudgeStage(STAGE_NAMES.PRODUCT_PROTO_REVIEW, '原型+PRD联合复核'),
     buildHumanStage(STAGE_NAMES.PRODUCT_FINAL_REVIEW, '需求评审'),
   ],
   stageDetails: [
@@ -388,13 +395,24 @@ const PRODUCT_TEMPLATE: FlowTemplate = {
       command: '/grill-me',
     },
     {
+      name: STAGE_NAMES.PRODUCT_BREAKDOWN,
+      description: 'AI 将需求要点拆解为功能模块与子任务。',
+      input: '结构化需求要点文档。',
+      processing: 'AI 产品助理按功能域拆解为模块化任务清单。',
+      responsibleRule: 'AI 产品助理主导，产品经理确认',
+      aiCapability: '功能拆解、模块划分、任务结构化',
+      admission: '需求要点已产出',
+      deliverables: '功能拆解清单、模块关系图',
+      command: '/grill-me',
+    },
+    {
       name: STAGE_NAMES.PRODUCT_RESEARCH,
       description: '输入目标网址，AI 自动爬取网站并产出产品分析、功能列表、UI 设计与高仿原型。',
-      input: '目标网站 URL + 可选登录凭证。',
+      input: '目标网站 URL + 功能拆解清单 + 可选登录凭证。',
       processing: 'AI 爬取网站内容，分析产品功能与 UI 设计，生成分析文档与原型工程。',
       responsibleRule: 'AI 产品助理执行，产品经理审核',
       aiCapability: '网站爬取、产品分析、UI 还原、原型生成',
-      admission: '用户提供目标网址',
+      admission: '用户提供目标网址，功能已拆解',
       deliverables: '产品分析文档、功能列表、design.md、原型工程',
       command: '/prd-research',
     },
@@ -410,75 +428,99 @@ const PRODUCT_TEMPLATE: FlowTemplate = {
       command: '/prd-research',
     },
     {
+      name: STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW,
+      description: 'AI 自动复核方案草案的完整性、一致性与可行性。',
+      input: '初步业务方案草案。',
+      processing: 'AI 从完整性、一致性、可行性等维度自动审查草案并输出复核意见。',
+      responsibleRule: 'AI 产品助理自动执行',
+      aiCapability: '方案复核、一致性检查、可行性评估',
+      admission: '草案已产出',
+      deliverables: 'AI 复核报告（含问题清单与改进建议）',
+    },
+    {
       name: STAGE_NAMES.PRODUCT_REVIEW,
       description: '产品经理自主复核方案草案。',
-      input: '初步业务方案草案。',
+      input: '初步业务方案草案 + AI 复核报告。',
       processing: '产品经理复核方案合理性，决定通过或返回修订。',
       responsibleRule: '产品经理复核',
-      admission: '方案草案已产出',
+      admission: '方案草案与 AI 复核报告已产出',
       deliverables: '复核结论：通过 / 不通过',
     },
     {
-      name: STAGE_NAMES.PRODUCT_PRD_WRITE,
-      description: 'AI 根据方案生成结构化 PRD。',
-      input: '定稿方案。',
-      processing: 'AI 产品助理自动撰写结构化 PRD。',
-      responsibleRule: 'AI 产品助理',
-      aiCapability: '自动撰写 PRD、流程说明、验收标准',
+      name: STAGE_NAMES.PRODUCT_AI_GATEWAY,
+      description: 'AI 自主决策节点：仅需 PRD 即跳过原型直接写 PRD；需要原型则同时产生原型+PRD。两路并行、择一或全并行。',
+      input: '方案复核通过结论。',
+      processing: 'AI 根据需求复杂度与类型判断输出方案：仅 PRD 或 原型+PRD。两路独立并行，完成后汇入联合复核。',
+      responsibleRule: 'AI 产品助理自主决策',
+      aiCapability: '根据需求类型自动决策输出内容',
       admission: '方案复核通过',
-      deliverables: '结构化 PRD 文档',
-      command: '/prd-write',
+      deliverables: '决策结论（输出路径）',
     },
     {
       name: STAGE_NAMES.PRODUCT_PROTO_MAKE,
-      description: 'AI 根据 PRD 生成 UI 交互原型。',
-      input: '结构化 PRD 文档。',
-      processing: 'AI 根据 PRD 生成可运行的 UI 原型。',
+      description: 'AI 根据方案生成 UI 交互原型。',
+      input: '定稿方案。',
+      processing: 'AI 根据方案生成可运行的 UI 原型。与 PRD 生成并行，互不阻塞。',
       responsibleRule: 'AI 产品助理',
       aiCapability: '生成原型页面、交互说明、页面流程',
-      admission: 'PRD 已产出',
+      admission: 'AI 网关决策通过（原型路径）',
       deliverables: 'UI 交互原型',
       command: '/proto-make',
     },
     {
+      name: STAGE_NAMES.PRODUCT_PRD_WRITE,
+      description: 'AI 根据定稿方案生成结构化 PRD。',
+      input: '定稿方案。当原型未产出时，PRD 可独立生成；否则基于已有原型补充细节。',
+      processing: 'AI 产品助理自动撰写结构化 PRD。在上行与原型初稿生成并行执行，互不阻塞。',
+      responsibleRule: 'AI 产品助理',
+      aiCapability: '自动撰写 PRD、流程说明、验收标准',
+      admission: 'AI 网关决策通过（PRD 路径）',
+      deliverables: '结构化 PRD 文档',
+      command: '/prd-write',
+    },
+    {
       name: STAGE_NAMES.PRODUCT_PROTO_REVIEW,
-      description: '产品经理复核原型交互一致性与需求覆盖度。',
-      input: 'UI 交互原型 + 结构化 PRD。',
-      processing: '产品经理复核原型交互，决定通过或返回修订。',
-      responsibleRule: '产品经理复核',
-      admission: '原型已生成',
-      deliverables: '复核结论：通过 / 不通过',
+      description: '产品经理对原型+PRD 联合复核，检查交互一致性、需求覆盖度与方案合理性。',
+      input: 'UI 交互原型（可选） + 结构化 PRD + 定稿方案。',
+      processing: '产品经理复核原型交互与 PRD 逻辑，决定通过或退回草案重新构思。',
+      responsibleRule: '产品经理决策',
+      admission: '原型 和/或 PRD 已产出',
+      deliverables: '复核结论：通过 / 不通过（退回草案）',
       command: '/proto-make',
     },
     {
       name: STAGE_NAMES.PRODUCT_FINAL_REVIEW,
-      description: '最终需求评审，通过即定稿并一键启动 AI 开发。',
+      description: '最终需求评审，通过即定稿并一键启动 AI 开发。驳回则回到原型+PRD联合复核。',
       input: '通过复核的 PRD + 原型。',
-      processing: '产品经理组织相关方评审并决策，通过即定稿。',
+      processing: '产品经理组织相关方评审并决策，通过即定稿。支持按问题类型三路驳回。',
       responsibleRule: '产品经理组织评审并决策',
-      admission: 'PRD 已产出并复核通过',
+      admission: '原型评审通过 + PRD 已生成',
       deliverables: '需求定稿、开发排期输入',
     },
   ],
   responsibleRules: [
-    { role: '产品经理', items: ['方案自主复核', '原型交互复核', '需求评审'] },
-    { role: 'AI 产品助理', items: ['需求头脑风暴', '方案调研', '草案输出', 'PRD 生成', '原型生成'] },
+    { role: '产品经理', items: ['方案自主复核', '原型+PRD联合复核', '需求评审'] },
+    { role: 'AI 产品助理', items: ['需求头脑风暴', '功能拆解', '方案调研', '草案输出', 'AI草案复核', 'AI设计决策', 'PRD初稿生成', '原型初稿生成'] },
     { role: '设计师（可选）', items: ['原型视觉与交互调整'] },
   ],
   aiCapabilities: [
-    { role: 'AI 产品助理', items: ['需求头脑风暴与要点结构化', '方案调研、选型对比与草案输出', '自动生成结构化 PRD', '根据 PRD 生成可交互原型'] },
+    { role: 'AI 产品助理', items: ['需求头脑风暴与要点结构化', '功能拆解与模块划分', '方案调研、选型对比与草案输出', '方案草案自动复核', 'AI 自主决策输出路径', '根据方案生成可交互原型', '自动生成结构化 PRD'] },
   ],
   admissions: [
     '业务方或用户已提出原始需求',
     '方案自主复核通过',
-    'PRD 已产出（完整链路需原型交互复核通过）',
+    'AI 网关决策完成（输出路径已确定）',
+    '原型+PRD联合复核通过',
+    'PRD 已产出',
   ],
   deliverables: [
     '结构化需求要点',
+    '功能拆解清单',
     '业务方案与备选方案对比',
     '初步业务方案',
-    '结构化 PRD',
+    'AI 草案复核报告',
     'UI 交互原型（可选）',
+    '结构化 PRD',
     '需求定稿（通过即可一键启动 AI 开发）',
   ],
 };
@@ -724,7 +766,7 @@ export const FlowTemplateMarket: React.FC = () => {
       <div className="border-b border-border/50 pb-4">
         <h2 className="text-2xl font-bold tracking-tight">流程模板市场</h2>
         <p className="text-muted-foreground mt-1">
-          标准流水线知识库：浏览平台预置的智能化需求产品 / 研发 / 测试流程模板，点击卡片查看完整链路与节点说明。
+          标准流水线知识库：浏览平台预置的AI需求产品 / 研发 / 测试流程模板，点击卡片查看完整链路与节点说明。
         </p>
       </div>
       <FlowTemplateMarketContent />

@@ -117,8 +117,9 @@ func intentRecognitionPrompt(userInput string, commands []CommandConfig) string 
 
 // recognizeIntent 调用 LLM 识别用户意图。
 // 如果是闲聊，返回回复内容；如果是任务意图，返回匹配的指令。
+// agentKey 指定要使用的 agent 插件（如 claude-code），确保闲聊回复来自用户选的 agent 而非默认 opencode。
 // 调用失败时返回 error，调用方应 fallback 到正常流程。
-func recognizeIntent(ctx context.Context, aguiClient *client.AGUIClient, userInput string) (*IntentResult, error) {
+func recognizeIntent(ctx context.Context, aguiClient *client.AGUIClient, userInput, agentKey string) (*IntentResult, error) {
 	// 先用规则快速路径匹配常见任务关键字，避免每次意图识别都启动 agent run。
 	if result := ruleBasedClassify(userInput); result != nil {
 		return result, nil
@@ -127,12 +128,12 @@ func recognizeIntent(ctx context.Context, aguiClient *client.AGUIClient, userInp
 	commands := GetCommandConfigs()
 	prompt := intentRecognitionPrompt(userInput, commands)
 
-	log.Printf("[Intent] recognizing intent for input: %q", truncate(userInput, 80))
+	log.Printf("[Intent] recognizing intent for input: %q agentKey=%s", truncate(userInput, 80), agentKey)
 
 	// 限制 LLM 意图识别的等待时间，防止模型不可用时长时间阻塞请求。
 	llmCtx, cancel := context.WithTimeout(ctx, intentRecognitionTimeout)
 	defer cancel()
-	resp, err := aguiClient.QuickComplete(llmCtx, prompt)
+	resp, err := aguiClient.QuickComplete(llmCtx, prompt, agentKey)
 	if err != nil {
 		return nil, fmt.Errorf("intent recognition failed: %w", err)
 	}

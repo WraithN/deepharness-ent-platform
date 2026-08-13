@@ -191,7 +191,7 @@ func (s *DBFeishuService) dispatchGroupSummary(ev object.InboundEvent, workspace
 	card, cardErr := s.cardKit.CreateStreamingCard(ctx, ev.ChatID, "正在生成群聊总结...")
 	if cardErr != nil {
 		log.Printf("[Feishu] CardKit create failed, fallback to batch: %v", cardErr)
-		reply, err := s.aguiClient.QuickComplete(ctx, prompt, workspacePath)
+		reply, err := s.aguiClient.QuickComplete(ctx, prompt, "", workspacePath)
 		if err != nil {
 			return "", fmt.Errorf("group summary failed: %w", err)
 		}
@@ -279,7 +279,7 @@ func buildWorkspacePath(workspaceRoot, userID, workspaceID string) (string, erro
 func (s *DBFeishuService) dispatchOneShot(ev object.InboundEvent, prompt, workspacePath string) (string, error) {
 	ctx, cancel := s.dispatchContext()
 	defer cancel()
-	reply, err := s.aguiClient.QuickComplete(ctx, prompt, workspacePath)
+	reply, err := s.aguiClient.QuickComplete(ctx, prompt, "", workspacePath)
 	if err != nil {
 		return "", fmt.Errorf("一次性问答失败: %w", err)
 	}

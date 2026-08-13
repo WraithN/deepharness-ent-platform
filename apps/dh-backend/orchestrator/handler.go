@@ -3,9 +3,11 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	identityservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/identity/service"
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/handler"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/middleware"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/pkg/pathutil"
 )
@@ -18,12 +20,13 @@ type ProductFlowHandler struct {
 }
 
 // StartProductFlowRequest 启动产品流程请求
- type StartProductFlowRequest struct {
+type StartProductFlowRequest struct {
 	WorkspaceID   string `json:"workspaceId"`
 	TenantID      string `json:"tenantId"`
 	WorkitemID    string `json:"workitemId"`
 	WorkitemTitle string `json:"workitemTitle"`
 	WorkitemDesc  string `json:"workitemDesc"`
+	DocPath       string `json:"docPath,omitempty"`
 }
 
 // StartProductFlow 启动产品流程
@@ -69,9 +72,19 @@ func (h *ProductFlowHandler) StartProductFlow(w http.ResponseWriter, r *http.Req
 	}
 
 	// 流程在后台 goroutine 中异步执行，不能复用已被 HTTP 请求 cancel 的 context
-	h.Orchestrator.StartProductFlow(context.Background(), userID, userName, req.WorkspaceID, req.TenantID, req.WorkitemID, req.WorkitemTitle, req.WorkitemDesc, workspacePath)
+	processID, err := h.Orchestrator.StartProductFlow(context.Background(), userID, userName, req.WorkspaceID, req.TenantID, req.WorkitemID, req.WorkitemTitle, req.WorkitemDesc, req.DocPath, workspacePath)
+	if err != nil {
+		if errors.Is(err, ErrProductFlowInProgress) {
+			w.WriteHeader(http.StatusConflict)
+			writeProductFlowJSON(w, map[string]any{"code": handler.ErrCodeProductFlowInProgress, "message": err.Error()})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		writeProductFlowJSON(w, map[string]any{"code": handler.ErrCodeGeneral, "message": err.Error()})
+		return
+	}
 
-	writeProductFlowJSON(w, map[string]any{"code": 0, "message": "product flow started"})
+	writeProductFlowJSON(w, map[string]any{"code": 0, "message": "product flow started", "processId": processID})
 }
 
 func writeProductFlowJSON(w http.ResponseWriter, v any) {

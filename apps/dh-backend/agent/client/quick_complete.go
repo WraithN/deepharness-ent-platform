@@ -18,8 +18,9 @@ const intentRecognitionTimeout = 60 * time.Second
 // QuickComplete 向 agent 发送一条简短提示词，同步等待完整文本响应。
 // 用于意图识别等不需要工具调用的轻量 LLM 交互。
 // 内部创建临时 thread，消费完 SSE 事件后返回拼接的纯文本。
+// agentKey 指定要使用的 agent 插件（如 claude-code、opencode），为空时使用 client 默认值。
 // 可选 workspace 参数指定 agent 工作目录，不传时使用 gatewayd 默认路径。
-func (c *AGUIClient) QuickComplete(ctx context.Context, prompt string, workspace ...string) (string, error) {
+func (c *AGUIClient) QuickComplete(ctx context.Context, prompt, agentKey string, workspace ...string) (string, error) {
 	quickCtx, cancel := context.WithTimeout(ctx, intentRecognitionTimeout)
 	defer cancel()
 
@@ -38,6 +39,7 @@ func (c *AGUIClient) QuickComplete(ctx context.Context, prompt string, workspace
 		Context:        []agui.ContextItem{},
 		ForwardedProps: json.RawMessage(`{}`),
 		Workspace:      ws,
+		AgentKey:       agentKey,
 	}
 
 	_, events, err := c.Run(quickCtx, input)

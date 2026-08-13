@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS agent_runtimes (
     gatewayd_url VARCHAR(512) NOT NULL DEFAULT '',
     workspace_path VARCHAR(512) NOT NULL DEFAULT '',
     ip VARCHAR(64) NOT NULL DEFAULT '',
+    init_status VARCHAR(256) NOT NULL DEFAULT '',
     installed_agents JSONB NOT NULL DEFAULT '[]'::jsonb,
     sessions_7d BIGINT NOT NULL DEFAULT 0,
     sessions_1d BIGINT NOT NULL DEFAULT 0,

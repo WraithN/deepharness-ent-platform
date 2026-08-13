@@ -10,6 +10,9 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/orchestrator/prompts"
 )
 
+// requirementDescTruncateLen 需求评估通知正文中需求描述的最大长度（字节截断）。
+const requirementDescTruncateLen = 200
+
 // RequirementAskForAcceptNode 需求受理（人工节点）
 type RequirementAskForAcceptNode struct {
 	core.BaseNode
@@ -38,81 +41,57 @@ func (n *RequirementAskForAcceptNode) Output(fc *core.FlowContext) error {
 	return nil
 }
 
-// RequirementEvalNode 需求评估（人工节点，条件分支）
-type RequirementEvalNode struct {
-	core.BaseNode
-}
+// NewRequirementEvalNode 创建需求评估人工节点（条件分支）。
+// 迁移为 core.HumanReviewNode：通知前通过 PreProcessor 执行 AI 复杂度预评估，
+// 评审结果由 fc.NeedArchDesign 决定路由（复杂走架构设计，简单直接开发）。
+func NewRequirementEvalNode(deps *core.FlowDeps) *core.HumanReviewNode {
+	return core.NewHumanReviewNode(deps, core.HumanReviewConfig{
+		StageName:  processobject.StageRequirementEval,
+		OutputDesc: "评估需求复杂度，决定是否需要架构设计",
+		PassDesc:   "需求较复杂，需要进行架构设计",
+		FailDesc:   "需求较简单，直接进入开发",
 
-func (n *RequirementEvalNode) Input(fc *core.FlowContext) error {
-	fc.UpdateStageFull(processobject.StageRequirementEval, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusInProgress,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		InputDesc:    fmt.Sprintf("需求「%s」", fc.WorkitemTitle),
-		OutputDesc:   "评估需求复杂度，决定是否需要架构设计",
-	})
-	return nil
-}
+		NotifType:     notificationobject.TypeRequirementEvalRequired,
+		NotifTitleFmt: "需求评估: %s",
 
-func (n *RequirementEvalNode) Processor(fc *core.FlowContext) error {
-	existing, _ := n.Deps.NotificationSvc.ListByTypeAndData(fc.Ctx, fc.TenantID, notificationobject.TypeRequirementEvalRequired, "workitemId", fc.WorkitemID)
-	for _, notif := range existing {
-		if notif.ActionStatus == notificationobject.ActionPending {
-			log.Printf("[RequirementEvalNode] workitem %s already has pending requirement_eval notification, skip", fc.WorkitemID)
-			return core.ErrPauseFlow
-		}
-	}
-
-	evalResult := n.runAIEval(fc)
-
-	desc := fc.WorkitemDesc
-	if len(desc) > 200 {
-		desc = desc[:200] + "..."
-	}
-
-	body := fmt.Sprintf("需求「%s」已受理，请评估是否需要架构设计。\n\n描述: %s", fc.WorkitemTitle, desc)
-	if evalResult != "" {
-		body += fmt.Sprintf("\n\n---\nAI 评估参考：\n%s", evalResult)
-	}
-
-	_, err := n.Deps.NotificationSvc.Create(notificationobject.CreateNotificationRequest{
-		UserID:      fc.UserID,
-		TenantID:    fc.TenantID,
-		WorkspaceID: fc.WorkspaceID,
-		Type:        notificationobject.TypeRequirementEvalRequired,
-		Title:       fmt.Sprintf("需求评估: %s", fc.WorkitemTitle),
-		Body:        body,
-		ActionType:  notificationobject.ActionApproveCodeOptimize,
-		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
-		Data: map[string]any{
-			"notificationType":     notificationobject.TypeRequirementEvalRequired,
-			"workitemId":           fc.WorkitemID,
-			"workitemTitle":        fc.WorkitemTitle,
-			"workitemDesc":         fc.WorkitemDesc,
-			"processId":            fc.ProcessID,
-			"workspacePath":        fc.WorkspacePath,
-			"workspaceId":          fc.WorkspaceID,
-			"tenantId":             fc.TenantID,
-			"userName":             fc.UserName,
-			"requirementEvalResult": evalResult,
+		InputDescBuilder: func(fc *core.FlowContext) string {
+			return fmt.Sprintf("需求「%s」", fc.WorkitemTitle)
 		},
-	})
-	if err != nil {
-		log.Printf("[RequirementEvalNode] create notification failed: %v", err)
-	}
+		// NeedArchDesign 为 bool：映射为 pass（需要架构设计）/ reject（直接开发）。
+		// 基类 NextNode/Output 均以 ResultGetter=="pass" 判定，故 pass 对应 StageArchDesign。
+		ResultGetter: func(fc *core.FlowContext) string {
+			if fc.NeedArchDesign {
+				return "pass"
+			}
+			return "reject"
+		},
+		ExtraData: func(fc *core.FlowContext) map[string]any {
+			return map[string]any{
+				"workitemDesc":          fc.WorkitemDesc,
+				"requirementEvalResult": fc.RequirementEvalResult,
+			}
+		},
+		PassNodeName: processobject.StageArchDesign,
+		FailNodeName: processobject.StageDevelopment,
 
-	return core.ErrPauseFlow
+		DedupCheckType: notificationobject.TypeRequirementEvalRequired,
+		PreProcessor: func(fc *core.FlowContext) error {
+			return evalRequirementComplexity(deps, fc)
+		},
+		BodyBuilder: buildRequirementEvalBody,
+	})
 }
 
-func (n *RequirementEvalNode) runAIEval(fc *core.FlowContext) string {
+// evalRequirementComplexity 通知前预评估：调用 AI 判断需求复杂度，结果写入 fc.RequirementEvalResult。
+// AI 调用失败不阻断流程（沿用旧行为），仅记录日志。
+func evalRequirementComplexity(deps *core.FlowDeps, fc *core.FlowContext) error {
 	prompt := prompts.BuildRequirementEvalPrompt(fc.WorkitemTitle, fc.WorkitemDesc)
 	log.Printf("[RequirementEvalNode] AI eval prompt length=%d", len(prompt))
 
-	_, events, err := n.Deps.AGUIClient.Run(fc.Ctx, core.BuildRunInput("", prompt, fc.WorkspacePath))
+	_, events, err := deps.AGUIClient.Run(fc.Ctx, core.BuildRunInput("", prompt, fc.WorkspacePath))
 	if err != nil {
 		log.Printf("[RequirementEvalNode] AI eval Run failed: %v", err)
-		return ""
+		return nil
 	}
 
 	result := core.ConsumeEvents(events)
@@ -122,34 +101,23 @@ func (n *RequirementEvalNode) runAIEval(fc *core.FlowContext) string {
 
 	if result.Text == "" {
 		log.Printf("[RequirementEvalNode] AI eval returned empty text")
-		return ""
+		return nil
 	}
 
 	fc.RequirementEvalResult = result.Text
 	log.Printf("[RequirementEvalNode] AI eval result length=%d", len(result.Text))
-	return result.Text
-}
-
-func (n *RequirementEvalNode) Output(fc *core.FlowContext) error {
-	var outputDesc string
-	if fc.NeedArchDesign {
-		outputDesc = "需求较复杂，需要进行架构设计"
-	} else {
-		outputDesc = "需求较简单，直接进入开发"
-	}
-	fc.UpdateStageFull(processobject.StageRequirementEval, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusCompleted,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		OutputDesc:   outputDesc,
-	})
 	return nil
 }
 
-func (n *RequirementEvalNode) NextNode(fc *core.FlowContext) string {
-	if fc.NeedArchDesign {
-		return processobject.StageArchDesign
+// buildRequirementEvalBody 构造需求评估通知正文：需求描述（超长截断）+ 可选 AI 评估参考。
+func buildRequirementEvalBody(fc *core.FlowContext) string {
+	desc := fc.WorkitemDesc
+	if len(desc) > requirementDescTruncateLen {
+		desc = desc[:requirementDescTruncateLen] + "..."
 	}
-	return processobject.StageDevelopment
+	body := fmt.Sprintf("需求「%s」已受理，请评估是否需要架构设计。\n\n描述: %s", fc.WorkitemTitle, desc)
+	if fc.RequirementEvalResult != "" {
+		body += fmt.Sprintf("\n\n---\nAI 评估参考：\n%s", fc.RequirementEvalResult)
+	}
+	return body
 }

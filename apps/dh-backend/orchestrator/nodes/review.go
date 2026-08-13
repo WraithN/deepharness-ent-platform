@@ -112,85 +112,36 @@ func (n *ReviewNode) Output(fc *core.FlowContext) error {
 	return nil
 }
 
-// HumanReviewNode 人工复审（人工节点，条件分支）
-type HumanReviewNode struct {
-	core.BaseNode
-}
+// NewHumanReviewNode 创建人工复审节点（条件分支）。
+// 迁移为 core.HumanReviewNode：审批通过完成开发，不通过进行代码优化后重新评审。
+func NewHumanReviewNode(deps *core.FlowDeps) *core.HumanReviewNode {
+	return core.NewHumanReviewNode(deps, core.HumanReviewConfig{
+		StageName:  processobject.StageHumanReview,
+		InputDesc:  "代码评审报告",
+		OutputDesc: "待开发人员审批评审报告并提供优化指示",
 
-func (n *HumanReviewNode) Input(fc *core.FlowContext) error {
-	fc.UpdateStageFull(processobject.StageHumanReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusInProgress,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		InputDesc:    "代码评审报告",
-		OutputDesc:   "待开发人员审批评审报告并提供优化指示",
-		Prompt:       fc.ReviewResult,
-	})
-	return nil
-}
+		NotifType:     notificationobject.TypeHumanReviewRequired,
+		NotifTitleFmt: "代码复审待审批: %s",
+		NotifBodyFmt:  "需求「%s」的代码评审已完成，请查看评审报告。审批通过则完成开发，审批不通过将进行代码优化后重新评审。",
 
-func (n *HumanReviewNode) Processor(fc *core.FlowContext) error {
-	existing, _ := n.Deps.NotificationSvc.ListByTypeAndData(fc.Ctx, fc.TenantID, notificationobject.TypeHumanReviewRequired, "workitemId", fc.WorkitemID)
-	for _, notif := range existing {
-		if notif.ActionStatus == notificationobject.ActionPending {
-			log.Printf("[HumanReviewNode] workitem %s already has pending human_review notification, skip", fc.WorkitemID)
-			return core.ErrPauseFlow
-		}
-	}
-
-	_, err := n.Deps.NotificationSvc.Create(notificationobject.CreateNotificationRequest{
-		UserID:      fc.UserID,
-		TenantID:    fc.TenantID,
-		WorkspaceID: fc.WorkspaceID,
-		Type:        notificationobject.TypeHumanReviewRequired,
-		Title:       fmt.Sprintf("代码复审待审批: %s", fc.WorkitemTitle),
-		Body:        fmt.Sprintf("需求「%s」的代码评审已完成，请查看评审报告。审批通过则完成开发，审批不通过将进行代码优化后重新评审。", fc.WorkitemTitle),
-		ActionType:  notificationobject.ActionApproveCodeOptimize,
-		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
-		Data: map[string]any{
-			"notificationType": notificationobject.TypeHumanReviewRequired,
-			"workitemId":       fc.WorkitemID,
-			"workitemTitle":    fc.WorkitemTitle,
-			"processId":        fc.ProcessID,
-			"sessionId":        fc.DevSessionID,
-			"threadId":         fc.DevThreadID,
-			"reviewReport":     fc.ReviewResult,
-			"workspacePath":    fc.WorkspacePath,
-			"workspaceId":      fc.WorkspaceID,
-			"tenantId":         fc.TenantID,
-			"userName":         fc.UserName,
+		PromptGetter: func(fc *core.FlowContext) string { return fc.ReviewResult },
+		ResultGetter: func(fc *core.FlowContext) string { return fc.ApprovalResult },
+		ExtraData: func(fc *core.FlowContext) map[string]any {
+			return map[string]any{
+				"sessionId":    fc.DevSessionID,
+				"threadId":     fc.DevThreadID,
+				"reviewReport": fc.ReviewResult,
+			}
 		},
+		OutputDescBuilder: func(fc *core.FlowContext) string {
+			if fc.ApprovalResult == "pass" {
+				return fmt.Sprintf("%s审批通过，开发完成", fc.UserName)
+			}
+			return fmt.Sprintf("%s审批不通过，需进行代码优化", fc.UserName)
+		},
+		PassNodeName: processobject.StageDevComplete,
+		FailNodeName: processobject.StageCodeOptimize,
+
+		DedupCheckType: notificationobject.TypeHumanReviewRequired,
 	})
-	if err != nil {
-		log.Printf("[HumanReviewNode] create notification failed: %v", err)
-	}
-
-	return core.ErrPauseFlow
-}
-
-func (n *HumanReviewNode) Output(fc *core.FlowContext) error {
-	var outputDesc string
-	if fc.ApprovalResult == "pass" {
-		outputDesc = fmt.Sprintf("%s审批通过，开发完成", fc.UserName)
-	} else {
-		outputDesc = fmt.Sprintf("%s审批不通过，需进行代码优化", fc.UserName)
-	}
-	fc.UpdateStageFull(processobject.StageHumanReview, processobject.UpdateStageRequest{
-		Status:       processobject.StageStatusCompleted,
-		OperatorType: processobject.OperatorTypeHuman,
-		OperatorName: fc.UserName,
-		OperatorID:   fc.UserID,
-		InputDesc:    "代码评审报告",
-		OutputDesc:   outputDesc,
-		Prompt:       fc.ReviewResult,
-	})
-	return nil
-}
-
-func (n *HumanReviewNode) NextNode(fc *core.FlowContext) string {
-	if fc.ApprovalResult == "pass" {
-		return processobject.StageDevComplete
-	}
-	return processobject.StageCodeOptimize
 }

@@ -12,12 +12,12 @@ func NewAutoTestFlow(deps *core.FlowDeps) *core.Flow {
 	return core.NewFlow("AutoTestFlow", deps,
 		&nodes.TestRequirementNode{BaseNode: core.NewBaseNode(processobject.StageTestRequirement, core.NodeTypeHuman, deps)},
 		nodes.NewTestPlanDesignNode(deps),
-		&nodes.TestPlanReviewNode{BaseNode: core.NewBaseNode(processobject.StageTestPlanReview, core.NodeTypeHuman, deps)},
+		nodes.NewTestPlanReviewNode(deps),
 		nodes.NewTestCaseGenNode(deps),
-		&nodes.TestCaseReviewNode{BaseNode: core.NewBaseNode(processobject.StageTestCaseReview, core.NodeTypeHuman, deps)},
+		nodes.NewTestCaseReviewNode(deps),
 		nodes.NewTestAutoExecNode(deps),
 		nodes.NewTestDefectVerifyNode(deps),
-		&nodes.TestAdmissionReviewNode{BaseNode: core.NewBaseNode(processobject.StageTestAdmissionReview, core.NodeTypeHuman, deps)},
+		nodes.NewTestAdmissionReviewNode(deps),
 		&nodes.TestCompleteNode{BaseNode: core.NewBaseNode(processobject.StageTestComplete, core.NodeTypeHuman, deps)},
 	)
 }
@@ -31,9 +31,9 @@ func NewAutoTestAssetFlow(deps *core.FlowDeps) *core.Flow {
 			ProcessType: processobject.ProcessTypeAutoTestAsset,
 		},
 		nodes.NewTestPlanDesignNode(deps),
-		&nodes.TestPlanReviewNode{BaseNode: core.NewBaseNode(processobject.StageTestPlanReview, core.NodeTypeHuman, deps)},
+		nodes.NewTestPlanReviewNode(deps),
 		nodes.NewTestCaseGenNode(deps),
-		&nodes.TestCaseReviewNode{BaseNode: core.NewBaseNode(processobject.StageTestCaseReview, core.NodeTypeHuman, deps)},
+		nodes.NewTestCaseReviewNode(deps),
 		&nodes.TestCompleteNode{BaseNode: core.NewBaseNode(processobject.StageTestComplete, core.NodeTypeHuman, deps)},
 	)
 }
@@ -48,7 +48,7 @@ func NewAutoTestExecutionFlow(deps *core.FlowDeps) *core.Flow {
 		},
 		nodes.NewTestAutoExecNode(deps),
 		nodes.NewTestDefectVerifyNode(deps),
-		&nodes.TestAdmissionReviewNode{BaseNode: core.NewBaseNode(processobject.StageTestAdmissionReview, core.NodeTypeHuman, deps)},
+		nodes.NewTestAdmissionReviewNode(deps),
 		&nodes.TestCompleteNode{BaseNode: core.NewBaseNode(processobject.StageTestComplete, core.NodeTypeHuman, deps)},
 	)
 }

@@ -48,6 +48,21 @@ func (s *MemoryProcessStore) ListByWorkspace(_ context.Context, workspaceID stri
 	return result, nil
 }
 
+func (s *MemoryProcessStore) ListByWorkitemAndDoc(_ context.Context, workitemID, sourceDocPath string) ([]object.Process, error) {
+	if sourceDocPath == "" {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var result []object.Process
+	for _, p := range s.items {
+		if p.WorkitemID == workitemID && p.SourceDocPath == sourceDocPath {
+			result = append(result, p)
+		}
+	}
+	return result, nil
+}
+
 func (s *MemoryProcessStore) Update(_ context.Context, id string, p object.Process) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

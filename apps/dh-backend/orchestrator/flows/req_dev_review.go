@@ -11,13 +11,13 @@ import (
 func NewReqDevAndReviewFlowLoop(deps *core.FlowDeps) *core.Flow {
 	return core.NewFlow("ReqDevAndReviewFlowLoop", deps,
 		&nodes.RequirementAskForAcceptNode{BaseNode: core.NewBaseNode(processobject.StageRequirement, core.NodeTypeHuman, deps)},
-		&nodes.RequirementEvalNode{BaseNode: core.NewBaseNode(processobject.StageRequirementEval, core.NodeTypeHuman, deps)},
+		nodes.NewRequirementEvalNode(deps),
 		nodes.NewArchDesignNode(deps),
 		&nodes.AiEvalNode{BaseNode: core.NewBaseNode(processobject.StageAIEval, core.NodeTypeAI, deps)},
-		&nodes.HumanAuditNode{BaseNode: core.NewBaseNode(processobject.StageHumanAudit, core.NodeTypeHuman, deps)},
+		nodes.NewHumanAuditNode(deps),
 		nodes.NewDevelopmentNode(deps),
 		&nodes.ReviewNode{BaseNode: core.NewBaseNode(processobject.StageReview, core.NodeTypeAI, deps)},
-		&nodes.HumanReviewNode{BaseNode: core.NewBaseNode(processobject.StageHumanReview, core.NodeTypeHuman, deps)},
+		nodes.NewHumanReviewNode(deps),
 		nodes.NewCodeOptimizeNode(deps),
 		&nodes.DevCompleteNode{BaseNode: core.NewBaseNode(processobject.StageDevComplete, core.NodeTypeHuman, deps)},
 	)

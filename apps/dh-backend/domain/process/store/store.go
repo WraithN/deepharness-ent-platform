@@ -11,5 +11,6 @@ type ProcessStore interface {
 	Create(ctx context.Context, p object.Process) error
 	GetByID(ctx context.Context, id string) (object.Process, error)
 	ListByWorkspace(ctx context.Context, workspaceID string) ([]object.Process, error)
+	ListByWorkitemAndDoc(ctx context.Context, workitemID, sourceDocPath string) ([]object.Process, error)
 	Update(ctx context.Context, id string, p object.Process) error
 }
