@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/process/object"
@@ -27,12 +28,15 @@ type ProcessService interface {
 	Create(ctx context.Context, req object.CreateProcessRequest) (object.Process, error)
 	GetByID(ctx context.Context, id string) (object.Process, error)
 	ListByWorkspace(ctx context.Context, workspaceID string) ([]object.Process, error)
+	ListByWorkitemAndDoc(ctx context.Context, workitemID, sourceDocPath string) ([]object.Process, error)
+	HasInProgress(ctx context.Context, workitemID, sourceDocPath string) (*object.Process, error)
 	UpdateStage(ctx context.Context, processID string, stageName string, req object.UpdateStageRequest) (object.Process, error)
 }
 
 // ProcessServiceImpl 流程服务实现
 type ProcessServiceImpl struct {
 	store store.ProcessStore
+	mu    sync.Mutex // 保护 Create/UpdateStage 的 read-modify-write，防止并行分支并发更新丢失
 }
 
 // NewProcessService 创建流程服务
@@ -41,16 +45,19 @@ func NewProcessService(s store.ProcessStore) *ProcessServiceImpl {
 }
 
 func (s *ProcessServiceImpl) Create(_ context.Context, req object.CreateProcessRequest) (object.Process, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	now := time.Now()
 	p := object.Process{
-		ID:          idutil.GenerateID(),
-		WorkspaceID: req.WorkspaceID,
-		WorkitemID:  req.WorkitemID,
-		Title:       req.Title,
-		Type:        req.Type,
-		Stages:      req.Stages,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:            idutil.GenerateID(),
+		WorkspaceID:   req.WorkspaceID,
+		WorkitemID:    req.WorkitemID,
+		Title:         req.Title,
+		SourceDocPath: req.SourceDocPath,
+		Type:          req.Type,
+		Stages:        req.Stages,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 	if err := s.store.Create(context.Background(), p); err != nil {
 		return object.Process{}, err
@@ -101,7 +108,35 @@ func migrateStages(p *object.Process) {
 	}
 }
 
+func (s *ProcessServiceImpl) ListByWorkitemAndDoc(_ context.Context, workitemID, sourceDocPath string) ([]object.Process, error) {
+	return s.store.ListByWorkitemAndDoc(context.Background(), workitemID, sourceDocPath)
+}
+
+func (s *ProcessServiceImpl) HasInProgress(_ context.Context, workitemID, sourceDocPath string) (*object.Process, error) {
+	list, err := s.store.ListByWorkitemAndDoc(context.Background(), workitemID, sourceDocPath)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		if hasActiveStage(&list[i]) {
+			return &list[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func hasActiveStage(p *object.Process) bool {
+	for _, s := range p.Stages {
+		if s.Status == object.StageStatusPending || s.Status == object.StageStatusInProgress {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *ProcessServiceImpl) UpdateStage(_ context.Context, processID string, stageName string, req object.UpdateStageRequest) (object.Process, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	p, err := s.store.GetByID(context.Background(), processID)
 	if err != nil {
 		return object.Process{}, err
