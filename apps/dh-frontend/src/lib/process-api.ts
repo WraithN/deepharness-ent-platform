@@ -85,7 +85,6 @@ export const STAGE_NAMES = {
   PRODUCT_REVIEW: 'product_review',
   PRODUCT_AI_GATEWAY: 'product_ai_gateway',
   PRODUCT_PROTO_MAKE: 'product_proto_make',
-  PRODUCT_AI_PROTO_REVIEW: 'product_ai_proto_review',
   PRODUCT_PROTO_REVIEW: 'product_proto_review',
   PRODUCT_PRD_WRITE: 'product_prd_write',
   PRODUCT_FINAL_REVIEW: 'product_final_review',
