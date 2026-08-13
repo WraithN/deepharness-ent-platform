@@ -413,7 +413,7 @@ const PRODUCT_TEMPLATE: FlowTemplate = {
       responsibleRule: 'AI 产品助理执行，产品经理审核',
       aiCapability: '网站爬取、产品分析、UI 还原、原型生成',
       admission: '用户提供目标网址，功能已拆解',
-      deliverables: '产品分析文档、功能列表、design.md、原型工程',
+      deliverables: '竞品调研产品整体分析、竞品调研产品功能列表、竞品调研产品UI设计分析、高仿原型',
       command: '/prd-research',
     },
     {

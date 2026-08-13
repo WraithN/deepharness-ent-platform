@@ -11,6 +11,7 @@ import { TaskListView, type TaskItemData } from './TaskListView';
 import { ToolCallView } from './ToolCallView';
 import { ThinkingCard } from './ThinkingCard';
 import { PrototypeCard } from './PrototypeCard';
+import { ResearchPrototypeCard } from './ResearchPrototypeCard';
 import { UserStoryCard, parseUserStoryFromText } from './UserStoryCard';
 import type { UserStoryData } from './UserStoryCard';
 import { RequirementBreakdownCard, useRequirementBreakdownData } from './RequirementBreakdownCard';
@@ -32,6 +33,8 @@ import {
 // （原始文本含 [[FILE:..]]/[[PROJECT:..]] 等标记，渲染时会被剥离，导致短内容误判为超长）。
 const TEXT_COLLAPSE_MAX_HEIGHT_PX = 215;
 const PROTOTYPE_DIR_SEGMENT = '/products/prototypes/';
+// /prd-research 产出的高仿原型目录段：路径形如 .../pm-jobs/prd-research/{标识}/prototype。
+const RESEARCH_PROTOTYPE_SEGMENT = '/pm-jobs/prd-research/';
 // 匹配需求拆分相关文件：路径中包含 req-breakdown 且以 .md/.json 结尾。
 const REQ_BREAKDOWN_FILE_REGEX = /req-breakdown.*\.(md|json)$/i;
 const REQ_BREAKDOWN_JSON_FILE_REGEX = /req-breakdown.*\.json$/i;
@@ -298,6 +301,11 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     }
   }
   const prototypeRootPaths = Array.from(prototypeRootMap.keys());
+
+  // /prd-research 高仿原型：路径含 /pm-jobs/prd-research/ 的 PROJECT 标记单独渲染高仿原型卡片，
+  // 不当作普通工程卡片，避免出现「查看 Diff / 提交修改」等 Git 操作。
+  const researchPrototypePaths = projectPaths.filter(p => p.includes(RESEARCH_PROTOTYPE_SEGMENT));
+
   // /proto-make 等指令的结果应只展示原型卡片；若当前消息已识别出原型工程，
   // 强制屏蔽同消息内的普通工程卡片和文件附件，避免一个指令产出多个卡片。
   const hasPrototypeCards = prototypeRootPaths.length > 0;
@@ -305,7 +313,9 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     ? []
     : projectPaths.filter(p => {
         const root = getPrototypeRootPath(p);
-        return !root || !prototypeRootMap.has(root);
+        if (root && prototypeRootMap.has(root)) return false;
+        if (p.includes(RESEARCH_PROTOTYPE_SEGMENT)) return false;
+        return true;
       });
   const nonPrototypeFileAttachments = hasPrototypeCards
     ? []
@@ -518,6 +528,16 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
                   workitemId={resolvedWorkitemId}
                   onPreview={onPrototypePreview}
                 />
+              ))}
+            </div>
+          )}
+
+          {/* 竞品调研高仿原型卡片：/prd-research 产物，仅预览原型 + 查看工程，不含 Git 操作。
+              生成未完成时不展示。 */}
+          {researchPrototypePaths.length > 0 && !isRunning && (
+            <div className="px-3 pb-2 flex flex-col gap-2">
+              {researchPrototypePaths.map((rootPath) => (
+                <ResearchPrototypeCard key={rootPath} path={rootPath} onPreview={onProjectPreview} />
               ))}
             </div>
           )}

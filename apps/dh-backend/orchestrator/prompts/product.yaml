@@ -83,15 +83,15 @@ product_research: |
 
   【文件输出要求】
   1. 在 {{.WorkspacePath}}/pm-jobs/prd-research/ 目录下创建本次任务目录，目录名使用网站域名或简短英文标识。
-  2. 必须生成以下四个产物：
-     - 产品分析文档：{{.WorkspacePath}}/pm-jobs/prd-research/{标识}/产品分析.md
-     - 功能列表：{{.WorkspacePath}}/pm-jobs/prd-research/{标识}/功能列表.md
-     - UI 设计文档：{{.WorkspacePath}}/pm-jobs/prd-research/{标识}/design.md
+  2. 必须生成以下四个产物（文件名中的 {产品名} 替换为目标产品的实际名称，例如「竞品调研-PingCode产品整体分析.md」）：
+     - 产品分析文档：{{.WorkspacePath}}/pm-jobs/prd-research/{标识}/竞品调研-{产品名}产品整体分析.md
+     - 功能列表：{{.WorkspacePath}}/pm-jobs/prd-research/{标识}/竞品调研-{产品名}产品功能列表.md
+     - UI 设计文档：{{.WorkspacePath}}/pm-jobs/prd-research/{标识}/竞品调研-{产品名}产品UI设计分析.md
      - 原型项目：{{.WorkspacePath}}/pm-jobs/prd-research/{标识}/prototype/
 
-  3. 产品分析.md：产品定位与目标用户、核心功能概述、信息架构、关键页面与交互流程、商业模式分析、竞品差异化分析、优缺点总结与改进建议。
-  4. 功能列表.md：表格形式，含功能名称、功能描述、优先级、所在页面、交互说明。
-  5. design.md：设计风格概述、色彩系统、字体与字号规范、间距与圆角规范、组件规范、关键页面布局说明。
+  3. 竞品调研-{产品名}产品整体分析.md：产品定位与目标用户、核心功能概述、信息架构、关键页面与交互流程、商业模式分析、竞品差异化分析、优缺点总结与改进建议。
+  4. 竞品调研-{产品名}产品功能列表.md：表格形式，含功能名称、功能描述、优先级、所在页面、交互说明。
+  5. 竞品调研-{产品名}产品UI设计分析.md：设计风格概述、色彩系统、字体与字号规范、间距与圆角规范、组件规范、关键页面布局说明。
   6. 原型：React 18 + TypeScript + Tailwind CSS + Vite，mock 数据还原真实数据结构，data-dh-id 标注，pnpm install && pnpm build。
 
   【输出标记】
