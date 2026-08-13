@@ -82,6 +82,7 @@ const STAGE_STATUS_LABELS: Record<string, string> = {
   [STAGE_STATUS.IN_PROGRESS]: '进行中',
   [STAGE_STATUS.COMPLETED]: '已完成',
   [STAGE_STATUS.FAILED]: '失败',
+  [STAGE_STATUS.SKIPPED]: '已跳过',
 };
 
 const API_STATUS_TO_UI: Record<string, string> = {
@@ -111,6 +112,7 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | '
   [STAGE_STATUS.IN_PROGRESS]: 'secondary',
   [STAGE_STATUS.FAILED]: 'destructive',
   [STAGE_STATUS.PENDING]: 'outline',
+  [STAGE_STATUS.SKIPPED]: 'outline',
 };
 
 type StatusIcon = React.FC<React.SVGProps<SVGSVGElement>>;
@@ -120,6 +122,7 @@ const STATUS_ICON: Record<string, StatusIcon> = {
   [STAGE_STATUS.IN_PROGRESS]: Loader2,
   [STAGE_STATUS.COMPLETED]: CheckCircle2,
   [STAGE_STATUS.FAILED]: XCircle,
+  [STAGE_STATUS.SKIPPED]: Circle,
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -127,6 +130,7 @@ const STATUS_COLOR: Record<string, string> = {
   [STAGE_STATUS.IN_PROGRESS]: 'text-blue-500',
   [STAGE_STATUS.COMPLETED]: 'text-emerald-500',
   [STAGE_STATUS.FAILED]: 'text-red-500',
+  [STAGE_STATUS.SKIPPED]: 'text-slate-400',
 };
 
 const STATUS_BORDER: Record<string, string> = {
@@ -134,6 +138,7 @@ const STATUS_BORDER: Record<string, string> = {
   [STAGE_STATUS.IN_PROGRESS]: 'border-blue-200 dark:border-blue-800',
   [STAGE_STATUS.COMPLETED]: 'border-emerald-200 dark:border-emerald-800',
   [STAGE_STATUS.FAILED]: 'border-red-200 dark:border-red-800',
+  [STAGE_STATUS.SKIPPED]: 'border-slate-200 dark:border-slate-800',
 };
 
 const STATUS_BG: Record<string, string> = {
@@ -141,6 +146,7 @@ const STATUS_BG: Record<string, string> = {
   [STAGE_STATUS.IN_PROGRESS]: 'bg-blue-50 dark:bg-blue-950/40',
   [STAGE_STATUS.COMPLETED]: 'bg-emerald-50 dark:bg-emerald-950/40',
   [STAGE_STATUS.FAILED]: 'bg-red-50 dark:bg-red-950/40',
+  [STAGE_STATUS.SKIPPED]: 'bg-slate-50 dark:bg-slate-950/40',
 };
 
 const SCROLL_OFFSET_Y = 100;
@@ -785,11 +791,13 @@ const PrevOutputSection: React.FC<{ stage: ProcessStage; workitem: WorkItemDTO |
           </div>
         </div>
       );
-    // 产品流程：上一步产物存储在当前阶段的 prompt 中
+    case STAGE_NAMES.PRODUCT_BREAKDOWN:
     case STAGE_NAMES.PRODUCT_RESEARCH:
     case STAGE_NAMES.PRODUCT_DRAFT:
-    case STAGE_NAMES.PRODUCT_PRD_WRITE:
+    case STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW:
+    case STAGE_NAMES.PRODUCT_AI_GATEWAY:
     case STAGE_NAMES.PRODUCT_PROTO_MAKE:
+    case STAGE_NAMES.PRODUCT_PRD_WRITE:
     case STAGE_NAMES.PRODUCT_FINAL_REVIEW:
       if (!stage.prompt) return null;
       return (
@@ -914,9 +922,12 @@ const StageInputContent: React.FC<StageInputContentProps> = ({ stage, workitem, 
 // 产品流程阶段名称集合，用于区分 AI 会话展示与交付物卡片
 const PRODUCT_STAGE_NAMES: string[] = [
   STAGE_NAMES.PRODUCT_BRAINSTORM,
+  STAGE_NAMES.PRODUCT_BREAKDOWN,
   STAGE_NAMES.PRODUCT_RESEARCH,
   STAGE_NAMES.PRODUCT_DRAFT,
+  STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW,
   STAGE_NAMES.PRODUCT_REVIEW,
+  STAGE_NAMES.PRODUCT_AI_GATEWAY,
   STAGE_NAMES.PRODUCT_PRD_WRITE,
   STAGE_NAMES.PRODUCT_PROTO_MAKE,
   STAGE_NAMES.PRODUCT_PROTO_REVIEW,
