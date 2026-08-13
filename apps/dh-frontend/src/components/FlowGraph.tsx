@@ -9,6 +9,7 @@ const STATUS_STROKE: Record<string, string> = {
   [STAGE_STATUS.IN_PROGRESS]: '#3b82f6',
   [STAGE_STATUS.COMPLETED]: '#10b981',
   [STAGE_STATUS.FAILED]: '#ef4444',
+  [STAGE_STATUS.SKIPPED]: '#94a3b8',
 };
 
 const STATUS_FILL: Record<string, string> = {
@@ -16,6 +17,7 @@ const STATUS_FILL: Record<string, string> = {
   [STAGE_STATUS.IN_PROGRESS]: '#dbeafe',
   [STAGE_STATUS.COMPLETED]: '#d1fae5',
   [STAGE_STATUS.FAILED]: '#fee2e2',
+  [STAGE_STATUS.SKIPPED]: '#f1f5f9',
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -23,6 +25,7 @@ const STATUS_LABELS: Record<string, string> = {
   [STAGE_STATUS.IN_PROGRESS]: '进行中',
   [STAGE_STATUS.COMPLETED]: '已完成',
   [STAGE_STATUS.FAILED]: '失败',
+  [STAGE_STATUS.SKIPPED]: '已跳过',
 };
 
 // ── 边颜色（基于源节点状态） ──
@@ -38,6 +41,7 @@ const NODE_Y = 55;
 const ROW_GAP = 95;
 const NODE_Y_BOTTOM = NODE_Y + ROW_GAP;
 const ORTH_TOP_Y = NODE_Y - 30;
+const ORTH_BOTTOM_Y = NODE_Y_BOTTOM + NODE_SIZE + 12;
 const LABEL_Y = NODE_Y + NODE_SIZE + 8;
 const LABEL_Y_BOTTOM = NODE_Y_BOTTOM + NODE_SIZE + 8;
 const PAD_X = 40;
@@ -134,31 +138,44 @@ const TEST_FLOW: FlowConfig = {
 const PRODUCT_FLOW: FlowConfig = {
   topRow: [
     STAGE_NAMES.PRODUCT_BRAINSTORM,
+    STAGE_NAMES.PRODUCT_BREAKDOWN,
     STAGE_NAMES.PRODUCT_RESEARCH,
     STAGE_NAMES.PRODUCT_DRAFT,
+    STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW,
     STAGE_NAMES.PRODUCT_REVIEW,
+    STAGE_NAMES.PRODUCT_AI_GATEWAY,
     STAGE_NAMES.PRODUCT_PRD_WRITE,
-    STAGE_NAMES.PRODUCT_PROTO_MAKE,
     STAGE_NAMES.PRODUCT_PROTO_REVIEW,
     STAGE_NAMES.PRODUCT_FINAL_REVIEW,
   ],
+  bottomRow: [
+    '', '', '', '', '', '', '',
+    STAGE_NAMES.PRODUCT_PROTO_MAKE,
+    '', '',
+  ],
   stageTypeFallback: {
     [STAGE_NAMES.PRODUCT_BRAINSTORM]: STAGE_TYPE.ACTION,
+    [STAGE_NAMES.PRODUCT_BREAKDOWN]: STAGE_TYPE.ACTION,
     [STAGE_NAMES.PRODUCT_RESEARCH]: STAGE_TYPE.ACTION,
     [STAGE_NAMES.PRODUCT_DRAFT]: STAGE_TYPE.ACTION,
+    [STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW]: STAGE_TYPE.JUDGE,
     [STAGE_NAMES.PRODUCT_REVIEW]: STAGE_TYPE.JUDGE,
-    [STAGE_NAMES.PRODUCT_PRD_WRITE]: STAGE_TYPE.ACTION,
+    [STAGE_NAMES.PRODUCT_AI_GATEWAY]: STAGE_TYPE.GATEWAY,
     [STAGE_NAMES.PRODUCT_PROTO_MAKE]: STAGE_TYPE.ACTION,
+    [STAGE_NAMES.PRODUCT_PRD_WRITE]: STAGE_TYPE.ACTION,
     [STAGE_NAMES.PRODUCT_PROTO_REVIEW]: STAGE_TYPE.JUDGE,
-    [STAGE_NAMES.PRODUCT_FINAL_REVIEW]: STAGE_TYPE.ACTION,
+    [STAGE_NAMES.PRODUCT_FINAL_REVIEW]: STAGE_TYPE.JUDGE,
   },
   operatorTypeFallback: {
     [STAGE_NAMES.PRODUCT_BRAINSTORM]: 'ai',
+    [STAGE_NAMES.PRODUCT_BREAKDOWN]: 'ai',
     [STAGE_NAMES.PRODUCT_RESEARCH]: 'ai',
     [STAGE_NAMES.PRODUCT_DRAFT]: 'ai',
+    [STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW]: 'ai',
     [STAGE_NAMES.PRODUCT_REVIEW]: 'human',
-    [STAGE_NAMES.PRODUCT_PRD_WRITE]: 'ai',
+    [STAGE_NAMES.PRODUCT_AI_GATEWAY]: 'ai',
     [STAGE_NAMES.PRODUCT_PROTO_MAKE]: 'ai',
+    [STAGE_NAMES.PRODUCT_PRD_WRITE]: 'ai',
     [STAGE_NAMES.PRODUCT_PROTO_REVIEW]: 'human',
     [STAGE_NAMES.PRODUCT_FINAL_REVIEW]: 'human',
   },
@@ -302,6 +319,7 @@ function edgeStyle(srcStatus: string, isConditional: boolean) {
   if (srcStatus === STAGE_STATUS.IN_PROGRESS) {
     return { stroke: EDGE_COLOR_ACTIVE, dasharray: DOT_DASH, animate: true };
   }
+  // pending / failed / skipped 均按 pending 样式处理
   return { stroke: EDGE_COLOR_PENDING, dasharray: isConditional ? '6 4' : '', animate: false };
 }
 
@@ -371,7 +389,25 @@ export const FlowGraph: React.FC<{
       const pos = stagePos(topRow, stage.name, bottomRowRef);
 
       const stageType = stage.stageType || stageTypeFallback[stage.name] || STAGE_TYPE.ACTION;
-      if (stageType === STAGE_TYPE.JUDGE) {
+      if (stageType === STAGE_TYPE.GATEWAY) {
+        graph.addNode({
+          id: stage.name,
+          shape: 'polygon',
+          x: pos.x,
+          y: pos.y,
+          width: NODE_SIZE,
+          height: NODE_SIZE,
+          attrs: {
+            body: {
+              refPoints: '0.5,0 1,0.5 0.5,1 0,0.5',
+              fill: '#f5f0ff',
+              stroke,
+              strokeWidth: 2.5,
+            },
+            label: { text: '+', fill: stroke, fontSize: 18, fontWeight: 700, textAnchor: 'middle', textVerticalAnchor: 'middle' },
+          },
+        });
+      } else if (stageType === STAGE_TYPE.JUDGE) {
         graph.addNode({
           id: stage.name,
           shape: 'polygon',
@@ -420,7 +456,9 @@ export const FlowGraph: React.FC<{
       const edgeConfig: Record<string, unknown> = {
         source: src,
         target: tgt,
-        connectionPoint: 'boundary',
+        // 有 anchors 时用 anchor 连接点，确保端点固定在锚点位置（如 bottom），
+        // 不被 boundary 重新投影到节点侧面
+        connectionPoint: anchors ? 'anchor' : 'boundary',
         attrs: {
           line: {
             stroke: style.stroke,
@@ -462,7 +500,7 @@ export const FlowGraph: React.FC<{
     };
 
     if (processType === 'auto_test' || processType === 'auto_test_asset') {
-      // ── 智能化测试资产流程边：测试需求 -> 测试计划 -> 计划评审 -> 用例生成 -> 用例评审 -> 完成 ──
+      // ── AI测试资产流程边：测试需求 -> 测试计划 -> 计划评审 -> 用例生成 -> 用例评审 -> 完成 ──
       addEdge(STAGE_NAMES.TEST_REQUIREMENT, STAGE_NAMES.TEST_PLAN_DESIGN, false);
       addEdge(STAGE_NAMES.TEST_PLAN_DESIGN, STAGE_NAMES.TEST_PLAN_REVIEW, false);
       addEdge(STAGE_NAMES.TEST_PLAN_REVIEW, STAGE_NAMES.TEST_CASE_GEN, true, 'Y 通过');
@@ -492,7 +530,7 @@ export const FlowGraph: React.FC<{
         );
       }
     } else if (processType === 'auto_test_execution') {
-      // ── 智能化测试执行流程边：测试需求 -> 自动化执行 -> 缺陷验证 -> 准入评审 -> 完成 ──
+      // ── AI测试执行流程边：测试需求 -> 自动化执行 -> 缺陷验证 -> 准入评审 -> 完成 ──
       addEdge(STAGE_NAMES.TEST_REQUIREMENT, STAGE_NAMES.TEST_AUTO_EXEC, false);
       addEdge(STAGE_NAMES.TEST_AUTO_EXEC, STAGE_NAMES.TEST_DEFECT_VERIFY, false);
       addEdge(STAGE_NAMES.TEST_DEFECT_VERIFY, STAGE_NAMES.TEST_ADMISSION_REVIEW, false);
@@ -510,59 +548,109 @@ export const FlowGraph: React.FC<{
         );
       }
     } else if (processType === 'product') {
-      // ── 产品流程边 ──
-      // 顶行单轴：头脑风暴 -> 调研 -> 草案 -> 方案复核 -> PRD 生成 -> 原型生成 -> AI 复查 -> 需求评审（结束）
+      // 产品流程（11 阶段 + 网关并行分叉，所有驳回边底部折线走）
+      // 头脑风暴 → 拆解 → 调研 → 草案 → AI复核 → 方案复核 → AI网关 →
+      //   [PRD初稿生成 (top) | 原型初稿生成 (bottom) 并行] → 原型+PRD联合复核 → 需求评审
 
-      // 主链路
-      addEdge(STAGE_NAMES.PRODUCT_BRAINSTORM, STAGE_NAMES.PRODUCT_RESEARCH, false);
+      addEdge(STAGE_NAMES.PRODUCT_BRAINSTORM, STAGE_NAMES.PRODUCT_BREAKDOWN, false);
+      addEdge(STAGE_NAMES.PRODUCT_BREAKDOWN, STAGE_NAMES.PRODUCT_RESEARCH, false);
       addEdge(STAGE_NAMES.PRODUCT_RESEARCH, STAGE_NAMES.PRODUCT_DRAFT, false);
-      addEdge(STAGE_NAMES.PRODUCT_DRAFT, STAGE_NAMES.PRODUCT_REVIEW, false);
-      addEdge(STAGE_NAMES.PRODUCT_REVIEW, STAGE_NAMES.PRODUCT_PRD_WRITE, true, 'Y 通过');
-      addEdge(STAGE_NAMES.PRODUCT_PRD_WRITE, STAGE_NAMES.PRODUCT_PROTO_MAKE, false);
-      addEdge(STAGE_NAMES.PRODUCT_PROTO_MAKE, STAGE_NAMES.PRODUCT_PROTO_REVIEW, false);
+      addEdge(STAGE_NAMES.PRODUCT_DRAFT, STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW, false);
+      addEdge(STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW, STAGE_NAMES.PRODUCT_REVIEW, true, 'Y 通过');
+      addEdge(STAGE_NAMES.PRODUCT_REVIEW, STAGE_NAMES.PRODUCT_AI_GATEWAY, true, 'Y 通过');
+
+      // 网关分叉 → 两路并行（PRD + prototype，prd_write 在上行，proto_make 在下行）
+      addEdge(STAGE_NAMES.PRODUCT_AI_GATEWAY, STAGE_NAMES.PRODUCT_PRD_WRITE, false);
+      {
+        const gatewayCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_AI_GATEWAY, bottomRowRef);
+        const protoCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_PROTO_MAKE, bottomRowRef);
+        const protoY = stageCenterY(topRow, STAGE_NAMES.PRODUCT_PROTO_MAKE, bottomRowRef);
+        addEdge(
+          STAGE_NAMES.PRODUCT_AI_GATEWAY,
+          STAGE_NAMES.PRODUCT_PROTO_MAKE,
+          false,
+          undefined,
+          [{ x: gatewayCx, y: protoY }, { x: protoCx - NODE_SIZE / 2, y: protoY }],
+          { source: 'bottom', target: 'left' },
+        );
+      }
+
+      // 两路汇入联合复核
+      addEdge(STAGE_NAMES.PRODUCT_PRD_WRITE, STAGE_NAMES.PRODUCT_PROTO_REVIEW, false);
+      {
+        const protoCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_PROTO_MAKE, bottomRowRef);
+        const protoY = stageCenterY(topRow, STAGE_NAMES.PRODUCT_PROTO_MAKE, bottomRowRef);
+        const reviewCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_PROTO_REVIEW, bottomRowRef);
+        addEdge(
+          STAGE_NAMES.PRODUCT_PROTO_MAKE,
+          STAGE_NAMES.PRODUCT_PROTO_REVIEW,
+          false,
+          undefined,
+          [{ x: reviewCx, y: protoY }],
+          { source: 'right', target: 'bottom' },
+        );
+      }
+
+      // 联合复核通过 → 需求评审
       addEdge(STAGE_NAMES.PRODUCT_PROTO_REVIEW, STAGE_NAMES.PRODUCT_FINAL_REVIEW, true, 'Y 通过');
 
-      // 驳回边 1：方案自主复核不通过，从顶部折回草案输出
+      // ─ 驳回边 ─
+
+      // 驳回边 1：AI 草案复核不通过 → 草案（底部微下调，避免与自主复核线重合）
       {
-        const reviewCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_REVIEW, bottomRowRef);
-        const draftCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_DRAFT, bottomRowRef);
+        const srcCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW, bottomRowRef);
+        const tgtCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_DRAFT, bottomRowRef);
+        const rejectY = NODE_Y + NODE_SIZE + 20;
+        addEdge(
+          STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW,
+          STAGE_NAMES.PRODUCT_DRAFT,
+          true,
+          'N 不通过',
+          [{ x: srcCx, y: rejectY }, { x: tgtCx, y: rejectY }],
+          { source: 'bottom', target: 'bottom' },
+        );
+      }
+
+      // 驳回边 2：方案复核不通过 → 草案（下方折线）
+      {
+        const srcCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_REVIEW, bottomRowRef);
+        const tgtCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_DRAFT, bottomRowRef);
         addEdge(
           STAGE_NAMES.PRODUCT_REVIEW,
           STAGE_NAMES.PRODUCT_DRAFT,
           true,
           'N 不通过',
-          [{ x: reviewCx, y: ORTH_TOP_Y }, { x: draftCx, y: ORTH_TOP_Y }],
-          { source: 'top', target: 'top' },
+          [{ x: srcCx, y: ORTH_BOTTOM_Y }, { x: tgtCx, y: ORTH_BOTTOM_Y }],
         );
       }
 
-      // 驳回边 2：AI 复查不通过，从底部折回 PRD 生成
+      // 驳回边 3：联合复核不通过 → 草案（上方折线，退回重新构思）
       {
-        const protoReviewCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_PROTO_REVIEW, bottomRowRef);
-        const prdWriteCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_PRD_WRITE, bottomRowRef);
-        const rejectY = NODE_Y_BOTTOM + NODE_SIZE + 10;
+        const srcCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_PROTO_REVIEW, bottomRowRef);
+        const tgtCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_DRAFT, bottomRowRef);
         addEdge(
           STAGE_NAMES.PRODUCT_PROTO_REVIEW,
-          STAGE_NAMES.PRODUCT_PRD_WRITE,
+          STAGE_NAMES.PRODUCT_DRAFT,
           true,
           'N 不通过',
-          [{ x: protoReviewCx, y: rejectY }, { x: prdWriteCx, y: rejectY }],
+          [{ x: srcCx, y: ORTH_TOP_Y }, { x: tgtCx, y: ORTH_TOP_Y }],
         );
       }
 
-      // 驳回边 3：需求评审驳回，从顶部折回 PRD 生成
+      // 驳回边 4：需求评审不通过 -> 原型+PRD联合复核（顶部折线，退回联合复核）
       {
-        const finalReviewCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_FINAL_REVIEW, bottomRowRef);
-        const prdWriteCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_PRD_WRITE, bottomRowRef);
-        const rejectY = ORTH_TOP_Y - 10;
+        const srcCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_FINAL_REVIEW, bottomRowRef);
+        const tgtCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_PROTO_REVIEW, bottomRowRef);
         addEdge(
           STAGE_NAMES.PRODUCT_FINAL_REVIEW,
-          STAGE_NAMES.PRODUCT_PRD_WRITE,
+          STAGE_NAMES.PRODUCT_PROTO_REVIEW,
           true,
-          'N 驳回',
-          [{ x: finalReviewCx, y: rejectY }, { x: prdWriteCx, y: rejectY }],
+          'N 不通过',
+          [{ x: srcCx, y: ORTH_TOP_Y - 18 }, { x: tgtCx, y: ORTH_TOP_Y - 18 }],
         );
       }
+
+
     } else {
       // ── AI 开发流程边 ──
 

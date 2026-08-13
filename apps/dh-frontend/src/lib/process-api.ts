@@ -54,6 +54,7 @@ export const STAGE_STATUS = {
   IN_PROGRESS: 'in_progress',
   COMPLETED: 'completed',
   FAILED: 'failed',
+  SKIPPED: 'skipped',
 } as const;
 
 export const STAGE_NAMES = {
@@ -77,12 +78,16 @@ export const STAGE_NAMES = {
   TEST_ADMISSION_REVIEW: 'test_admission_review',
   TEST_COMPLETE: 'test_complete',
   PRODUCT_BRAINSTORM: 'product_brainstorm',
+  PRODUCT_BREAKDOWN: 'product_breakdown',
   PRODUCT_RESEARCH: 'product_research',
   PRODUCT_DRAFT: 'product_draft',
+  PRODUCT_AI_DRAFT_REVIEW: 'product_ai_draft_review',
   PRODUCT_REVIEW: 'product_review',
-  PRODUCT_PRD_WRITE: 'product_prd_write',
+  PRODUCT_AI_GATEWAY: 'product_ai_gateway',
   PRODUCT_PROTO_MAKE: 'product_proto_make',
+  PRODUCT_AI_PROTO_REVIEW: 'product_ai_proto_review',
   PRODUCT_PROTO_REVIEW: 'product_proto_review',
+  PRODUCT_PRD_WRITE: 'product_prd_write',
   PRODUCT_FINAL_REVIEW: 'product_final_review',
 } as const;
 
@@ -91,7 +96,7 @@ export const PROCESS_TYPE_LABELS: Record<string, string> = {
   auto_test: '自动化测试',
   auto_test_asset: '测试资产',
   auto_test_execution: '测试执行',
-  product: '产品流程',
+  product: 'AI 需求设计',
 };
 
 /** 流程列表轮询间隔（毫秒） */
@@ -108,6 +113,7 @@ export const OPERATOR_TYPE = {
 export const STAGE_TYPE = {
   ACTION: 'action',
   JUDGE: 'judge',
+  GATEWAY: 'gateway',
 } as const;
 
 export const AGENT_ROLE_LABELS: Record<string, string> = {
@@ -137,7 +143,7 @@ export const processApi = {
 
   /** 启动产品流程 */
   startProductFlow: (req: StartProductFlowRequest) =>
-    api.post<{ code: number; message: string }>('/v1/orchestrator/product-flow', req),
+    api.post<{ code: number; message: string; processId: string }>('/v1/orchestrator/product-flow', req),
 };
 
 export const sessionApi = {
