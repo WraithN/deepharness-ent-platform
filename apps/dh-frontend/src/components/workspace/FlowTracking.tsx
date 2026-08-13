@@ -46,6 +46,7 @@ const STAGE_ICON: Record<string, React.FC<React.SVGProps<SVGSVGElement>>> = {
   [STAGE_STATUS.IN_PROGRESS]: Loader2,
   [STAGE_STATUS.COMPLETED]: CheckCircle2,
   [STAGE_STATUS.FAILED]: XCircle,
+  [STAGE_STATUS.SKIPPED]: Circle,
 };
 
 const STAGE_ICON_COLOR: Record<string, string> = {
@@ -53,6 +54,7 @@ const STAGE_ICON_COLOR: Record<string, string> = {
   [STAGE_STATUS.IN_PROGRESS]: 'text-blue-500 animate-spin',
   [STAGE_STATUS.COMPLETED]: 'text-emerald-500',
   [STAGE_STATUS.FAILED]: 'text-red-500',
+  [STAGE_STATUS.SKIPPED]: 'text-slate-400',
 };
 
 // ── 流程追踪列表页 ──
