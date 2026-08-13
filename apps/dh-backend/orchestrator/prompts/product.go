@@ -66,3 +66,33 @@ func BuildProductProtoReviewPrompt(title, protoResult, prdResult, workspacePath 
 	})
 	return ApplyPromptCommon(rendered, workspacePath)
 }
+
+// BuildProductBreakdownPrompt 需求拆解（功能拆解清单与模块关系图）
+func BuildProductBreakdownPrompt(title, brainstormResult, workspacePath string) string {
+	rendered := Render("product_breakdown", map[string]string{
+		"Title":            title,
+		"BrainstormResult": brainstormResult,
+		"WorkspacePath":    workspacePath,
+	})
+	return ApplyPromptCommon(rendered, workspacePath)
+}
+
+// BuildProductAIDraftReviewPrompt AI 草案复核（输出报告 + pass/reject 决策）
+func BuildProductAIDraftReviewPrompt(title, draftResult, workspacePath string) string {
+	rendered := Render("product_ai_draft_review", map[string]string{
+		"Title":         title,
+		"DraftResult":   draftResult,
+		"WorkspacePath": workspacePath,
+	})
+	return ApplyPromptCommon(rendered, workspacePath)
+}
+
+// BuildProductAIGatewayPrompt AI 网关决策（输出 NEED_PROTO: true/false）
+func BuildProductAIGatewayPrompt(title, draftResult, workspacePath string) string {
+	rendered := Render("product_ai_gateway", map[string]string{
+		"Title":         title,
+		"DraftResult":   draftResult,
+		"WorkspacePath": workspacePath,
+	})
+	return ApplyPromptCommon(rendered, workspacePath)
+}

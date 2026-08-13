@@ -90,3 +90,39 @@ func TestRenderTestPlanDesign(t *testing.T) {
 		t.Error("missing title")
 	}
 }
+
+func TestRenderProductBreakdown(t *testing.T) {
+	result := BuildProductBreakdownPrompt("测试需求", "需求要点内容", "/workspace")
+	if !strings.Contains(result, "功能拆解清单") {
+		t.Error("missing 功能拆解清单")
+	}
+	if !strings.Contains(result, "/workspace/pm-jobs/breakdown/") {
+		t.Error("missing breakdown workspace path")
+	}
+	if !strings.Contains(result, "需求要点内容") {
+		t.Error("missing brainstorm result")
+	}
+}
+
+func TestRenderProductAIDraftReview(t *testing.T) {
+	result := BuildProductAIDraftReviewPrompt("测试需求", "草案内容", "/workspace")
+	if !strings.Contains(result, "pass / reject") {
+		t.Error("missing pass/reject decision format")
+	}
+	if !strings.Contains(result, "草案内容") {
+		t.Error("missing draft result")
+	}
+}
+
+func TestRenderProductAIGateway(t *testing.T) {
+	result := BuildProductAIGatewayPrompt("测试需求", "定稿方案内容", "/workspace")
+	if !strings.Contains(result, "NEED_PROTO: true") {
+		t.Error("missing NEED_PROTO true format")
+	}
+	if !strings.Contains(result, "NEED_PROTO: false") {
+		t.Error("missing NEED_PROTO false format")
+	}
+	if !strings.Contains(result, "定稿方案内容") {
+		t.Error("missing draft result")
+	}
+}
