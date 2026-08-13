@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,7 +18,7 @@ import (
 type scrapeRequest struct {
 	URL      string          `json:"url"`
 	Cookies  []object.Cookie `json:"cookies,omitempty"`
-	MaxPages int             `json:"maxPages,omitempty"`
+	MaxDepth int             `json:"maxDepth,omitempty"`
 }
 
 // scrapeResponse 是 crawler-service /scrape 的响应体。
@@ -68,80 +67,10 @@ func buildScrapedArgs(originalArgs string, result scrapeResponse) string {
 }
 
 // scrapeWebsite 抓取指定 URL。
-// 若配置了 crawler MCP server，优先通过 gatewayd MCP 聚合层调用；失败则回退到直连 crawler-service。
+// 架构上 crawler-service 独立部署于单独服务器，dh-backend 直接通过 HTTP 调用其 /scrape 接口，
+// 不再经过 gatewayd 的 MCP 聚合层（原 MCP 通道要求 crawler 与 gatewayd 同机 stdio 通信，与三服务器架构不符）。
 func (h *AGUIHandler) scrapeWebsite(ctx context.Context, targetURL string, cookies []object.Cookie) (scrapeResponse, error) {
-	if h.crawlerMCPName != "" && h.gatewaydAdminURL != "" {
-		result, err := h.scrapeWebsiteViaMCP(ctx, targetURL, cookies)
-		if err == nil {
-			log.Printf("[AGUIHandler] scraped via MCP crawler=%s url=%s", h.crawlerMCPName, targetURL)
-			return result, nil
-		}
-		log.Printf("[AGUIHandler] MCP scrape failed, fallback to direct crawler-service: %v", err)
-	}
 	return h.scrapeWebsiteDirect(ctx, targetURL, cookies)
-}
-
-// scrapeWebsiteViaMCP 通过 gatewayd MCP 聚合层调用 crawler:scrape。
-func (h *AGUIHandler) scrapeWebsiteViaMCP(ctx context.Context, targetURL string, cookies []object.Cookie) (scrapeResponse, error) {
-	timeout := h.crawlerServiceTimeout
-	if timeout <= 0 {
-		timeout = 60 * time.Second
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	args := map[string]any{
-		"url":      targetURL,
-		"cookies":  cookies,
-		"maxPages": 1,
-	}
-	bodyData, err := json.Marshal(map[string]any{"arguments": args})
-	if err != nil {
-		return scrapeResponse{}, fmt.Errorf("marshal mcp scrape request: %w", err)
-	}
-
-	// gatewayd 的 MCP 工具调用路由为 POST /mcp/tools/{server}:{tool}/call（见 gatewayd server.rs）。
-	url := fmt.Sprintf("%s/mcp/tools/%s:scrape/call", h.gatewaydAdminURL, h.crawlerMCPName)
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(bodyData))
-	if err != nil {
-		return scrapeResponse{}, fmt.Errorf("create mcp scrape request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return scrapeResponse{}, fmt.Errorf("call mcp tool: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return scrapeResponse{}, fmt.Errorf("mcp tool returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	// gatewayd 返回 { result: { content: [{type:"text", text:"..."}], isError?: bool } }
-	var wrapper struct {
-		Result struct {
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-			IsError bool `json:"isError"`
-		} `json:"result"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
-		return scrapeResponse{}, fmt.Errorf("decode mcp scrape response: %w", err)
-	}
-	if wrapper.Result.IsError || len(wrapper.Result.Content) == 0 {
-		return scrapeResponse{}, fmt.Errorf("mcp scrape returned error or empty content")
-	}
-
-	var result scrapeResponse
-	text := wrapper.Result.Content[0].Text
-	if err := json.Unmarshal([]byte(text), &result); err != nil {
-		return scrapeResponse{}, fmt.Errorf("parse mcp scrape tool result: %w", err)
-	}
-	return result, nil
 }
 
 // scrapeWebsiteDirect 直接调用 crawler-service /scrape 接口抓取指定 URL。
@@ -160,7 +89,7 @@ func (h *AGUIHandler) scrapeWebsiteDirect(ctx context.Context, targetURL string,
 	reqBody := scrapeRequest{
 		URL:      targetURL,
 		Cookies:  cookies,
-		MaxPages: 1,
+		MaxDepth: h.crawlerMaxDepth,
 	}
 	bodyData, err := json.Marshal(reqBody)
 	if err != nil {

@@ -32,9 +32,6 @@ if [ -z "$GATEWAYD_BIN" ]; then
     GATEWAYD_BIN="${ENT_DESKTOP_ROOT}/target/release/dh-gatewayd"
 fi
 
-# 注册 crawler-service MCP server（幂等）。
-bash "${PLATFORM_ROOT}/scripts/init-crawler-mcp.sh"
-
 "$GATEWAYD_BIN" \
     --port "${GATEWAYD_API_PORT:-2345}" \
     --admin-port "$GATEWAYD_PORT" \

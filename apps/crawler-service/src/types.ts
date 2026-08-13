@@ -15,7 +15,7 @@ export const scrapeRequestSchema = z.object({
   url: z.string().url(),
   cookies: z.array(cookieSchema).default([]),
   waitForSelector: z.string().optional(),
-  maxPages: z.coerce.number().min(1).max(50).default(10),
+  maxDepth: z.coerce.number().int().min(1).max(10).default(2),
   includeLinks: z.boolean().default(true),
   includeScreenshot: z.boolean().default(false),
   outputFormat: z.enum(["markdown", "text", "html"]).default("markdown"),
@@ -34,7 +34,7 @@ export interface ScrapeResponse {
   screenshot?: string;
   metadata: {
     pageCount: number;
-    crawlSource: "firecrawl" | "playwright" | "none";
+    crawlSource: "playwright";
     error?: string;
   };
 }

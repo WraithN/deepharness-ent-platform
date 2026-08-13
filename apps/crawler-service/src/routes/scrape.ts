@@ -1,7 +1,39 @@
 import { FastifyInstance } from "fastify";
 import { scrapeRequestSchema, ScrapeResponse } from "../types.js";
-import { openPageWithCookies } from "../services/browser.js";
-import { scrapeWithFirecrawl } from "../services/firecrawl.js";
+import { crawlPagesWithBrowser, PageResult } from "../services/browser.js";
+
+/** 多页内容合并时的页分隔符。 */
+const PAGE_SEPARATOR = "\n\n---\n\n";
+
+/** 合并多页的同名字段，并在每页前加 URL 标题，便于下游识别内容来源。 */
+function mergePageMarkdown(pages: PageResult[]): string {
+  return pages
+    .map((p) => {
+      // markdown 兜底提取可能为空（SPA 无 h1/p/li），此时回退到 innerText。
+      const body = p.markdown || p.text;
+      return `## ${p.url}\n\n${body}`;
+    })
+    .filter((s) => s.trim().length > 0)
+    .join(PAGE_SEPARATOR);
+}
+
+function mergePageText(pages: PageResult[]): string {
+  return pages
+    .map((p) => p.text)
+    .filter((s) => s.trim().length > 0)
+    .join(PAGE_SEPARATOR);
+}
+
+function mergePageHtml(pages: PageResult[]): string {
+  return pages
+    .map((p) => p.html)
+    .filter((s) => s.trim().length > 0)
+    .join(PAGE_SEPARATOR);
+}
+
+function dedupe(items: string[]): string[] {
+  return [...new Set(items)];
+}
 
 export default async function scrapeRoutes(app: FastifyInstance) {
   app.post<{
@@ -16,37 +48,30 @@ export default async function scrapeRoutes(app: FastifyInstance) {
     }
     const body = parsed.data;
 
-    // 1. Playwright 负责登录态 + 页面渲染兜底。
-    const pageResult = await openPageWithCookies(body.url, body.cookies, {
+    // 用 Playwright 做 BFS 多页遍历（跟踪同域站内链接，最多 maxDepth 层）。
+    // 不再依赖 Firecrawl，保证多页抓取在 Firecrawl 未运行时同样可用。
+    const pages = await crawlPagesWithBrowser(body.url, body.cookies, body.maxDepth, {
       waitForSelector: body.waitForSelector,
       includeScreenshot: body.includeScreenshot,
-      includeLinks: body.includeLinks,
     });
 
-    // 2. Firecrawl 负责结构化提取；传入 cookies 保持登录态，waitFor 支持 SPA 渲染。
-    const firecrawlResult = await scrapeWithFirecrawl(pageResult.url, {
-      maxPages: body.maxPages,
-      includeLinks: body.includeLinks,
-      cookies: body.cookies,
-    });
-
-    // 智能合并：优先使用内容更丰富的 markdown。
-    // SPA 场景下 Firecrawl 可能返回空或极少内容，此时应回退到 Playwright 渲染结果。
-    const fcMd = firecrawlResult?.markdown ?? "";
-    const pwMd = pageResult.markdown;
-    const useFirecrawl = fcMd.length >= pwMd.length * 0.5;
+    if (pages.length === 0) {
+      reply.status(502);
+      await reply.send({ error: "无法抓取页面内容" });
+      return;
+    }
 
     const response: ScrapeResponse = {
-      url: pageResult.url,
-      title: firecrawlResult?.title || pageResult.title,
-      markdown: useFirecrawl ? fcMd : pwMd,
-      text: pageResult.text,
-      html: body.outputFormat === "html" ? pageResult.html : undefined,
-      links: body.includeLinks ? (firecrawlResult?.links ?? pageResult.links) : [],
-      screenshot: pageResult.screenshot,
+      url: pages[0].url,
+      title: pages[0].title,
+      markdown: mergePageMarkdown(pages),
+      text: mergePageText(pages),
+      html: body.outputFormat === "html" ? mergePageHtml(pages) : undefined,
+      links: body.includeLinks ? dedupe(pages.flatMap((p) => p.links)) : [],
+      screenshot: pages[0].screenshot,
       metadata: {
-        pageCount: firecrawlResult?.pageCount ?? 1,
-        crawlSource: useFirecrawl && firecrawlResult ? "firecrawl" : "playwright",
+        pageCount: pages.length,
+        crawlSource: "playwright",
       },
     };
 

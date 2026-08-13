@@ -46,14 +46,13 @@ workspace:
 personal_stub:
   url: "http://127.0.0.1:8090"
 
-# crawler-service 服务地址，用于 /prd-research 等网站爬取场景
+# crawler-service 服务地址，用于 /prd-research 等网站爬取场景。
+# 架构上 crawler-service 独立部署于单独服务器，dh-backend 通过 HTTP 直连调用。
 crawler_service:
   url: "http://127.0.0.1:8091"
   timeout: "60s"
-  # 在 gatewayd MCP 聚合层中注册的 crawler server 名称。
-  # 配置后 dh-backend 会优先通过 gatewayd /mcp/tools/{mcp_name}:scrape 调用抓取能力；
-  # 为空或调用失败时回退到上方 url 的直接 HTTP 调用。
-  mcp_name: "crawler"
+  # max_depth: /prd-research 抓取的站内链接深度（层数），起始页为第 1 层，默认 2。
+  max_depth: 2
 
 # 产品空间文档采纳配置
 # doc_adoption_cleanup: 文档采纳到产品空间后，自动清理个人工作区中的源草稿文件。

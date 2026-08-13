@@ -46,7 +46,7 @@ type AGUIHandler struct {
 	crawlerCookieSvc     *crawlerservice.CrawlerCookieService
 	crawlerServiceURL     string
 	crawlerServiceTimeout time.Duration
-	crawlerMCPName        string
+	crawlerMaxDepth       int
 	workspaceRoot         string
 	// agentConfigSvc 用于在 agent attach 后同步空间级模型/看门狗配置到 gatewayd。
 	// 仅创建 session 时同步会在 gatewayd 重启后失效，因此每次 run attach 后都需重新同步。
@@ -54,7 +54,7 @@ type AGUIHandler struct {
 }
 
 // NewAGUIHandler 创建 AG-UI handler。
-func NewAGUIHandler(adminURL, pluginKey, workspaceRoot string, sessions chat.SessionStore, messages chat.MessageStore, buf buffer.SSEBuffer, workItemSvc workitemservice.WorkItemService, crawlerCookieSvc *crawlerservice.CrawlerCookieService, crawlerServiceURL string, crawlerServiceTimeout time.Duration, crawlerMCPName string) *AGUIHandler {
+func NewAGUIHandler(adminURL, pluginKey, workspaceRoot string, sessions chat.SessionStore, messages chat.MessageStore, buf buffer.SSEBuffer, workItemSvc workitemservice.WorkItemService, crawlerCookieSvc *crawlerservice.CrawlerCookieService, crawlerServiceURL string, crawlerServiceTimeout time.Duration, crawlerMaxDepth int) *AGUIHandler {
 	return &AGUIHandler{
 		aguiClient:            client.NewAGUIClient(adminURL, pluginKey),
 		gatewaydAdminURL:     adminURL,
@@ -66,7 +66,7 @@ func NewAGUIHandler(adminURL, pluginKey, workspaceRoot string, sessions chat.Ses
 		crawlerCookieSvc:     crawlerCookieSvc,
 		crawlerServiceURL:     crawlerServiceURL,
 		crawlerServiceTimeout: crawlerServiceTimeout,
-		crawlerMCPName:        crawlerMCPName,
+		crawlerMaxDepth:       crawlerMaxDepth,
 		workspaceRoot:         workspaceRoot,
 	}
 }

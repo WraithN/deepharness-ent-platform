@@ -12,6 +12,9 @@ import (
 
 const configFileName = "config.yaml"
 
+// defaultCrawlerMaxDepth 是 /prd-research 抓取的默认站内链接深度（层数），起始页为第 1 层。
+const defaultCrawlerMaxDepth = 2
+
 // Config 保存后端运行时的所有可配置项。所有值必须从 config.yaml 或环境变量获取。
 type Config struct {
 	Port             string
@@ -32,12 +35,12 @@ type Config struct {
 	PersonalStubURL string
 
 	// CrawlerServiceURL 是 crawler-service 服务地址，用于 /prd-research 等网站爬取场景。
+	// crawler-service 独立部署于单独服务器，dh-backend 通过 HTTP 直连调用。
 	CrawlerServiceURL string
 	// CrawlerServiceTimeout 是调用 crawler-service 的最大超时时间。
 	CrawlerServiceTimeout time.Duration
-	// CrawlerMCPName 是 crawler-service 在 gatewayd MCP 聚合层中注册的 server 名称。
-	// 为空时禁用 MCP 调用通道，回退到直接 HTTP 调用 crawler-service。
-	CrawlerMCPName string
+	// CrawlerMaxDepth 是 /prd-research 抓取的站内链接深度（层数），起始页为第 1 层，默认 2。
+	CrawlerMaxDepth int
 
 	// Redis（Buffer 存储后端，可选）
 	RedisAddrs    []string
@@ -246,9 +249,9 @@ type yamlConfig struct {
 		URL string `yaml:"url"`
 	} `yaml:"personal_stub"`
 	CrawlerService struct {
-		URL     string `yaml:"url"`
-		Timeout string `yaml:"timeout"`
-		MCPName string `yaml:"mcp_name"`
+		URL      string `yaml:"url"`
+		Timeout  string `yaml:"timeout"`
+		MaxDepth int    `yaml:"max_depth"`
 	} `yaml:"crawler_service"`
 	ProductSpace struct {
 		DocAdoptionCleanup struct {
@@ -403,7 +406,10 @@ func Load() (Config, error) {
 	cfg.PersonalStubURL = yc.PersonalStub.URL
 	cfg.CrawlerServiceURL = yc.CrawlerService.URL
 	cfg.CrawlerServiceTimeout = parseDurationOrZero(yc.CrawlerService.Timeout)
-	cfg.CrawlerMCPName = yc.CrawlerService.MCPName
+	cfg.CrawlerMaxDepth = yc.CrawlerService.MaxDepth
+	if cfg.CrawlerMaxDepth <= 0 {
+		cfg.CrawlerMaxDepth = defaultCrawlerMaxDepth
+	}
 	cfg.DocAdoptionCleanupEnabled = yc.ProductSpace.DocAdoptionCleanup.Enabled
 	cfg.DocAdoptionCleanupRetentionDays = yc.ProductSpace.DocAdoptionCleanup.RetentionDays
 	cfg.DocAdoptionCleanupInterval = parseDurationOrZero(yc.ProductSpace.DocAdoptionCleanup.Interval)
@@ -527,7 +533,7 @@ func Load() (Config, error) {
 	cfg.PersonalStubURL = getEnv("PERSONAL_STUB_URL", cfg.PersonalStubURL)
 	cfg.CrawlerServiceURL = getEnv("CRAWLER_SERVICE_URL", cfg.CrawlerServiceURL)
 	cfg.CrawlerServiceTimeout = getDurationEnv("CRAWLER_SERVICE_TIMEOUT", cfg.CrawlerServiceTimeout)
-	cfg.CrawlerMCPName = getEnv("CRAWLER_MCP_NAME", cfg.CrawlerMCPName)
+	cfg.CrawlerMaxDepth = getIntEnv("CRAWLER_MAX_DEPTH", cfg.CrawlerMaxDepth)
 	cfg.DocAdoptionCleanupEnabled = getBoolEnv("DOC_ADOPTION_CLEANUP_ENABLED", cfg.DocAdoptionCleanupEnabled)
 	cfg.DocAdoptionCleanupRetentionDays = getIntEnv("DOC_ADOPTION_CLEANUP_RETENTION_DAYS", cfg.DocAdoptionCleanupRetentionDays)
 	cfg.DocAdoptionCleanupInterval = getDurationEnv("DOC_ADOPTION_CLEANUP_INTERVAL", cfg.DocAdoptionCleanupInterval)

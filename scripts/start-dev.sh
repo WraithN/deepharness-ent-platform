@@ -212,11 +212,6 @@ start_gatewayd() {
         return 1
     fi
 
-    # 构建 crawler-service 并注册其 MCP server 到 gatewayd.db，使 gatewayd 启动时即可加载。
-    log_info "Building crawler-service for MCP server..."
-    (cd "${PLATFORM_ROOT}" && pnpm --filter @repo/crawler-service build)
-    bash "${PLATFORM_ROOT}/scripts/init-crawler-mcp.sh"
-
     if [ "$DETACH_MODE" = true ]; then
         setsid nohup "$GATEWAYD_BIN" \
             --port "$GATEWAYD_API_PORT" \
@@ -417,11 +412,6 @@ main() {
 
     # 构建 gatewayd（由 personal-stub 启动和管理）
     build_gatewayd
-
-    # 构建 crawler-service 并注册其 MCP server（gatewayd 启动时加载）
-    log_info "Building crawler-service for MCP server..."
-    (cd "${PLATFORM_ROOT}" && pnpm --filter @repo/crawler-service build)
-    bash "${PLATFORM_ROOT}/scripts/init-crawler-mcp.sh"
 
     # 按依赖顺序启动
     # gatewayd 由 personal-stub 自动启动和管理（不再由 start-dev.sh 直接启动）。
