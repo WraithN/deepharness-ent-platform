@@ -327,7 +327,7 @@ func (n *ProductReviewNode) Processor(fc *core.FlowContext) error {
 		WorkspaceID: fc.WorkspaceID,
 		Type:        notificationobject.TypeProductReviewRequired,
 		Title:       fmt.Sprintf("方案自主复核: %s", fc.WorkitemTitle),
-		Body:        fmt.Sprintf("需求「%s」的业务方案草案已生成，请复核。通过则进入 PRD 生成，不通过将返回重新输出方案。", fc.WorkitemTitle),
+		Body:        fmt.Sprintf("需求「%s」的业务方案草案已生成，请复核。通过则进入 AI 网关决策，不通过将返回重新输出方案。", fc.WorkitemTitle),
 		ActionType:  notificationobject.ActionApproveCodeOptimize,
 		ActionURL:   fmt.Sprintf("/process/%s", fc.ProcessID),
 		Data: map[string]any{
