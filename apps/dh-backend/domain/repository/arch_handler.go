@@ -15,90 +15,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// 架构库目录名常量（与 arch-repo-analysis skill 的产出结构保持一致）。
+// 架构库目录/文件名常量（与 arch-repo-analysis skill 的产出结构保持一致）。
+// L1=libraries.yaml，L2=modules/<lib>.yaml，介绍页=overviews/<lib>.yaml，
+// L3=knowledge-graph.json（位于 .understand-anything/ 下）。
 const (
-	archDomainsDir  = "domains"
-	archServicesDir = "services"
-	archRulesDir    = "rules"
-	archYamlExt     = ".yaml"
-	domainRulesFile = "domain-dependency-rules.yaml"
-	archProjectView = "project"
-	archServiceView = "service"
-	archDDDView     = "ddd"
+	archLibrariesFile = "libraries.yaml"
+	archModulesDir    = "modules"
+	archOverviewsDir  = "overviews"
+	archKGFileName    = "knowledge-graph.json"
+	archUnderstandDir = ".understand-anything"
+	archYamlExt       = ".yaml"
 )
-
-// archDomainDef 架构库 domains/xxx-domain.yaml 的结构（仅取架构图展示所需字段）。
-type archDomainDef struct {
-	DomainKey      string   `yaml:"domainKey"`
-	DomainName     string   `yaml:"domainName"`
-	OwnerTeam      string   `yaml:"ownerTeam"`
-	Description    string   `yaml:"description"`
-	BusinessScope  []string `yaml:"businessScope"`
-	AggregateRoots []string `yaml:"aggregateRoots"`
-	OwnedDatabases []string `yaml:"ownedDatabases"`
-	AntiPatterns   []string `yaml:"antiPatterns"`
-}
-
-// archServiceDep 服务依赖项：syncCall 用 targetService，MQ 用 topicKey。
-type archServiceDep struct {
-	TargetService string `yaml:"targetService"`
-	Reason        string `yaml:"reason"`
-	TopicKey      string `yaml:"topicKey"`
-}
-
-// archServiceDef 架构库 services/xxx-service.yaml 的结构。
-type archServiceDef struct {
-	ServiceKey   string `yaml:"serviceKey"`
-	ServiceName  string `yaml:"serviceName"`
-	Domain       string `yaml:"domain"`
-	OwnerTeam    string `yaml:"ownerTeam"`
-	ServiceLevel string `yaml:"serviceLevel"`
-	Description  string `yaml:"description"`
-	Capabilities []struct {
-		CapabilityKey string `yaml:"capabilityKey"`
-		Name          string `yaml:"name"`
-		Description   string `yaml:"description"`
-	} `yaml:"capabilities"`
-	Dependencies struct {
-		SyncCall     []archServiceDep `yaml:"syncCall"`
-		AsyncProduce []archServiceDep `yaml:"asyncProduce"`
-		AsyncConsume []archServiceDep `yaml:"asyncConsume"`
-	} `yaml:"dependencies"`
-	Database struct {
-		OwnDB          string   `yaml:"ownDB"`
-		AllowedReadDB  []string `yaml:"allowedReadDB"`
-		AllowedWriteDB []string `yaml:"allowedWriteDB"`
-	} `yaml:"database"`
-	ForbiddenDependencies []string `yaml:"forbiddenDependencies"`
-	ForbiddenDBAccess     []string `yaml:"forbiddenDBAccess"`
-	Tags                  []string `yaml:"tags"`
-}
-
-// archDomainRules 架构库 rules/domain-dependency-rules.yaml 的 matrix 结构。
-type archDomainRules struct {
-	Matrix map[string]struct {
-		AllowSyncCall       []string `yaml:"allowSyncCall"`
-		ForbidSyncCall      []string `yaml:"forbidSyncCall"`
-		AllowEventSubscribe []string `yaml:"allowEventSubscribe"`
-	} `yaml:"matrix"`
-}
 
 // ── 响应结构 ──
-
-// 节点/边类型常量：前端据此着色与过滤。
-const (
-	archNodeKindRepo    = "repo"
-	archNodeKindService = "service"
-	archNodeKindDomain  = "domain"
-	archNodeKindInfra   = "infra"
-
-	archEdgeKindRPC = "rpc"
-	archEdgeKindMQ  = "mq"
-	archEdgeKindDB  = "db"
-)
-
-// 基础组件识别标签：命中任一即归为基础组件（灰色节点）。
-var infraTags = []string{"infra", "基础组件", "base-infra", "infrastructure"}
 
 type archNode struct {
 	ID           string            `json:"id"`
@@ -173,7 +102,7 @@ func ArchGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp.Views, resp.Domains, resp.Warnings = buildArchGraph(r.Context(), localPath)
+	// Task 2 rewrites this handler for level-based query
 	handler.SetJSONHeader(w)
 	json.NewEncoder(w).Encode(resp)
 }
@@ -241,48 +170,4 @@ func parseYamlFile[T any](fileName, content string, out *T, warnings *[]string) 
 		return false
 	}
 	return true
-}
-
-// loadArchDomains 读取并解析架构库 domains/ 下全部领域定义。
-func loadArchDomains(ctx context.Context, repoPath string) ([]archDomainDef, []string) {
-	files, warnings := readArchYamlFiles(ctx, repoPath, archDomainsDir)
-	domains := make([]archDomainDef, 0, len(files))
-	for name, content := range files {
-		var def archDomainDef
-		if parseYamlFile(archDomainsDir+"/"+name, content, &def, &warnings) && def.DomainKey != "" {
-			domains = append(domains, def)
-		}
-	}
-	return domains, warnings
-}
-
-// loadArchServices 读取并解析架构库 services/ 下全部微服务元数据。
-func loadArchServices(ctx context.Context, repoPath string) ([]archServiceDef, []string) {
-	files, warnings := readArchYamlFiles(ctx, repoPath, archServicesDir)
-	services := make([]archServiceDef, 0, len(files))
-	for name, content := range files {
-		var def archServiceDef
-		if parseYamlFile(archServicesDir+"/"+name, content, &def, &warnings) && def.ServiceKey != "" {
-			services = append(services, def)
-		}
-	}
-	return services, warnings
-}
-
-// loadArchDomainRules 读取架构库 rules/domain-dependency-rules.yaml（可选，不存在返回 nil）。
-func loadArchDomainRules(ctx context.Context, repoPath string) (*archDomainRules, []string) {
-	sc := stubclient.FromContext(ctx)
-	if sc == nil {
-		return nil, nil
-	}
-	content, err := sc.ReadFile(ctx, filepath.Join(repoPath, archRulesDir, domainRulesFile))
-	if err != nil {
-		return nil, nil
-	}
-	var rules archDomainRules
-	var warnings []string
-	if !parseYamlFile(archRulesDir+"/"+domainRulesFile, content, &rules, &warnings) {
-		return nil, warnings
-	}
-	return &rules, warnings
 }

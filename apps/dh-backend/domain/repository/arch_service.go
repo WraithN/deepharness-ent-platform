@@ -2,224 +2,216 @@ package repository
 
 import (
 	"context"
-	"strconv"
+	"encoding/json"
+	"path/filepath"
 	"strings"
+
+	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
 )
 
-// buildArchGraph 从架构库 YAML 元数据构建三视图架构图（工程全景/服务依赖/业务领域）。
-// 返回 (views, 业务线选项, warnings)；单个文件缺失或解析失败不阻断整体出图。
-func buildArchGraph(ctx context.Context, repoPath string) (map[string]*archView, []archDomainOption, []string) {
-	domains, warn1 := loadArchDomains(ctx, repoPath)
-	services, warn2 := loadArchServices(ctx, repoPath)
-	rules, warn3 := loadArchDomainRules(ctx, repoPath)
-	warnings := append(append(warn1, warn2...), warn3...)
+// ── L1/L2/Overview 数据结构 ──
 
-	serviceByKey := make(map[string]archServiceDef, len(services))
-	for _, svc := range services {
-		serviceByKey[svc.ServiceKey] = svc
-	}
-	domainNameByKey := make(map[string]string, len(domains))
-	for _, d := range domains {
-		domainNameByKey[d.DomainKey] = d.DomainName
-	}
-
-	views := map[string]*archView{
-		archProjectView: buildRepoLevelView(services, serviceByKey, domainNameByKey),
-		archServiceView: buildServiceLevelView(services, serviceByKey, domainNameByKey),
-		archDDDView:     buildDomainLevelView(domains, services, serviceByKey, rules),
-	}
-	options := make([]archDomainOption, 0, len(domains))
-	for _, d := range domains {
-		options = append(options, archDomainOption{Key: d.DomainKey, Name: d.DomainName})
-	}
-	return views, options, warnings
+// librariesData 对应架构库 libraries.yaml（L1 开发库层）。
+type librariesData struct {
+	Libraries    []ArchLibrary       `yaml:"libraries"`
+	Dependencies []ArchLibDependency `yaml:"dependencies"`
+	Warnings     []string            `yaml:"warnings"`
+	ParsedAt     string              `yaml:"parsedAt"`
 }
 
-// buildRepoLevelView 工程全景（仓库维度）：节点为服务对应的工程仓库，边为 RPC/MQ/DB 依赖。
-func buildRepoLevelView(services []archServiceDef, serviceByKey map[string]archServiceDef, domainNameByKey map[string]string) *archView {
-	view := &archView{}
-	for _, svc := range services {
-		kind := archNodeKindRepo
-		if isInfraService(svc, domainNameByKey) {
-			kind = archNodeKindInfra
-		}
-		view.Nodes = append(view.Nodes, archNode{
-			ID:           svc.ServiceKey,
-			Label:        svc.ServiceKey,
-			Kind:         kind,
-			BusinessLine: domainNameByKey[svc.Domain],
-			Meta: map[string]string{
-				"服务名":  svc.ServiceName,
-				"业务线":  domainNameByKey[svc.Domain],
-				"负责团队": svc.OwnerTeam,
-				"服务等级": svc.ServiceLevel,
-				"能力数":  strconv.Itoa(len(svc.Capabilities)),
-				"描述":   svc.Description,
-			},
-		})
-	}
-	view.Edges = buildServiceEdges(services, serviceByKey)
-	return view
+// ArchLibrary 单个开发库节点。
+type ArchLibrary struct {
+	Key       string   `yaml:"key" json:"key"`
+	Name      string   `yaml:"name" json:"name"`
+	Path      string   `yaml:"path" json:"path"`
+	Languages []string `yaml:"languages" json:"languages"`
+	Summary   string   `yaml:"summary" json:"summary"`
 }
 
-// buildServiceLevelView 服务依赖视图（微服务）：与工程全景同拓扑，节点呈现微服务属性。
-func buildServiceLevelView(services []archServiceDef, serviceByKey map[string]archServiceDef, domainNameByKey map[string]string) *archView {
-	view := &archView{}
-	for _, svc := range services {
-		kind := archNodeKindService
-		if isInfraService(svc, domainNameByKey) {
-			kind = archNodeKindInfra
-		}
-		view.Nodes = append(view.Nodes, archNode{
-			ID:           svc.ServiceKey,
-			Label:        svc.ServiceName,
-			Kind:         kind,
-			BusinessLine: domainNameByKey[svc.Domain],
-			Meta: map[string]string{
-				"服务标识":    svc.ServiceKey,
-				"业务线":     domainNameByKey[svc.Domain],
-				"服务等级":    svc.ServiceLevel,
-				"自有库":     svc.Database.OwnDB,
-				"对外依赖":    strconv.Itoa(len(svc.Dependencies.SyncCall)),
-				"生产Topic": strconv.Itoa(len(svc.Dependencies.AsyncProduce)),
-				"消费Topic": strconv.Itoa(len(svc.Dependencies.AsyncConsume)),
-			},
-		})
-	}
-	view.Edges = buildServiceEdges(services, serviceByKey)
-	return view
+// ArchLibDependency 开发库间依赖边。
+type ArchLibDependency struct {
+	From        string `yaml:"from" json:"from"`
+	To          string `yaml:"to" json:"to"`
+	Kind        string `yaml:"kind" json:"kind"`
+	Description string `yaml:"description" json:"description"`
 }
 
-// buildServiceEdges 汇总服务间依赖边：syncCall→RPC，同 topic 的生产者→消费者→MQ，跨服务读库→DB共享。
-// 指向未登记服务的依赖跳过（架构库数据不全时不产生悬空边）。
-func buildServiceEdges(services []archServiceDef, serviceByKey map[string]archServiceDef) []archEdge {
-	var edges []archEdge
-	topicConsumers := map[string][]string{} // topicKey -> consumer serviceKeys
-	for _, svc := range services {
-		for _, dep := range svc.Dependencies.AsyncConsume {
-			topicConsumers[dep.TopicKey] = append(topicConsumers[dep.TopicKey], svc.ServiceKey)
-		}
-	}
-	// mqEdge 去重：同一对 生产者->消费者->topic 只出一条边。
-	mqSeen := map[string]bool{}
-	dbSeen := map[string]bool{}
-	for _, svc := range services {
-		for _, dep := range svc.Dependencies.SyncCall {
-			if _, ok := serviceByKey[dep.TargetService]; !ok {
-				continue
-			}
-			edges = append(edges, archEdge{Source: svc.ServiceKey, Target: dep.TargetService, Label: "RPC调用", Kind: archEdgeKindRPC})
-		}
-		for _, dep := range svc.Dependencies.AsyncProduce {
-			for _, consumer := range topicConsumers[dep.TopicKey] {
-				key := svc.ServiceKey + "|" + consumer + "|" + dep.TopicKey
-				if mqSeen[key] {
-					continue
-				}
-				mqSeen[key] = true
-				edges = append(edges, archEdge{Source: svc.ServiceKey, Target: consumer, Label: "MQ:" + dep.TopicKey, Kind: archEdgeKindMQ})
-			}
-		}
-		edges = append(edges, buildDBShareEdges(svc, serviceByKey, dbSeen)...)
-	}
-	return edges
+// modulesData 对应 modules/<lib>.yaml（L2 模块层）。
+type modulesData struct {
+	Modules      []ArchModule           `yaml:"modules"`
+	Dependencies []ArchModuleDependency `yaml:"dependencies"`
 }
 
-// buildDBShareEdges 服务读了他服务的自有库时产生 DB共享 边（svc -> 库属主）。
-func buildDBShareEdges(svc archServiceDef, serviceByKey map[string]archServiceDef, seen map[string]bool) []archEdge {
-	var edges []archEdge
-	for _, db := range svc.Database.AllowedReadDB {
-		for _, other := range serviceByKey {
-			if other.ServiceKey == svc.ServiceKey || other.Database.OwnDB != db {
-				continue
-			}
-			key := svc.ServiceKey + "|" + other.ServiceKey + "|" + db
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			edges = append(edges, archEdge{Source: svc.ServiceKey, Target: other.ServiceKey, Label: "DB共享:" + db, Kind: archEdgeKindDB})
-		}
-	}
-	return edges
+// ArchModule 单个模块节点。
+type ArchModule struct {
+	Key       string `yaml:"key" json:"key"`
+	Name      string `yaml:"name" json:"name"`
+	Path      string `yaml:"path" json:"path"`
+	Summary   string `yaml:"summary" json:"summary"`
+	FileCount int    `yaml:"fileCount" json:"fileCount"`
 }
 
-// buildDomainLevelView 业务领域视图（DDD）：节点为领域；
-// 边优先取 rules/ 依赖矩阵，否则把服务级 syncCall 聚合到领域维度。
-func buildDomainLevelView(domains []archDomainDef, services []archServiceDef, serviceByKey map[string]archServiceDef, rules *archDomainRules) *archView {
-	view := &archView{}
-	domainKeys := map[string]bool{}
-	for _, d := range domains {
-		domainKeys[d.DomainKey] = true
-		view.Nodes = append(view.Nodes, archNode{
-			ID:           d.DomainKey,
-			Label:        d.DomainName,
-			Kind:         archNodeKindDomain,
-			BusinessLine: d.DomainName,
-			Meta: map[string]string{
-				"聚合根":  strings.Join(d.AggregateRoots, "、"),
-				"负责团队": d.OwnerTeam,
-				"职责":   d.Description,
-			},
-		})
-	}
-	if rules != nil && len(rules.Matrix) > 0 {
-		view.Edges = buildDomainRuleEdges(rules, domainKeys)
-		return view
-	}
-	view.Edges = aggregateServiceEdgesToDomain(services, serviceByKey, domainKeys)
-	return view
+// ArchModuleDependency 模块间依赖边。
+type ArchModuleDependency struct {
+	From string `yaml:"from" json:"from"`
+	To   string `yaml:"to" json:"to"`
+	Kind string `yaml:"kind" json:"kind"`
 }
 
-// buildDomainRuleEdges 按 rules 依赖矩阵生成领域间允许调用边。
-// 注：allowEventSubscribe 指向的是 topic 而非领域，无对应节点，暂不单独成边。
-func buildDomainRuleEdges(rules *archDomainRules, domainKeys map[string]bool) []archEdge {
-	var edges []archEdge
-	for domain, constraint := range rules.Matrix {
-		if !domainKeys[domain] {
+// ArchOverview 开发库介绍页内容（overviews/<lib>.yaml）。
+type ArchOverview struct {
+	Key          string   `yaml:"key" json:"key"`
+	Name         string   `yaml:"name" json:"name"`
+	Positioning  string   `yaml:"positioning" json:"positioning"`
+	Architecture string   `yaml:"architecture" json:"architecture"`
+	TechStack    []string `yaml:"techStack" json:"techStack"`
+	CoreModules  []struct {
+		Key  string `yaml:"key" json:"key"`
+		Role string `yaml:"role" json:"role"`
+	} `yaml:"coreModules" json:"coreModules"`
+}
+
+// ── knowledge-graph.json 结构（L3 类/函数视图）──
+
+// kgGraph 对应 understand 产出的 knowledge-graph.json 结构（仅取画布所需字段）。
+type kgGraph struct {
+	Nodes []kgNode `json:"nodes"`
+	Edges []kgEdge `json:"edges"`
+}
+
+// kgNode 知识图谱节点：type 为 file/function/class。
+type kgNode struct {
+	ID         string   `json:"id"`
+	Type       string   `json:"type"`
+	Name       string   `json:"name"`
+	Summary    string   `json:"summary"`
+	FilePath   string   `json:"filePath"`
+	LineRange  string   `json:"lineRange"`
+	Complexity string   `json:"complexity"`
+	Tags       []string `json:"tags"`
+}
+
+// kgEdge 知识图谱边：kind 为 calls/imports/contains/inherits/depends_on。
+type kgEdge struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Kind   string `json:"kind"`
+}
+
+// ── 单文件 YAML 读取辅助 ──
+
+// readArchYAMLFile 读取架构库内单个 YAML 文件并解析；文件不存在返回 (false, nil)。
+// 复用 parseYamlFile：解析失败时记录 warning 并返回 false，不阻断整体出图。
+func readArchYAMLFile[T any](ctx context.Context, repoPath, relPath string, out *T) (bool, []string) {
+	sc := stubclient.FromContext(ctx)
+	if sc == nil {
+		return false, []string{"personal-stub 客户端不可用"}
+	}
+	content, err := sc.ReadFile(ctx, filepath.Join(repoPath, relPath))
+	if err != nil {
+		return false, nil // 文件不存在视为未解析，非错误
+	}
+	var warnings []string
+	if !parseYamlFile(relPath, content, out, &warnings) {
+		return false, warnings
+	}
+	return true, warnings
+}
+
+// loadLibraries 读取架构库根目录的 libraries.yaml（L1 开发库层）。
+func loadLibraries(ctx context.Context, repoPath string) (*librariesData, []string) {
+	var data librariesData
+	ok, warnings := readArchYAMLFile(ctx, repoPath, archLibrariesFile, &data)
+	if !ok {
+		return nil, warnings
+	}
+	return &data, warnings
+}
+
+// loadModules 读取架构库 modules/<lib>.yaml（L2 模块层）。
+func loadModules(ctx context.Context, repoPath, libKey string) (*modulesData, []string) {
+	var data modulesData
+	rel := filepath.Join(archModulesDir, libKey+archYamlExt)
+	ok, warnings := readArchYAMLFile(ctx, repoPath, rel, &data)
+	if !ok {
+		return nil, warnings
+	}
+	return &data, warnings
+}
+
+// loadOverview 读取架构库 overviews/<lib>.yaml（开发库介绍页）。
+// 文件不存在时返回 (nil, nil)，不视为错误。
+func loadOverview(ctx context.Context, repoPath, libKey string) (*ArchOverview, error) {
+	var data ArchOverview
+	rel := filepath.Join(archOverviewsDir, libKey+archYamlExt)
+	ok, _ := readArchYAMLFile(ctx, repoPath, rel, &data)
+	if !ok {
+		return nil, nil
+	}
+	return &data, nil
+}
+
+// ── L3 类视图：knowledge-graph.json 按 module path 过滤 ──
+
+// kgNodeTypes 为知识图谱中可纳入类视图的节点类型白名单。
+var kgNodeTypes = map[string]bool{
+	"file":     true,
+	"function": true,
+	"class":    true,
+}
+
+// filterClassView 是 loadClassView 的纯过滤逻辑（便于单测）：
+// 仅保留 file/function/class 类型且 filePath 命中前缀的节点；
+// 边仅当两端节点均存活时保留。prefix 为空表示不过滤路径。
+func filterClassView(kg kgGraph, prefix string) *archView {
+	prefix = filepath.ToSlash(prefix)
+	nodeIDs := map[string]bool{}
+	var nodes []archNode
+	for _, n := range kg.Nodes {
+		// 类型白名单过滤：非 file/function/class 节点跳过（如 config 节点）。
+		if !kgNodeTypes[n.Type] {
 			continue
 		}
-		for _, target := range constraint.AllowSyncCall {
-			if domainKeys[target] {
-				edges = append(edges, archEdge{Source: domain, Target: target, Label: "允许同步调用", Kind: archEdgeKindRPC})
-			}
+		// 路径前缀过滤：prefix 非空时要求 filePath 落在模块路径下。
+		if prefix != "" && !strings.HasPrefix(filepath.ToSlash(n.FilePath), prefix) {
+			continue
 		}
+		nodeIDs[n.ID] = true
+		nodes = append(nodes, archNode{
+			ID: n.ID, Label: n.Name, Kind: n.Type,
+			Meta: map[string]string{
+				"summary":    n.Summary,
+				"filePath":   n.FilePath,
+				"lineRange":  n.LineRange,
+				"complexity": n.Complexity,
+			},
+		})
 	}
-	return edges
-}
-
-// aggregateServiceEdgesToDomain 把服务级 syncCall 聚合为领域间依赖边（去重）。
-func aggregateServiceEdgesToDomain(services []archServiceDef, serviceByKey map[string]archServiceDef, domainKeys map[string]bool) []archEdge {
+	// 边过滤：仅保留两端节点均在过滤后集合内的边，剔除悬空边。
 	var edges []archEdge
-	seen := map[string]bool{}
-	for _, svc := range services {
-		for _, dep := range svc.Dependencies.SyncCall {
-			target, ok := serviceByKey[dep.TargetService]
-			if !ok || svc.Domain == "" || target.Domain == "" || svc.Domain == target.Domain {
-				continue
-			}
-			if !domainKeys[svc.Domain] || !domainKeys[target.Domain] {
-				continue
-			}
-			key := svc.Domain + "|" + target.Domain
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			edges = append(edges, archEdge{Source: svc.Domain, Target: target.Domain, Label: "RPC调用", Kind: archEdgeKindRPC})
+	for _, e := range kg.Edges {
+		if !nodeIDs[e.Source] || !nodeIDs[e.Target] {
+			continue
 		}
+		edges = append(edges, archEdge{Source: e.Source, Target: e.Target, Label: e.Kind, Kind: e.Kind})
 	}
-	return edges
+	return &archView{Nodes: nodes, Edges: edges}
 }
 
-// isInfraService 判定服务是否为基础组件（tags 命中或所属领域名含「基础」）。
-func isInfraService(svc archServiceDef, domainNameByKey map[string]string) bool {
-	for _, tag := range svc.Tags {
-		for _, infra := range infraTags {
-			if strings.EqualFold(tag, infra) {
-				return true
-			}
-		}
+// loadClassView 读取开发库 knowledge-graph.json，按 module path 前缀过滤节点与边。
+// modulePathPrefix 为模块在开发库内的相对路径前缀（如 "gateway/"）。
+func loadClassView(ctx context.Context, kgPath, modulePathPrefix string) (*archView, []string) {
+	sc := stubclient.FromContext(ctx)
+	if sc == nil {
+		return nil, []string{"personal-stub 客户端不可用"}
 	}
-	return strings.Contains(domainNameByKey[svc.Domain], "基础")
+	content, err := sc.ReadFile(ctx, kgPath)
+	if err != nil {
+		return nil, []string{"knowledge-graph.json 读取失败: " + err.Error()}
+	}
+	var kg kgGraph
+	if err := json.Unmarshal([]byte(content), &kg); err != nil {
+		return nil, []string{"knowledge-graph.json 解析失败: " + err.Error()}
+	}
+	return filterClassView(kg, modulePathPrefix), nil
 }
