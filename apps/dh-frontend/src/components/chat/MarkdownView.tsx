@@ -96,7 +96,7 @@ function containsMermaid(content: string): boolean {
   const normalized = normalizeCodeBlocks(content);
   const mermaidFencePattern = /```\s*mermaid\s*[\s\S]*?```/;
   if (mermaidFencePattern.test(normalized)) return true;
-  const codeBlocks = normalized.match(/```([\s\S]*?)```/g) ?? [];
+  const codeBlocks: string[] = normalized.match(/```([\s\S]*?)```/g) ?? [];
   return codeBlocks.some(block => {
     const code = block.replace(/```/g, '');
     return isMermaidDiagramCode(code) || isTextFlow(code);

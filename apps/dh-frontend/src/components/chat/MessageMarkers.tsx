@@ -109,8 +109,10 @@ export const ProjectMarkerCards: React.FC<ProjectMarkerCardsProps> = ({
     for (const p of prototypePaths) {
       const idx = p.indexOf(PROTOTYPE_DIR_SEGMENT);
       if (idx >= 0) {
-        const root = p.substring(0, p.indexOf('/', idx + PROTOTYPE_DIR_SEGMENT.length));
-        roots.push(root > -1 ? p.substring(0, root) : p);
+        // 定位原型目录名之后第一个 '/'，截取到该处作为原型工程根路径。
+        const slashIdx = p.indexOf('/', idx + PROTOTYPE_DIR_SEGMENT.length);
+        const root = slashIdx > -1 ? p.substring(0, slashIdx) : p;
+        roots.add(root);
       } else {
         roots.add(p);
       }
@@ -259,7 +261,7 @@ export const ReviewReportMarkerRenderer: React.FC<ReviewReportMarkerRendererProp
         onPreview={onReviewReportPreview}
         onAdopt={onReviewAdopt}
         onFix={onReviewFix}
-        isPreviewActive={activePreviewPath === reviewReportData.reportPath}
+        activePreviewPath={activePreviewPath}
       />
     </div>
   );
