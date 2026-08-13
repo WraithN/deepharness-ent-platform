@@ -23,7 +23,7 @@ func (f *Flow) Run(fc *FlowContext) error {
 	currentIdx := 0
 	for currentIdx < len(f.Nodes) {
 		node := f.Nodes[currentIdx]
-		if err := f.executeNode(fc, node); err != nil {
+		if err := ExecuteNode(fc, node); err != nil {
 			if errors.Is(err, ErrPauseFlow) {
 				log.Printf("[Flow:%s] paused at node %s", f.Name, node.Name())
 				fc.PausedNode = node.Name()
@@ -70,7 +70,7 @@ func (f *Flow) Resume(fc *FlowContext) error {
 
 	for currentIdx < len(f.Nodes) {
 		node := f.Nodes[currentIdx]
-		if err := f.executeNode(fc, node); err != nil {
+		if err := ExecuteNode(fc, node); err != nil {
 			if errors.Is(err, ErrPauseFlow) {
 				log.Printf("[Flow:%s] paused at node %s", f.Name, node.Name())
 				fc.PausedNode = node.Name()
@@ -91,8 +91,10 @@ func (f *Flow) Resume(fc *FlowContext) error {
 	return nil
 }
 
-func (f *Flow) executeNode(fc *FlowContext, node Node) error {
-	log.Printf("[Flow:%s] executing node %s (%s)", f.Name, node.Name(), node.Type())
+// ExecuteNode 执行单个节点的 Input -> Processor -> Output 三段式。
+// 提取为包级函数，供 Flow 主循环与 ParallelNode 分支复用，保证执行语义一致。
+func ExecuteNode(fc *FlowContext, node Node) error {
+	log.Printf("[Flow] executing node %s (%s)", node.Name(), node.Type())
 	if err := node.Input(fc); err != nil {
 		return fmt.Errorf("node %s input: %w", node.Name(), err)
 	}
