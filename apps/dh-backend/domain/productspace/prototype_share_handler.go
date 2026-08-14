@@ -79,6 +79,7 @@ func (h *Handler) ServeSharedPrototype(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.Contains(contentType, "text/html") {
+		data = rewritePrototypeAssetPaths(data)
 		data = injectPrototypeAnnotationScript(data)
 	}
 

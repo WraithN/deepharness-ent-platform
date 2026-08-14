@@ -42,14 +42,14 @@ func (n *RequirementAskForAcceptNode) Output(fc *core.FlowContext) error {
 }
 
 // NewRequirementEvalNode 创建需求评估人工节点（条件分支）。
-// 迁移为 core.HumanReviewNode：通知前通过 PreProcessor 执行 AI 复杂度预评估，
-// 评审结果由 fc.NeedArchDesign 决定路由（复杂走架构设计，简单直接开发）。
+// 迁移为 core.HumanReviewNode：通知前通过 PreProcessor 执行 AI 可行性预评估，
+// 评审结果由 fc.NeedArchDesign 决定路由（通过走方案设计，不通过转人工介入）。
 func NewRequirementEvalNode(deps *core.FlowDeps) *core.HumanReviewNode {
 	return core.NewHumanReviewNode(deps, core.HumanReviewConfig{
 		StageName:  processobject.StageRequirementEval,
-		OutputDesc: "评估需求复杂度，决定是否需要架构设计",
-		PassDesc:   "需求较复杂，需要进行架构设计",
-		FailDesc:   "需求较简单，直接进入开发",
+		OutputDesc: "评估需求是否适合 AI 开发",
+		PassDesc:   "评估通过，进入方案设计",
+		FailDesc:   "评估不通过，转人工介入",
 
 		NotifType:     notificationobject.TypeRequirementEvalRequired,
 		NotifTitleFmt: "需求评估: %s",
@@ -57,7 +57,7 @@ func NewRequirementEvalNode(deps *core.FlowDeps) *core.HumanReviewNode {
 		InputDescBuilder: func(fc *core.FlowContext) string {
 			return fmt.Sprintf("需求「%s」", fc.WorkitemTitle)
 		},
-		// NeedArchDesign 为 bool：映射为 pass（需要架构设计）/ reject（直接开发）。
+		// NeedArchDesign 为 bool：映射为 pass（适合 AI 开发，进入方案设计）/ reject（不适合，转人工介入）。
 		// 基类 NextNode/Output 均以 ResultGetter=="pass" 判定，故 pass 对应 StageArchDesign。
 		ResultGetter: func(fc *core.FlowContext) string {
 			if fc.NeedArchDesign {
@@ -72,7 +72,7 @@ func NewRequirementEvalNode(deps *core.FlowDeps) *core.HumanReviewNode {
 			}
 		},
 		PassNodeName: processobject.StageArchDesign,
-		FailNodeName: processobject.StageDevelopment,
+		FailNodeName: processobject.StageDevComplete,
 
 		DedupCheckType: notificationobject.TypeRequirementEvalRequired,
 		PreProcessor: func(fc *core.FlowContext) error {
@@ -82,7 +82,7 @@ func NewRequirementEvalNode(deps *core.FlowDeps) *core.HumanReviewNode {
 	})
 }
 
-// evalRequirementComplexity 通知前预评估：调用 AI 判断需求复杂度，结果写入 fc.RequirementEvalResult。
+// evalRequirementComplexity 通知前预评估：调用 AI 判断需求是否适合 AI 开发，结果写入 fc.RequirementEvalResult。
 // AI 调用失败不阻断流程（沿用旧行为），仅记录日志。
 func evalRequirementComplexity(deps *core.FlowDeps, fc *core.FlowContext) error {
 	prompt := prompts.BuildRequirementEvalPrompt(fc.WorkitemTitle, fc.WorkitemDesc)
@@ -115,7 +115,7 @@ func buildRequirementEvalBody(fc *core.FlowContext) string {
 	if len(desc) > requirementDescTruncateLen {
 		desc = desc[:requirementDescTruncateLen] + "..."
 	}
-	body := fmt.Sprintf("需求「%s」已受理，请评估是否需要架构设计。\n\n描述: %s", fc.WorkitemTitle, desc)
+	body := fmt.Sprintf("需求「%s」已受理，请评估是否适合 AI 开发。通过则进入方案设计，不通过将转人工介入。\n\n描述: %s", fc.WorkitemTitle, desc)
 	if fc.RequirementEvalResult != "" {
 		body += fmt.Sprintf("\n\n---\nAI 评估参考：\n%s", fc.RequirementEvalResult)
 	}

@@ -4,16 +4,15 @@ import "time"
 
 // 流程阶段名称常量（通用，其他流程可复用）
 const (
-	StageRequirement    = "requirement"     // 需求受理
+	StageRequirement     = "requirement"      // 需求受理
 	StageRequirementEval = "requirement_eval" // 需求评估
-	StageArchDesign     = "arch_design"     // 架构设计
-	StageAIEval         = "ai_eval"         // 智能评估
-	StageHumanAudit     = "human_audit"     // 人工审核
-	StageDevelopment    = "development"     // 需求开发
-	StageReview         = "review"          // 智能评审
-	StageHumanReview    = "human_review"    // 人工复审
-	StageCodeOptimize   = "code_optimize"   // 代码优化
-	StageDevComplete    = "dev_complete"    // 开发结束
+	StageArchDesign      = "arch_design"      // 方案设计
+	StageAIEval          = "ai_eval"          // AI 方案评估
+	StageHumanAudit      = "human_audit"      // 人工审核
+	StageDevelopment     = "development"      // AI 开发
+	StageReview          = "review"           // AI 代码评审
+	StageHumanReview     = "human_review"     // 人工评审
+	StageDevComplete     = "dev_complete"     // 人工介入
 
 	// 自动化测试流程阶段
 	StageTestRequirement     = "test_requirement"      // 测试需求接收
@@ -27,31 +26,30 @@ const (
 	StageTestComplete        = "test_complete"         // 测试结束
 
 	// 产品流程阶段
-	StageProductBrainstorm    = "product_brainstorm"    // 需求头脑风暴
-	StageProductBreakdown     = "product_breakdown"     // 需求拆解
-	StageProductResearch      = "product_research"      // 方案调研与选型
-	StageProductDraft         = "product_draft"         // 方案草案输出
+	StageProductBrainstorm    = "product_brainstorm"      // 需求头脑风暴
+	StageProductBreakdown     = "product_breakdown"       // 需求拆解
+	StageProductResearch      = "product_research"        // 方案调研与选型
+	StageProductDraft         = "product_draft"           // 方案草案输出
 	StageProductAIDraftReview = "product_ai_draft_review" // AI 草案复核
-	StageProductReview        = "product_review"        // 方案自主复核
-	StageProductAIGateway     = "product_ai_gateway"    // AI 网关（并行分叉）
-	StageProductPRDWrite      = "product_prd_write"     // PRD初稿生成
-	StageProductProtoMake     = "product_proto_make"    // 原型生成
-	StageProductProtoReview   = "product_proto_review"  // 原型交互复核
-	StageProductFinalReview   = "product_final_review"  // 需求评审
+	StageProductReview        = "product_review"          // 方案自主复核
+	StageProductAIGateway     = "product_ai_gateway"      // AI 并行决策器（并行分叉）
+	StageProductPRDWrite      = "product_prd_write"       // PRD初稿生成
+	StageProductProtoMake     = "product_proto_make"      // 原型生成
+	StageProductProtoReview   = "product_proto_review"    // 需求设计复核
+	StageProductFinalReview   = "product_final_review"    // 需求评审
 )
 
 // 流程阶段展示标签
 var StageLabels = map[string]string{
 	StageRequirement:     "需求受理",
 	StageRequirementEval: "需求评估",
-	StageArchDesign:      "架构设计",
-	StageAIEval:          "智能评估",
+	StageArchDesign:      "方案设计",
+	StageAIEval:          "AI 方案评估",
 	StageHumanAudit:      "人工审核",
-	StageDevelopment:     "需求开发",
-	StageReview:          "智能评审",
-	StageHumanReview:     "人工复审",
-	StageCodeOptimize:    "代码优化",
-	StageDevComplete:     "开发结束",
+	StageDevelopment:     "AI 开发",
+	StageReview:          "AI 代码评审",
+	StageHumanReview:     "人工评审",
+	StageDevComplete:     "人工介入",
 
 	StageTestRequirement:     "测试需求接收",
 	StageTestPlanDesign:      "测试方案设计",
@@ -69,10 +67,10 @@ var StageLabels = map[string]string{
 	StageProductDraft:         "方案草案输出",
 	StageProductAIDraftReview: "AI 草案复核",
 	StageProductReview:        "方案自主复核",
-	StageProductAIGateway:     "AI 网关",
+	StageProductAIGateway:     "AI 并行决策器",
 	StageProductPRDWrite:      "PRD初稿生成",
 	StageProductProtoMake:     "原型生成",
-	StageProductProtoReview:   "原型交互复核",
+	StageProductProtoReview:   "需求设计复核",
 	StageProductFinalReview:   "需求评审",
 }
 
@@ -110,12 +108,11 @@ var StageMetaMap = map[string]stageMeta{
 	StageRequirement:     {OperatorTypeHuman, StageTypeAction},
 	StageRequirementEval: {OperatorTypeHuman, StageTypeJudge},
 	StageArchDesign:      {OperatorTypeAI, StageTypeAction},
-	StageAIEval:          {OperatorTypeAI, StageTypeAction},
+	StageAIEval:          {OperatorTypeAI, StageTypeJudge},
 	StageHumanAudit:      {OperatorTypeHuman, StageTypeJudge},
 	StageDevelopment:     {OperatorTypeAI, StageTypeAction},
-	StageReview:          {OperatorTypeAI, StageTypeAction},
+	StageReview:          {OperatorTypeAI, StageTypeJudge},
 	StageHumanReview:     {OperatorTypeHuman, StageTypeJudge},
-	StageCodeOptimize:    {OperatorTypeAI, StageTypeAction},
 	StageDevComplete:     {OperatorTypeHuman, StageTypeAction},
 
 	StageTestRequirement:     {OperatorTypeHuman, StageTypeAction},
@@ -132,31 +129,30 @@ var StageMetaMap = map[string]stageMeta{
 	StageProductBreakdown:     {OperatorTypeAI, StageTypeAction},
 	StageProductResearch:      {OperatorTypeAI, StageTypeAction},
 	StageProductDraft:         {OperatorTypeAI, StageTypeAction},
-	StageProductAIDraftReview: {OperatorTypeAI, StageTypeJudge},
+	StageProductAIDraftReview: {OperatorTypeHuman, StageTypeJudge},
 	StageProductReview:        {OperatorTypeHuman, StageTypeJudge},
 	StageProductAIGateway:     {OperatorTypeAI, StageTypeGateway},
 	StageProductPRDWrite:      {OperatorTypeAI, StageTypeAction},
 	StageProductProtoMake:     {OperatorTypeAI, StageTypeAction},
 	StageProductProtoReview:   {OperatorTypeHuman, StageTypeJudge},
-	StageProductFinalReview:   {OperatorTypeHuman, StageTypeJudge},
+	StageProductFinalReview:   {OperatorTypeHuman, StageTypeAction},
 }
 
 // AI 角色常量
 const (
-	AgentRoleDevelopment  = "开发助理"
-	AgentRoleReview       = "评审助理"
-	AgentRoleCodeOptimize = "优化助理"
-	AgentRoleAIEval       = "评估助理"
-	AgentRoleProduct      = "产品助理"
+	AgentRoleDevelopment = "开发助理"
+	AgentRoleReview      = "评审助理"
+	AgentRoleAIEval      = "评估助理"
+	AgentRoleProduct     = "产品助理"
 )
 
 // 流程类型常量
 const (
-	ProcessTypeAIDev              = "ai_dev"
-	ProcessTypeAutoTest           = "auto_test"
-	ProcessTypeAutoTestAsset      = "auto_test_asset"
-	ProcessTypeAutoTestExecution  = "auto_test_execution"
-	ProcessTypeProduct            = "product"
+	ProcessTypeAIDev             = "ai_dev"
+	ProcessTypeAutoTest          = "auto_test"
+	ProcessTypeAutoTestAsset     = "auto_test_asset"
+	ProcessTypeAutoTestExecution = "auto_test_execution"
+	ProcessTypeProduct           = "product"
 )
 
 // ProcessStage 流程阶段
@@ -167,6 +163,7 @@ type ProcessStage struct {
 	StageType   string     `json:"stageType,omitempty"` // action / judge
 	SessionID   string     `json:"sessionId,omitempty"`
 	Prompt      string     `json:"prompt,omitempty"`
+	InputPrompt string     `json:"inputPrompt,omitempty"` // AI 节点的输入提示词（BuildPrompt 渲染结果）
 	StartedAt   *time.Time `json:"startedAt,omitempty"`
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
 	Error       string     `json:"error,omitempty"`
@@ -180,6 +177,7 @@ type ProcessStage struct {
 	ExtraInputDesc string `json:"extraInputDesc,omitempty"` // 额外输入描述（如用户提示词、优化指示）
 	ExtraInput     string `json:"extraInput,omitempty"`     // 额外输入内容
 	OutputDesc     string `json:"outputDesc,omitempty"`     // 阶段交付物描述
+	RetryCount     int    `json:"retryCount,omitempty"`     // 阶段已执行/重试次数（AI 草案复核用于展示第 N 次）
 }
 
 // Process 流程实体
@@ -207,25 +205,27 @@ type CreateProcessRequest struct {
 
 // UpdateStageRequest 更新阶段状态请求
 type UpdateStageRequest struct {
-	Status       string `json:"status"`
-	SessionID    string `json:"sessionId,omitempty"`
-	Prompt       string `json:"prompt,omitempty"`
-	Error        string `json:"error,omitempty"`
-	OperatorType string `json:"operatorType,omitempty"`
-	OperatorName string `json:"operatorName,omitempty"`
-	OperatorID   string `json:"operatorId,omitempty"`
-	AgentRole    string `json:"agentRole,omitempty"`
+	Status         string `json:"status"`
+	SessionID      string `json:"sessionId,omitempty"`
+	Prompt         string `json:"prompt,omitempty"`
+	InputPrompt    string `json:"inputPrompt,omitempty"`
+	Error          string `json:"error,omitempty"`
+	OperatorType   string `json:"operatorType,omitempty"`
+	OperatorName   string `json:"operatorName,omitempty"`
+	OperatorID     string `json:"operatorId,omitempty"`
+	AgentRole      string `json:"agentRole,omitempty"`
 	InputDesc      string `json:"inputDesc,omitempty"`
 	ExtraInputDesc string `json:"extraInputDesc,omitempty"`
 	ExtraInput     string `json:"extraInput,omitempty"`
 	OutputDesc     string `json:"outputDesc,omitempty"`
+	RetryCount     int    `json:"retryCount,omitempty"`
 }
 
 // NewAIDevProcess 创建 AI 开发流程（含预定义阶段）
 func NewAIDevProcess(workspaceID, workitemID, title string) *Process {
 	now := time.Now()
 	stages := make([]ProcessStage, 0, 10)
-	for _, name := range []string{StageRequirement, StageRequirementEval, StageArchDesign, StageAIEval, StageHumanAudit, StageDevelopment, StageReview, StageHumanReview, StageCodeOptimize, StageDevComplete} {
+	for _, name := range []string{StageRequirement, StageRequirementEval, StageArchDesign, StageAIEval, StageHumanAudit, StageDevelopment, StageReview, StageHumanReview, StageDevComplete} {
 		meta := StageMetaMap[name]
 		stages = append(stages, ProcessStage{
 			Name:         name,
@@ -343,8 +343,8 @@ func NewProductProcess(workspaceID, workitemID, title, docPath string) *Process 
 	now := time.Now()
 	productStages := []string{
 		StageProductBrainstorm, StageProductBreakdown, StageProductResearch,
-		StageProductDraft, StageProductAIDraftReview, StageProductReview,
-		StageProductAIGateway, StageProductPRDWrite, StageProductProtoMake,
+		StageProductDraft, StageProductAIDraftReview,
+		StageProductReview, StageProductAIGateway, StageProductPRDWrite, StageProductProtoMake,
 		StageProductProtoReview, StageProductFinalReview,
 	}
 	stages := make([]ProcessStage, 0, len(productStages))

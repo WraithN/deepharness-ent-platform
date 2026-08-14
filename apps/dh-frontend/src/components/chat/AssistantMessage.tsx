@@ -279,8 +279,6 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     return () => observer.disconnect();
   }, [textContent]);
 
-  const isStreaming = isRunning || isThinkingRunning;
-
   // 将 /proto-make 等指令生成的原型工程路径按一级产品目录去重，
   // 并过滤掉属于该原型工程下的普通 PROJECT/FILE 标记，避免一次生成出现多个卡片。
   function getPrototypeRootPath(path: string): string | null {
@@ -368,7 +366,9 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     }
   }, [hasUserStoryFromMarker, hasUserStoryFromLegacy, hasReqBreakdownFromMarker, hasReqBreakdownFromLegacy, reviewReportData]);
 
-  const showCollapsed = textOverflows && !textExpanded && !isStreaming;
+  // 流式期间也允许折叠：内容超出阈值时自动折叠并显示"展开全部"按钮，
+  // 用户可手动展开查看完整内容或折叠只看摘要，不强制等到流式结束。
+  const showCollapsed = textOverflows && !textExpanded;
 
   const toolCallCount = thinkingItems.filter((i) => i.type === 'tool-call').length;
 
@@ -496,9 +496,8 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
                   <div className="chat-bubble-fade absolute bottom-0 left-0 right-0 h-16 pointer-events-none z-10" />
                 )}
               </div>
-              {/* 仅当渲染后内容真实超出折叠高度且非流式输出时才展示折叠按钮，
-                  避免短内容出现无效按钮；流式期间内容持续完整展开，折叠不适用。 */}
-              {textOverflows && !isStreaming && (
+              {/* 内容超出折叠高度时展示折叠/展开按钮（含流式输出期间），让用户可随时折叠长内容。 */}
+              {textOverflows && (
                 <div className="flex justify-center py-1.5">
                   <button
                     className="chat-bubble-toggle"

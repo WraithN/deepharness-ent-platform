@@ -85,7 +85,9 @@ func (h *AGUIHandler) tryAugmentPRDResearchMessage(r *http.Request, messages []a
 // parsePRDResearchArgs 从指令参数中提取目标 URL 与登录 Cookie。
 // 兼容两种输入格式：
 //  1. 系统提示词模板格式（多行）：「调研链接：<URL>」与「登录Cookie：<name=value; ...>」；
-//  2. 裸参数格式：首个 token 为 URL，后续 ck:/cookie: 前缀 token 为 Cookie。
+//  2. 裸参数格式：首个 token 为 URL，后续为 Cookie。
+//     Cookie 支持直接粘贴浏览器 cookie 字符串（name=value; name2=value2），
+//     以及带 ck:/cookie: 前缀的单个 cookie（ck:name=value，向后兼容）。
 // 仅提供产品名称（无有效链接）时返回空 targetURL，调用方跳过抓取。
 func parsePRDResearchArgs(args string) (targetURL string, inlineCookies []object.Cookie) {
 	if link := normalizeResearchURL(extractLabeledLine(args, researchLinkLabels)); link != "" {
@@ -100,15 +102,16 @@ func parsePRDResearchArgs(args string) (targetURL string, inlineCookies []object
 	if link == "" {
 		return "", nil
 	}
+	// 逐 token 解析 cookie：先尝试带 ck:/cookie: 前缀格式（向后兼容），
+	// 再尝试无前缀的 name=value 格式（用户直接粘贴浏览器 cookie 的常见场景）。
+	// 末尾分号在 splitArgsTokens 按空格分割后残留在 token 上，需先去除。
 	for i := 1; i < len(tokens); i++ {
-		name, value, ok := parseInlineCookie(strings.TrimSpace(tokens[i]))
-		if !ok {
-			continue
+		token := strings.TrimSuffix(strings.TrimSpace(tokens[i]), ";")
+		if name, value, ok := parseInlineCookie(token); ok {
+			inlineCookies = append(inlineCookies, object.Cookie{Name: name, Value: value})
+		} else if name, value, ok := splitPlainCookie(token); ok {
+			inlineCookies = append(inlineCookies, object.Cookie{Name: name, Value: value})
 		}
-		inlineCookies = append(inlineCookies, object.Cookie{
-			Name:  name,
-			Value: value,
-		})
 		if len(inlineCookies) >= maxInlineCookies {
 			break
 		}
@@ -195,8 +198,8 @@ func normalizeResearchURL(raw string) string {
 func parseCookieString(s string) []object.Cookie {
 	var cookies []object.Cookie
 	for _, part := range strings.Split(s, ";") {
-		name, value, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok || name == "" || value == "" {
+		name, value, ok := splitPlainCookie(strings.TrimSpace(part))
+		if !ok {
 			continue
 		}
 		cookies = append(cookies, object.Cookie{Name: name, Value: value})
@@ -205,6 +208,21 @@ func parseCookieString(s string) []object.Cookie {
 		}
 	}
 	return cookies
+}
+
+// splitPlainCookie 解析无前缀的 "name=value" 格式 cookie，name/value 去空白后均不可为空。
+// 供 parseCookieString（分号分隔整体解析）与裸参数路径（逐 token 解析）复用。
+func splitPlainCookie(token string) (name string, value string, ok bool) {
+	name, value, ok = strings.Cut(token, "=")
+	if !ok {
+		return "", "", false
+	}
+	name = strings.TrimSpace(name)
+	value = strings.TrimSpace(value)
+	if name == "" || value == "" {
+		return "", "", false
+	}
+	return name, value, true
 }
 
 func splitArgsTokens(args string) []string {

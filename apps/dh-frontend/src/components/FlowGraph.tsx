@@ -75,12 +75,11 @@ const DEV_FLOW: FlowConfig = {
     [STAGE_NAMES.REQUIREMENT]: STAGE_TYPE.ACTION,
     [STAGE_NAMES.REQUIREMENT_EVAL]: STAGE_TYPE.JUDGE,
     [STAGE_NAMES.ARCH_DESIGN]: STAGE_TYPE.ACTION,
-    [STAGE_NAMES.AI_EVAL]: STAGE_TYPE.ACTION,
+    [STAGE_NAMES.AI_EVAL]: STAGE_TYPE.JUDGE,
     [STAGE_NAMES.HUMAN_AUDIT]: STAGE_TYPE.JUDGE,
     [STAGE_NAMES.DEVELOPMENT]: STAGE_TYPE.ACTION,
-    [STAGE_NAMES.REVIEW]: STAGE_TYPE.ACTION,
+    [STAGE_NAMES.REVIEW]: STAGE_TYPE.JUDGE,
     [STAGE_NAMES.HUMAN_REVIEW]: STAGE_TYPE.JUDGE,
-    [STAGE_NAMES.CODE_OPTIMIZE]: STAGE_TYPE.ACTION,
     [STAGE_NAMES.DEV_COMPLETE]: STAGE_TYPE.ACTION,
   },
   operatorTypeFallback: {
@@ -92,11 +91,8 @@ const DEV_FLOW: FlowConfig = {
     [STAGE_NAMES.DEVELOPMENT]: 'ai',
     [STAGE_NAMES.REVIEW]: 'ai',
     [STAGE_NAMES.HUMAN_REVIEW]: 'human',
-    [STAGE_NAMES.CODE_OPTIMIZE]: 'ai',
     [STAGE_NAMES.DEV_COMPLETE]: 'human',
   },
-  labelYOverride: (stageName, defaultY) =>
-    stageName === STAGE_NAMES.CODE_OPTIMIZE ? LABEL_Y_BOTTOM : defaultY,
 };
 
 const TEST_FLOW: FlowConfig = {
@@ -164,14 +160,14 @@ const PRODUCT_FLOW: FlowConfig = {
     [STAGE_NAMES.PRODUCT_PROTO_MAKE]: STAGE_TYPE.ACTION,
     [STAGE_NAMES.PRODUCT_PRD_WRITE]: STAGE_TYPE.ACTION,
     [STAGE_NAMES.PRODUCT_PROTO_REVIEW]: STAGE_TYPE.JUDGE,
-    [STAGE_NAMES.PRODUCT_FINAL_REVIEW]: STAGE_TYPE.JUDGE,
+    [STAGE_NAMES.PRODUCT_FINAL_REVIEW]: STAGE_TYPE.ACTION,
   },
   operatorTypeFallback: {
     [STAGE_NAMES.PRODUCT_BRAINSTORM]: 'ai',
     [STAGE_NAMES.PRODUCT_BREAKDOWN]: 'ai',
     [STAGE_NAMES.PRODUCT_RESEARCH]: 'ai',
     [STAGE_NAMES.PRODUCT_DRAFT]: 'ai',
-    [STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW]: 'ai',
+    [STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW]: 'human',
     [STAGE_NAMES.PRODUCT_REVIEW]: 'human',
     [STAGE_NAMES.PRODUCT_AI_GATEWAY]: 'ai',
     [STAGE_NAMES.PRODUCT_PROTO_MAKE]: 'ai',
@@ -296,7 +292,7 @@ function stagePos(topRow: string[], stageName: string, bottomRow: string[] = [])
   if (bottomIdx !== -1) {
     return { x: topRowX(topRow.length, bottomIdx), y: NODE_Y_BOTTOM };
   }
-  // 兼容旧逻辑：不在 top/bottom row 的节点落到 HUMAN_REVIEW 下方（AI 开发流程的 code_optimize）
+  // 兼容旧逻辑：不在 top/bottom row 的节点落到 HUMAN_REVIEW 下方
   const humanReviewIdx = topRow.indexOf(STAGE_NAMES.HUMAN_REVIEW);
   return { x: topRowX(topRow.length, humanReviewIdx), y: NODE_Y_BOTTOM };
 }
@@ -548,9 +544,9 @@ export const FlowGraph: React.FC<{
         );
       }
     } else if (processType === 'product') {
-      // 产品流程（11 阶段 + 网关并行分叉，所有驳回边底部折线走）
-      // 头脑风暴 → 拆解 → 调研 → 草案 → AI复核 → 方案复核 → AI网关 →
-      //   [PRD初稿生成 (top) | 原型初稿生成 (bottom) 并行] → 原型+PRD联合复核 → 需求评审
+      // 产品流程（11 阶段 + 并行决策器分叉，所有驳回边底部折线走）
+      // 头脑风暴 → 拆解 → 调研 → 草案 → AI复核 → 方案复核 → AI并行决策器 →
+      //   [PRD初稿生成 (top) | 原型初稿生成 (bottom) 并行] → 需求设计复核 → 需求评审
 
       addEdge(STAGE_NAMES.PRODUCT_BRAINSTORM, STAGE_NAMES.PRODUCT_BREAKDOWN, false);
       addEdge(STAGE_NAMES.PRODUCT_BREAKDOWN, STAGE_NAMES.PRODUCT_RESEARCH, false);
@@ -559,7 +555,7 @@ export const FlowGraph: React.FC<{
       addEdge(STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW, STAGE_NAMES.PRODUCT_REVIEW, true, 'Y 通过');
       addEdge(STAGE_NAMES.PRODUCT_REVIEW, STAGE_NAMES.PRODUCT_AI_GATEWAY, true, 'Y 通过');
 
-      // 网关分叉 → 两路并行（PRD + prototype，prd_write 在上行，proto_make 在下行）
+      // 并行决策器分叉 → 两路并行（PRD + prototype，prd_write 在上行，proto_make 在下行）
       addEdge(STAGE_NAMES.PRODUCT_AI_GATEWAY, STAGE_NAMES.PRODUCT_PRD_WRITE, false);
       {
         const gatewayCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_AI_GATEWAY, bottomRowRef);
@@ -575,7 +571,7 @@ export const FlowGraph: React.FC<{
         );
       }
 
-      // 两路汇入联合复核
+      // 两路汇入需求设计复核
       addEdge(STAGE_NAMES.PRODUCT_PRD_WRITE, STAGE_NAMES.PRODUCT_PROTO_REVIEW, false);
       {
         const protoCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_PROTO_MAKE, bottomRowRef);
@@ -591,7 +587,7 @@ export const FlowGraph: React.FC<{
         );
       }
 
-      // 联合复核通过 → 需求评审
+      // 需求设计复核通过 → 需求评审
       addEdge(STAGE_NAMES.PRODUCT_PROTO_REVIEW, STAGE_NAMES.PRODUCT_FINAL_REVIEW, true, 'Y 通过');
 
       // ─ 驳回边 ─
@@ -624,7 +620,7 @@ export const FlowGraph: React.FC<{
         );
       }
 
-      // 驳回边 3：联合复核不通过 → 草案（上方折线，退回重新构思）
+      // 驳回边 3：需求设计复核不通过 → 草案（上方折线，退回重新构思）
       {
         const srcCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_PROTO_REVIEW, bottomRowRef);
         const tgtCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_DRAFT, bottomRowRef);
@@ -637,19 +633,6 @@ export const FlowGraph: React.FC<{
         );
       }
 
-      // 驳回边 4：需求评审不通过 -> 原型+PRD联合复核（顶部折线，退回联合复核）
-      {
-        const srcCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_FINAL_REVIEW, bottomRowRef);
-        const tgtCx = stageCenterX(topRow, STAGE_NAMES.PRODUCT_PROTO_REVIEW, bottomRowRef);
-        addEdge(
-          STAGE_NAMES.PRODUCT_FINAL_REVIEW,
-          STAGE_NAMES.PRODUCT_PROTO_REVIEW,
-          true,
-          'N 不通过',
-          [{ x: srcCx, y: ORTH_TOP_Y - 18 }, { x: tgtCx, y: ORTH_TOP_Y - 18 }],
-        );
-      }
-
 
     } else {
       // ── AI 开发流程边 ──
@@ -657,21 +640,35 @@ export const FlowGraph: React.FC<{
       // 顺序边（顶行水平实线）
       addEdge(STAGE_NAMES.REQUIREMENT, STAGE_NAMES.REQUIREMENT_EVAL, false);
       addEdge(STAGE_NAMES.ARCH_DESIGN, STAGE_NAMES.AI_EVAL, false);
-      addEdge(STAGE_NAMES.AI_EVAL, STAGE_NAMES.HUMAN_AUDIT, false);
       addEdge(STAGE_NAMES.DEVELOPMENT, STAGE_NAMES.REVIEW, false);
-      addEdge(STAGE_NAMES.REVIEW, STAGE_NAMES.HUMAN_REVIEW, false);
 
-      addEdge(STAGE_NAMES.REQUIREMENT_EVAL, STAGE_NAMES.ARCH_DESIGN, true, 'Y 需要架构设计');
+      addEdge(STAGE_NAMES.REQUIREMENT_EVAL, STAGE_NAMES.ARCH_DESIGN, true, 'Y 通过');
 
+      // 需求评估不通过 → 直接到末节点人工介入（顶部折线，跳过中间所有节点）
       {
         const evalCx = stageCenterX(topRow, STAGE_NAMES.REQUIREMENT_EVAL, bottomRowRef);
-        const devCx = stageCenterX(topRow, STAGE_NAMES.DEVELOPMENT, bottomRowRef);
+        const completeCx = stageCenterX(topRow, STAGE_NAMES.DEV_COMPLETE, bottomRowRef);
         addEdge(
           STAGE_NAMES.REQUIREMENT_EVAL,
-          STAGE_NAMES.DEVELOPMENT,
+          STAGE_NAMES.DEV_COMPLETE,
           true,
-          'N 直接开发',
-          [{ x: (evalCx + devCx) / 2, y: ORTH_TOP_Y }],
+          'N 不通过',
+          [{ x: (evalCx + completeCx) / 2, y: ORTH_TOP_Y }],
+        );
+      }
+
+      addEdge(STAGE_NAMES.AI_EVAL, STAGE_NAMES.HUMAN_AUDIT, true, 'Y 通过');
+
+      // AI 方案评估不通过 → 返回方案设计（底部回环，与人工审核回环错层避免重叠）
+      {
+        const aiEvalCx = stageCenterX(topRow, STAGE_NAMES.AI_EVAL, bottomRowRef);
+        const archCx = stageCenterX(topRow, STAGE_NAMES.ARCH_DESIGN, bottomRowRef);
+        addEdge(
+          STAGE_NAMES.AI_EVAL,
+          STAGE_NAMES.ARCH_DESIGN,
+          true,
+          'N 不通过',
+          [{ x: aiEvalCx, y: NODE_Y_BOTTOM - 26 }, { x: archCx, y: NODE_Y_BOTTOM - 26 }],
         );
       }
 
@@ -689,18 +686,33 @@ export const FlowGraph: React.FC<{
         );
       }
 
-      addEdge(STAGE_NAMES.HUMAN_REVIEW, STAGE_NAMES.CODE_OPTIMIZE, true, 'N 不通过');
-      addEdge(STAGE_NAMES.HUMAN_REVIEW, STAGE_NAMES.DEV_COMPLETE, true, 'Y 通过');
+      addEdge(STAGE_NAMES.REVIEW, STAGE_NAMES.HUMAN_REVIEW, true, 'Y 通过');
 
+      // AI 代码评审不通过 → 返回 AI 开发（底部回环，与人工评审回环错层避免重叠）
       {
         const reviewCx = stageCenterX(topRow, STAGE_NAMES.REVIEW, bottomRowRef);
-        const optimizeCenterY = NODE_Y_BOTTOM + NODE_SIZE / 2;
+        const devCx = stageCenterX(topRow, STAGE_NAMES.DEVELOPMENT, bottomRowRef);
         addEdge(
-          STAGE_NAMES.CODE_OPTIMIZE,
           STAGE_NAMES.REVIEW,
+          STAGE_NAMES.DEVELOPMENT,
           true,
-          'N 重新评审',
-          [{ x: reviewCx, y: optimizeCenterY }],
+          'N 不通过',
+          [{ x: reviewCx, y: NODE_Y_BOTTOM - 26 }, { x: devCx, y: NODE_Y_BOTTOM - 26 }],
+        );
+      }
+
+      addEdge(STAGE_NAMES.HUMAN_REVIEW, STAGE_NAMES.DEV_COMPLETE, true, 'Y 通过');
+
+      // 人工评审不通过 → 返回 AI 开发（底部回环）
+      {
+        const humanReviewCx = stageCenterX(topRow, STAGE_NAMES.HUMAN_REVIEW, bottomRowRef);
+        const devCx = stageCenterX(topRow, STAGE_NAMES.DEVELOPMENT, bottomRowRef);
+        addEdge(
+          STAGE_NAMES.HUMAN_REVIEW,
+          STAGE_NAMES.DEVELOPMENT,
+          true,
+          'N 不通过',
+          [{ x: humanReviewCx, y: NODE_Y_BOTTOM - 10 }, { x: devCx, y: NODE_Y_BOTTOM - 10 }],
         );
       }
     }

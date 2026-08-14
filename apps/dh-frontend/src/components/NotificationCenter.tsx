@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, Zap, FileCheck, AlertCircle, Rocket, Loader2, FolderGit2, Wand2, ClipboardCheck, ClipboardList, CheckCircle2, X, FlaskConical, TestTubeDiagonal, ShieldCheck, ArrowRight } from 'lucide-react';
+import { Bell, Zap, FileCheck, AlertCircle, AlertTriangle, Rocket, Loader2, FolderGit2, Wand2, ClipboardCheck, ClipboardList, CheckCircle2, X, FlaskConical, TestTubeDiagonal, ShieldCheck, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -68,6 +68,9 @@ const NOTIFICATION_ICONS: Record<string, React.ElementType> = {
   product_review_required: ClipboardCheck,
   product_proto_review_required: TestTubeDiagonal,
   product_final_review_required: ShieldCheck,
+  product_ai_draft_review_required: AlertTriangle,
+  ai_eval_review_required: AlertTriangle,
+  code_review_decision_required: AlertTriangle,
 };
 
 export const NotificationCenter: React.FC = () => {
@@ -121,7 +124,25 @@ export const NotificationCenter: React.FC = () => {
     fetchNotifications();
   };
 
-  // 需求评估：需要架构设计（approved=false，无需优化指示）
+  // 需求评估：通过（approved=true，进入方案设计）
+  const handleEvalPass = async (id: string) => {
+    setActing(id);
+    try {
+      await api.post(`/v1/notifications/${id}/action`, {
+        action: 'approve',
+        approved: true,
+      });
+      toast.success('已通过，进入方案设计');
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    } catch {
+      toast.error('操作失败，请重试');
+    } finally {
+      setActing('');
+    }
+    fetchNotifications();
+  };
+
+  // 需求评估：不通过（approved=false，转人工介入）
   const handleReviewRejectDirect = async (id: string) => {
     setActing(id);
     try {
@@ -129,7 +150,7 @@ export const NotificationCenter: React.FC = () => {
         action: 'approve',
         approved: false,
       });
-      toast.success('已选择架构设计，流程继续');
+      toast.success('已标记不通过，转人工介入');
       setNotifications(prev => prev.filter(n => n.id !== id));
     } catch {
       toast.error('操作失败，请重试');
@@ -167,6 +188,25 @@ export const NotificationCenter: React.FC = () => {
       });
       toast.success('审核通过，流程继续');
       setNotifications(prev => prev.filter(n => n.id !== id));
+    } catch {
+      toast.error('操作失败，请重试');
+    } finally {
+      setActing('');
+    }
+    fetchNotifications();
+  };
+
+  // 需求评审确认：需求评审是结束处理节点（无驳回），确认后关联 PRD/原型到产品空间并跳转流程详情页。
+  const handleFinalReviewConfirm = async (id: string, url: string) => {
+    setActing(id);
+    try {
+      await api.post(`/v1/notifications/${id}/action`, {
+        action: 'approve',
+        approved: true,
+      });
+      toast.success('需求评审已完成，PRD 与原型已关联到需求');
+      setNotifications(prev => prev.filter(n => n.id !== id));
+      if (url) navigate(url);
     } catch {
       toast.error('操作失败，请重试');
     } finally {
@@ -217,7 +257,7 @@ export const NotificationCenter: React.FC = () => {
     navigate(url);
   };
 
-  // 审批不通过：提交优化指示，触发代码优化
+  // 审批不通过：提交修改指示，返回 AI 开发返修后重新评审
   const handleReviewReject = async () => {
     if (!optimizeNotificationId) return;
     setActing(optimizeNotificationId);
@@ -227,7 +267,7 @@ export const NotificationCenter: React.FC = () => {
         approved: false,
         prompt: optimizePrompt,
       });
-      toast.success('已提交优化指示，AI 将进行代码优化后重新评审');
+      toast.success('已提交修改指示，AI 将返修后重新评审');
       setNotifications(prev => prev.filter(n => n.id !== optimizeNotificationId));
     } catch {
       toast.error('操作失败，请重试');
@@ -428,6 +468,9 @@ export const NotificationCenter: React.FC = () => {
                         : n.type === 'product_review_required' ? 'bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400'
                         : n.type === 'product_proto_review_required' ? 'bg-pink-100 text-pink-600 dark:bg-pink-900/30 dark:text-pink-400'
                         : n.type === 'product_final_review_required' ? 'bg-fuchsia-100 text-fuchsia-600 dark:bg-fuchsia-900/30 dark:text-fuchsia-400'
+                        : n.type === 'product_ai_draft_review_required' ? 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
+                        : n.type === 'ai_eval_review_required' ? 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
+                        : n.type === 'code_review_decision_required' ? 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
                         : 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400'
                       }`}>
                         <Icon className="h-4 w-4" />
@@ -442,7 +485,7 @@ export const NotificationCenter: React.FC = () => {
                         {new Date(n.createdAt).toLocaleString('zh-CN')}
                       </p>
                       {/* 操作按钮 */}
-                      {n.actionType === 'approve_code_optimize' && n.actionStatus === 'pending' && n.type !== 'requirement_eval_required' && n.type !== 'human_audit_required' && n.type !== 'test_plan_review_required' && n.type !== 'test_case_review_required' && n.type !== 'test_admission_review_required' && n.type !== 'product_review_required' && n.type !== 'product_proto_review_required' && n.type !== 'product_final_review_required' && (
+                      {n.actionType === 'approve_code_optimize' && n.actionStatus === 'pending' && n.type !== 'requirement_eval_required' && n.type !== 'human_audit_required' && n.type !== 'ai_eval_review_required' && n.type !== 'code_review_decision_required' && n.type !== 'test_plan_review_required' && n.type !== 'test_case_review_required' && n.type !== 'test_admission_review_required' && n.type !== 'product_review_required' && n.type !== 'product_proto_review_required' && n.type !== 'product_final_review_required' && n.type !== 'product_ai_draft_review_required' && (
                         <div className="flex gap-2 pt-1">
                           <Button
                             size="sm"
@@ -465,22 +508,22 @@ export const NotificationCenter: React.FC = () => {
                               setShowOptimizeDialog(true);
                             }}
                           >
-                            <Wand2 className="h-3 w-3" />
-                            需优化
+                            <X className="h-3 w-3" />
+                            不通过
                           </Button>
                         </div>
                       )}
-                      {/* 需求评估通知按钮 */}
+                      {/* 需求评估通知按钮：通过进入方案设计，不通过转人工介入 */}
                       {n.actionType === 'approve_code_optimize' && n.actionStatus === 'pending' && n.type === 'requirement_eval_required' && (
                         <div className="flex gap-2 pt-1">
                           <Button
                             size="sm"
                             className="h-7 text-xs gap-1"
                             disabled={acting === n.id}
-                            onClick={() => handleReviewPass(n.id)}
+                            onClick={() => handleEvalPass(n.id)}
                           >
                             {acting === n.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
-                            直接开发
+                            通过
                           </Button>
                           <Button
                             size="sm"
@@ -489,8 +532,8 @@ export const NotificationCenter: React.FC = () => {
                             disabled={acting === n.id}
                             onClick={() => handleReviewRejectDirect(n.id)}
                           >
-                            <ClipboardList className="h-3 w-3" />
-                            需要架构设计
+                            <X className="h-3 w-3" />
+                            不通过
                           </Button>
                         </div>
                       )}
@@ -543,7 +586,7 @@ export const NotificationCenter: React.FC = () => {
                           </div>
                         )}
                         {/* 产品评审通知按钮 */}
-                        {n.actionType === 'approve_code_optimize' && n.actionStatus === 'pending' && (n.type === 'product_review_required' || n.type === 'product_proto_review_required' || n.type === 'product_final_review_required') && (
+                        {n.actionType === 'approve_code_optimize' && n.actionStatus === 'pending' && (n.type === 'product_review_required' || n.type === 'product_proto_review_required') && (
                           <div className="flex gap-2 pt-1">
                             <Button
                               size="sm"
@@ -563,6 +606,92 @@ export const NotificationCenter: React.FC = () => {
                             >
                               <X className="h-3 w-3" />
                                不通过
+                            </Button>
+                          </div>
+                        )}
+                        {/* 需求评审通知按钮：结束处理节点，无驳回，仅确认 */}
+                        {n.actionType === 'approve_code_optimize' && n.actionStatus === 'pending' && n.type === 'product_final_review_required' && (
+                          <div className="flex gap-2 pt-1">
+                            <Button
+                              size="sm"
+                              className="h-7 text-xs gap-1"
+                              disabled={acting === n.id}
+                              onClick={() => handleFinalReviewConfirm(n.id, n.actionUrl)}
+                            >
+                              {acting === n.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldCheck className="h-3 w-3" />}
+                              确认完成
+                            </Button>
+                          </div>
+                        )}
+                        {/* AI 草案复核通知：人工通过 / 拒绝 */}
+                        {n.actionType === 'approve_code_optimize' && n.actionStatus === 'pending' && n.type === 'product_ai_draft_review_required' && (
+                          <div className="flex gap-2 pt-1">
+                            <Button
+                              size="sm"
+                              className="h-7 text-xs gap-1"
+                              disabled={acting === n.id}
+                              onClick={() => handleTestReviewPass(n.id)}
+                            >
+                              {acting === n.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                              通过
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs gap-1"
+                              disabled={acting === n.id}
+                              onClick={() => openRejectDialog(n.id, n.title)}
+                            >
+                              <X className="h-3 w-3" />
+                              拒绝
+                            </Button>
+                          </div>
+                        )}
+                        {/* AI 方案评估超限通知：人工通过 / 拒绝（拒绝返回方案设计） */}
+                        {n.actionType === 'approve_code_optimize' && n.actionStatus === 'pending' && n.type === 'ai_eval_review_required' && (
+                          <div className="flex gap-2 pt-1">
+                            <Button
+                              size="sm"
+                              className="h-7 text-xs gap-1"
+                              disabled={acting === n.id}
+                              onClick={() => handleTestReviewPass(n.id)}
+                            >
+                              {acting === n.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                              通过
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs gap-1"
+                              disabled={acting === n.id}
+                              onClick={() => openRejectDialog(n.id, n.title)}
+                            >
+                              <X className="h-3 w-3" />
+                              拒绝
+                            </Button>
+                          </div>
+                        )}
+                        {/* AI 代码评审超限通知：人工通过（进人工评审）/ 拒绝（返回 AI 开发） */}
+                        {n.actionType === 'approve_code_optimize' && n.actionStatus === 'pending' && n.type === 'code_review_decision_required' && (
+                          <div className="flex gap-2 pt-1">
+                            <Button
+                              size="sm"
+                              className="h-7 text-xs gap-1"
+                              disabled={acting === n.id}
+                              onClick={() => handleTestReviewPass(n.id)}
+                            >
+                              {acting === n.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                              通过
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs gap-1"
+                              disabled={acting === n.id}
+                              onClick={() => openRejectDialog(n.id, n.title)}
+                            >
+                              <X className="h-3 w-3" />
+                              拒绝
                             </Button>
                           </div>
                         )}
@@ -732,7 +861,7 @@ export const NotificationCenter: React.FC = () => {
       </DialogContent>
     </Dialog>
 
-    {/* ── 代码优化审批对话框 ── */}
+    {/* ── 人工评审驳回对话框（提交修改指示，返回 AI 开发返修） ── */}
     <Dialog open={showOptimizeDialog} onOpenChange={setShowOptimizeDialog}>
       <DialogContent className="sm:max-w-lg p-0 flex flex-col overflow-hidden">
         <DialogHeader className="px-6 py-4 border-b border-border/50">
@@ -741,7 +870,7 @@ export const NotificationCenter: React.FC = () => {
               <Wand2 className="h-4 w-4 text-purple-600 dark:text-purple-400" />
             </div>
             <div>
-              <DialogTitle className="text-base">审核评审报告并指示优化</DialogTitle>
+              <DialogTitle className="text-base">审核评审报告并指示修改</DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
                 {optimizeTitle}
               </DialogDescription>
@@ -750,16 +879,16 @@ export const NotificationCenter: React.FC = () => {
         </DialogHeader>
         <div className="px-6 py-4 space-y-4 overflow-y-auto max-h-[calc(70vh-80px)]">
           <div className="space-y-1.5">
-            <Label htmlFor="optimize-prompt">优化指示（可选）</Label>
+            <Label htmlFor="optimize-prompt">修改指示（可选）</Label>
             <Textarea
               id="optimize-prompt"
-              placeholder="输入对 AI 的具体优化指示，例如：请重点关注性能优化和错误处理..."
+              placeholder="输入对 AI 的具体修改指示，例如：请重点关注性能优化和错误处理..."
               value={optimizePrompt}
               onChange={e => setOptimizePrompt(e.target.value)}
               className="min-h-[120px]"
             />
             <p className="text-[11px] text-muted-foreground">
-              留空则 AI 仅根据评审报告自动进行优化修复
+              留空则 AI 仅根据评审报告自动修复
             </p>
           </div>
         </div>
@@ -779,7 +908,7 @@ export const NotificationCenter: React.FC = () => {
             className="gap-1.5"
           >
             <Wand2 className="h-3.5 w-3.5" />
-            提交优化指示
+            提交修改指示
           </Button>
         </DialogFooter>
       </DialogContent>

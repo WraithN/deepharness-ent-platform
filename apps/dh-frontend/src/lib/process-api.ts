@@ -13,6 +13,7 @@ export interface ProcessStage {
   stageType?: string;
   sessionId?: string;
   prompt?: string;
+  inputPrompt?: string;
   startedAt?: string;
   completedAt?: string;
   error?: string;
@@ -24,6 +25,7 @@ export interface ProcessStage {
   extraInputDesc?: string;
   extraInput?: string;
   outputDesc?: string;
+  retryCount?: number;
 }
 
 export interface Process {
@@ -66,7 +68,6 @@ export const STAGE_NAMES = {
   DEVELOPMENT: 'development',
   REVIEW: 'review',
   HUMAN_REVIEW: 'human_review',
-  CODE_OPTIMIZE: 'code_optimize',
   DEV_COMPLETE: 'dev_complete',
   TEST_REQUIREMENT: 'test_requirement',
   TEST_PLAN_DESIGN: 'test_plan_design',
@@ -129,6 +130,8 @@ export interface StartProductFlowRequest {
   workitemId: string;
   workitemTitle: string;
   workitemDesc: string;
+  /** 发起流程时关联的头脑风暴源文档路径（头脑风暴节点复用其内容，不实际发起头脑风暴） */
+  docPath?: string;
 }
 
 export const processApi = {
@@ -143,6 +146,24 @@ export const processApi = {
   /** 启动产品流程 */
   startProductFlow: (req: StartProductFlowRequest) =>
     api.post<{ code: number; message: string; processId: string }>('/v1/orchestrator/product-flow', req),
+
+  /** 重试产品流程的失败节点 */
+  retryProductFlow: (processId: string) =>
+    api.post<{ code: number; message: string; processId: string }>(`/v1/processes/${encodeURIComponent(processId)}/retry`),
+
+  /** 检查是否存在进行中的流程 */
+  activeCheck: (workitemId: string, docPath: string) =>
+    api.get<{ hasActive: boolean; activeProcess: Process | null }>(
+      `/v1/processes/active-check?workitemId=${encodeURIComponent(workitemId)}&docPath=${encodeURIComponent(docPath)}`,
+    ),
+
+  /** 终止进行中的流程 */
+  terminateProcess: (processId: string) =>
+    api.post<Process>(`/v1/processes/${encodeURIComponent(processId)}/terminate`),
+
+  /** AI 草案复核人工通过/拒绝 */
+  aiDraftReview: (processId: string, approved: boolean) =>
+    api.post<{ code: number; message: string }>(`/v1/processes/${encodeURIComponent(processId)}/ai-draft-review`, { approved }),
 };
 
 export const sessionApi = {

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -67,6 +67,7 @@ import { requirementShareApi, productSpaceApi, findPrototypeProductName } from '
 import { productDocApi } from '@/lib/productdoc-api';
 import { workItemDocApi } from '@/lib/workitem-doc-api';
 import { workItemApi } from '@/lib/workitem-api';
+import { maskWorkspacePath } from '@/lib/utils';
 
 const DATE_FMT: Intl.DateTimeFormatOptions = {
   month: '2-digit',
@@ -174,10 +175,6 @@ function durationFromStage(stage: ProcessStage): number | null {
   if (!stage.startedAt || !stage.completedAt) return null;
   return calcDurationMs(stage.startedAt, stage.completedAt);
 }
-
-/** 脱敏：将提示词中的工作区绝对路径替换为 ~/，隐藏服务器目录结构 */
-const maskWorkspacePath = (text: string): string =>
-  text.replace(/\/[^\s"]+\/projects\//g, '~/projects/');
 
 function DetailField({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -385,6 +382,7 @@ export const ProcessDetail: React.FC = () => {
                 devStageOutput={devStage?.outputDesc}
                 reviewReportText={humanReviewStage?.prompt}
                 processId={process.id}
+                stages={process.stages}
               />
             </div>
               );
@@ -605,9 +603,10 @@ interface StageCardProps {
   devStageOutput?: string;
   reviewReportText?: string;
   processId?: string;
+  stages?: ProcessStage[];
 }
 
-const StageCard: React.FC<StageCardProps> = ({ stage, workitem, workspaceId, onViewDetail, onViewDesign, devStageOutput, reviewReportText, processId }) => {
+const StageCard: React.FC<StageCardProps> = ({ stage, workitem, workspaceId, onViewDetail, onViewDesign, devStageOutput, reviewReportText, processId, stages }) => {
   const status = stage.status;
   const Icon = STATUS_ICON[status] ?? Circle;
   const isSpinning = status === STAGE_STATUS.IN_PROGRESS;
@@ -615,6 +614,26 @@ const StageCard: React.FC<StageCardProps> = ({ stage, workitem, workspaceId, onV
   const isAI = stage.operatorType === OPERATOR_TYPE.AI;
   const dur = durationFromStage(stage);
   const [expanded, setExpanded] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const retryingRef = useRef(false);
+
+  // 失败节点重试：调用后端重试接口，流程轮询会自动刷新最新状态。
+  // 用 ref 做同步防抖，避免 setState 异步导致快速双击时重复提交。
+  const handleRetry = async () => {
+    if (!processId || retryingRef.current) return;
+    retryingRef.current = true;
+    setRetrying(true);
+    try {
+      await processApi.retryProductFlow(processId);
+      toast.success('已重新执行该节点');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      toast.error(msg || '重试失败，请稍后再试');
+    } finally {
+      retryingRef.current = false;
+      setRetrying(false);
+    }
+  };
 
   const ALL_ITEMS = ['input', 'process', 'deliverables'];
 
@@ -633,6 +652,8 @@ const StageCard: React.FC<StageCardProps> = ({ stage, workitem, workspaceId, onV
                 isAI={isAI}
                 dur={dur}
                 expanded={expanded}
+                onRetry={handleRetry}
+                retrying={retrying}
               />
             </div>
           </CollapsibleTrigger>
@@ -647,7 +668,7 @@ const StageCard: React.FC<StageCardProps> = ({ stage, workitem, workspaceId, onV
                   </span>
                 </AccordionTrigger>
                 <AccordionContent>
-                  <StageInputContent stage={stage} workitem={workitem} workspaceId={workspaceId} onViewDetail={onViewDetail} onViewDesign={onViewDesign} devStageOutput={devStageOutput} />
+                  <StageInputContent stage={stage} workitem={workitem} workspaceId={workspaceId} onViewDetail={onViewDetail} onViewDesign={onViewDesign} devStageOutput={devStageOutput} stages={stages} processId={processId} />
                 </AccordionContent>
               </AccordionItem>
 
@@ -691,9 +712,11 @@ interface StageHeaderProps {
   isAI: boolean;
   dur: number | null;
   expanded: boolean;
+  onRetry?: () => void;
+  retrying?: boolean;
 }
 
-const StageHeader: React.FC<StageHeaderProps> = ({ stage, status, Icon, color, isSpinning, isAI, dur, expanded }) => {
+const StageHeader: React.FC<StageHeaderProps> = ({ stage, status, Icon, color, isSpinning, isAI, dur, expanded, onRetry, retrying }) => {
   const formatOperator = (): string => {
     if (!stage.operatorName) return '';
     if (isAI && stage.agentRole) {
@@ -739,6 +762,21 @@ const StageHeader: React.FC<StageHeaderProps> = ({ stage, status, Icon, color, i
         {stage.error && (
           <span className="text-xs text-red-500">{stage.error}</span>
         )}
+        {status === STAGE_STATUS.FAILED && onRetry && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-6 text-[10px] gap-1 shrink-0"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRetry();
+            }}
+            disabled={retrying}
+          >
+            <RefreshCw className={`h-3 w-3 ${retrying ? 'animate-spin' : ''}`} />
+            重试
+          </Button>
+        )}
         <ChevronDown className={`h-4 w-4 text-muted-foreground/50 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
       </div>
     </div>
@@ -754,10 +792,12 @@ interface StageInputContentProps {
   onViewDetail: () => void;
   onViewDesign: () => void;
   devStageOutput?: string;
+  stages?: ProcessStage[];
+  processId?: string;
 }
 
 /** 渲染"上一步交付物"区块内容 */
-const PrevOutputSection: React.FC<{ stage: ProcessStage; workitem: WorkItemDTO | null; devStageOutput?: string }> = ({ stage, workitem, devStageOutput }) => {
+const PrevOutputSection: React.FC<{ stage: ProcessStage; workitem: WorkItemDTO | null; devStageOutput?: string; prevStages?: ProcessStage[]; workspaceId: string; processId?: string }> = ({ stage, workitem, devStageOutput, prevStages, workspaceId, processId }) => {
   switch (stage.name) {
     case STAGE_NAMES.REQUIREMENT:
       return null;
@@ -777,7 +817,6 @@ const PrevOutputSection: React.FC<{ stage: ProcessStage; workitem: WorkItemDTO |
       );
     }
     case STAGE_NAMES.HUMAN_REVIEW:
-    case STAGE_NAMES.CODE_OPTIMIZE:
     case STAGE_NAMES.HUMAN_AUDIT:
       if (!stage.prompt) return null;
       return (
@@ -798,19 +837,54 @@ const PrevOutputSection: React.FC<{ stage: ProcessStage; workitem: WorkItemDTO |
     case STAGE_NAMES.PRODUCT_AI_GATEWAY:
     case STAGE_NAMES.PRODUCT_PROTO_MAKE:
     case STAGE_NAMES.PRODUCT_PRD_WRITE:
-    case STAGE_NAMES.PRODUCT_FINAL_REVIEW:
-      if (!stage.prompt) return null;
+    case STAGE_NAMES.PRODUCT_PROTO_REVIEW:
+    case STAGE_NAMES.PRODUCT_FINAL_REVIEW: {
+      // 上一步交付物：展示前序阶段的产出（prevStages.prompt），而非当前阶段的 prompt。
+      // 需求设计复核等并行汇合节点会有多个前序产物（如 PRD + 原型）。
+      const list = (prevStages ?? []).filter((s) => !!s?.prompt);
+      if (list.length === 0) return null;
       return (
-        <div className="bg-muted/40 rounded-lg p-3 space-y-2">
-          <div className="flex items-center gap-2">
-            <FileText className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">{stage.inputDesc || '前置产物'}</span>
-          </div>
-          <div className="p-2 bg-background/50 rounded border border-border/30 text-xs text-muted-foreground max-h-32 overflow-y-auto whitespace-pre-wrap leading-relaxed">
-            {maskWorkspacePath(stage.prompt)}
-          </div>
+        <div className="space-y-2">
+          {list.map((ps) => {
+            const prevPrompt = ps.prompt!;
+            const prevLabel = ps.outputDesc || ps.label || '前置产物';
+            // 上一步交付物含文件标记时，渲染文档卡片（可点击跳转），而非原始 [[FILE:...]] 记号文本。
+            const prevMarkers = parseProductDeliverableMarkers(prevPrompt);
+            if (prevMarkers.length > 0) {
+              return (
+                <div key={ps.name} className="bg-muted/40 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">{prevLabel}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {prevMarkers.map((marker, idx) => (
+                      <ProductDeliverableCard
+                        key={`${marker.type}-${marker.path}-${idx}`}
+                        marker={marker}
+                        workspaceId={workspaceId}
+                        processId={processId ?? ''}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div key={ps.name} className="bg-muted/40 rounded-lg p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">{prevLabel}</span>
+                </div>
+                <div className="p-2 bg-background/50 rounded border border-border/30 text-xs text-muted-foreground max-h-32 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+                  {maskWorkspacePath(prevPrompt)}
+                </div>
+              </div>
+            );
+          })}
         </div>
       );
+    }
     default:
       return null;
   }
@@ -851,29 +925,31 @@ const ExtraInputSection: React.FC<{ stage: ProcessStage; workitem: WorkItemDTO |
         />
       );
     case STAGE_NAMES.DEVELOPMENT:
-      if (!stage.prompt) return null;
+      if (!stage.prompt && !stage.extraInput) return null;
       return (
-        <div className="bg-muted/40 rounded-lg p-3">
-          <div className="flex items-center gap-2 mb-2">
-            <GitBranch className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">开发提示词</span>
-          </div>
-          <div className="p-2 bg-background/50 rounded border border-border/30 text-xs text-muted-foreground max-h-32 overflow-y-auto whitespace-pre-wrap leading-relaxed">
-            {maskWorkspacePath(stage.prompt)}
-          </div>
-        </div>
-      );
-    case STAGE_NAMES.CODE_OPTIMIZE:
-      if (!stage.extraInput) return null;
-      return (
-        <div className="bg-muted/40 rounded-lg p-3">
-          <div className="flex items-center gap-2 mb-2">
-            <User className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">{stage.extraInputDesc || '开发人员优化指示'}</span>
-          </div>
-          <div className="p-2 bg-background/50 rounded border border-border/30 text-xs text-muted-foreground max-h-32 overflow-y-auto whitespace-pre-wrap leading-relaxed">
-            {stage.extraInput}
-          </div>
+        <div className="space-y-2">
+          {stage.prompt && (
+            <div className="bg-muted/40 rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <GitBranch className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">开发提示词</span>
+              </div>
+              <div className="p-2 bg-background/50 rounded border border-border/30 text-xs text-muted-foreground max-h-32 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+                {maskWorkspacePath(stage.prompt)}
+              </div>
+            </div>
+          )}
+          {stage.extraInput && (
+            <div className="bg-muted/40 rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <User className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">{stage.extraInputDesc || '人工修改指示'}</span>
+              </div>
+              <div className="p-2 bg-background/50 rounded border border-border/30 text-xs text-muted-foreground max-h-32 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+                {stage.extraInput}
+              </div>
+            </div>
+          )}
         </div>
       );
     case STAGE_NAMES.PRODUCT_BRAINSTORM:
@@ -883,13 +959,27 @@ const ExtraInputSection: React.FC<{ stage: ProcessStage; workitem: WorkItemDTO |
   }
 };
 
-const StageInputContent: React.FC<StageInputContentProps> = ({ stage, workitem, workspaceId, onViewDetail, onViewDesign, devStageOutput }) => {
+const StageInputContent: React.FC<StageInputContentProps> = ({ stage, workitem, workspaceId, onViewDetail, onViewDesign, devStageOutput, stages, processId }) => {
   const hasPrevOutput = stage.name !== STAGE_NAMES.REQUIREMENT && stage.name !== STAGE_NAMES.PRODUCT_BRAINSTORM;
   const hasExtraInput =
     !!stage.extraInputDesc ||
     stage.name === STAGE_NAMES.REQUIREMENT ||
     stage.name === STAGE_NAMES.DEVELOPMENT ||
     stage.name === STAGE_NAMES.PRODUCT_BRAINSTORM;
+
+  // 上一步交付物：取当前阶段的前序阶段。
+  // 需求设计复核是并行分叉的汇合点，其前序产物为 PRD 生成 + 原型生成两个。
+  const prevStages = useMemo<ProcessStage[]>(() => {
+    if (!stages || stages.length === 0) return [];
+    const idx = stages.findIndex((s) => s.name === stage.name);
+    if (idx <= 0) return [];
+    if (stage.name === STAGE_NAMES.PRODUCT_PROTO_REVIEW) {
+      const prd = stages.find((s) => s.name === STAGE_NAMES.PRODUCT_PRD_WRITE);
+      const proto = stages.find((s) => s.name === STAGE_NAMES.PRODUCT_PROTO_MAKE);
+      return [prd, proto].filter((s): s is ProcessStage => !!s);
+    }
+    return [stages[idx - 1]];
+  }, [stages, stage.name]);
 
   if (!hasPrevOutput && !hasExtraInput) {
     return <p className="text-xs text-muted-foreground py-1">暂无输入信息</p>;
@@ -903,7 +993,7 @@ const StageInputContent: React.FC<StageInputContentProps> = ({ stage, workitem, 
             <PackageCheck className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="text-xs font-medium text-muted-foreground">上一步交付物</span>
           </div>
-          <PrevOutputSection stage={stage} workitem={workitem} devStageOutput={devStageOutput} />
+          <PrevOutputSection stage={stage} workitem={workitem} devStageOutput={devStageOutput} prevStages={prevStages} workspaceId={workspaceId} processId={processId} />
         </div>
       )}
       {hasExtraInput && (
@@ -945,30 +1035,26 @@ function productStageSummary(prompt: string | undefined, maxLength = 200): strin
   return firstLine.length > maxLength ? `${firstLine.slice(0, maxLength)}…` : firstLine;
 }
 
-// --- 产品流程 AI 阶段处理过程展示（不拉取会话消息，避免跨用户会话权限问题） ---
+// --- 产品流程 AI 阶段处理过程展示：输入 AI 的提示词 + AI 返回的对话详情 ---
 interface ProductStageProcessProps {
   stage: ProcessStage;
+  workspaceId: string;
 }
 
-const ProductStageProcess: React.FC<ProductStageProcessProps> = ({ stage }) => {
-  const roleLabel = stage.agentRole
-    ? (AGENT_ROLE_LABELS[stage.agentRole] ?? stage.agentRole)
-    : 'AI 产品助理';
-
+const ProductStageProcess: React.FC<ProductStageProcessProps> = ({ stage, workspaceId }) => {
   return (
-    <div className="py-1">
-      <div className="bg-blue-50/50 dark:bg-blue-950/20 rounded-lg p-3">
-        <div className="flex items-center gap-2">
-          <Bot className="h-4 w-4 text-blue-400" />
-          <span className="text-sm font-medium">{roleLabel}@{stage.operatorName || 'AI'}</span>
-          <span className="text-xs text-muted-foreground">
-            {stage.status === STAGE_STATUS.COMPLETED ? '工作完毕' : '正在工作...'}
-          </span>
+    <div className="py-1 space-y-2">
+      {/* 输入 AI 的提示词 */}
+      {stage.inputPrompt && (
+        <div className="bg-blue-50/50 dark:bg-blue-950/20 rounded-lg p-3">
+          <div className="text-xs font-medium text-muted-foreground mb-1">输入 AI 的提示词</div>
+          <div className="p-2 bg-background/50 rounded border border-border/30 text-xs text-muted-foreground max-h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+            {maskWorkspacePath(stage.inputPrompt)}
+          </div>
         </div>
-        <p className="text-xs text-muted-foreground mt-2">
-          AI 已完成 {stage.label}，生成产物可在下方「交付成果」中查看。
-        </p>
-      </div>
+      )}
+      {/* AI 返回的对话详情（含角色头部与消息流） */}
+      <AIConversationContent stage={stage} workspaceId={workspaceId} />
     </div>
   );
 };
@@ -993,6 +1079,10 @@ function parseProductDeliverableMarkers(prompt: string | undefined): ProductDeli
     const type = match[1] as 'FILE' | 'PROJECT';
     const rawPath = match[2].trim();
     if (!rawPath) continue;
+    // 过滤无效标记：字面量占位符（...）或非绝对路径（不含 / 分隔符）。
+    // agent 思考过程可能引用模板示例「[[FILE:...]]」「[[FILE:文件完整路径]]」，
+    // 这些不是真实产物，展示会导致"查看详情"因路径不存在而报错。
+    if (rawPath === '...' || rawPath === '…' || !rawPath.includes('/')) continue;
     const segments = rawPath.split('/').filter(Boolean);
     const name = segments.length > 0 ? segments[segments.length - 1] : rawPath;
     if (type === 'FILE') {
@@ -1017,11 +1107,19 @@ interface ProductDeliverableCardProps {
   processId: string;
 }
 
-/** 单个交付物卡片：一键导入/采纳产物并打开需求级分享落地页（新窗口）。 */
+/** 单个交付物卡片：文档用 FileView 新页面展示内容，原型工程导入产品空间并打开分享落地页。 */
 const ProductDeliverableCard: React.FC<ProductDeliverableCardProps> = ({ marker, workspaceId, processId }) => {
   const [loading, setLoading] = useState(false);
 
   const handleOpen = async () => {
+    // 文档产物：直接在新页面（FileView）展示内容，无需导入产品空间。
+    if (marker.type === 'file') {
+      const params = new URLSearchParams();
+      params.set('path', marker.path);
+      window.open(`/file-view?${params.toString()}`, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    // 原型工程：导入产品空间并打开需求级分享落地页。
     setLoading(true);
     try {
       const share = await productSpaceApi.shareProcessDeliverable(processId, {
@@ -1077,9 +1175,117 @@ interface ProductStageOutputProps {
 
 const ProductStageOutput: React.FC<ProductStageOutputProps> = ({ stage, workspaceId, processId }) => {
   const [open, setOpen] = useState(false);
+  const [submittingDecision, setSubmittingDecision] = useState(false);
+  const submittingDecisionRef = useRef(false);
   const markers = parseProductDeliverableMarkers(stage.prompt);
   const hasDetail = !!stage.prompt;
   const summary = productStageSummary(stage.prompt) || stage.outputDesc;
+
+  // AI 草案复核人工通过/拒绝提交（ref 同步防抖，避免快速双击重复提交）。
+  const handleAIDraftReviewDecision = async (approved: boolean) => {
+    if (!processId || submittingDecisionRef.current) return;
+    submittingDecisionRef.current = true;
+    setSubmittingDecision(true);
+    try {
+      await processApi.aiDraftReview(processId, approved);
+      toast.success(approved ? '已通过复核' : '已拒绝复核');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      toast.error(msg || '操作失败，请重试');
+    } finally {
+      submittingDecisionRef.current = false;
+      setSubmittingDecision(false);
+    }
+  };
+
+  // 失败节点：不把输入 prompt 中的上游文件标记当作交付物，仅提示重试。
+  if (stage.status === STAGE_STATUS.FAILED) {
+    return (
+      <div className="py-1">
+        <p className="text-xs text-muted-foreground">该阶段执行失败，可点击上方「重试」按钮重新执行。</p>
+      </div>
+    );
+  }
+
+  // AI 草案复核：交付物是评审结论卡片（带状态 + 详情弹窗）+ 被复核的草案卡片。
+  if (stage.name === STAGE_NAMES.PRODUCT_AI_DRAFT_REVIEW) {
+    const passed = !(stage.outputDesc || '').includes('不通过');
+    const draftMarkers = parseProductDeliverableMarkers(stage.extraInput);
+    const retryCount = stage.retryCount || 1;
+    // 节点暂停（in_progress）且已有复核建议时，等待人工通过/拒绝。
+    const isWaitingDecision = stage.status === STAGE_STATUS.IN_PROGRESS && !!stage.prompt;
+    return (
+      <div className="space-y-2 py-1">
+        {/* 评审结论卡片 */}
+        <div className="border border-border/50 rounded-lg p-3 flex items-center gap-2 flex-wrap">
+          <Bot className="h-4 w-4 text-blue-400 shrink-0" />
+          <span className="text-sm font-medium">AI 草案复核建议（第 {retryCount} 次）</span>
+          {isWaitingDecision ? (
+            <>
+              <Button
+                size="sm"
+                className="h-7 text-[10px] gap-1"
+                disabled={submittingDecision}
+                onClick={() => handleAIDraftReviewDecision(true)}
+              >
+                <CheckCircle2 className="h-3 w-3" />
+                通过
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-[10px] gap-1"
+                disabled={submittingDecision}
+                onClick={() => handleAIDraftReviewDecision(false)}
+              >
+                <XCircle className="h-3 w-3" />
+                拒绝
+              </Button>
+            </>
+          ) : (
+            <Badge variant={passed ? 'default' : 'destructive'} className="text-[10px]">
+              {passed ? '评审通过' : '评审不通过'}
+            </Badge>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-[10px] gap-1 ml-auto"
+            onClick={() => setOpen(true)}
+            disabled={!stage.prompt}
+          >
+            <ExternalLink className="h-3 w-3" />
+            查看详情
+          </Button>
+        </div>
+        {/* 被复核的草案卡片 */}
+        {draftMarkers.length > 0 && (
+          <div className="space-y-2">
+            {draftMarkers.map((marker, idx) => (
+              <ProductDeliverableCard
+                key={`${marker.type}-${marker.path}-${idx}`}
+                marker={marker}
+                workspaceId={workspaceId}
+                processId={processId}
+              />
+            ))}
+          </div>
+        )}
+        {/* 评审详情弹窗 */}
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>AI 草案复核详情</DialogTitle>
+              <DialogDescription>{stage.label} 评审详细内容</DialogDescription>
+            </DialogHeader>
+            <div className="text-sm">
+              <MarkdownView content={maskWorkspacePath(stage.prompt || '')} collapsible={false} />
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
+  }
 
   // 存在真实产物标记时，渲染产物卡片列表，点击后跳转到产品空间分享页。
   if (markers.length > 0) {
@@ -1188,6 +1394,8 @@ const StageProcessContent: React.FC<StageProcessContentProps> = ({ stage, workit
                 </span>
                 进行开发
               </>
+            ) : stage.status === STAGE_STATUS.IN_PROGRESS ? (
+              `等待${operatorName}操作审批`
             ) : (
               `${operatorName}完成了操作审批`
             )}
@@ -1198,7 +1406,7 @@ const StageProcessContent: React.FC<StageProcessContentProps> = ({ stage, workit
   }
 
   if (isProductStageName(stage.name)) {
-    return <ProductStageProcess stage={stage} />;
+    return <ProductStageProcess stage={stage} workspaceId={workspaceId} />;
   }
 
   return <AIConversationContent stage={stage} workspaceId={workspaceId} />;
@@ -1535,7 +1743,7 @@ const StageOutputContent: React.FC<StageOutputContentProps> = ({ stage, workitem
     );
   }
 
-  // 智能评估阶段：展示 AI 评估报告
+  // AI 方案评估阶段：展示评估报告与通过/不通过结论
   if (stage.name === STAGE_NAMES.AI_EVAL) {
     return (
       <div className="space-y-2 py-1">
@@ -1568,21 +1776,6 @@ const StageOutputContent: React.FC<StageOutputContentProps> = ({ stage, workitem
               {maskWorkspacePath(stage.prompt)}
             </div>
           )}
-        </div>
-      </div>
-    );
-  }
-
-  // 代码优化阶段：展示优化结果
-  if (stage.name === STAGE_NAMES.CODE_OPTIMIZE) {
-    return (
-      <div className="space-y-2 py-1">
-        <div className="bg-blue-50/50 dark:bg-blue-950/20 rounded-lg p-3 space-y-2">
-          <div className="flex items-center gap-2">
-            <Bot className="h-4 w-4 text-blue-400" />
-            <span className="text-sm font-medium">{stage.outputDesc}</span>
-          </div>
-          <p className="text-xs text-muted-foreground whitespace-pre-wrap">{maskWorkspacePath(stage.prompt || 'AI根据评审报告完成了代码优化')}</p>
         </div>
       </div>
     );

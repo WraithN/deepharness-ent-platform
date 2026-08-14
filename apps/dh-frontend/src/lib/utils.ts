@@ -96,6 +96,19 @@ export function sanitizeWorkspacePaths(text: string): string {
 }
 
 /**
+ * 脱敏：将内容中的工作区绝对路径前缀替换为 ~/，隐藏服务器目录结构与用户/工作区 ID。
+ * 工作区路径结构：{workspaceRoot}/{userID}/{workspaceID}/{业务目录}/...
+ * 锚定连续两层长 ID 段（32 位 hex UUID 或 21 字符 NanoID），连同其前 workspaceRoot 前缀一并替换，
+ * 避免误伤普通 URL（URL 中不存在连续两层长 ID 段）。
+ * 例如 /home/nan/test/{userId}/{workspaceId}/pm-jobs/breakdown/xxx.md -> ~/pm-jobs/breakdown/xxx.md
+ */
+export function maskWorkspacePath(text: string): string {
+  if (!text) return text;
+  const idSegment = '(?:[0-9a-fA-F]{32}|[A-Za-z0-9_-]{21})';
+  return text.replace(new RegExp(`/[^\\s"']+/${idSegment}/${idSegment}/`, 'g'), '~/');
+}
+
+/**
  * 将日期格式化为友好的人类可读日期标签（用于聊天日期分隔线）。
  * 今天 →「今天」、昨天 →「昨天」、今年 →「M月D日」、其他 →「YYYY年M月D日」。
  */

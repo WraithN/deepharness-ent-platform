@@ -7,7 +7,10 @@ import (
 )
 
 // NewReqDevAndReviewFlowLoop 创建"需求开发与代码评审"流程
-// 拓扑: 需求受理 -> 需求评估(条件) -> [架构设计 -> 智能评估 -> 人工审核 ->] 需求开发 -> 智能评审 -> 人工复审(条件) -> 代码优化 -> Review(循环) / 开发结束
+// 拓扑: 需求受理 -> 需求评估(条件: 通过走方案设计, 不通过直接到人工介入) -> 方案设计 ->
+// AI方案评估(混合判断: 不通过自动回方案设计, 最多2次, 超限转人工裁决) -> 人工审核(条件) ->
+// AI开发 -> AI代码评审(混合判断: 不通过自动回AI开发, 最多2次, 超限转人工裁决) ->
+// 人工评审(条件: 不通过回AI开发) -> 人工介入(终态)
 func NewReqDevAndReviewFlowLoop(deps *core.FlowDeps) *core.Flow {
 	return core.NewFlow("ReqDevAndReviewFlowLoop", deps,
 		&nodes.RequirementAskForAcceptNode{BaseNode: core.NewBaseNode(processobject.StageRequirement, core.NodeTypeHuman, deps)},
@@ -18,7 +21,6 @@ func NewReqDevAndReviewFlowLoop(deps *core.FlowDeps) *core.Flow {
 		nodes.NewDevelopmentNode(deps),
 		&nodes.ReviewNode{BaseNode: core.NewBaseNode(processobject.StageReview, core.NodeTypeAI, deps)},
 		nodes.NewHumanReviewNode(deps),
-		nodes.NewCodeOptimizeNode(deps),
 		&nodes.DevCompleteNode{BaseNode: core.NewBaseNode(processobject.StageDevComplete, core.NodeTypeHuman, deps)},
 	)
 }

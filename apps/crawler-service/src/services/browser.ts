@@ -12,12 +12,14 @@ const STEALTH_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 /**
- * SPA 页面加载后的固定渲染等待时间（毫秒）。
- * domcontentloaded 触发时 SPA 内容（React/Vue 等）通常尚未挂载，固定等待一段时间以获取渲染后的内容。
+ * SPA 页面加载后等待渲染内容出现的最长时间（毫秒）。
+ * domcontentloaded 触发时 SPA 内容（React/Vue/Angular 等）通常尚未挂载。
+ * 使用 waitForFunction 等待 body.innerText 非空，而非固定 sleep：
+ * 渲染快的页面提前继续，慢的页面（如 PingCode 工作台这种 Angular SPA）给足时间。
  * 不能用 networkidle：轮询型站点（在线看板、工作台等）持续有后台请求，networkidle 长期无法满足，
  * 会让抓取阻塞到接近 timeout（实测约 56s），导致前端长时间停留在"正在连接个人助手"。
  */
-const SPA_RENDER_WAIT_MS = 3000;
+const SPA_RENDER_WAIT_MS = 8000;
 
 /**
  * 多页遍历的边界常量：
@@ -28,6 +30,12 @@ const SPA_RENDER_WAIT_MS = 3000;
 const MIN_CRAWL_DEPTH = 1;
 const MAX_CRAWL_DEPTH = 10;
 const MAX_CRAWL_PAGES = 30;
+
+/**
+ * BFS 循环中，剩余时间不足此阈值时不再开启新页面。
+ * 5s 不足以加载并渲染一个 SPA 页面，继续抓只会拿到空内容且可能超时。
+ */
+const MIN_REMAINING_FOR_NEW_PAGE_MS = 5000;
 
 /**
  * 反检测 init script：在每个页面加载前注入，覆盖 navigator 指纹。
@@ -69,6 +77,7 @@ export interface PageResult {
   markdown: string;
   text: string;
   html: string;
+  cleanedHtml: string;
   links: string[];
   screenshot?: string;
 }
@@ -84,6 +93,7 @@ export async function openPageWithCookies(
     waitForSelector?: string;
     includeScreenshot?: boolean;
     includeLinks?: boolean;
+    pageTimeoutMs?: number;
   },
 ): Promise<PageResult> {
   const browser = await getBrowser();
@@ -105,7 +115,9 @@ export async function openPageWithCookies(
     const page = await context.newPage();
     // 使用 domcontentloaded 而非 networkidle：轮询型 SPA 后台请求不断，networkidle 会长时间阻塞。
     // domcontentloaded 后固定等待 SPA_RENDER_WAIT_MS，兼顾加载速度与内容渲染。
-    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: config.requestTimeoutMs });
+    // 单页超时由调用方通过 pageTimeoutMs 控制（BFS 中取 min(配置值, 剩余总体时间)）。
+    const gotoTimeout = opts.pageTimeoutMs ?? config.pageTimeoutMs;
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: gotoTimeout });
 
     if (opts.waitForSelector) {
       await page.waitForSelector(opts.waitForSelector, { timeout: 10_000 }).catch(() => {
@@ -113,13 +125,45 @@ export async function openPageWithCookies(
       });
     }
 
-    // 等待动态内容基本稳定（SPA 渲染）。
-    await page.waitForTimeout(SPA_RENDER_WAIT_MS);
+    // 轮询 innerText 直到内容稳定（连续 2 次相同且非空）或超时。
+    // 比固定 sleep 更高效（渲染快的页面提前继续），比一次性 waitForFunction 更准确
+    // （等待内容不再变化而非仅非空，避免在加载提示出现时就取空内容）。
+    const pollIntervalMs = 1000;
+    const stableThreshold = 2;
+    let prevText = "";
+    let stableCount = 0;
+    const pollDeadline = Date.now() + SPA_RENDER_WAIT_MS;
+    while (Date.now() < pollDeadline) {
+      const currentText = await page.evaluate(() => (document.body?.innerText ?? "").trim());
+      if (currentText.length > 0 && currentText === prevText) {
+        stableCount++;
+        if (stableCount >= stableThreshold) break;
+      } else {
+        stableCount = 0;
+      }
+      prevText = currentText;
+      await page.waitForTimeout(pollIntervalMs);
+    }
 
     const title = await page.title();
     const url = page.url();
     const html = await page.content();
-    const text = await page.evaluate(() => document.body?.innerText ?? "");
+    // 清洗 HTML：移除 script/style/noscript/svg 等噪音元素，保留 body 结构化 HTML。
+    // 供 agent 分析页面 UI 布局与组件结构（markdown 提取对 Angular 等 SPA 框架覆盖不足）。
+    const cleanedHtml = await page.evaluate(() => {
+      const clone = document.body!.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll("script, style, noscript, svg").forEach((el) => el.remove());
+      return clone.innerHTML;
+    });
+    // 优先用 innerText（仅可见文本，更干净）；若太短（<50 字符，可能是折叠导航等 CSS 隐藏了大部分文本），
+    // 回退到 textContent（排除 script/style/noscript），获取 DOM 中的全部文本节点。
+    const text = await page.evaluate(() => {
+      const inner = (document.body?.innerText ?? "").trim();
+      if (inner.length >= 50) return inner;
+      const clone = document.body!.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll("script, style, noscript").forEach((el) => el.remove());
+      return (clone.textContent ?? "").replace(/\s+/g, " ").trim();
+    });
     const links = opts.includeLinks
       ? await page.evaluate(() =>
           Array.from(document.querySelectorAll("a[href]"))
@@ -144,7 +188,7 @@ export async function openPageWithCookies(
       return h1 ? `# ${h1}\n\n${paragraphs}` : paragraphs;
     });
 
-    return { title, url, markdown, text, html, links: [...new Set(links)], screenshot };
+    return { title, url, markdown, text, html, cleanedHtml, links: [...new Set(links)], screenshot };
   } finally {
     await context.close();
   }
@@ -154,6 +198,8 @@ function normalizeCookies(cookies: Cookie[], targetUrl: string): Cookie[] {
   const url = new URL(targetUrl);
   return cookies.map((c) => ({
     ...c,
+    // name 前后可能有空白（上游解析残留），Playwright addCookies 对 name 中的空白报 Invalid cookie fields。
+    name: c.name.trim(),
     domain: c.domain || url.hostname,
     path: c.path || "/",
   }));
@@ -202,7 +248,22 @@ export async function crawlPagesWithBrowser(
   // BFS 队列：level 从 0 开始（起始页为第 1 层，level=0）。
   const queue: Array<{ url: string; level: number }> = [{ url: startUrl, level: 0 }];
 
+  // 总体 deadline：超时后停止开新页，返回已抓取的部分结果，避免链接过多的站点（如工作台）
+  // 串行抓取耗时远超上游超时导致整体失败。deadline 在循环中检查，当前页会用剩余时间作为 goto 超时。
+  const crawlDeadline = Date.now() + config.crawlTimeoutMs;
+
   while (queue.length > 0 && pages.length < MAX_CRAWL_PAGES) {
+    // 剩余时间不足时不再开启新页面，确保在总体超时前返回已抓取内容。
+    const remaining = crawlDeadline - Date.now();
+    if (remaining <= MIN_REMAINING_FOR_NEW_PAGE_MS) {
+      console.warn(
+        `[crawler] crawl deadline approaching, stopping early: pages=${pages.length} remaining=${remaining}ms`,
+      );
+      break;
+    }
+    // 单页超时取配置值与剩余时间的较小值，防止末页的 goto 超时越过总体 deadline。
+    const pageTimeout = Math.min(config.pageTimeoutMs, remaining);
+
     const item = queue.shift()!;
     const normalized = normalizeLink(item.url);
     if (!normalized || visited.has(normalized)) continue;
@@ -215,6 +276,7 @@ export async function crawlPagesWithBrowser(
         waitForSelector: opts.waitForSelector,
         includeScreenshot: opts.includeScreenshot,
         includeLinks: true,
+        pageTimeoutMs: pageTimeout,
       });
     } catch (err) {
       console.warn("[crawler] open page failed:", normalized, err instanceof Error ? err.message : String(err));

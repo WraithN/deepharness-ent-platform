@@ -76,6 +76,13 @@ type DBProductSpaceService struct {
 	db               *sql.DB
 	workspaceRoot    string
 	workspaceService workspaceMemberRoleProvider
+	// ensureStubRunning 由 server 层注入，用于免登录 serve 文件前确保 personal-stub 运行。
+	ensureStubRunning func(ctx context.Context, userID string) error
+}
+
+// SetStubEnsurer 注入 personal-stub 就绪回调（direct-host 模式按需启动）。
+func (s *DBProductSpaceService) SetStubEnsurer(f func(ctx context.Context, userID string) error) {
+	s.ensureStubRunning = f
 }
 
 var _ ProductSpaceService = (*DBProductSpaceService)(nil)

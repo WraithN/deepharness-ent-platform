@@ -1451,6 +1451,13 @@ export const Chat: React.FC = () => {
     [activeInputCommand],
   );
 
+  // 输入框在行首指令后是否还有实际内容（用户已填写提示词/参数）。
+  // 有内容时说明用户已开始自述需求，不再自动弹出系统提示词面板，也不在按钮上显示角标。
+  const hasContentAfterCommand = useMemo(() => {
+    if (!activeInputCommand) return false;
+    return input.trimStart().slice(activeInputCommand.length).trim().length > 0;
+  }, [activeInputCommand, input]);
+
   // 插入系统提示词到输入框。系统提示词为前端内置模板，无后端 id，不上报使用次数。
   const insertSystemPrompt = (p: SystemPrompt) => {
     const next = input.trimEnd() ? input.trimEnd() + '\n' + p.content : p.content;
@@ -1460,17 +1467,17 @@ export const Chat: React.FC = () => {
   };
 
   // 输入框行首指令变为带系统提示词的指令时，自动展开提示词面板并选中「系统」分类。
-  // 首次挂载仅记录不弹出，避免恢复草稿/历史输入时打扰。
+  // 首次挂载仅记录不弹出，避免恢复草稿/历史输入时打扰；指令后已有内容时也不弹出。
   const prevInputCommandRef = useRef<string | null>(null);
   useEffect(() => {
     const prev = prevInputCommandRef.current;
     prevInputCommandRef.current = activeInputCommand;
-    if (prev === null || !activeInputCommand || activeInputCommand === prev || activeSystemPrompts.length === 0) return;
+    if (prev === null || !activeInputCommand || activeInputCommand === prev || activeSystemPrompts.length === 0 || hasContentAfterCommand) return;
     setPromptMenuCategory(SYSTEM_PROMPT_CATEGORY_NAME);
     setPromptMenuOpen(true);
     setCmdMenuOpen(false); setRepoMenuOpen(false); setTaskMenuOpen(false); setSkillPopoverOpen(false);
     setCompactPlusOpen(false); setCompactPlusSubmenu(null);
-  }, [activeInputCommand, activeSystemPrompts]);
+  }, [activeInputCommand, activeSystemPrompts, hasContentAfterCommand]);
 
   // 「系统」分类随指令从输入框移除而失效时，回退到「全部」，避免停留在已消失的分类上。
   useEffect(() => {
@@ -3533,7 +3540,9 @@ export const Chat: React.FC = () => {
               }
               const { questionText: parsedQuestionText, options: parsedOptions } = parseInlineOptions(assistantText);
               const allOptions = q.options?.length ? q.options : parsedOptions;
-              const displayQuestionText = parsedQuestionText || q.question || q.text || '需要你的输入';
+              // 优先使用 question 事件携带的真实问题文本（question 工具的 question 字段或 marker 的 questionText），
+              // 避免从消息文本误解析出 agent 在长输出中复述的"上个问题答案"覆盖正确问题。
+              const displayQuestionText = q.question || q.text || parsedQuestionText || '需要你的输入';
               return (
               <div className={cn('border-b-2 border-primary/20 bg-amber-50/50 dark:bg-amber-950/20 pointer-events-auto max-h-[400px] overflow-y-auto', showPreview ? 'px-3 py-2.5' : 'px-5 py-3')}>
                 <div className="flex items-center gap-2 mb-2">
@@ -3807,7 +3816,7 @@ export const Chat: React.FC = () => {
                           }}
                         >
                           <FileText className={cn('mr-1.5', toolbarLevel === 0 ? 'h-3 w-3' : 'h-3.5 w-3.5')} />{toolbarLevel === 0 ? '' : '提示词'}
-                          {activeSystemPrompts.length > 0 && (
+                          {activeSystemPrompts.length > 0 && !hasContentAfterCommand && (
                             <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-violet-500" />
                           )}
                         </Button>
@@ -3897,7 +3906,7 @@ export const Chat: React.FC = () => {
                                 }}
                               >
                                 <FileText className="h-4 w-4 text-muted-foreground" />
-                                {activeSystemPrompts.length > 0 && (
+                                {activeSystemPrompts.length > 0 && !hasContentAfterCommand && (
                                   <span className="absolute top-0.5 right-0.5 h-2 w-2 rounded-full bg-violet-500" />
                                 )}
                               </button>

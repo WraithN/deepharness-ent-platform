@@ -10,3 +10,11 @@ const (
 	DirUIDesignJobs = workspacepath.DirUIDesignJobs
 	DirTesterJobs   = workspacepath.DirTesterJobs
 )
+
+// 架构库解析产物目录/文件名常量，供 dh-backend 的 handler 与 service 包跨包复用。
+const (
+	// ArchUnderstandDir 是 understand 解析产物的存放目录名。
+	ArchUnderstandDir = ".understand-anything"
+	// ArchKGFileName 是 understand 产出的知识图谱文件名。
+	ArchKGFileName = "knowledge-graph.json"
+)

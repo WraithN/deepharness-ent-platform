@@ -194,6 +194,15 @@ const (
 })();`
 )
 
+// rewritePrototypeAssetPaths 将 HTML 中 Vite 构建产物的绝对资源路径（/assets/...）改写为相对路径（./assets/...）。
+// 原型通过 iframe 以子路径 serve（如 /api/v1/requirement-shares/{token}/files/...），
+// 绝对路径 /assets/... 会被浏览器解析到域名根路径导致 404，需改写为相对当前 HTML 的路径。
+func rewritePrototypeAssetPaths(html []byte) []byte {
+	html = bytes.ReplaceAll(html, []byte(`src="/`), []byte(`src="./`))
+	html = bytes.ReplaceAll(html, []byte(`href="/`), []byte(`href="./`))
+	return html
+}
+
 // injectPrototypeAnnotationScript 将标注脚本与样式注入 HTML 页面，优先放在 </body> 前。
 func injectPrototypeAnnotationScript(html []byte) []byte {
 	block := []byte(
@@ -223,6 +232,14 @@ type Handler struct {
 	cleanupSvc    service.ProductSpaceCleanupTaskService
 	workItemSvc   WorkItemDocLinker
 	processSvc    ProcessService
+	// ensureStubRunning 由 server 层注入，用于免登录 serve 文件前确保 personal-stub 运行。
+	// direct-host 模式下 personal-stub 按需启动，免登录请求不经过 containerMW，需显式触发。
+	ensureStubRunning func(ctx context.Context, userID string) error
+}
+
+// SetStubEnsurer 注入 personal-stub 就绪回调（direct-host 模式按需启动）。
+func (h *Handler) SetStubEnsurer(f func(ctx context.Context, userID string) error) {
+	h.ensureStubRunning = f
 }
 
 // NewHandler 创建 product-space HTTP 处理器。

@@ -50,7 +50,9 @@ personal_stub:
 # 架构上 crawler-service 独立部署于单独服务器，dh-backend 通过 HTTP 直连调用。
 crawler_service:
   url: "http://127.0.0.1:8091"
-  timeout: "60s"
+  # 超时需 > crawler-service 的 REQUEST_TIMEOUT_MS(100s)，确保 crawler-service BFS 总体超时(90s)
+  # 能先触发并返回部分结果，而非 dh-backend 端先超时导致整体失败。
+  timeout: "105s"
   # max_depth: /prd-research 抓取的站内链接深度（层数），起始页为第 1 层，默认 2。
   max_depth: 2
 

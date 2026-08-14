@@ -118,6 +118,26 @@ type ActiveCheckResponse struct {
 	ActiveProcess *object.Process `json:"activeProcess"`
 }
 
+// Terminate 终止进行中的流程（将 pending/in_progress 阶段标记为 terminated）。
+func Terminate(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if defaultProcessService == nil {
+		notInitialized(w)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "missing process id")
+		return
+	}
+	p, err := defaultProcessService.TerminateProcess(r.Context(), id)
+	if err != nil {
+		handler.WriteJSONError(w, http.StatusInternalServerError, handler.ErrCodeGeneral, err.Error())
+		return
+	}
+	json.NewEncoder(w).Encode(p)
+}
+
 // ActiveCheck 检查是否存在进行中的流程
 func ActiveCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

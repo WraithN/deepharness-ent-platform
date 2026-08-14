@@ -132,8 +132,9 @@ func resolveUserLocalPathStatic(repo repository.Repository, userID string) strin
 		return repo.LocalPath
 	}
 	// 路径格式：{root}/{creatorID}/{workspaceID}/dev-jobs/{repoName}
+	// dev-jobs 为倒数第2段，creatorID 为倒数第4段。
 	parts := strings.Split(filepath.ToSlash(repo.LocalPath), "/")
-	if len(parts) < 4 || parts[len(parts)-3] != workspacepath.DirDevJobs {
+	if len(parts) < 4 || parts[len(parts)-2] != workspacepath.DirDevJobs {
 		return repo.LocalPath
 	}
 	parts[len(parts)-4] = userID
@@ -146,7 +147,7 @@ func extractCreatorUserIDFromLocalPath(localPath string) string {
 		return ""
 	}
 	parts := strings.Split(filepath.ToSlash(localPath), "/")
-	if len(parts) >= 4 && parts[len(parts)-3] == workspacepath.DirDevJobs {
+	if len(parts) >= 4 && parts[len(parts)-2] == workspacepath.DirDevJobs {
 		return parts[len(parts)-4]
 	}
 	return ""

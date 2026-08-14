@@ -3,10 +3,20 @@ import { useNavigate } from 'react-router-dom';
 import { FileText, Eye, Download, Loader2, FolderInput, Check, Rocket } from 'lucide-react';
 import { fileApi } from '@/lib/file-api';
 import { productSpaceApi } from '@/lib/productspace-api';
-import { processApi } from '@/lib/process-api';
+import { processApi, type Process } from '@/lib/process-api';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { cn, isProductSpaceFile } from '@/lib/utils';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 interface FileAttachmentCardProps {
   path: string;
@@ -54,6 +64,9 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
   const [adopted, setAdopted] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [startingFlow, setStartingFlow] = useState(false);
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [activeProcess, setActiveProcess] = useState<Process | null>(null);
+  const [terminating, setTerminating] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,21 +145,51 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
     }
   };
 
+  // 实际发起流程（无进行中流程或已取消旧流程后调用）。
+  const doStartProductFlow = async () => {
+    const res = await processApi.startProductFlow({
+      workspaceId,
+      workitemId,
+      workitemTitle: displayTitle,
+      workitemDesc: '',
+      docPath: path,
+    });
+    toast.success('AI需求设计流程已启动');
+    if (res.processId) {
+      navigate(`/personal/flow/${res.processId}`);
+    }
+  };
+
+  // 确认取消旧流程并重新发起。
+  const handleConfirmRestart = async () => {
+    if (!activeProcess) return;
+    setTerminating(true);
+    try {
+      await processApi.terminateProcess(activeProcess.id);
+      setConfirmDialogOpen(false);
+      await doStartProductFlow();
+    } catch (err) {
+      console.error('[FileAttachmentCard] terminate old flow failed:', err);
+      const msg = err instanceof Error ? err.message : '';
+      toast.error(msg || '取消旧流程失败，请重试');
+    } finally {
+      setTerminating(false);
+    }
+  };
+
   const handleStartProductFlow = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!workspaceId || !workitemId) return;
     setStartingFlow(true);
     try {
-      const res = await processApi.startProductFlow({
-        workspaceId,
-        workitemId,
-        workitemTitle: displayTitle,
-        workitemDesc: '',
-      });
-      toast.success('AI需求设计流程已启动');
-      if (res.processId) {
-        navigate(`/personal/flow/${res.processId}`);
+      // 先检查是否存在进行中的流程；有则弹窗让用户选择取消旧流程后重新发起。
+      const check = await processApi.activeCheck(workitemId, path);
+      if (check.hasActive && check.activeProcess) {
+        setActiveProcess(check.activeProcess);
+        setConfirmDialogOpen(true);
+        return;
       }
+      await doStartProductFlow();
     } catch (err) {
       console.error('[FileAttachmentCard] start product flow failed:', err);
       const msg = err instanceof Error ? err.message : '';
@@ -233,6 +276,25 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({ path, on
           </pre>
         )}
       </div>
+
+      {/* 已有进行中流程确认弹窗 */}
+      <AlertDialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>该需求已有进行中的 AI 需求设计流程</AlertDialogTitle>
+            <AlertDialogDescription>
+              是否取消旧的流程，并基于当前头脑风暴文档重新发起新的 AI 需求设计流程？旧流程的进行中任务将被终止。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={terminating}>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmRestart} disabled={terminating}>
+              {terminating && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+              取消旧流程并重新发起
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

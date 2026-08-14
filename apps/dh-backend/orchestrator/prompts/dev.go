@@ -37,7 +37,7 @@ func BuildRequirementEvalPrompt(title, description string) string {
 	return ApplyPromptCommon(rendered, "")
 }
 
-// BuildArchDesignPrompt 架构设计
+// BuildArchDesignPrompt 方案设计
 func BuildArchDesignPrompt(title, description, workspacePath string) string {
 	rendered := Render("dev_arch_design", map[string]string{
 		"Title":         title,
@@ -47,7 +47,7 @@ func BuildArchDesignPrompt(title, description, workspacePath string) string {
 	return ApplyPromptCommon(rendered, workspacePath)
 }
 
-// BuildOptimizePrompt 代码优化
+// BuildOptimizePrompt 评审返修（AI 代码评审/人工评审不通过返回 AI 开发时使用的修复提示词）
 func BuildOptimizePrompt(reviewReport, developerPrompt string) string {
 	rendered := Render("dev_optimize", map[string]string{
 		"ReviewReport":    reviewReport,
@@ -56,7 +56,7 @@ func BuildOptimizePrompt(reviewReport, developerPrompt string) string {
 	return ApplyPromptCommon(rendered, "")
 }
 
-// BuildAIEvalPrompt AI 架构评估
+// BuildAIEvalPrompt AI 方案评估
 func BuildAIEvalPrompt(archDesignResult, workitemTitle, workitemDesc string) string {
 	rendered := Render("dev_ai_eval", map[string]string{
 		"ArchDesignResult": archDesignResult,

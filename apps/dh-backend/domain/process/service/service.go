@@ -19,7 +19,6 @@ var ALL_AIDEV_STAGES = []string{
 	object.StageDevelopment,
 	object.StageReview,
 	object.StageHumanReview,
-	object.StageCodeOptimize,
 	object.StageDevComplete,
 }
 
@@ -31,6 +30,7 @@ type ProcessService interface {
 	ListByWorkitemAndDoc(ctx context.Context, workitemID, sourceDocPath string) ([]object.Process, error)
 	HasInProgress(ctx context.Context, workitemID, sourceDocPath string) (*object.Process, error)
 	UpdateStage(ctx context.Context, processID string, stageName string, req object.UpdateStageRequest) (object.Process, error)
+	TerminateProcess(ctx context.Context, id string) (object.Process, error)
 }
 
 // ProcessServiceImpl 流程服务实现
@@ -71,6 +71,7 @@ func (s *ProcessServiceImpl) GetByID(_ context.Context, id string) (object.Proce
 		return object.Process{}, err
 	}
 	migrateStages(&p)
+	removeObsoleteStages(&p)
 	return p, nil
 }
 
@@ -84,6 +85,7 @@ func (s *ProcessServiceImpl) ListByWorkspace(_ context.Context, workspaceID stri
 	}
 	for i := range list {
 		migrateStages(&list[i])
+		removeObsoleteStages(&list[i])
 	}
 	return list, nil
 }
@@ -106,6 +108,28 @@ func migrateStages(p *object.Process) {
 			})
 		}
 	}
+}
+
+// obsoleteProductStageNames 是已从产品流程定义中移除的废弃阶段，
+// 存量流程数据的 stages 中可能残留这些阶段，读取时自动清理（幂等）。
+var obsoleteProductStageNames = map[string]bool{
+	"product_ai_draft_review_fail": true,
+}
+
+// removeObsoleteStages 移除产品流程中已废弃的阶段（如 AI 草案复核失败节点）。
+// 只清理内存中的阶段，不写回数据库；每次读取都会清理，确保前端不再展示废弃节点。
+func removeObsoleteStages(p *object.Process) {
+	if p.Type != object.ProcessTypeProduct {
+		return
+	}
+	filtered := make([]object.ProcessStage, 0, len(p.Stages))
+	for _, s := range p.Stages {
+		if obsoleteProductStageNames[s.Name] {
+			continue
+		}
+		filtered = append(filtered, s)
+	}
+	p.Stages = filtered
 }
 
 func (s *ProcessServiceImpl) ListByWorkitemAndDoc(_ context.Context, workitemID, sourceDocPath string) ([]object.Process, error) {
@@ -134,6 +158,29 @@ func hasActiveStage(p *object.Process) bool {
 	return false
 }
 
+// TerminateProcess 将流程中所有 pending/in_progress 阶段标记为 terminated，
+// 用于取消进行中的流程（如重新发起前先取消旧流程）。
+func (s *ProcessServiceImpl) TerminateProcess(_ context.Context, id string) (object.Process, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, err := s.store.GetByID(context.Background(), id)
+	if err != nil {
+		return object.Process{}, err
+	}
+	now := time.Now()
+	for i := range p.Stages {
+		if p.Stages[i].Status == object.StageStatusPending || p.Stages[i].Status == object.StageStatusInProgress {
+			p.Stages[i].Status = object.StageStatusTerminated
+			p.Stages[i].CompletedAt = &now
+		}
+	}
+	p.UpdatedAt = now
+	if err := s.store.Update(context.Background(), id, p); err != nil {
+		return object.Process{}, err
+	}
+	return p, nil
+}
+
 func (s *ProcessServiceImpl) UpdateStage(_ context.Context, processID string, stageName string, req object.UpdateStageRequest) (object.Process, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -152,6 +199,9 @@ func (s *ProcessServiceImpl) UpdateStage(_ context.Context, processID string, st
 			}
 			if req.Prompt != "" {
 				p.Stages[i].Prompt = req.Prompt
+			}
+			if req.InputPrompt != "" {
+				p.Stages[i].InputPrompt = req.InputPrompt
 			}
 			if req.Error != "" {
 				p.Stages[i].Error = req.Error
@@ -180,6 +230,9 @@ func (s *ProcessServiceImpl) UpdateStage(_ context.Context, processID string, st
 			if req.OutputDesc != "" {
 				p.Stages[i].OutputDesc = req.OutputDesc
 			}
+			if req.RetryCount > 0 {
+				p.Stages[i].RetryCount = req.RetryCount
+			}
 			if req.Status == object.StageStatusInProgress && p.Stages[i].StartedAt == nil {
 				p.Stages[i].StartedAt = &now
 			}
@@ -197,6 +250,7 @@ func (s *ProcessServiceImpl) UpdateStage(_ context.Context, processID string, st
 			Status:         req.Status,
 			SessionID:      req.SessionID,
 			Prompt:         req.Prompt,
+			InputPrompt:    req.InputPrompt,
 			Error:          req.Error,
 			OperatorType:   req.OperatorType,
 			OperatorName:   req.OperatorName,
@@ -206,6 +260,7 @@ func (s *ProcessServiceImpl) UpdateStage(_ context.Context, processID string, st
 			ExtraInputDesc: req.ExtraInputDesc,
 			ExtraInput:     req.ExtraInput,
 			OutputDesc:     req.OutputDesc,
+			RetryCount:     req.RetryCount,
 		}
 		if req.Status == object.StageStatusInProgress {
 			newStage.StartedAt = &now

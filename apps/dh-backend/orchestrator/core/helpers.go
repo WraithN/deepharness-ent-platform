@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -162,4 +163,37 @@ func FetchLastAssistantMessage(fc *FlowContext, store chat.MessageStore) string 
 		}
 	}
 	return ""
+}
+
+// fileMarkerRegex 匹配 [[FILE:...]] 标记。
+var fileMarkerRegex = regexp.MustCompile(`\[\[FILE:([^\]]+)\]\]`)
+
+// ExtractLastFileMarker 从内容中提取最后一个有效的文件标记（[[FILE:绝对路径]]）。
+// 跳过字面量占位符（...）与非绝对路径（如「文件完整路径」「绝对路径」），
+// 这些是 agent 思考过程或模板示例中残留的无意义标记。
+// 无有效标记时返回空串。
+func ExtractLastFileMarker(content string) string {
+	matches := fileMarkerRegex.FindAllStringSubmatch(content, -1)
+	for i := len(matches) - 1; i >= 0; i-- {
+		path := strings.TrimSpace(matches[i][1])
+		if path == "" || path == "..." || path == "…" || !strings.Contains(path, "/") {
+			continue
+		}
+		return "[[FILE:" + path + "]]"
+	}
+	return ""
+}
+
+// reviewSectionMarker 是 AI 草案复核建议正文的起始标记。
+const reviewSectionMarker = "## AI 草案复核结论"
+
+// ExtractReviewSection 从 AI 回复中提取复核建议正文（自「## AI 草案复核结论」起始）。
+// agent 回复混合了思考过程（英文）与最终复核建议，交付物仅展示复核建议正文。
+// 未找到标记时返回原始内容。
+func ExtractReviewSection(content string) string {
+	idx := strings.Index(content, reviewSectionMarker)
+	if idx < 0 {
+		return content
+	}
+	return strings.TrimSpace(content[idx:])
 }

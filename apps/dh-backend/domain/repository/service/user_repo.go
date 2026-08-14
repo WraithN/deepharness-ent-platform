@@ -68,8 +68,13 @@ func (s *DBRepositoryService) SyncUserRepo(ctx context.Context, workspaceID, rep
 		}
 	}
 
-	// 如果已经同步完成，直接返回
+	// 文件系统已就绪（.git 存在且无同步锁）时直接返回，但需修正 DB CloneStatus 可能
+	// 滞后于文件系统的情况：仓库级同步 syncRepository 在某些失败路径会残留 .git 却将
+	// CloneStatus 置为 failed/pending/cloning（典型场景：空仓库 initEmptyRepo 后 fetch
+	// 失败，.git 已由 PlainInit 创建但整体 clone 返回错误）。若不修正，isArchRepoCloned
+	// 因 CloneStatus != cloned 始终返回 false，架构看板无法出现，表现为"同步架构库一直不生效"。
 	if s.isUserRepoSynced(ctx, workspaceID, userID, r.Name) {
+		s.markClonedIfStale(r, "SyncUserRepo")
 		return nil
 	}
 	// 如果正在同步中（锁文件存在），直接返回
@@ -125,4 +130,16 @@ func (s *DBRepositoryService) SyncUserRepo(ctx context.Context, workspaceID, rep
 	})
 
 	return nil
+}
+
+// markClonedIfStale 在文件系统已就绪但 DB CloneStatus 非 cloned 时，将 DB 修正为 cloned。
+// 用于消除"文件系统 .git 存在但 DB CloneStatus 滞后"的不一致，使 isArchRepoCloned 能通过。
+// trigger 仅用于日志标识调用来源，便于排查状态被谁修正。
+func (s *DBRepositoryService) markClonedIfStale(r repository.Repository, trigger string) {
+	if r.CloneStatus == repository.CloneStatusCloned {
+		return
+	}
+	now := time.Now().UTC()
+	s.updateStatusAndSyncTime(r.ID, repository.CloneStatusCloned, &now)
+	log.Printf("[Repository] %s: reconcile CloneStatus %q -> cloned for %s", trigger, r.CloneStatus, r.Name)
 }

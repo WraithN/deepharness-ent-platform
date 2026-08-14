@@ -8,6 +8,7 @@ import { parseReviewReportFromText } from '@/components/chat/ReviewReportCard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FileCode2, GitBranch } from 'lucide-react';
+import { maskWorkspacePath } from '@/lib/utils';
 
 const SEVERITY_ITEMS: Array<{ key: 'critical' | 'high' | 'medium' | 'low'; label: string; color: string; bg: string }> = [
   { key: 'critical', label: '致命', color: 'text-red-600 dark:text-red-400', bg: 'bg-red-50 dark:bg-red-950/30' },
@@ -15,10 +16,6 @@ const SEVERITY_ITEMS: Array<{ key: 'critical' | 'high' | 'medium' | 'low'; label
   { key: 'medium', label: '一般', color: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-950/30' },
   { key: 'low', label: '轻微', color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-950/30' },
 ];
-
-/** 脱敏：将工作区绝对路径替换为 ~/ */
-const maskWorkspacePath = (text: string): string =>
-  text.replace(/\/[^\s"]+\/projects\//g, '~/projects/');
 
 export const ReviewReportPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();

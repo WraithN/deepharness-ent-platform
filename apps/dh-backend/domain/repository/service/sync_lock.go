@@ -31,6 +31,16 @@ func (s *DBRepositoryService) userProjectPath(workspaceID, userID, repoName stri
 	return filepath.Join(base, workspacepath.DirDevJobs, safeName)
 }
 
+// DevLibKGPath 返回开发库在用户目录下的 knowledge-graph.json 路径。
+// 开发库解析产物由 understand 技能写入 <lib>/.understand-anything/knowledge-graph.json。
+func (s *DBRepositoryService) DevLibKGPath(ctx context.Context, workspaceID, userID, libKey string) string {
+	p := s.userProjectPath(workspaceID, userID, libKey)
+	if p == "" {
+		return ""
+	}
+	return filepath.Join(p, repository.ArchUnderstandDir, repository.ArchKGFileName)
+}
+
 // resolveUserLocalPath 返回当前用户应使用的仓库本地路径。
 //
 // 工作空间级仓库在 DB 中记录的是创建者目录（{root}/{creatorID}/{ws}/dev-jobs/{name}）。
@@ -54,8 +64,8 @@ func extractCreatorUserIDFromLocalPath(localPath string) string {
 		return ""
 	}
 	parts := strings.Split(filepath.ToSlash(localPath), "/")
-	// 倒数第三段必须是 dev-jobs，倒数第四段即为创建者 userID。
-	if len(parts) >= 4 && parts[len(parts)-3] == workspacepath.DirDevJobs {
+	// dev-jobs 为倒数第2段，creatorID 为倒数第4段。
+	if len(parts) >= 4 && parts[len(parts)-2] == workspacepath.DirDevJobs {
 		return parts[len(parts)-4]
 	}
 	return ""

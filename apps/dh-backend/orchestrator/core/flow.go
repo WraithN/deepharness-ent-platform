@@ -91,6 +91,40 @@ func (f *Flow) Resume(fc *FlowContext) error {
 	return nil
 }
 
+// Retry 从指定节点重新执行流程（用于失败节点重试）。
+// 与 Resume 不同：Retry 会重新执行目标节点的 Input -> Processor -> Output，
+// 而 Resume 只执行暂停节点的 Output（其 Input/Processor 已在此前完成）。
+func (f *Flow) Retry(fc *FlowContext, retryNodeName string) error {
+	startIdx := f.indexOfNode(retryNodeName)
+	if startIdx == -1 {
+		return fmt.Errorf("retry node %s not found", retryNodeName)
+	}
+	log.Printf("[Flow:%s] retrying from node %s", f.Name, retryNodeName)
+
+	currentIdx := startIdx
+	for currentIdx < len(f.Nodes) {
+		node := f.Nodes[currentIdx]
+		if err := ExecuteNode(fc, node); err != nil {
+			if errors.Is(err, ErrPauseFlow) {
+				log.Printf("[Flow:%s] paused at node %s", f.Name, node.Name())
+				fc.PausedNode = node.Name()
+				return err
+			}
+			log.Printf("[Flow:%s] node %s failed: %v", f.Name, node.Name(), err)
+			return err
+		}
+		if next := node.NextNode(fc); next != "" {
+			if idx := f.indexOfNode(next); idx != -1 {
+				currentIdx = idx
+				continue
+			}
+		}
+		currentIdx++
+	}
+	log.Printf("[Flow:%s] completed after retry", f.Name)
+	return nil
+}
+
 // ExecuteNode 执行单个节点的 Input -> Processor -> Output 三段式。
 // 提取为包级函数，供 Flow 主循环与 ParallelNode 分支复用，保证执行语义一致。
 func ExecuteNode(fc *FlowContext, node Node) error {

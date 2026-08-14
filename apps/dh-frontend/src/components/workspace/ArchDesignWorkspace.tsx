@@ -112,11 +112,14 @@ export const ArchDesignWorkspace: React.FC = () => {
   const filteredView = useMemo<ArchView>(() => {
     const view = graphData?.views?.[viewMode];
     if (!view) return { nodes: [], edges: [] };
+    // 后端空仓库场景下 buildArchGraph 返回的 nodes/edges 可能为 null，需防御。
+    const allNodes = view.nodes ?? [];
     const nodes = businessLine === ALL_BUSINESS_LINE
-      ? view.nodes
-      : view.nodes.filter(n => n.businessLine === businessLine);
+      ? allNodes
+      : allNodes.filter(n => n.businessLine === businessLine);
     const nodeIds = new Set(nodes.map(n => n.id));
-    const edges = view.edges.filter(e => edgeKindFilter[e.kind] && nodeIds.has(e.source) && nodeIds.has(e.target));
+    const allEdges = view.edges ?? [];
+    const edges = allEdges.filter(e => edgeKindFilter[e.kind] && nodeIds.has(e.source) && nodeIds.has(e.target));
     return { nodes, edges };
   }, [graphData, viewMode, businessLine, edgeKindFilter]);
 
@@ -203,6 +206,11 @@ export const ArchDesignWorkspace: React.FC = () => {
         const timeout = setTimeout(() => {
           clearInterval(poll);
           setSyncing(false);
+          // 同步超时：可能 clone 卡住（如 SSH 认证挂起）或后端状态未及时更新。
+          // 重新加载一次确认最终状态，避免用户停留在"同步中"假死。
+          toast.warning('同步架构库超时，正在确认最终状态...');
+          setPageState('loading');
+          loadGraph();
         }, SYNC_POLL_TIMEOUT_MS);
         poll = setInterval(() => {
           handlePollTick(poll, timeout);

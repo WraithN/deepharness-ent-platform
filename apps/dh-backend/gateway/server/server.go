@@ -120,6 +120,7 @@ const (
 	ROUTE_AUDIT_EVENTS                                                                 = API_V1_PREFIX + "/audit/events"
 	ROUTE_ORCHESTRATOR_SESSIONS                                                        = API_V1_PREFIX + "/orchestrator/sessions"
 	ROUTE_ORCHESTRATOR_PRODUCT_FLOW                                                    = API_V1_PREFIX + "/orchestrator/product-flow"
+	ROUTE_ORCHESTRATOR_PRODUCT_FLOW_RETRY                                              = API_V1_PREFIX + "/processes/{id}/retry"
 	ROUTE_POST_AGENT_REVIEWS_REPORTS                                                   = http.MethodPost + " " + API_V1_PREFIX + "/agent-reviews/reports"
 	ROUTE_GET_AGENT_REVIEWS_REPORTS                                                    = http.MethodGet + " " + API_V1_PREFIX + "/agent-reviews/reports"
 	ROUTE_GET_AGENT_REVIEWS_REPORTS_BY_ID                                              = http.MethodGet + " " + API_V1_PREFIX + "/agent-reviews/reports/{id}"
@@ -133,6 +134,8 @@ const (
 	ROUTE_GET_PROCESSES_ACTIVE_CHECK                                                   = http.MethodGet + " " + API_V1_PREFIX + "/processes/active-check"
 	ROUTE_POST_PROCESSES                                                               = http.MethodPost + " " + API_V1_PREFIX + "/processes"
 	ROUTE_PATCH_PROCESSES_BY_ID_STAGES_BY_STAGE_NAME                                   = http.MethodPatch + " " + API_V1_PREFIX + "/processes/{id}/stages/{stageName}"
+	ROUTE_POST_PROCESSES_BY_ID_TERMINATE                                               = http.MethodPost + " " + API_V1_PREFIX + "/processes/{id}/terminate"
+	ROUTE_POST_PROCESSES_BY_ID_AI_DRAFT_REVIEW                                         = http.MethodPost + " " + API_V1_PREFIX + "/processes/{id}/ai-draft-review"
 	ROUTE_POST_PROCESSES_BY_ID_DELIVERABLES_SHARE                                      = http.MethodPost + " " + API_V1_PREFIX + "/processes/{id}/deliverables/share"
 	ROUTE_STATS_SUMMARY                                                                = API_V1_PREFIX + "/stats/summary"
 	ROUTE_STATS_TREND                                                                  = API_V1_PREFIX + "/stats/trend"
@@ -314,6 +317,11 @@ func New(cfg config.Config) (http.Handler, func()) {
 	productFlowHandler := &devorchestrator.ProductFlowHandler{Orchestrator: orch, WorkspaceRoot: cfg.WorkspaceRoot, UserService: userService}
 	workspaceService := initWorkspaceService(db, cfg.WorkspaceRoot, userService, cfg.CodingAgents)
 	initProductSpaceService(db, cfg, workspaceService)
+	// 需求评审确认后，编排层通过此回调把 PRD/原型导入产品空间并关联需求。
+	orch.SetProductDeliverableImporter(func(ctx context.Context, workspaceID, actingUserID, ownerUserID, workitemTitle, deliverableType, path string) error {
+		_, err := productSpaceService.ImportProcessDeliverable(ctx, workspaceID, actingUserID, ownerUserID, workitemTitle, deliverableType, path)
+		return err
+	})
 	initAgentConfigService(db, cfg.CodingAgents, cfg.CodingAgentModels, cfg.CodingAgentModelVendors)
 	initWorkspacePromptService(db)
 	initRepositoryService(db, cfg)
@@ -342,6 +350,18 @@ func New(cfg config.Config) (http.Handler, func()) {
 		})
 		// personal-stub 存活巡检：进程死亡或僵死时自动重启（nil = 随进程生命周期持续运行）。
 		dm.StartReconcileLoop(nil)
+		// 注入 gatewayd 就绪回调：orchestrator 后台任务执行 AI 节点前，按需启动 per-user gatewayd/personal-stub。
+		orch.SetGatewaydEnsurer(func(ctx context.Context, userID string) error {
+			_, err := dm.Acquire(ctx, userID)
+			return err
+		})
+		// 注入 personal-stub 就绪回调：免登录 serve 文件前，按需启动 per-user personal-stub。
+		if ps, ok := productSpaceService.(*psService.DBProductSpaceService); ok {
+			ps.SetStubEnsurer(func(ctx context.Context, userID string) error {
+				_, err := dm.Acquire(ctx, userID)
+				return err
+			})
+		}
 	}
 	agentStatusTracker := provisioner.NewStatusTracker()
 	agentController := provisioner.NewController(prov, cfg.AgentProvisioner)
@@ -531,6 +551,7 @@ func New(cfg config.Config) (http.Handler, func()) {
 	mux.HandleFunc(ROUTE_AUDIT_EVENTS, audit.Events)
 	mux.HandleFunc(ROUTE_ORCHESTRATOR_SESSIONS, sessionmanager.Sessions)
 	mux.Handle(ROUTE_ORCHESTRATOR_PRODUCT_FLOW, middleware.Auth(http.HandlerFunc(productFlowHandler.StartProductFlow)))
+	mux.Handle(ROUTE_ORCHESTRATOR_PRODUCT_FLOW_RETRY, middleware.Auth(http.HandlerFunc(productFlowHandler.RetryProductFlow)))
 	// Agent Review 报告存储：采纳/查询/更新问题状态，需登录态，按 workspaceId 隔离
 	mux.Handle(ROUTE_POST_AGENT_REVIEWS_REPORTS, middleware.Auth(http.HandlerFunc(agent_review.Adopt)))
 	mux.Handle(ROUTE_GET_AGENT_REVIEWS_REPORTS, middleware.Auth(http.HandlerFunc(agent_review.ListReports)))
@@ -547,6 +568,8 @@ func New(cfg config.Config) (http.Handler, func()) {
 	mux.Handle(ROUTE_GET_PROCESSES_ACTIVE_CHECK, middleware.Auth(http.HandlerFunc(process.ActiveCheck)))
 	mux.Handle(ROUTE_POST_PROCESSES, middleware.Auth(http.HandlerFunc(process.Create)))
 	mux.Handle(ROUTE_PATCH_PROCESSES_BY_ID_STAGES_BY_STAGE_NAME, middleware.Auth(http.HandlerFunc(process.UpdateStage)))
+	mux.Handle(ROUTE_POST_PROCESSES_BY_ID_TERMINATE, middleware.Auth(http.HandlerFunc(process.Terminate)))
+	mux.Handle(ROUTE_POST_PROCESSES_BY_ID_AI_DRAFT_REVIEW, middleware.Auth(http.HandlerFunc(productFlowHandler.AiDraftReview)))
 	// 数据大盘统计需登录并按 workspaceId 隔离
 	mux.Handle(ROUTE_STATS_SUMMARY, middleware.Auth(http.HandlerFunc(statsHandler.Summary)))
 	mux.Handle(ROUTE_STATS_TREND, middleware.Auth(http.HandlerFunc(statsHandler.Trend)))
@@ -811,13 +834,13 @@ func initDevReviewOrchestrator(db *sql.DB, cfg config.Config, workItemSvc workit
 				if userName == "" {
 					userName = "用户"
 				}
-				// approved=true -> 直接开发(不需要架构设计), approved=false -> 需要架构设计
+				// approved=true -> 评估通过(进入方案设计), approved=false -> 不通过(转人工介入)
 				approvedRaw, hasApproved := data["approved"]
 				approved := false
 				if hasApproved {
 					approved, _ = approvedRaw.(bool)
 				}
-				needArch := !approved // approved=true 表示"直接开发", 所以 needArch=false
+				needArch := approved // 通过即进入方案设计（needArch=true）
 				if workitemID != "" {
 					orch.OnRequirementEvalResult(context.Background(), notificationID, userID, userName, workitemID, processID, workspacePath, workspaceID, tenantID, workitemTitle, needArch)
 				}
@@ -874,6 +897,55 @@ func initDevReviewOrchestrator(db *sql.DB, cfg config.Config, workItemSvc workit
 				}
 				return
 			}
+			if notificationType == notificationobject.TypeAIEvalReviewRequired {
+				workitemID, _ := data["workitemId"].(string)
+				workitemTitle, _ := data["workitemTitle"].(string)
+				processID, _ := data["processId"].(string)
+				workspacePath, _ := data["workspacePath"].(string)
+				workspaceID, _ := data["workspaceId"].(string)
+				tenantID, _ := data["tenantId"].(string)
+				sessionID, _ := data["sessionId"].(string)
+				threadID, _ := data["threadId"].(string)
+				archDesignResult, _ := data["archDesignResult"].(string)
+				aiEvalResult, _ := data["aiEvalResult"].(string)
+				userName, _ := data["userName"].(string)
+				if userName == "" {
+					userName = "用户"
+				}
+				approvedRaw, hasApproved := data["approved"]
+				approved := false
+				if hasApproved {
+					approved, _ = approvedRaw.(bool)
+				}
+				if workitemID != "" {
+					orch.OnAIEvalDecisionResult(context.Background(), notificationID, userID, userName, workitemID, processID, workspacePath, workspaceID, tenantID, workitemTitle, sessionID, threadID, archDesignResult, aiEvalResult, approved)
+				}
+				return
+			}
+			if notificationType == notificationobject.TypeCodeReviewDecisionRequired {
+				workitemID, _ := data["workitemId"].(string)
+				workitemTitle, _ := data["workitemTitle"].(string)
+				processID, _ := data["processId"].(string)
+				workspacePath, _ := data["workspacePath"].(string)
+				workspaceID, _ := data["workspaceId"].(string)
+				tenantID, _ := data["tenantId"].(string)
+				sessionID, _ := data["sessionId"].(string)
+				threadID, _ := data["threadId"].(string)
+				reviewReport, _ := data["reviewReport"].(string)
+				userName, _ := data["userName"].(string)
+				if userName == "" {
+					userName = "用户"
+				}
+				approvedRaw, hasApproved := data["approved"]
+				approved := false
+				if hasApproved {
+					approved, _ = approvedRaw.(bool)
+				}
+				if workitemID != "" {
+					orch.OnCodeReviewDecisionResult(context.Background(), notificationID, userID, userName, workitemID, processID, workspacePath, workspaceID, tenantID, workitemTitle, sessionID, threadID, reviewReport, approved)
+				}
+				return
+			}
 			if notificationType == notificationobject.TypeTestPlanReviewRequired ||
 				notificationType == notificationobject.TypeTestCaseReviewRequired ||
 				notificationType == notificationobject.TypeTestAdmissionReviewRequired {
@@ -901,7 +973,8 @@ func initDevReviewOrchestrator(db *sql.DB, cfg config.Config, workItemSvc workit
 			}
 			if notificationType == notificationobject.TypeProductReviewRequired ||
 				notificationType == notificationobject.TypeProductProtoReviewRequired ||
-				notificationType == notificationobject.TypeProductFinalReviewRequired {
+				notificationType == notificationobject.TypeProductFinalReviewRequired ||
+				notificationType == notificationobject.TypeProductAIDraftReviewRequired {
 				workitemID, _ := data["workitemId"].(string)
 				workitemTitle, _ := data["workitemTitle"].(string)
 				processID, _ := data["processId"].(string)
@@ -922,6 +995,8 @@ func initDevReviewOrchestrator(db *sql.DB, cfg config.Config, workItemSvc workit
 						orch.OnProductReviewResult(context.Background(), notificationID, userID, userName, workitemID, processID, workspacePath, workspaceID, tenantID, workitemTitle, approved)
 					} else if notificationType == notificationobject.TypeProductProtoReviewRequired {
 						orch.OnProductProtoReviewResult(context.Background(), notificationID, userID, userName, workitemID, processID, workspacePath, workspaceID, tenantID, workitemTitle, approved)
+					} else if notificationType == notificationobject.TypeProductAIDraftReviewRequired {
+						orch.OnAIDraftReviewResult(context.Background(), notificationID, userID, userName, workitemID, processID, workspacePath, workspaceID, tenantID, workitemTitle, approved)
 					} else {
 						orch.OnProductFinalReviewResult(context.Background(), notificationID, userID, userName, workitemID, processID, workspacePath, workspaceID, tenantID, workitemTitle, approved)
 					}

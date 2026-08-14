@@ -303,6 +303,11 @@ func (s *DBProductSpaceService) ServeSharedRequirementFile(token, relativePath s
 		return nil, "", fmt.Errorf("cannot determine file owner: %w", findErr)
 	}
 
+	// 确保 per-user personal-stub 运行（direct-host 按需启动，免登录请求不经过 containerMW）。
+	if s.ensureStubRunning != nil {
+		_ = s.ensureStubRunning(context.Background(), fileUserID)
+	}
+
 	absPath, err := resolveProductSpacePath(s.workspaceRoot, workspaceID, fileUserID, relativePath)
 	if err != nil {
 		return nil, "", err

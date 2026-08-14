@@ -31,6 +31,14 @@ function mergePageHtml(pages: PageResult[]): string {
     .join(PAGE_SEPARATOR);
 }
 
+/** 合并多页的清洗后 HTML，每页前加 URL 注释，便于下游识别内容来源。 */
+function mergePageCleanedHtml(pages: PageResult[]): string {
+  return pages
+    .map((p) => `<!-- ${p.url} -->\n${p.cleanedHtml}`)
+    .filter((s) => s.trim().length > 0)
+    .join(PAGE_SEPARATOR);
+}
+
 function dedupe(items: string[]): string[] {
   return [...new Set(items)];
 }
@@ -67,6 +75,7 @@ export default async function scrapeRoutes(app: FastifyInstance) {
       markdown: mergePageMarkdown(pages),
       text: mergePageText(pages),
       html: body.outputFormat === "html" ? mergePageHtml(pages) : undefined,
+      cleanedHtml: mergePageCleanedHtml(pages),
       links: body.includeLinks ? dedupe(pages.flatMap((p) => p.links)) : [],
       screenshot: pages[0].screenshot,
       metadata: {

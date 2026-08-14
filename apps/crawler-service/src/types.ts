@@ -30,6 +30,7 @@ export interface ScrapeResponse {
   markdown: string;
   text?: string;
   html?: string;
+  cleanedHtml?: string;
   links: string[];
   screenshot?: string;
   metadata: {

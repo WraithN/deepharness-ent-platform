@@ -11,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { MarkdownView } from '@/components/chat/MarkdownView';
 import { fileApi, type FileContent } from '@/lib/file-api';
 import { productSpaceApi } from '@/lib/productspace-api';
-import { processApi } from '@/lib/process-api';
+import { processApi, type Process } from '@/lib/process-api';
 import { api } from '@/lib/api';
 import type { WorkItemDTO, UserDTO } from '@/lib/api-types';
 import { useAuth } from '@/contexts/AuthContext';
@@ -112,6 +112,9 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
 
   // 发起产品流程状态。
   const [startingFlow, setStartingFlow] = useState(false);
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [activeProcess, setActiveProcess] = useState<Process | null>(null);
+  const [terminating, setTerminating] = useState(false);
   const isBrainstormResult = path.includes('/brainstorm/');
   const canStartProductFlow = isBrainstormResult && !!workitemId && !!workspaceId;
 
@@ -293,21 +296,51 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
     }
   };
 
+  // 实际发起流程（无进行中流程或已取消旧流程后调用）。
+  const doStartProductFlow = async () => {
+    const res = await processApi.startProductFlow({
+      workspaceId,
+      workitemId,
+      workitemTitle: requirementTitle || displayTitle,
+      workitemDesc: '',
+      docPath: path,
+    });
+    toast.success('AI需求设计流程已启动');
+    if (res.processId) {
+      navigate(`/personal/flow/${res.processId}`);
+    }
+  };
+
+  // 确认取消旧流程并重新发起。
+  const handleConfirmRestart = async () => {
+    if (!activeProcess) return;
+    setTerminating(true);
+    try {
+      await processApi.terminateProcess(activeProcess.id);
+      setConfirmDialogOpen(false);
+      await doStartProductFlow();
+    } catch (e) {
+      console.error('[InlineFilePreview] terminate old flow failed:', e);
+      const msg = e instanceof Error ? e.message : '';
+      toast.error(msg || '取消旧流程失败，请重试');
+    } finally {
+      setTerminating(false);
+    }
+  };
+
   // 发起AI需求设计流程：基于当前 brainstorm 结果启动产品流程。
   const handleStartProductFlow = async () => {
     if (!workspaceId || !workitemId) return;
     setStartingFlow(true);
     try {
-      const res = await processApi.startProductFlow({
-        workspaceId,
-        workitemId,
-        workitemTitle: requirementTitle || displayTitle,
-        workitemDesc: '',
-      });
-      toast.success('AI需求设计流程已启动');
-      if (res.processId) {
-        navigate(`/personal/flow/${res.processId}`);
+      // 先检查是否存在进行中的流程；有则弹窗让用户选择取消旧流程后重新发起。
+      const check = await processApi.activeCheck(workitemId, path);
+      if (check.hasActive && check.activeProcess) {
+        setActiveProcess(check.activeProcess);
+        setConfirmDialogOpen(true);
+        return;
       }
+      await doStartProductFlow();
     } catch (e) {
       console.error('[InlineFilePreview] start product flow failed:', e);
       const msg = e instanceof Error ? e.message : '';
@@ -515,6 +548,25 @@ export const InlineFilePreview: React.FC<InlineFilePreviewProps> = ({ path, onCl
             <AlertDialogAction onClick={handleDelete} disabled={deleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               {deleting && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
               确认作废
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* 已有进行中流程确认弹窗 */}
+      <AlertDialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>该需求已有进行中的 AI 需求设计流程</AlertDialogTitle>
+            <AlertDialogDescription>
+              是否取消旧的流程，并基于当前头脑风暴文档重新发起新的 AI 需求设计流程？旧流程的进行中任务将被终止。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={terminating}>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmRestart} disabled={terminating}>
+              {terminating && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+              取消旧流程并重新发起
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

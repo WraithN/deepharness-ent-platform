@@ -44,16 +44,18 @@ type FlowContext struct {
 
 	WorkspacePath string
 
-	SessionID string
-	ThreadID  string
+	SessionID    string
+	ThreadID     string
 	DevSessionID string
 	DevThreadID  string
 
-	CodePrompt      string
-	CodeResult      string
-	ReviewPrompt    string
-	ReviewResult    string
-	DeveloperPrompt string
+	CodePrompt        string
+	CodeResult        string
+	ReviewPrompt      string
+	ReviewResult      string
+	ReviewDecision    string // AI 代码评审结论："pass" / "reject"
+	ReviewRejectCount int    // AI 代码评审不通过次数（用于限制最多自动重试 maxReviewRetries 次）
+	DeveloperPrompt   string
 
 	ApprovalResult string
 
@@ -62,8 +64,10 @@ type FlowContext struct {
 	NeedArchDesign        bool
 	RequirementEvalResult string
 
-	ArchDesignResult string
-	AIEvalResult     string
+	ArchDesignResult  string
+	AIEvalResult      string
+	AIEvalDecision    string // AI 方案评估结论："pass" / "reject"
+	AIEvalRejectCount int    // AI 方案评估不通过次数（用于限制最多自动重试 maxAIEvalRetries 次）
 
 	// 自动化测试流程数据
 	TestPlanResult            string
@@ -81,12 +85,13 @@ type FlowContext struct {
 	DraftResult                string
 	AIDraftReviewResult        string // AI 草案复核报告文本
 	ProductAIDraftReviewResult string // "pass" / "reject"
+	AIDraftReviewRejectCount   int    // AI 草案复核不通过次数（用于限制最多自动重试 maxAIDraftReviewRetries 次）
 	PRDResult                  string
 	ProtoResult                string
 	ProductReviewResult        string // "pass" / "reject"
 	ProductProtoReviewResult   string // "pass" / "reject"
 	ProductFinalReviewResult   string // "pass" / "reject"
-	AIGatewayResult            string // AI 网关决策文本
+	AIGatewayResult            string // AI 并行决策器决策文本
 	NeedProto                  bool   // 是否需要原型
 
 	PausedNode     string

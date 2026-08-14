@@ -16,7 +16,7 @@ func BuildProductBrainstormPrompt(title, description, workspacePath string) stri
 	return ApplyPromptCommon(rendered, workspacePath)
 }
 
-// BuildProductResearchPrompt 方案调研与选型
+// BuildProductResearchPrompt 方案调研与选型（基于需求拆解清单）
 func BuildProductResearchPrompt(title, breakdownResult, workspacePath string) string {
 	rendered := Render("product_research", map[string]string{
 		"Title":           title,
@@ -56,7 +56,7 @@ func BuildProductProtoMakePrompt(title, draftResult, workspacePath string) strin
 	return ApplyPromptCommon(rendered, workspacePath)
 }
 
-// BuildProductProtoReviewPrompt AI复查（原型交互一致性与需求覆盖度）
+// BuildProductProtoReviewPrompt AI复查（PRD 文档与原型的一致性与需求覆盖度）
 func BuildProductProtoReviewPrompt(title, protoResult, prdResult, workspacePath string) string {
 	rendered := Render("product_proto_review", map[string]string{
 		"Title":         title,
@@ -87,7 +87,7 @@ func BuildProductAIDraftReviewPrompt(title, draftResult, workspacePath string) s
 	return ApplyPromptCommon(rendered, workspacePath)
 }
 
-// BuildProductAIGatewayPrompt AI 网关决策（输出 NEED_PROTO: true/false）
+// BuildProductAIGatewayPrompt AI 并行决策器决策（输出 NEED_PROTO: true/false）
 func BuildProductAIGatewayPrompt(title, draftResult, workspacePath string) string {
 	rendered := Render("product_ai_gateway", map[string]string{
 		"Title":         title,

@@ -42,10 +42,16 @@ func TestParsePRDResearchArgs(t *testing.T) {
 			wantCookies: 0,
 		},
 		{
-			name:        "裸参数格式",
+			name:        "裸参数格式（带 ck: 前缀）",
 			args:        "https://example.com/x ck:sessionid=abc",
 			wantURL:     "https://example.com/x",
 			wantCookies: 1,
+		},
+		{
+			name:        "裸参数格式（直接粘贴浏览器 cookie，无前缀）",
+			args:        "https://example.com/x sessionid=abc; token=xyz; empty=",
+			wantURL:     "https://example.com/x",
+			wantCookies: 2, // empty= 值为空，跳过
 		},
 	}
 

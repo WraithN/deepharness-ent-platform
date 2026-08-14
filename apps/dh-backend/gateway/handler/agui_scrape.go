@@ -23,11 +23,12 @@ type scrapeRequest struct {
 
 // scrapeResponse 是 crawler-service /scrape 的响应体。
 type scrapeResponse struct {
-	URL      string `json:"url"`
-	Title    string `json:"title,omitempty"`
-	Markdown string `json:"markdown,omitempty"`
-	Text     string `json:"text,omitempty"`
-	HTML     string `json:"html,omitempty"`
+	URL         string `json:"url"`
+	Title       string `json:"title,omitempty"`
+	Markdown    string `json:"markdown,omitempty"`
+	Text        string `json:"text,omitempty"`
+	HTML        string `json:"html,omitempty"`
+	CleanedHTML string `json:"cleanedHtml,omitempty"`
 }
 
 // extractDomain 从 URL 字符串中提取 host，用于匹配本地保存的 cookie。
@@ -40,6 +41,8 @@ func extractDomain(rawURL string) string {
 }
 
 // buildScrapedArgs 将原始参数与抓取结果合并为新的指令参数。
+// 同时输出文本摘要（markdown/text）和清洗后 HTML（完整页面结构），
+// 供 agent 既了解页面文本内容，又分析 UI 布局与组件结构。
 func buildScrapedArgs(originalArgs string, result scrapeResponse) string {
 	var sb strings.Builder
 	sb.WriteString(strings.TrimSpace(originalArgs))
@@ -51,17 +54,36 @@ func buildScrapedArgs(originalArgs string, result scrapeResponse) string {
 		sb.WriteString(fmt.Sprintf("- 最终 URL：%s\n", result.URL))
 	}
 	sb.WriteString("\n--- 正文开始 ---\n")
-	content := result.Markdown
-	if content == "" {
-		content = result.Text
+
+	hasContent := false
+	// 文本摘要（markdown 优先，text 兜底）。
+	textContent := result.Markdown
+	if textContent == "" {
+		textContent = result.Text
 	}
-	if content == "" {
-		content = result.HTML
+	if textContent != "" {
+		sb.WriteString(textContent)
+		hasContent = true
 	}
-	if content == "" {
-		content = "（未能成功抓取网页内容，请仅基于 URL 进行分析。）"
+
+	// 清洗后 HTML：完整页面结构，供 agent 分析 UI 布局、导航、组件等。
+	if result.CleanedHTML != "" {
+		if hasContent {
+			sb.WriteString("\n\n--- 页面 HTML 结构 ---\n")
+		}
+		sb.WriteString(result.CleanedHTML)
+		hasContent = true
 	}
-	sb.WriteString(content)
+
+	// 最终 fallback：原始 HTML 或占位文本。
+	if !hasContent {
+		if result.HTML != "" {
+			sb.WriteString(result.HTML)
+		} else {
+			sb.WriteString("（未能成功抓取网页内容，请仅基于 URL 进行分析。）")
+		}
+	}
+
 	sb.WriteString("\n--- 正文结束 ---\n")
 	return sb.String()
 }

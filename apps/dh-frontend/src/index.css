@@ -1,5 +1,13 @@
 html {
   font-size: 17px;
+  /* 预留稳定的滚动条沟槽，避免垂直滚动条出现/消失时内容左右抖动 */
+  scrollbar-gutter: stable;
+}
+
+/* 防止流式输出时宽内容（表格/代码块等）撑出横向滚动条，导致会话框右侧左右抖动 */
+html,
+body {
+  overflow-x: hidden;
 }
 
 @tailwind base;

@@ -115,6 +115,7 @@ func (h *Handler) ServeSharedRequirementFile(w http.ResponseWriter, r *http.Requ
 	}
 
 	if strings.Contains(contentType, "text/html") {
+		data = rewritePrototypeAssetPaths(data)
 		data = injectPrototypeAnnotationScript(data)
 	}
 

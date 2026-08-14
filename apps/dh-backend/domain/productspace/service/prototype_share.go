@@ -192,6 +192,10 @@ func (s *DBProductSpaceService) ServeSharedFile(token, relativePath string) ([]b
 	if err := rejectSymlink(absPath); err != nil {
 		return nil, "", fmt.Errorf("symlink check failed: %w", err)
 	}
+	// 确保 per-user personal-stub 运行（direct-host 按需启动，免登录请求不经过 containerMW）。
+	if s.ensureStubRunning != nil {
+		_ = s.ensureStubRunning(context.Background(), userID)
+	}
 	data, err := stubReadFile(context.Background(), absPath)
 	if err != nil {
 		if !stubFileExists(context.Background(), absPath) {

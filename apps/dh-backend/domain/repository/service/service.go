@@ -42,6 +42,9 @@ type RepositoryService interface {
 	ListUserRepos(ctx context.Context, workspaceID, userID string) ([]object.UserRepoStatus, error)
 	// SyncUserRepo 将指定仓库克隆到用户 projects 目录，异步执行。
 	SyncUserRepo(ctx context.Context, workspaceID, repoID, userID string) error
+
+	// DevLibKGPath 返回开发库在用户目录下的 knowledge-graph.json 路径。
+	DevLibKGPath(ctx context.Context, workspaceID, userID, libKey string) string
 }
 
 // ParseRepoName 从仓库 URL 解析仓库名称（取最后一段路径并去除 .git 后缀）。
