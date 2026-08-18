@@ -9,7 +9,6 @@ import (
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/client"
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/agent/provisioner"
 	agentconfigservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/agentconfig/service"
-	crawlerservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/crawler/service"
 	workitemservice "github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/workitem/service"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/common/workspacepath"
 )
@@ -36,38 +35,30 @@ const protoProjectsDirName = workspacepath.SubDirPrototypes
 
 // AGUIHandler 处理 AG-UI 协议的 agent run 请求。
 type AGUIHandler struct {
-	aguiClient           *client.AGUIClient
-	gatewaydAdminURL     string
-	pluginKey            string
-	sessions             chat.SessionStore
-	messages             chat.MessageStore
-	buffer               buffer.SSEBuffer
-	workItemSvc          workitemservice.WorkItemService
-	crawlerCookieSvc     *crawlerservice.CrawlerCookieService
-	crawlerServiceURL     string
-	crawlerServiceTimeout time.Duration
-	crawlerMaxDepth       int
-	workspaceRoot         string
+	aguiClient       *client.AGUIClient
+	gatewaydAdminURL string
+	pluginKey        string
+	sessions         chat.SessionStore
+	messages         chat.MessageStore
+	buffer           buffer.SSEBuffer
+	workItemSvc      workitemservice.WorkItemService
+	workspaceRoot    string
 	// agentConfigSvc 用于在 agent attach 后同步空间级模型/看门狗配置到 gatewayd。
 	// 仅创建 session 时同步会在 gatewayd 重启后失效，因此每次 run attach 后都需重新同步。
-	agentConfigSvc       agentconfigservice.AgentConfigService
+	agentConfigSvc agentconfigservice.AgentConfigService
 }
 
 // NewAGUIHandler 创建 AG-UI handler。
-func NewAGUIHandler(adminURL, pluginKey, workspaceRoot string, sessions chat.SessionStore, messages chat.MessageStore, buf buffer.SSEBuffer, workItemSvc workitemservice.WorkItemService, crawlerCookieSvc *crawlerservice.CrawlerCookieService, crawlerServiceURL string, crawlerServiceTimeout time.Duration, crawlerMaxDepth int) *AGUIHandler {
+func NewAGUIHandler(adminURL, pluginKey, workspaceRoot string, sessions chat.SessionStore, messages chat.MessageStore, buf buffer.SSEBuffer, workItemSvc workitemservice.WorkItemService) *AGUIHandler {
 	return &AGUIHandler{
-		aguiClient:            client.NewAGUIClient(adminURL, pluginKey),
-		gatewaydAdminURL:     adminURL,
-		pluginKey:            pluginKey,
-		sessions:             sessions,
-		messages:             messages,
-		buffer:               buf,
-		workItemSvc:          workItemSvc,
-		crawlerCookieSvc:     crawlerCookieSvc,
-		crawlerServiceURL:     crawlerServiceURL,
-		crawlerServiceTimeout: crawlerServiceTimeout,
-		crawlerMaxDepth:       crawlerMaxDepth,
-		workspaceRoot:         workspaceRoot,
+		aguiClient:       client.NewAGUIClient(adminURL, pluginKey),
+		gatewaydAdminURL: adminURL,
+		pluginKey:        pluginKey,
+		sessions:         sessions,
+		messages:         messages,
+		buffer:           buf,
+		workItemSvc:      workItemSvc,
+		workspaceRoot:    workspaceRoot,
 	}
 }
 

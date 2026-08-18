@@ -414,7 +414,7 @@ func New(cfg config.Config) (http.Handler, func()) {
 	agentconfig.InitRuntimeSync(sessions, agentClient)
 	// 注入配置文件中启用的需求管理平台列表，供空间设置的平台下拉框读取。
 	workitem.InitPlatforms(cfg.WorkitemPlatformWhitelist)
-	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, cfg.WorkspaceRoot, sessions, messages, sseBuffer, workItemSvc, crawlerCookieSvc, cfg.CrawlerServiceURL, cfg.CrawlerServiceTimeout, cfg.CrawlerMaxDepth)
+	aguiHandler := handler.NewAGUIHandler(cfg.GatewaydAdminURL, cfg.GatewaydAgentID, cfg.WorkspaceRoot, sessions, messages, sseBuffer, workItemSvc)
 	// 注入空间级智能体配置服务，确保每次 agent run attach 后都能同步模型/看门狗配置，
 	// 避免 gatewayd 重启后复用旧会话时回退到默认 120s watchdog。
 	aguiHandler.SetAgentConfigService(defaultAgentConfigService)

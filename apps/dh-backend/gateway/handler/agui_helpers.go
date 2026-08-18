@@ -112,7 +112,7 @@ func emitLongTaskFeedback(command, runID, sessionID string, writeEvent func(agui
 		"/code":         "正在编写代码",
 		"/user-story":   "正在拆分用户故事",
 		"/prd-write":    "正在撰写 PRD",
-		"/prd-research": "正在进行产品爬虫调研",
+		"/prd-research": "正在进行产品调研",
 		"/ui-kit":       "正在生成 UI 组件库规范",
 		"/test-case":    "正在生成测试用例",
 		"/auto-test":    "正在生成自动化脚本",
