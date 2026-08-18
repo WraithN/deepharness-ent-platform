@@ -260,6 +260,7 @@ const (
 	ROUTE_FEISHU_BINDINGS                                                              = API_V1_PREFIX + "/feishu/bindings"
 	ROUTE_FEISHU_CHAT_SESSIONS                                                         = API_V1_PREFIX + "/feishu/chat-sessions"
 	ROUTE_WORKSPACES_BY_ID_AGENT_STATUS                                                = API_V1_PREFIX + "/workspaces/{id}/agent-status"
+	ROUTE_ADMIN_SERVICES_CRAWLER                                                       = API_V1_PREFIX + "/admin/services/crawler"
 )
 
 var (
@@ -741,6 +742,10 @@ func New(cfg config.Config) (http.Handler, func()) {
 	mux.HandleFunc(ROUTE_WORKSPACES_BY_ID_AGENT_STATUS, agentStatusHandler.GetStatus)
 
 	mux.Handle(ROUTE_FEISHU_CHAT_SESSIONS, middleware.Auth(http.HandlerFunc(feishu.ListChatSessions)))
+
+	// crawler-service MCP 配置：供 gatewayd 启动时拉取 crawler MCP endpoint 地址与默认参数。
+	crawlerCfgHandler := handler.NewCrawlerConfigHandler(&cfg)
+	mux.Handle(ROUTE_ADMIN_SERVICES_CRAWLER, middleware.Auth(http.HandlerFunc(crawlerCfgHandler.ServeHTTP)))
 
 	// Apply middleware
 	return middleware.Logger(middleware.CORS(mux)), func() {
