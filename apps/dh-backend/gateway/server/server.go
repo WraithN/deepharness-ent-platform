@@ -182,6 +182,9 @@ const (
 	ROUTE_WORKSPACES_BY_ID_REPOSITORIES                                                = API_V1_PREFIX + "/workspaces/{id}/repositories"
 	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_SCAN                                           = API_V1_PREFIX + "/workspaces/{id}/repositories/scan"
 	ROUTE_WORKSPACES_BY_ID_ARCH_GRAPH                                                  = API_V1_PREFIX + "/workspaces/{id}/arch/graph"
+	ROUTE_WORKSPACES_BY_ID_ARCH_OVERVIEW                                               = API_V1_PREFIX + "/workspaces/{id}/arch/overview"
+	ROUTE_WORKSPACES_BY_ID_ARCH_PARSE                                                  = API_V1_PREFIX + "/workspaces/{id}/arch/parse"
+	ROUTE_WORKSPACES_BY_ID_ARCH_PARSE_STATUS                                           = API_V1_PREFIX + "/workspaces/{id}/arch/parse/status"
 	ROUTE_WORKSPACES_BY_ID_USER_REPOS                                                  = API_V1_PREFIX + "/workspaces/{id}/user-repos"
 	ROUTE_WORKSPACES_BY_ID_USER_REPOS_BY_REPO_ID_SYNC                                  = API_V1_PREFIX + "/workspaces/{id}/user-repos/{repoId}/sync"
 	ROUTE_WORKSPACES_BY_ID_REPOSITORIES_BY_REPO_ID                                     = API_V1_PREFIX + "/workspaces/{id}/repositories/{repoId}"
@@ -414,6 +417,9 @@ func New(cfg config.Config) (http.Handler, func()) {
 	// 注入空间级智能体配置服务，确保每次 agent run attach 后都能同步模型/看门狗配置，
 	// 避免 gatewayd 重启后复用旧会话时回退到默认 120s watchdog。
 	aguiHandler.SetAgentConfigService(defaultAgentConfigService)
+	// 注入架构库解析会话创建器：*AGUIHandler 结构化满足 repository.ArchParseSessionCreator
+	// （见 gateway/handler/arch_parse_session.go 的 CreateAndRun），供 POST /arch/parse 创建并启动解析会话。
+	repository.InitArchParseSessionCreator(aguiHandler)
 	// 为 workspace 模块注入同步补全能力，用于规范的智能生成。
 	// 规范生成不绑定特定 agent，使用默认 pluginKey（agentKey 传空）。
 	workspace.InitStandardCompleter(func(ctx context.Context, prompt string) (string, error) {
@@ -622,6 +628,9 @@ func New(cfg config.Config) (http.Handler, func()) {
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_REPOSITORIES, middleware.Auth(http.HandlerFunc(repository.Repositories)))
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_REPOSITORIES_SCAN, middleware.Auth(http.HandlerFunc(repository.ScanRepositories)))
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_ARCH_GRAPH, containerMW(http.HandlerFunc(repository.ArchGraph)))
+	mux.Handle(ROUTE_WORKSPACES_BY_ID_ARCH_OVERVIEW, containerMW(http.HandlerFunc(repository.ArchOverviewHandler)))
+	mux.Handle(ROUTE_WORKSPACES_BY_ID_ARCH_PARSE, containerMW(http.HandlerFunc(repository.ArchParse)))
+	mux.Handle(ROUTE_WORKSPACES_BY_ID_ARCH_PARSE_STATUS, containerMW(http.HandlerFunc(repository.ArchParseStatus)))
 	// 用户级仓库操作（需登录态，userID 由 auth 中间件注入）
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_USER_REPOS, containerMW(http.HandlerFunc(repository.UserRepos)))
 	mux.Handle(ROUTE_WORKSPACES_BY_ID_USER_REPOS_BY_REPO_ID_SYNC, containerMW(http.HandlerFunc(repository.SyncUserRepo)))

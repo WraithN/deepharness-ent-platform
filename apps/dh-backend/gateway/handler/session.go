@@ -25,6 +25,14 @@ const (
 	standardTypeDesign = "design"
 )
 
+// 会话默认值：未指定 agent 时使用的内置 agent 标识与类型，
+// 以及会话 Context 中记录插件 key 的字段名（供历史会话恢复时正确归类）。
+const (
+	defaultSessionAgentID   = "agent-default"
+	defaultSessionAgentType = "chat"
+	sessionCtxKeyPluginKey  = "pluginKey"
+)
+
 type SessionHandler struct {
 	sessions           chat.SessionStore
 	messages           chat.MessageStore
@@ -161,11 +169,11 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 
 	agentID := req.AgentID
 	if agentID == "" {
-		agentID = "agent-default"
+		agentID = defaultSessionAgentID
 	}
 	agentType := req.AgentType
 	if agentType == "" {
-		agentType = "chat"
+		agentType = defaultSessionAgentType
 	}
 
 	// 校验前端指定的插件 key 是否在当前空间可用。
@@ -241,7 +249,7 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	if context == nil {
 		context = make(map[string]any)
 	}
-	context["pluginKey"] = pluginKey
+	context[sessionCtxKeyPluginKey] = pluginKey
 	context["instanceId"] = instanceID
 	// 若 gatewayd 不可达而使用本地 session id，则在上下文中标记，避免后续 /api/v1/agent 向不存在的 gatewayd session 发送 run。
 	if gatewaydUnreachable {

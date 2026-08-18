@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/gateway/stubclient"
+	gitrepo "github.com/deepharness/deepharness-ent-platform/packages/go-sdk/infrastructure/repository"
 )
 
 // ── L1/L2/Overview 数据结构 ──
@@ -130,6 +131,9 @@ func loadLibraries(ctx context.Context, repoPath string) (*librariesData, []stri
 
 // loadModules 读取架构库 modules/<lib>.yaml（L2 模块层）。
 func loadModules(ctx context.Context, repoPath, libKey string) (*modulesData, []string) {
+	// libKey 来自 query 参数，先净化防路径穿越（与 parse_lock.go 同款处理）；
+	// 净化后 key 变化导致查不到模块属预期行为。
+	libKey = gitrepo.SanitizePathSegment(libKey)
 	var data modulesData
 	rel := filepath.Join(archModulesDir, libKey+archYamlExt)
 	ok, warnings := readArchYAMLFile(ctx, repoPath, rel, &data)
@@ -142,6 +146,8 @@ func loadModules(ctx context.Context, repoPath, libKey string) (*modulesData, []
 // loadOverview 读取架构库 overviews/<lib>.yaml（开发库介绍页）。
 // 文件不存在时返回 (nil, nil)，不视为错误。
 func loadOverview(ctx context.Context, repoPath, libKey string) (*ArchOverview, error) {
+	// libKey 来自 query 参数，先净化防路径穿越；净化后 key 变化查不到文件时返回 (nil, nil)。
+	libKey = gitrepo.SanitizePathSegment(libKey)
 	var data ArchOverview
 	rel := filepath.Join(archOverviewsDir, libKey+archYamlExt)
 	ok, _ := readArchYAMLFile(ctx, repoPath, rel, &data)

@@ -53,7 +53,7 @@
   - `func loadOverview(ctx, repoPath, libKey) (*ArchOverview, error)` — 读 `overviews/<lib>.yaml`
   - `func loadClassView(ctx, kgPath, modulePathPrefix string) (*archView, []string)` — 读 knowledge-graph.json 按 path 过滤
 
-- [ ] **Step 1: 定义 L1/L2/overview 结构体与 YAML 标签**
+- [x] **Step 1: 定义 L1/L2/overview 结构体与 YAML 标签**
 
 在 `arch_service.go` 顶部（替换旧 `archDomainDef` 等服务级结构体，但保留 `archView`/`archNode`/`archEdge` 复用）新增：
 
@@ -119,7 +119,7 @@ type ArchOverview struct {
 }
 ```
 
-- [ ] **Step 2: 实现 loadLibraries / loadModules / loadOverview**
+- [x] **Step 2: 实现 loadLibraries / loadModules / loadOverview**
 
 复用现有 `readArchYamlFiles` 与 `parseYamlFile` 模式（单文件读取）。新增单文件读取辅助：
 
@@ -181,7 +181,7 @@ archKGFileName     = "knowledge-graph.json"
 archUnderstandDir  = ".understand-anything"
 ```
 
-- [ ] **Step 3: 实现 loadClassView（读 knowledge-graph.json 按 module path 过滤）**
+- [x] **Step 3: 实现 loadClassView（读 knowledge-graph.json 按 module path 过滤）**
 
 ```go
 // kgGraph 对应 understand 产出的 knowledge-graph.json 结构（仅取画布所需字段）。
@@ -252,11 +252,11 @@ func loadClassView(ctx context.Context, kgPath, modulePathPrefix string) (*archV
 }
 ```
 
-- [ ] **Step 4: 删除旧 buildArchGraph 及其调用的 buildRepoLevelView/buildServiceLevelView/buildDomainLevelView 等服务级函数**
+- [x] **Step 4: 删除旧 buildArchGraph 及其调用的 buildRepoLevelView/buildServiceLevelView/buildDomainLevelView 等服务级函数**
 
 `arch_service.go` 中所有 `buildRepoLevelView`/`buildServiceLevelView`/`buildDomainLevelView`/`buildServiceEdges`/`buildDBShareEdges`/`buildDomainRuleEdges`/`aggregateServiceEdgesToDomain`/`isInfraService` 及旧结构体 `archDomainDef`/`archServiceDef`/`archDomainRules` 等全部删除（被 L1/L2/L3 取代）。同时删除 `arch_handler.go` 中 `loadArchDomains`/`loadArchServices`/`loadArchDomainRules` 及 `archDomainDef` 等旧定义。
 
-- [ ] **Step 5: 写单元测试**
+- [x] **Step 5: 写单元测试**
 
 `arch_service_test.go`：用 stubclient 的假实现或直接测试纯函数 `loadClassView` 的过滤逻辑（构造 kgGraph JSON 字符串，验证按 prefix 过滤）。由于 `loadClassView` 依赖 stubclient，可测试其内部过滤逻辑：抽取一个纯函数 `filterClassView(kg, prefix) *archView` 并测试它。
 
@@ -293,7 +293,7 @@ func TestFilterClassView(t *testing.T) {
 
 将 `loadClassView` 的过滤部分抽取为 `filterClassView(kg kgGraph, prefix string) *archView`。
 
-- [ ] **Step 6: 验证**
+- [x] **Step 6: 验证**
 
 Run: `cd apps/dh-backend && go vet ./... && go test ./domain/repository/... -run TestFilterClassView -v`
 Expected: PASS，0 vet warnings。
@@ -309,7 +309,7 @@ Expected: PASS，0 vet warnings。
 - Consumes: Task 1 的 loadLibraries/loadModules/loadClassView
 - Produces: `ArchGraph` handler 按 `level` 参数返回 `{nodes, edges, drillLevel, lib?, module?, warnings?}`
 
-- [ ] **Step 1: 改造 archGraphResponse 结构**
+- [x] **Step 1: 改造 archGraphResponse 结构**
 
 ```go
 // archGraphResponse 是 GET /arch/graph 的统一响应（层级查询）。
@@ -327,7 +327,7 @@ type archGraphResponse struct {
 }
 ```
 
-- [ ] **Step 2: 改造 ArchGraph handler 按 level 分发**
+- [x] **Step 2: 改造 ArchGraph handler 按 level 分发**
 
 ```go
 func ArchGraph(w http.ResponseWriter, r *http.Request) {
@@ -416,7 +416,7 @@ func ArchGraph(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-- [ ] **Step 3: 实现节点/边转换辅助与 loadClassesForModule**
+- [x] **Step 3: 实现节点/边转换辅助与 loadClassesForModule**
 
 ```go
 // loadClassesForModule 解析 lib+module 对应的类视图：
@@ -488,14 +488,14 @@ func libDepsToEdges(deps []ArchLibDependency) []archEdge {
 // modulesToNodes / moduleDepsToEdges 同理
 ```
 
-- [ ] **Step 4: 在 RepositoryService 接口加 DevLibKGPath 声明**
+- [x] **Step 4: 在 RepositoryService 接口加 DevLibKGPath 声明**
 
 `service/service.go` 的 `RepositoryService` 接口加：
 ```go
 DevLibKGPath(ctx context.Context, workspaceID, userID, libKey string) string
 ```
 
-- [ ] **Step 5: 验证**
+- [x] **Step 5: 验证**
 
 Run: `cd apps/dh-backend && go vet ./... && go build ./...`
 Expected: 通过，0 warnings。
@@ -507,7 +507,7 @@ Expected: 通过，0 warnings。
 **Files:**
 - Modify: `apps/dh-backend/domain/repository/arch_handler.go`
 
-- [ ] **Step 1: 新增 ArchOverview handler**
+- [x] **Step 1: 新增 ArchOverview handler**
 
 ```go
 // ArchOverviewHandler 处理 GET /arch/overview?lib=<key>。
@@ -542,7 +542,7 @@ func ArchOverviewHandler(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-- [ ] **Step 2: 验证**
+- [x] **Step 2: 验证**
 
 Run: `cd apps/dh-backend && go vet ./... && go build ./...`
 Expected: 通过。
@@ -560,7 +560,7 @@ Expected: 通过。
   - `func (s *DBRepositoryService) WriteParseLock(ctx, workspaceID, userID, archRepoName, sessionID) error`
   - `func (s *DBRepositoryService) DeleteParseLock(ctx, workspaceID, userID, archRepoName)`
 
-- [ ] **Step 1: 实现解析锁（复用 sync_lock.go 的 stubclient 模式）**
+- [x] **Step 1: 实现解析锁（复用 sync_lock.go 的 stubclient 模式）**
 
 ```go
 package service
@@ -640,7 +640,7 @@ func (s *DBRepositoryService) DeleteParseLock(ctx context.Context, workspaceID, 
 }
 ```
 
-- [ ] **Step 2: 在 RepositoryService 接口加方法声明**
+- [x] **Step 2: 在 RepositoryService 接口加方法声明**
 
 `service/service.go` 接口加：
 ```go
@@ -649,7 +649,7 @@ WriteParseLock(ctx context.Context, workspaceID, userID, archRepoName, sessionID
 DeleteParseLock(ctx context.Context, workspaceID, userID, archRepoName string)
 ```
 
-- [ ] **Step 3: 验证**
+- [x] **Step 3: 验证**
 
 Run: `cd apps/dh-backend && go vet ./... && go build ./...`
 Expected: 通过。
@@ -665,7 +665,7 @@ Expected: 通过。
 - Consumes: Task 4 解析锁；现有会话创建机制（参考 `gateway/handler/session.go` 的 Sessions 创建 + agui AgentRun）
 - Produces: `ArchParse`（POST）+ `ArchParseStatus`（GET）handler
 
-- [ ] **Step 1: 定义解析指令构建与状态响应**
+- [x] **Step 1: 定义解析指令构建与状态响应**
 
 ```go
 const archParseSkillPath = "shares/skills/dev-lib-analysis/SKILL.md"
@@ -685,7 +685,7 @@ type parseStatusResponse struct {
 }
 ```
 
-- [ ] **Step 2: 实现 ArchParse（POST，加锁 + 创建会话）**
+- [x] **Step 2: 实现 ArchParse（POST，加锁 + 创建会话）**
 
 参考 `gateway/handler/session.go` 的会话创建与 `agui_run.go` 的 AgentRun 机制。由于直接复用现有会话创建涉及较多依赖，采用「创建会话 + 预填指令」的简化路径：调用 sessionHandler 创建会话，再把指令作为首条用户消息触发 agent run。
 
@@ -742,7 +742,7 @@ func InitArchParseSessionCreator(c ArchParseSessionCreator) { archParseSessionCr
 
 > 注：会话创建的具体对接需参考 `gateway/handler/session.go:Sessions`（POST 创建）与 `agui_run.go:AgentRun`（触发执行）。执行时在 session handler 上实现 `CreateAndRun`：创建会话 + 以 prompt 作为首条消息触发 agent run，返回 sessionID。
 
-- [ ] **Step 3: 实现 ArchParseStatus（GET，检测 parsedAt + 清死锁）**
+- [x] **Step 3: 实现 ArchParseStatus（GET，检测 parsedAt + 清死锁）**
 
 ```go
 // ArchParseStatus 查询解析状态：锁状态 + libraries.yaml 是否有 parsedAt。
@@ -780,7 +780,7 @@ func ArchParseStatus(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-- [ ] **Step 4: 验证**
+- [x] **Step 4: 验证**
 
 Run: `cd apps/dh-backend && go vet ./... && go build ./...`
 Expected: 通过（`archParseSessionCreator` 的实现注入在 Task 6 路由装配时完成，此处先用接口占位）。
@@ -792,7 +792,7 @@ Expected: 通过（`archParseSessionCreator` 的实现注入在 Task 6 路由装
 **Files:**
 - Modify: `apps/dh-backend/gateway/server/server.go`
 
-- [ ] **Step 1: 新增路由常量**
+- [x] **Step 1: 新增路由常量**
 
 在路由常量块（`ROUTE_WORKSPACES_BY_ID_ARCH_GRAPH` 附近）加：
 
@@ -802,7 +802,7 @@ ROUTE_WORKSPACES_BY_ID_ARCH_PARSE                                            = A
 ROUTE_WORKSPACES_BY_ID_ARCH_PARSE_STATUS                                     = API_V1_PREFIX + "/workspaces/glm_5.2_ark_toC/arch/parse/status"
 ```
 
-- [ ] **Step 2: 注册路由（复用 containerMW）**
+- [x] **Step 2: 注册路由（复用 containerMW）**
 
 在 `ROUTE_WORKSPACES_BY_ID_ARCH_GRAPH` 注册行附近加：
 
@@ -812,7 +812,7 @@ mux.Handle(ROUTE_WORKSPACES_BY_ID_ARCH_PARSE, containerMW(http.HandlerFunc(repos
 mux.Handle(ROUTE_WORKSPACES_BY_ID_ARCH_PARSE_STATUS, containerMW(http.HandlerFunc(repository.ArchParseStatus)))
 ```
 
-- [ ] **Step 3: 实现 sessionHandler 的 CreateAndRun 并注入**
+- [x] **Step 3: 实现 sessionHandler 的 CreateAndRun 并注入**
 
 在 `gateway/handler/session.go`（或新建 `arch_parse_session.go`）实现 `ArchParseSessionCreator`：
 
@@ -837,7 +837,7 @@ repository.InitArchParseSessionCreator(&handler.ArchParseSessionCreatorImpl{...}
 
 > 注：此步需阅读 session.go / agui_run.go 的会话创建与 agent run 内部方法，提取可复用的创建+触发逻辑。这是本计划中唯一需要较多对接现有代码的步骤。
 
-- [ ] **Step 4: 验证**
+- [x] **Step 4: 验证**
 
 Run: `cd apps/dh-backend && go vet ./... && go build ./...`
 Expected: 通过。
@@ -849,7 +849,7 @@ Expected: 通过。
 **Files:**
 - Create: `shares/skills/dev-lib-analysis/SKILL.md`
 
-- [ ] **Step 1: 编写 SKILL.md**
+- [x] **Step 1: 编写 SKILL.md**
 
 ```markdown
 ---
@@ -948,7 +948,7 @@ coreModules:
 \`\`\`
 ```
 
-- [ ] **Step 2: 部署到共享目录**
+- [x] **Step 2: 部署到共享目录**
 
 将 SKILL.md 复制到 `shares/skills/dev-lib-analysis/SKILL.md`（仓库内版本控制）。
 运行时由 dh-backend 部署到 `{workspaceRoot}/shares/skills/`（现有部署机制，参考 arch-repo-analysis 已部署）。
@@ -963,7 +963,7 @@ Expected: 文件存在。
 **Files:**
 - Modify: `apps/dh-frontend/src/lib/arch-api.ts`
 
-- [ ] **Step 1: 替换类型为层级模型**
+- [x] **Step 1: 替换类型为层级模型**
 
 ```typescript
 import { api } from './api';
@@ -1031,7 +1031,7 @@ export const archApi = {
 
 删除旧的 `ArchNodeKind`/`ArchEdgeKind`/`ArchView`/`ArchViewMode`/`ArchDomainOption` 及 `EDGE_KINDS` 等。
 
-- [ ] **Step 2: 验证类型**
+- [x] **Step 2: 验证类型**
 
 Run: `cd apps/dh-frontend && pnpm exec tsc --noEmit -p tsconfig.check.json 2>&1 | grep arch-api`
 Expected: 无 arch-api 相关 error（ArchDesignWorkspace 的引用错误在 Task 9 修复）。
@@ -1043,7 +1043,7 @@ Expected: 无 arch-api 相关 error（ArchDesignWorkspace 的引用错误在 Tas
 **Files:**
 - Modify: `apps/dh-frontend/src/components/workspace/ArchDesignWorkspace.tsx`
 
-- [ ] **Step 1: 重写组件状态与数据加载**
+- [x] **Step 1: 重写组件状态与数据加载**
 
 删除 `viewMode`/`businessLine`/`edgeKindFilter`/`graphData.views/domains` 相关。新增层级状态：
 
@@ -1083,7 +1083,7 @@ const loadGraph = useCallback(() => {
 }, [workspaceId, drillLevel, selectedLib, selectedModule]);
 ```
 
-- [ ] **Step 2: 实现下钻与面包屑**
+- [x] **Step 2: 实现下钻与面包屑**
 
 ```typescript
 // 下钻到模块层
@@ -1107,7 +1107,7 @@ const drillBack = (to: DrillLevel) => {
 
 `useEffect(loadGraph, [loadGraph])` 保持，drillLevel/selectedLib/selectedModule 变化触发重载。
 
-- [ ] **Step 3: 实现介绍页抽屉**
+- [x] **Step 3: 实现介绍页抽屉**
 
 ```typescript
 const openOverview = (libKey: string) => {
@@ -1118,7 +1118,7 @@ const openOverview = (libKey: string) => {
 };
 ```
 
-- [ ] **Step 4: 实现解析触发（not-parsed/parsing 状态）**
+- [x] **Step 4: 实现解析触发（not-parsed/parsing 状态）**
 
 复用 Task 4 的 sync 同步逻辑（not-synced 状态保留），新增 not-parsed/parsing：
 
@@ -1155,7 +1155,7 @@ const handleParse = () => {
 };
 ```
 
-- [ ] **Step 5: 重写 render（删除筛选面板，加面包屑+介绍抽屉+解析按钮）**
+- [x] **Step 5: 重写 render（删除筛选面板，加面包屑+介绍抽屉+解析按钮）**
 
 - 删除左侧筛选面板（视图模式/依赖过滤/业务线/图例）。
 - 顶部加面包屑：`架构总览 > <selectedLib> > <selectedModule>`（按 drillLevel 显示）。
@@ -1167,7 +1167,7 @@ const handleParse = () => {
 
 X6 画布渲染逻辑（`useEffect`）复用现有网格布局，但用新的 `nodes`/`edges` 状态。
 
-- [ ] **Step 6: 验证**
+- [x] **Step 6: 验证**
 
 Run: `cd apps/dh-frontend && pnpm exec tsc --noEmit -p tsconfig.check.json 2>&1 | grep ArchDesignWorkspace`
 Expected: 无 ArchDesignWorkspace 相关 error。
@@ -1176,22 +1176,22 @@ Expected: 无 ArchDesignWorkspace 相关 error。
 
 ## Task 10: 集成验证
 
-- [ ] **Step 1: 后端全量验证**
+- [x] **Step 1: 后端全量验证**
 
 Run: `cd apps/dh-backend && go vet ./... && go build ./... && go test ./domain/repository/... -v`
 Expected: 0 warnings，build 通过，测试 PASS。
 
-- [ ] **Step 2: 前端验证**
+- [x] **Step 2: 前端验证**
 
 Run: `cd apps/dh-frontend && pnpm exec tsc --noEmit -p tsconfig.check.json 2>&1 | grep -E "ArchDesign|arch-api"`
 Expected: 无本次改动相关 error。
 
-- [ ] **Step 3: 启动开发环境**
+- [x] **Step 3: 启动开发环境**
 
 Run: `bash scripts/restart-dev.sh`
 Expected: 全部服务启动，dh-backend 重建。
 
-- [ ] **Step 4: 手动验证（curl 基本可达性）**
+- [x] **Step 4: 手动验证（curl 基本可达性）**
 
 Run: `curl -s -w "\n%{http_code}\n" http://localhost:8080/api/v1/workspaces/glm_5.2_ark_toC/arch/graph?level=libraries`
 Expected: 401（鉴权拦截，路由匹配正常）。
@@ -1199,7 +1199,7 @@ Expected: 401（鉴权拦截，路由匹配正常）。
 Run: `curl -s -w "\n%{http_code}\n" http://localhost:8080/api/v1/workspaces/glm_5.2_ark_toC/arch/parse`
 Expected: 401（POST 路由可达）。
 
-- [ ] **Step 5: 部署技能到共享目录**
+- [x] **Step 5: 部署技能到共享目录**
 
 确认 `shares/skills/dev-lib-analysis/SKILL.md` 已就位，重启后 personal-stub 会同步 skills。
 

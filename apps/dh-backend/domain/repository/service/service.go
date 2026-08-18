@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/deepharness/deepharness-ent-platform/apps/dh-backend/domain/repository/object"
 	"github.com/deepharness/deepharness-ent-platform/packages/go-sdk/domain/repository"
@@ -45,6 +46,15 @@ type RepositoryService interface {
 
 	// DevLibKGPath 返回开发库在用户目录下的 knowledge-graph.json 路径。
 	DevLibKGPath(ctx context.Context, workspaceID, userID, libKey string) string
+
+	// HasParseLock 检查架构库是否存在解析锁（表示正在全量解析中）。
+	HasParseLock(ctx context.Context, workspaceID, userID, archRepoName string) bool
+	// WriteParseLock 写入解析锁，内容为 sessionID + 启动时间。
+	WriteParseLock(ctx context.Context, workspaceID, userID, archRepoName, sessionID string) error
+	// ReadParseLock 读取解析锁内容，返回 sessionID 与启动时间（供 status 轮询做 TTL 死锁检测）。
+	ReadParseLock(ctx context.Context, workspaceID, userID, archRepoName string) (sessionID string, startedAt time.Time, err error)
+	// DeleteParseLock 删除解析锁（解析完成或失败后清理）。
+	DeleteParseLock(ctx context.Context, workspaceID, userID, archRepoName string)
 }
 
 // ParseRepoName 从仓库 URL 解析仓库名称（取最后一段路径并去除 .git 后缀）。

@@ -143,7 +143,9 @@ build_go_if_needed() {
             needs_rebuild=true
             break
         fi
-    done < <(find "$module_dir" -name "*.go" -type f -print0)
+    # 同时监听 SKILL.md：personal-stub 内嵌技能文件变更也需触发重建。
+    # 括号分组使 -print0 作用于两个 -name 谓词的并集（再与 -type f 取交集）。
+    done < <(find "$module_dir" \( -name "*.go" -o -name "SKILL.md" \) -type f -print0)
 
     if [ "$needs_rebuild" = true ]; then
         log_info "Building ${service_name}..."

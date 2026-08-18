@@ -1,39 +1,18 @@
 import { api } from './api';
 
-// ── 架构设计图数据类型（与后端 domain/repository/arch_handler.go 响应结构对应）──
-
-/** 节点类型：repo=业务仓库 service=微服务 domain=业务领域 infra=基础组件。 */
-export type ArchNodeKind = 'repo' | 'service' | 'domain' | 'infra';
-
-/** 依赖边类型：rpc=RPC调用 mq=MQ消息 db=DB共享。 */
-export type ArchEdgeKind = 'rpc' | 'mq' | 'db';
+export type ArchDrillLevel = 'libraries' | 'modules' | 'classes';
 
 export interface ArchNode {
   id: string;
   label: string;
-  kind: ArchNodeKind;
-  businessLine?: string;
+  kind: string;
   meta?: Record<string, string>;
 }
-
 export interface ArchEdge {
   source: string;
   target: string;
   label: string;
-  kind: ArchEdgeKind;
-}
-
-export interface ArchView {
-  nodes: ArchNode[];
-  edges: ArchEdge[];
-}
-
-/** 视图模式：project=工程全景 service=服务依赖 ddd=业务领域。 */
-export type ArchViewMode = 'project' | 'service' | 'ddd';
-
-export interface ArchDomainOption {
-  key: string;
-  name: string;
+  kind: string;
 }
 
 export interface ArchGraphResponse {
@@ -41,12 +20,45 @@ export interface ArchGraphResponse {
   cloned: boolean;
   repoId?: string;
   repoName?: string;
-  views?: Record<ArchViewMode, ArchView>;
-  domains?: ArchDomainOption[];
+  drillLevel?: ArchDrillLevel;
+  lib?: string;
+  module?: string;
+  nodes?: ArchNode[];
+  edges?: ArchEdge[];
   warnings?: string[];
 }
 
+export interface ArchOverview {
+  key: string;
+  name: string;
+  positioning: string;
+  architecture: string;
+  techStack: string[];
+  coreModules: { key: string; role: string }[];
+}
+
+export interface ArchParseStatus {
+  parsing: boolean;
+  parsed: boolean;
+  warnings?: string[];
+}
+
+const ARCH_GRAPH_TIMEOUT_MS = 15000;
+
 export const archApi = {
-  graph: (workspaceId: string) =>
-    api.get<ArchGraphResponse>(`/v1/workspaces/${workspaceId}/arch/graph`),
+  graph: (workspaceId: string, params: { level: ArchDrillLevel; lib?: string; module?: string }) =>
+    api.get<ArchGraphResponse>(
+      `/v1/workspaces/${workspaceId}/arch/graph?level=${params.level}` +
+      (params.lib ? `&lib=${encodeURIComponent(params.lib)}` : '') +
+      (params.module ? `&module=${encodeURIComponent(params.module)}` : ''),
+      // 大图场景（L3 类视图）响应较慢，超时后中断请求避免请求悬挂。
+      { signal: AbortSignal.timeout(ARCH_GRAPH_TIMEOUT_MS) },
+    ),
+  overview: (workspaceId: string, lib: string) =>
+    api.get<ArchOverview>(`/v1/workspaces/${workspaceId}/arch/overview?lib=${encodeURIComponent(lib)}`),
+  // 后端解析触发返回 202 Accepted（无 JSON body），故返回类型为 void；解析进度由 parseStatus 轮询获取。
+  parse: (workspaceId: string) =>
+    api.post<void>(`/v1/workspaces/${workspaceId}/arch/parse`, {}),
+  parseStatus: (workspaceId: string) =>
+    api.get<ArchParseStatus>(`/v1/workspaces/${workspaceId}/arch/parse/status`),
 };

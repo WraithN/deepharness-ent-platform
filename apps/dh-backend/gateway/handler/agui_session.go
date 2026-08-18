@@ -27,8 +27,8 @@ func (h *AGUIHandler) ensureSession(ctx context.Context, sessionID, workspaceID 
 	sess := chat.Session{
 		ID:          sessionID,
 		WorkspaceID: workspaceID,
-		AgentID:     "agent-default",
-		AgentType:   "chat",
+		AgentID:     defaultSessionAgentID,
+		AgentType:   defaultSessionAgentType,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
