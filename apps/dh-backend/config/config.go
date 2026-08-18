@@ -12,8 +12,9 @@ import (
 
 const configFileName = "config.yaml"
 
-// defaultCrawlerMaxDepth 是 /prd-research 抓取的默认站内链接深度（层数），起始页为第 1 层。
-const defaultCrawlerMaxDepth = 2
+// DefaultCrawlerMaxDepth 是 /prd-research 抓取的默认站内链接深度（层数），起始页为第 1 层。
+// 供 config.Load 填充默认值，以及 crawler 配置 handler 兜底使用。
+const DefaultCrawlerMaxDepth = 2
 
 // Config 保存后端运行时的所有可配置项。所有值必须从 config.yaml 或环境变量获取。
 type Config struct {
@@ -408,7 +409,7 @@ func Load() (Config, error) {
 	cfg.CrawlerServiceTimeout = parseDurationOrZero(yc.CrawlerService.Timeout)
 	cfg.CrawlerMaxDepth = yc.CrawlerService.MaxDepth
 	if cfg.CrawlerMaxDepth <= 0 {
-		cfg.CrawlerMaxDepth = defaultCrawlerMaxDepth
+		cfg.CrawlerMaxDepth = DefaultCrawlerMaxDepth
 	}
 	cfg.DocAdoptionCleanupEnabled = yc.ProductSpace.DocAdoptionCleanup.Enabled
 	cfg.DocAdoptionCleanupRetentionDays = yc.ProductSpace.DocAdoptionCleanup.RetentionDays
