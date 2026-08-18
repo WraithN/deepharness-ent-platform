@@ -1,47 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { scrapeRequestSchema, ScrapeResponse } from "../types.js";
-import { crawlPagesWithBrowser, PageResult } from "../services/browser.js";
-
-/** 多页内容合并时的页分隔符。 */
-const PAGE_SEPARATOR = "\n\n---\n\n";
-
-/** 合并多页的同名字段，并在每页前加 URL 标题，便于下游识别内容来源。 */
-function mergePageMarkdown(pages: PageResult[]): string {
-  return pages
-    .map((p) => {
-      // markdown 兜底提取可能为空（SPA 无 h1/p/li），此时回退到 innerText。
-      const body = p.markdown || p.text;
-      return `## ${p.url}\n\n${body}`;
-    })
-    .filter((s) => s.trim().length > 0)
-    .join(PAGE_SEPARATOR);
-}
-
-function mergePageText(pages: PageResult[]): string {
-  return pages
-    .map((p) => p.text)
-    .filter((s) => s.trim().length > 0)
-    .join(PAGE_SEPARATOR);
-}
-
-function mergePageHtml(pages: PageResult[]): string {
-  return pages
-    .map((p) => p.html)
-    .filter((s) => s.trim().length > 0)
-    .join(PAGE_SEPARATOR);
-}
-
-/** 合并多页的清洗后 HTML，每页前加 URL 注释，便于下游识别内容来源。 */
-function mergePageCleanedHtml(pages: PageResult[]): string {
-  return pages
-    .map((p) => `<!-- ${p.url} -->\n${p.cleanedHtml}`)
-    .filter((s) => s.trim().length > 0)
-    .join(PAGE_SEPARATOR);
-}
-
-function dedupe(items: string[]): string[] {
-  return [...new Set(items)];
-}
+import { crawlPagesWithBrowser } from "../services/browser.js";
+import { mergePageMarkdown, mergePageText, mergePageHtml, mergePageCleanedHtml, dedupe } from "../services/merge.js";
 
 export default async function scrapeRoutes(app: FastifyInstance) {
   app.post<{

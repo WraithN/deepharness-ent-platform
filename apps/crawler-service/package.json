@@ -9,10 +9,12 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "npx biome check src",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",
+    "crypto-js": "^4.2.0",
     "fastify": "^4.28.1",
     "playwright": "^1.45.3",
     "playwright-extra": "^4.3.6",
@@ -20,9 +22,11 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/crypto-js": "^4.2.2",
     "@types/node": "^20.14.11",
     "tsx": "^4.16.2",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^1.6.0"
   },
   "engines": {
     "node": ">=20"
