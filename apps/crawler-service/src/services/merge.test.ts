@@ -5,7 +5,9 @@ import type { PageResult } from "./browser.js";
 function page(over: Partial<PageResult> = {}): PageResult {
   return {
     title: "T", url: "https://x.test/a", markdown: "md", text: "txt",
-    html: "<h>h</h>", cleanedHtml: "<c>c</c>", links: [], ...over,
+    html: "<h>h</h>", cleanedHtml: "<c>c</c>", links: [],
+    imageUrls: [], attachmentUrls: [],
+    ...over,
   };
 }
 

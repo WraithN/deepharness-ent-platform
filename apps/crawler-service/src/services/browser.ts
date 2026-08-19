@@ -1,6 +1,7 @@
 import { Browser, BrowserContext, chromium, Page } from "playwright";
 import { config } from "../config.js";
 import { Cookie } from "../types.js";
+import { extractImageUrls, extractAttachmentUrls } from "./url-extract.js";
 
 let browserPromise: Promise<Browser> | null = null;
 
@@ -8,7 +9,7 @@ let browserPromise: Promise<Browser> | null = null;
  * 伪装用的 User-Agent，去除 HeadlessChrome 标记。
  * Playwright 默认 UA 含 "HeadlessChrome/xxx"，被反爬脚本直接识别。
  */
-const STEALTH_USER_AGENT =
+export const STEALTH_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 /**
@@ -80,6 +81,8 @@ export interface PageResult {
   cleanedHtml: string;
   links: string[];
   screenshot?: string;
+  imageUrls: string[];
+  attachmentUrls: string[];
 }
 
 /**
@@ -164,13 +167,24 @@ export async function openPageWithCookies(
       clone.querySelectorAll("script, style, noscript").forEach((el) => el.remove());
       return (clone.textContent ?? "").replace(/\s+/g, " ").trim();
     });
-    const links = opts.includeLinks
-      ? await page.evaluate(() =>
-          Array.from(document.querySelectorAll("a[href]"))
-            .map((a) => (a as HTMLAnchorElement).href)
-            .filter((href) => href.startsWith("http://") || href.startsWith("https://")),
-        )
-      : [];
+    // 一次 evaluate 同时收集 a[href]（链接 + 附件）和 img[src]（图片）原始列表，
+    // 避免多次 evaluate 的跨 JS↔Host 桥往返开销。
+    // - rawLinks：HTTP(S) 完整链接（用于 BFS 站内跳转跟踪），仍按 opts.includeLinks 过滤。
+    // - rawImgSrcs：currentSrc 优先（响应式 srcset 选中的），回退 src；含相对/绝对/data URI，交由 extractImageUrls 处理。
+    // - rawAttachmentHrefs：getAttribute("href") 取原始值（可能相对），交由 extractAttachmentUrls 绝对化。
+    const { rawLinks, rawImgSrcs, rawAttachmentHrefs } = await page.evaluate(() => {
+      const rawLinks = Array.from(document.querySelectorAll("a[href]"))
+        .map((a) => (a as HTMLAnchorElement).href)
+        .filter((href) => href.startsWith("http://") || href.startsWith("https://"));
+      const rawImgSrcs = Array.from(document.querySelectorAll("img[src]"))
+        .map((img) => (img as HTMLImageElement).currentSrc || (img as HTMLImageElement).src);
+      const rawAttachmentHrefs = Array.from(document.querySelectorAll("a[href]"))
+        .map((a) => (a as HTMLAnchorElement).getAttribute("href") || "");
+      return { rawLinks, rawImgSrcs, rawAttachmentHrefs };
+    });
+    const links = opts.includeLinks ? [...new Set(rawLinks)] : [];
+    const imageUrls = extractImageUrls(rawImgSrcs, url);
+    const attachmentUrls = extractAttachmentUrls(rawAttachmentHrefs, url);
 
     let screenshot: string | undefined;
     if (opts.includeScreenshot) {
@@ -188,13 +202,13 @@ export async function openPageWithCookies(
       return h1 ? `# ${h1}\n\n${paragraphs}` : paragraphs;
     });
 
-    return { title, url, markdown, text, html, cleanedHtml, links: [...new Set(links)], screenshot };
+    return { title, url, markdown, text, html, cleanedHtml, links, screenshot, imageUrls, attachmentUrls };
   } finally {
     await context.close();
   }
 }
 
-function normalizeCookies(cookies: Cookie[], targetUrl: string): Cookie[] {
+export function normalizeCookies(cookies: Cookie[], targetUrl: string): Cookie[] {
   const url = new URL(targetUrl);
   return cookies.map((c) => ({
     ...c,
