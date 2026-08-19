@@ -10,6 +10,10 @@ const configSchema = z.object({
   pageTimeoutMs: z.coerce.number().default(30_000),
   browserHeadless: z.coerce.boolean().default(true),
   logLevel: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  // 临时文件目录：截图/附件下载后暂存，供 agent curl 下载。
+  tempDir: z.string().default("/tmp/crawler-files"),
+  // 临时文件保留时长（毫秒），超时由 LRU 清理任务删除。
+  tempFileTtlMs: z.coerce.number().default(30 * 60 * 1000),
 });
 
 function loadConfig() {
@@ -20,6 +24,8 @@ function loadConfig() {
     pageTimeoutMs: process.env.PAGE_TIMEOUT_MS,
     browserHeadless: process.env.BROWSER_HEADLESS,
     logLevel: process.env.LOG_LEVEL,
+    tempDir: process.env.TEMP_DIR,
+    tempFileTtlMs: process.env.TEMP_FILE_TTL_MS,
   };
   return configSchema.parse(raw);
 }
