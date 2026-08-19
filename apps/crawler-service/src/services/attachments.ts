@@ -23,6 +23,8 @@ export interface AttachmentResult {
   url: string;
   filename: string;
   markdown: string;
+  // 附件原始字节（下载后未转换前的 buffer）。成功下载时带上，供 mcp 存临时文件返回下载 URL，避免二次下载。
+  buffer?: Buffer;
 }
 
 // 全局共享一个 TurndownService 实例（无状态，可复用）。
@@ -63,12 +65,12 @@ async function fetchSingle(
   }
   try {
     // 下载+转换作为一个整体受 30s 超时约束，慢下载/无 content-length 的大文件同样被兜底。
-    const markdown = await withTimeout(
+    const { markdown, buffer } = await withTimeout(
       downloadAndConvert(request, url, filename),
       ATTACHMENT_SINGLE_TIMEOUT_MS,
       ATTACHMENT_TIMEOUT_TEXT,
     );
-    return { url, filename, markdown };
+    return { url, filename, markdown, buffer };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { url, filename, markdown: `[转换失败: ${msg}]` };
@@ -80,18 +82,18 @@ async function downloadAndConvert(
   request: import("playwright").APIRequestContext,
   url: string,
   filename: string,
-): Promise<string> {
+): Promise<{ markdown: string; buffer?: Buffer }> {
   const resp = await request.get(url);
   const contentLength = Number(resp.headers()["content-length"] ?? 0);
   if (contentLength > MAX_ATTACHMENT_BYTES) {
-    return ATTACHMENT_SKIP_TOO_LARGE_TEXT;
+    return { markdown: ATTACHMENT_SKIP_TOO_LARGE_TEXT };
   }
   const buffer = Buffer.from(await resp.body());
   // content-length 缺失或不准确时，以实际下载字节数二次兜底。
   if (buffer.byteLength > MAX_ATTACHMENT_BYTES) {
-    return ATTACHMENT_SKIP_TOO_LARGE_TEXT;
+    return { markdown: ATTACHMENT_SKIP_TOO_LARGE_TEXT };
   }
-  return convertBuffer(buffer, filename);
+  return { markdown: await convertBuffer(buffer, filename), buffer };
 }
 
 /**

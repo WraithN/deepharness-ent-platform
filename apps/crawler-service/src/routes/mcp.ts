@@ -5,7 +5,9 @@ import { z } from "zod";
 import { crawlPagesWithBrowser } from "../services/browser.js";
 import { mergePageMarkdown, mergePageCleanedHtml } from "../services/merge.js";
 import { ocrPageImages } from "../services/image-ocr.js";
-import { fetchAndConvertAttachments } from "../services/attachments.js";
+import { fetchAndConvertAttachments, type AttachmentResult } from "../services/attachments.js";
+import { saveTempFile } from "../services/temp-files.js";
+import { config } from "../config.js";
 import type { Cookie } from "../types.js";
 
 // MCP server 元信息，与 package.json 的 name/version 保持一致，供 client 在 initialize 响应中识别。
@@ -18,6 +20,9 @@ const HTML_SECTION_SEPARATOR = "\n\n--- 页面 HTML 结构 ---\n";
 // 图片 OCR / 附件 markdown 在最终 text 中追加的段落分隔标识。
 const OCR_SECTION_SEPARATOR = "\n\n--- 图片 OCR 文字 ---\n";
 const ATTACHMENT_SECTION_SEPARATOR = "\n\n--- 附件内容 ---\n";
+// 截图下载 URL 与附件文件下载 URL 在 text 末尾追加的段落分隔标识。
+const SCREENSHOT_SECTION_SEPARATOR = "\n\n--- 截图 ---\n";
+const ATTACHMENT_FILE_SECTION_SEPARATOR = "\n\n--- 附件文件 ---\n";
 
 // web_scrape 工具的输入 schema。maxDepth 默认 0（单页），与 scrapeRequestSchema 的 min(1) 不同：
 // MCP 工具允许 0 表示只抓起始页，crawlPagesWithBrowser 内部会把 0 clamp 到 MIN_CRAWL_DEPTH(1)。
@@ -37,6 +42,7 @@ const WEB_SCRAPE_INPUT = {
     .describe("可选，登录态 cookie（agent 从对话上下文或用户提供的 cookie 传入）"),
   includeImages: z.boolean().default(false).describe("是否对页面内嵌 <img> 做 OCR 提取文字"),
   includeAttachments: z.boolean().default(false).describe("是否下载页面里的 PDF/WORD 附件并转为 markdown"),
+  includeScreenshot: z.boolean().default(false).describe("是否整页截图并返回下载 URL（agent 可 curl 下载保存）"),
 };
 
 /** MCP 错误响应中 content 的固定文本前缀，便于 agent 在异常情况下识别失败原因。 */
@@ -61,7 +67,9 @@ function buildMcpServer(): McpServer {
           domain: c.domain,
           path: c.path ?? "/",
         }));
-        const pages = await crawlPagesWithBrowser(args.url, cookies, args.maxDepth, {});
+        const pages = await crawlPagesWithBrowser(args.url, cookies, args.maxDepth, {
+          includeScreenshot: args.includeScreenshot,
+        });
         if (pages.length === 0) {
           return { content: [{ type: "text" as const, text: SCRAPE_FAIL_TEXT }], isError: true };
         }
@@ -82,6 +90,24 @@ function buildMcpServer(): McpServer {
           const attResults = await fetchAndConvertAttachments(pages, cookies);
           if (attResults.length > 0) {
             text += ATTACHMENT_SECTION_SEPARATOR + formatAttachmentResults(attResults);
+            // 附件原始文件：crawler 已下载（buffer），存临时文件返回下载 URL 供 agent curl 下载。
+            const fileLines = await saveAttachmentFiles(attResults);
+            if (fileLines.length > 0) {
+              text += ATTACHMENT_FILE_SECTION_SEPARATOR + fileLines.join("\n");
+            }
+          }
+        }
+
+        // 截图：整页 PNG base64 -> 存临时文件，返回下载 URL 供 agent curl 下载。
+        if (args.includeScreenshot) {
+          const shotLines: string[] = [];
+          for (const p of pages) {
+            if (!p.screenshot) continue;
+            const id = await saveScreenshot(p.screenshot);
+            shotLines.push(`${p.url}  ${buildTempFileUrl(id)}`);
+          }
+          if (shotLines.length > 0) {
+            text += SCREENSHOT_SECTION_SEPARATOR + shotLines.join("\n");
           }
         }
 
@@ -153,4 +179,42 @@ function formatOcrResults(results: { url: string; ocrText: string }[]): string {
  */
 function formatAttachmentResults(results: { url: string; filename: string; markdown: string }[]): string {
   return results.map((r) => `## ${r.filename} (${r.url})\n\n${r.markdown}`).join("\n\n");
+}
+
+// 截图 base64 data URL -> 存临时文件，返回 id。
+async function saveScreenshot(dataUrl: string): Promise<string> {
+  const b64 = dataUrl.split(",")[1] ?? "";
+  return saveTempFile(Buffer.from(b64, "base64"), ".png");
+}
+
+/**
+ * 将附件结果中已下载的原始文件存入临时文件，返回「filename  URL」行列表。
+ * 只有成功下载到 buffer 的附件才入库；跳过/失败/超限项无 buffer，直接略过。
+ */
+async function saveAttachmentFiles(attResults: AttachmentResult[]): Promise<string[]> {
+  const lines: string[] = [];
+  for (const a of attResults) {
+    if (!a.buffer) continue;
+    const ext = extnameFromUrl(a.url);
+    const id = await saveTempFile(a.buffer, ext);
+    lines.push(`${a.filename}  ${buildTempFileUrl(id)}`);
+  }
+  return lines;
+}
+
+// 从附件 URL 提取扩展名（.pdf/.docx/.doc），无则 .bin。
+function extnameFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const last = u.pathname.split("/").pop() ?? "";
+    const ext = last.includes(".") ? `.${last.split(".").pop()!.toLowerCase()}` : ".bin";
+    return /^\.[a-z0-9]+$/.test(ext) ? ext : ".bin";
+  } catch {
+    return ".bin";
+  }
+}
+
+// 构造临时文件下载 URL（host 从 crawler 自身推导，端口 config.port）。
+function buildTempFileUrl(id: string): string {
+  return `http://localhost:${config.port}/files/${id}`;
 }
