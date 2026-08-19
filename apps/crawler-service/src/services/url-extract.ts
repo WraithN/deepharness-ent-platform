@@ -48,7 +48,10 @@ function isIpv4(host: string): boolean {
  * - 回环：localhost、127.0.0.0/8、::1
  * - 链路本地：169.254.0.0/16、fe80::/10
  * - 私网段：10.0.0.0/8、172.16.0.0/12、192.168.0.0/16
+ * - CGNAT：100.64.0.0/10
  * - 0.0.0.0（及 0.0.0.0/8 本网络地址）
+ * - IPv4 映射 IPv6（::ffff:0:0/96，含点分与 hex 形式）
+ * - IPv6 ULA：fc00::/7
  * 普通域名（非 IP）一律放行；无法解析的 URL 保守地判定为私网并拒绝。
  */
 export function isPrivateHost(rawUrl: string): boolean {
@@ -65,11 +68,16 @@ export function isPrivateHost(rawUrl: string): boolean {
 
   if (host === "localhost" || host === "0.0.0.0") return true;
 
-  // IPv6 回环与链路本地前缀。
-  if (host === "::1") return true;
-  if (host.startsWith("fe80:")) return true;
+  // IPv6 地址（含冒号）走 IPv6 网段判断；普通域名不含冒号，不会被误判。
+  if (host.includes(":")) {
+    if (host === "::1") return true; // 回环
+    if (host.startsWith("fe80:")) return true; // 链路本地 fe80::/10
+    if (host.startsWith("::ffff:")) return true; // IPv4 映射 IPv6 ::ffff:0:0/96
+    if (host.startsWith("fc") || host.startsWith("fd")) return true; // ULA fc00::/7
+    return false; // 其余 IPv6 公网放行
+  }
 
-  // 仅对纯 IPv4 做网段判断，其余（普通域名 / IPv6 公网）放行。
+  // 仅对纯 IPv4 做网段判断，其余（普通域名）放行。
   if (!isIpv4(host)) return false;
 
   const parts = host.split(".").map(Number);
@@ -80,6 +88,7 @@ export function isPrivateHost(rawUrl: string): boolean {
   if (a === 169 && b === 254) return true; // 169.254.0.0/16 链路本地
   if (a === 192 && b === 168) return true; // 192.168.0.0/16 私网
   if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 私网
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
   return false;
 }
 

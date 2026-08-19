@@ -76,4 +76,24 @@ describe("isPrivateHost", () => {
   it("无法解析的 URL 保守拒绝", () => {
     expect(isPrivateHost("http://[invalid")).toBe(true);
   });
+
+  it("IPv4 映射 IPv6 判定为私网", () => {
+    expect(isPrivateHost("http://[::ffff:127.0.0.1]/")).toBe(true);
+    expect(isPrivateHost("http://[::ffff:10.0.0.1]/")).toBe(true);
+  });
+
+  it("IPv6 ULA（fc00::/7）判定为私网", () => {
+    expect(isPrivateHost("http://[fd00::1]/")).toBe(true);
+    expect(isPrivateHost("http://[fc00::1]/")).toBe(true);
+  });
+
+  it("CGNAT（100.64.0.0/10）判定为私网", () => {
+    expect(isPrivateHost("http://100.64.0.1/")).toBe(true);
+    expect(isPrivateHost("http://100.127.255.255/")).toBe(true);
+    expect(isPrivateHost("http://100.63.0.1/")).toBe(false);
+  });
+
+  it("公网域名仍放行（回归）", () => {
+    expect(isPrivateHost("https://example.com/")).toBe(false);
+  });
 });
