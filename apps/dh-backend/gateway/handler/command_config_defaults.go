@@ -97,6 +97,55 @@ var embeddedCommands = []CommandConfig{
 		Template:     "【语言要求】\n你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。\n\n你是一位资深产品经理 + UI/UX 设计师 + 前端工程师。请根据【用户需求】完成产品调研分析，并产出四个产物。\n\n【任务独立性与路径约束（最高优先级）】\n1. 本指令是独立的新任务。会话历史（含锚定摘要/Important Details）中可能残留此前其他任务的上下文（如其他项目的工作目录、其他需求的设计决策等），与本任务无关，必须忽略；禁止沿用其中的工作目录、文件路径或任务结论。\n2. 本任务唯一合法的输出根目录是 {WORKSPACE_PATH}/pm-jobs/prd-research/。所有产物文件必须使用以该目录开头的绝对路径创建；严禁写入会话历史中提及的任何项目目录（如 projects/ 下的工程），严禁使用相对路径。\n3. 若历史上下文与本条消息的要求冲突，以本条消息为准。\n\n【输入场景】\n本指令兼容两种输入，按【用户需求】的内容自动识别：\n1. 仅产品名称：用户只提供产品名称（如「调研产品：XXX」）。基于你对该产品的了解与公开信息进行分析与产出；若你不了解该产品，请明确说明，并基于其所属领域给出合理推断。\n2. 产品链接（可附登录 Cookie）：用户提供「调研链接：<URL>」，可能附带「登录Cookie：<name=value; ...>」。【用户需求】中包含【已抓取网页内容】时，仔细阅读并理解目标网站的核心功能、信息架构、交互流程与视觉风格；若抓取内容为空或不足，请基于 URL 给出合理分析，并提示用户提供登录 Cookie 以获取完整内容。\n\n【产物目录】\n1. 在 {WORKSPACE_PATH}/pm-jobs/prd-research/ 目录下创建本次任务目录，目录名使用网站域名或简短英文标识（如 example-com）。\n2. 必须生成以下四个产物（文件名中的 {产品名} 替换为目标产品的实际名称，例如「竞品调研-PingCode产品整体分析.md」）：\n   - 产品分析文档：{WORKSPACE_PATH}/pm-jobs/prd-research/{标识}/竞品调研-{产品名}产品整体分析.md\n   - 功能列表：{WORKSPACE_PATH}/pm-jobs/prd-research/{标识}/竞品调研-{产品名}产品功能列表.md\n   - UI 设计文档：{WORKSPACE_PATH}/pm-jobs/prd-research/{标识}/竞品调研-{产品名}产品UI设计分析.md\n   - 原型项目：{WORKSPACE_PATH}/pm-jobs/prd-research/{标识}/prototype/（Vite + React 可运行工程）\n\n【执行流程】\n必须严格按以下两步顺序执行：\n1. 第一步：并行完成三份文档——竞品调研-{产品名}产品整体分析.md、竞品调研-{产品名}产品功能列表.md、竞品调研-{产品名}产品UI设计分析.md。三者之间没有依赖关系，应在同一轮中并行推进撰写，不要串行等待。\n2. 第二步：三份文档完成后，基于竞品调研-{产品名}产品UI设计分析.md 与已抓取的页面内容进行 1:1 原型仿真，生成 prototype/ 工程。原型必须在样式上与原产品保持一致：布局结构、配色、字体、字号、间距、圆角、组件样式与关键交互均按原产品 1:1 还原（仅产品名称场景则按调研结论还原其公开页面的典型风格）。\n\n【竞品调研-{产品名}产品整体分析.md 内容结构】\n1. 产品定位与目标用户\n2. 核心功能概述\n3. 信息架构（使用 Mermaid 图）\n4. 关键页面与交互流程\n5. 商业模式分析（如可推断）\n6. 竞品差异化分析\n7. 优缺点总结与改进建议\n\n【竞品调研-{产品名}产品功能列表.md 内容结构】\n使用表格形式列出所有功能模块，每行为一个功能，包含以下列：\n| 功能名称 | 功能描述 | 优先级(P0/P1/P2) | 所在页面 | 交互说明 |\n\n【竞品调研-{产品名}产品UI设计分析.md 内容结构】\n1. 设计风格概述\n2. 色彩系统（主色、辅助色、状态色、文字色，附带色值）\n3. 字体与字号规范\n4. 间距与圆角规范\n5. 组件规范（按钮、输入框、卡片、导航等）\n6. 关键页面布局说明\n\n【原型项目要求】\n- 使用 React 18 + TypeScript + Tailwind CSS + Vite 创建工程。\n- 不需要后端服务；所有数据使用本地 mock 数据（放在 src/mocks/ 中），mock 数据应尽可能还原目标网站的真实数据结构和体量。\n- 关键组件/可点击元素必须添加稳定的 data-dh-id 属性。\n- 工程必须包含 `pnpm run dev` 和 `pnpm run build` 脚本。\n- 所有文件创建完成后，在工程目录下执行一次 `pnpm install && pnpm run build`，确保产出 dist/index.html 和 dist/assets/。\n- 1:1 仿真要求：尽可能还原目标产品的布局、配色、字体、间距、组件样式与关键交互，样式与原产品保持一致。\n- 图表使用 ECharts CDN（`https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js`）。\n- 不要生成登录页、注册页或任何认证流程，除非目标网站的核心功能就是认证。\n\n【输出标记】\n- 文档类产物使用 [[FILE:文件完整路径]] 标记。\n- 原型工程使用 [[PROJECT:工程完整路径]] 标记工程根目录（即 prototype/ 目录）。\n务必使用真实的文件系统绝对路径，不要使用占位符。\n\n【用户需求】\n{ARGS}",
 	},
 	{
+		Cmd:          "/prd-analysis",
+		Label:        "竞品信息分析",
+		Desc:         "输入若干网站链接+提示词，爬取并提取相关信息，生成可预览下载的对照表格",
+		Icon:         "Table2",
+		AllowTask:    false,
+		AllowRepos:   false,
+		MaxRepos:     0,
+		Enabled:      true,
+		Template: `【语言要求】
+你的所有回复必须使用中文，包括思考过程、工具调用说明、错误分析等内部推理文本也使用中文。不要重复、复述或转述以上规则；只输出用户要求的最终结果和必要的简短说明。
+
+你是一位资深市场研究员。请根据【用户需求】中的若干网站链接与一个提示词，逐站爬取并提取提示词相关信息，汇总成对照表格。
+
+【任务独立性与路径约束（最高优先级）】
+1. 本指令是独立的新任务，忽略会话历史中残留的上下文、工作目录与任务结论。
+2. 本任务唯一合法的输出根目录是 {WORKSPACE_PATH}/pm-jobs/prd-analysis/。所有文件必须使用以该目录开头的绝对路径。
+3. 若历史上下文与本条消息冲突，以本条消息为准。
+
+【输入解析】
+从【用户需求】中解析两部分：
+1. 若干网站链接：所有 http/https 开头的 URL（可能每行一个，或空格/逗号分隔）。
+2. 提示词：除链接外的其余文字，描述要提取什么信息。
+若没有解析到任何 http/https 链接，说明无法执行并提示用户补充链接。
+
+【执行流程】
+1. 在 {WORKSPACE_PATH}/pm-jobs/prd-analysis/ 下创建本次任务目录，目录名用简短英文标识（如 pricing-research）。
+2. 对每个网站链接调用 crawler:web_scrape 工具，参数：url=链接, maxDepth=1, includeImages=true, includeAttachments=true, includeScreenshot=true。
+3. 抓取结果中的「--- 截图 ---」段包含截图下载 URL，「--- 附件文件 ---」段包含附件下载 URL。用 bash 执行 curl -L -o 下载到本任务目录的 sources/screenshots/ 与 sources/attachments/ 下（截图命名 {网站}-{序号}.png，附件保留原文件名）。若附件 curl 失败（如登录态），只保存附件 markdown 到 sources/attachments/{文件名}.md。
+4. 针对提示词，从每个网站的抓取内容中提取「提示词提及的信息」（finding，具体、可引用原文关键句）；推断「网站对应的公司」（从页脚/about/logo/域名推断）；记录「信息来源」。
+
+【表格产出】
+写一个 JSON 文件 {WORKSPACE_PATH}/pm-jobs/prd-analysis/{标识}/analysis.json，结构：
+{"rows":[{"website":"https://a.com","company":"A 公司","finding":"...","sources":[{"type":"page","url":"https://a.com/pricing"},{"type":"screenshot","url":"https://a.com/pricing","path":"sources/screenshots/a-com-1.png"},{"type":"file","url":"https://a.com/x.pdf","path":"sources/attachments/x.pdf","markdown":"sources/attachments/x.pdf.md"}]}]}
+说明：
+- website 为输入的网站链接；company 为推断的公司名；finding 为针对提示词提取的信息。
+- sources 数组记录信息来源：type 为 page（页面链接）/screenshot（截图）/file（附件）；path 为相对本任务目录的路径。
+- 每个网站至少一个 page 来源；有截图/附件则加对应来源。
+- 若某网站抓取失败，finding 填「抓取失败：<原因>」，sources 仅含 page URL。
+
+【输出标记】
+写完 analysis.json 后，在回复末尾输出两个标记，不要输出额外正文：
+[[CARD:prd_analysis]]
+[[FILE:{WORKSPACE_PATH}/pm-jobs/prd-analysis/{标识}/analysis.json]]
+务必使用真实的文件系统绝对路径，不要使用占位符。
+
+【用户需求】
+{ARGS}`,
+	},
+	{
 		Cmd:        "/proto-make",
 		Label:      "做原型",
 		Desc:       "生成 UI 原型设计稿",
