@@ -4,6 +4,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { crawlPagesWithBrowser } from "../services/browser.js";
 import { mergePageMarkdown, mergePageCleanedHtml } from "../services/merge.js";
+import { ocrPageImages } from "../services/image-ocr.js";
+import { fetchAndConvertAttachments } from "../services/attachments.js";
 import type { Cookie } from "../types.js";
 
 // MCP server 元信息，与 package.json 的 name/version 保持一致，供 client 在 initialize 响应中识别。
@@ -13,6 +15,9 @@ const MCP_SERVER_VERSION = "0.0.1";
 // web_scrape 工具标识与输出文本中的分隔标识。
 const WEB_SCRAPE_TOOL_NAME = "web_scrape";
 const HTML_SECTION_SEPARATOR = "\n\n--- 页面 HTML 结构 ---\n";
+// 图片 OCR / 附件 markdown 在最终 text 中追加的段落分隔标识。
+const OCR_SECTION_SEPARATOR = "\n\n--- 图片 OCR 文字 ---\n";
+const ATTACHMENT_SECTION_SEPARATOR = "\n\n--- 附件内容 ---\n";
 
 // web_scrape 工具的输入 schema。maxDepth 默认 0（单页），与 scrapeRequestSchema 的 min(1) 不同：
 // MCP 工具允许 0 表示只抓起始页，crawlPagesWithBrowser 内部会把 0 clamp 到 MIN_CRAWL_DEPTH(1)。
@@ -30,6 +35,8 @@ const WEB_SCRAPE_INPUT = {
     )
     .optional()
     .describe("可选，登录态 cookie（agent 从对话上下文或用户提供的 cookie 传入）"),
+  includeImages: z.boolean().default(false).describe("是否对页面内嵌 <img> 做 OCR 提取文字"),
+  includeAttachments: z.boolean().default(false).describe("是否下载页面里的 PDF/WORD 附件并转为 markdown"),
 };
 
 /** MCP 错误响应中 content 的固定文本前缀，便于 agent 在异常情况下识别失败原因。 */
@@ -60,7 +67,24 @@ function buildMcpServer(): McpServer {
         }
         const md = mergePageMarkdown(pages);
         const cleaned = mergePageCleanedHtml(pages);
-        const text = md + (cleaned ? `${HTML_SECTION_SEPARATOR}${cleaned}` : "");
+        let text = md + (cleaned ? `${HTML_SECTION_SEPARATOR}${cleaned}` : "");
+
+        // 仅当显式开启且页面确有图片时才触发 OCR，避免无谓下载/识别开销。
+        if (args.includeImages && pages.some((p) => p.imageUrls.length > 0)) {
+          const ocrResults = await ocrPageImages(pages, cookies);
+          if (ocrResults.length > 0) {
+            text += OCR_SECTION_SEPARATOR + formatOcrResults(ocrResults);
+          }
+        }
+
+        // 仅当显式开启且页面确有附件时才下载转换，避免无谓网络请求。
+        if (args.includeAttachments && pages.some((p) => p.attachmentUrls.length > 0)) {
+          const attResults = await fetchAndConvertAttachments(pages, cookies);
+          if (attResults.length > 0) {
+            text += ATTACHMENT_SECTION_SEPARATOR + formatAttachmentResults(attResults);
+          }
+        }
+
         return { content: [{ type: "text" as const, text }] };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -113,4 +137,20 @@ export default async function mcpRoutes(app: FastifyInstance) {
   app.get("/mcp", async (_req, reply) => {
     reply.code(405).send({ error: "GET not supported, use POST" });
   });
+}
+
+/**
+ * 将 OCR 结果格式化为纯文本段落：每张图以 `[url]\nocrText` 形式呈现，图片间空行分隔。
+ * 纯函数，便于在 mcp handler 中拼接到最终 text。
+ */
+function formatOcrResults(results: { url: string; ocrText: string }[]): string {
+  return results.map((r) => `[${r.url}]\n${r.ocrText}`).join("\n\n");
+}
+
+/**
+ * 将附件转换结果格式化为 markdown 段落：每个附件以 `## filename (url)` 标题 + 正文呈现，附件间空行分隔。
+ * 纯函数，便于在 mcp handler 中拼接到最终 text。
+ */
+function formatAttachmentResults(results: { url: string; filename: string; markdown: string }[]): string {
+  return results.map((r) => `## ${r.filename} (${r.url})\n\n${r.markdown}`).join("\n\n");
 }
