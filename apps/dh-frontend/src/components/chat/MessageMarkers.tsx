@@ -20,6 +20,7 @@ import { RequirementBreakdownCard, useRequirementBreakdownData } from './Require
 import type { RequirementBreakdownData, RequirementBreakdownSubmitResult, RequirementItem } from './RequirementBreakdownCard';
 import { ReviewReportCard, parseReviewReportFromText } from './ReviewReportCard';
 import type { ReviewReportData } from './ReviewReportCard';
+import { PrdAnalysisCard } from './PrdAnalysisCard';
 import {
   parseFileMarkers,
   parseProjectMarkers,
@@ -267,6 +268,24 @@ export const ReviewReportMarkerRenderer: React.FC<ReviewReportMarkerRendererProp
   );
 };
 
+// ── PrdAnalysisMarkerRenderer: [[CARD:prd_analysis]] ──
+
+interface PrdAnalysisMarkerRendererProps {
+  allText: string;
+  filePaths: string[];
+}
+
+/** 从文本解析 prd_analysis 标记，定位 analysis.json 并渲染竞品信息分析表格卡片 */
+export const PrdAnalysisMarkerRenderer: React.FC<PrdAnalysisMarkerRendererProps> = ({
+  allText, filePaths,
+}) => {
+  const hasPrdAnalysis = parseCardTypes(allText).includes('prd_analysis');
+  if (!hasPrdAnalysis) return null;
+  const jsonPath = filePaths.find((p) => p.endsWith('analysis.json'));
+  if (!jsonPath) return null;
+  return <PrdAnalysisCard jsonPath={jsonPath} />;
+};
+
 // ── ReqNameResolver: [[REQ_NAME:...]] ──
 
 /**
@@ -388,6 +407,11 @@ export const MessageMarkers: React.FC<MessageMarkersProps> = (props) => {
         onReviewAdopt={props.onReviewAdopt}
         onReviewFix={props.onReviewFix}
         activePreviewPath={props.activePreviewPath}
+      />
+
+      <PrdAnalysisMarkerRenderer
+        allText={textParts.join('\n')}
+        filePaths={files}
       />
     </>
   );

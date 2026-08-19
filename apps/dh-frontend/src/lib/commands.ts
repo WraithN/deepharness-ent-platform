@@ -63,6 +63,7 @@ export const COMMAND_CATEGORIES: Record<string, CommandCategory> = {
   '/grill-me': 'product',
   '/req-breakdown': 'product',
   '/data-analysis': 'product',
+  '/prd-analysis': 'product',
 };
 
 /** 其他/未分类指令的标签。 */
