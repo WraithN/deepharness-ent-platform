@@ -7,6 +7,7 @@ import { mergePageMarkdown, mergePageCleanedHtml } from "../services/merge.js";
 import { ocrPageImages } from "../services/image-ocr.js";
 import { fetchAndConvertAttachments, type AttachmentResult } from "../services/attachments.js";
 import { saveTempFile } from "../services/temp-files.js";
+import { isPrivateHost } from "../services/url-extract.js";
 import { config } from "../config.js";
 import type { Cookie } from "../types.js";
 
@@ -67,6 +68,10 @@ function buildMcpServer(): McpServer {
           domain: c.domain,
           path: c.path ?? "/",
         }));
+        // SSRF 防护：起始 URL 指向内网/私网地址时直接拒绝，避免被诱导抓取内部服务。
+        if (isPrivateHost(args.url)) {
+          return { content: [{ type: "text" as const, text: "[跳过：内网地址]" }], isError: true };
+        }
         const pages = await crawlPagesWithBrowser(args.url, cookies, args.maxDepth, {
           includeScreenshot: args.includeScreenshot,
         });
@@ -214,7 +219,9 @@ function extnameFromUrl(url: string): string {
   }
 }
 
-// 构造临时文件下载 URL（host 从 crawler 自身推导，端口 config.port）。
+// 构造临时文件下载 URL。优先使用 PUBLIC_BASE_URL（生产环境 agent 无法访问 crawler 的 localhost），
+// 未配置时回退到 http://localhost:{port}（本地开发）。
 function buildTempFileUrl(id: string): string {
-  return `http://localhost:${config.port}/files/${id}`;
+  const base = config.publicBaseUrl || `http://localhost:${config.port}`;
+  return `${base}/files/${id}`;
 }

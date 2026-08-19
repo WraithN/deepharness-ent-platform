@@ -14,6 +14,9 @@ const configSchema = z.object({
   tempDir: z.string().default("/tmp/crawler-files"),
   // 临时文件保留时长（毫秒），超时由 LRU 清理任务删除。
   tempFileTtlMs: z.coerce.number().default(30 * 60 * 1000),
+  // 对外可达的基础 URL（如截图/附件下载 URL 的 host）。生产环境 crawler 部署在独立服务器，
+  // 需显式配置可被 agent 访问的地址；为空时回退到 http://localhost:{port}（本地开发）。
+  publicBaseUrl: z.string().default(""),
 });
 
 function loadConfig() {
@@ -26,6 +29,7 @@ function loadConfig() {
     logLevel: process.env.LOG_LEVEL,
     tempDir: process.env.TEMP_DIR,
     tempFileTtlMs: process.env.TEMP_FILE_TTL_MS,
+    publicBaseUrl: process.env.PUBLIC_BASE_URL,
   };
   return configSchema.parse(raw);
 }
