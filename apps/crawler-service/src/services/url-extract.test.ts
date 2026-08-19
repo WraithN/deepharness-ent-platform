@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractImageUrls, extractAttachmentUrls } from "./url-extract.js";
+import { extractImageUrls, extractAttachmentUrls, isPrivateHost } from "./url-extract.js";
 
 describe("extractImageUrls", () => {
   it("绝对化相对 URL，去重保序，过滤 data: URI", () => {
@@ -39,5 +39,41 @@ describe("extractAttachmentUrls", () => {
 
   it("空数组返回空", () => {
     expect(extractAttachmentUrls([], "https://x.test/")).toEqual([]);
+  });
+});
+
+describe("isPrivateHost", () => {
+  it("回环地址判定为私网", () => {
+    expect(isPrivateHost("http://localhost:3000/x.png")).toBe(true);
+    expect(isPrivateHost("http://127.0.0.1/a.pdf")).toBe(true);
+    expect(isPrivateHost("http://127.8.8.8/x")).toBe(true);
+    expect(isPrivateHost("http://[::1]/x")).toBe(true);
+  });
+
+  it("链路本地地址判定为私网", () => {
+    expect(isPrivateHost("http://169.254.169.254/latest/meta-data")).toBe(true);
+    expect(isPrivateHost("http://[fe80::1]/x")).toBe(true);
+  });
+
+  it("私网段判定为私网", () => {
+    expect(isPrivateHost("http://10.0.0.1/x")).toBe(true);
+    expect(isPrivateHost("http://172.16.0.1/x")).toBe(true);
+    expect(isPrivateHost("http://172.31.255.255/x")).toBe(true);
+    expect(isPrivateHost("http://192.168.1.1/x")).toBe(true);
+  });
+
+  it("0.0.0.0 判定为私网", () => {
+    expect(isPrivateHost("http://0.0.0.0/x")).toBe(true);
+  });
+
+  it("公网域名与公网 IP 放行", () => {
+    expect(isPrivateHost("https://example.com/a.png")).toBe(false);
+    expect(isPrivateHost("http://8.8.8.8/x")).toBe(false);
+    expect(isPrivateHost("http://172.15.0.1/x")).toBe(false);
+    expect(isPrivateHost("http://172.32.0.1/x")).toBe(false);
+  });
+
+  it("无法解析的 URL 保守拒绝", () => {
+    expect(isPrivateHost("http://[invalid")).toBe(true);
   });
 });

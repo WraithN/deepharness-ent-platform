@@ -14,7 +14,7 @@ vi.mock("./download-context.js", () => ({
       "base64",
     );
     const request = {
-      get: async () => ({ body: async () => fakePng, headers: {} }),
+      get: async () => ({ body: async () => fakePng, headers: () => ({}) }),
     };
     return fn(request);
   }),
@@ -73,7 +73,7 @@ describe("ocrPageImages", () => {
       const request = {
         get: async (url: string) => {
           if (url.includes("fail")) throw new Error("network error");
-          return { body: async () => fakePng, headers: {} };
+          return { body: async () => fakePng, headers: () => ({}) };
         },
       } as unknown as APIRequestContext;
       return fn(request);
@@ -89,5 +89,16 @@ describe("ocrPageImages", () => {
     expect(out[1].url).toBe("https://x.test/fail.png");
     expect(out[1].ocrText).toContain("[OCR 失败");
     expect(out[1].ocrText).toContain("network error");
+  });
+
+  it("内网图片地址被 SSRF 拦截，返回 [跳过：内网地址]", async () => {
+    const out = await ocrPageImages(
+      [pageWithImages(["http://127.0.0.1/secret.png", "https://x.test/a.png"])],
+      [],
+    );
+    expect(out).toHaveLength(2);
+    expect(out[0].url).toBe("http://127.0.0.1/secret.png");
+    expect(out[0].ocrText).toBe("[跳过：内网地址]");
+    expect(out[1].ocrText).toBe("识别出的文字");
   });
 });

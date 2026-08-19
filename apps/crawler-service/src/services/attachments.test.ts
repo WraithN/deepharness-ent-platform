@@ -8,8 +8,8 @@ vi.mock("./download-context.js", () => ({
     const fakeDocx = Buffer.from("PK fake docx");
     const request = {
       get: vi.fn(async (url: string) => {
-        if (url.endsWith(".pdf")) return { body: async () => fakePdf, headers: { "content-length": "100" } };
-        if (url.endsWith(".docx")) return { body: async () => fakeDocx, headers: { "content-length": "100" } };
+        if (url.endsWith(".pdf")) return { body: async () => fakePdf, headers: () => ({ "content-length": "100" }) };
+        if (url.endsWith(".docx")) return { body: async () => fakeDocx, headers: () => ({ "content-length": "100" }) };
         throw new Error("not found");
       }),
     };
@@ -35,6 +35,7 @@ vi.mock("turndown", () => ({
 }));
 
 import { fetchAndConvertAttachments } from "./attachments.js";
+import { withDownloadContext } from "./download-context.js";
 import type { PageResult } from "./browser.js";
 
 function pageWithAttachments(urls: string[]): PageResult {
@@ -61,5 +62,35 @@ describe("fetchAndConvertAttachments", () => {
   it("无附件返回空", async () => {
     const out = await fetchAndConvertAttachments([pageWithAttachments([])], []);
     expect(out).toEqual([]);
+  });
+
+  it("内网附件地址被 SSRF 拦截，返回 [跳过：内网地址]", async () => {
+    const out = await fetchAndConvertAttachments(
+      [pageWithAttachments(["http://169.254.169.254/latest/meta.pdf"])],
+      [],
+    );
+    expect(out[0].filename).toBe("meta.pdf");
+    expect(out[0].markdown).toBe("[跳过：内网地址]");
+  });
+
+  it("content-length 超限时在读取 body 前快速跳过", async () => {
+    vi.mocked(withDownloadContext).mockImplementationOnce(async (_cookies, _base, fn) => {
+      const request = {
+        get: vi.fn(async () => ({
+          // body 不应被读取：若被调用则抛错，证明 fast reject 生效。
+          body: vi.fn(async () => {
+            throw new Error("不应读取 body");
+          }),
+          headers: () => ({ "content-length": String(11 * 1024 * 1024) }),
+        })),
+      } as unknown as import("playwright").APIRequestContext;
+      return fn(request);
+    });
+
+    const out = await fetchAndConvertAttachments(
+      [pageWithAttachments(["https://x.test/big.pdf"])],
+      [],
+    );
+    expect(out[0].markdown).toBe("[跳过：附件超 10MB]");
   });
 });

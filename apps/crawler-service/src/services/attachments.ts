@@ -5,6 +5,7 @@ import type { PageResult } from "./browser.js";
 import type { Cookie } from "../types.js";
 import { withDownloadContext } from "./download-context.js";
 import { withTimeout } from "./timeout-utils.js";
+import { isPrivateHost } from "./url-extract.js";
 
 // 每页附件数上限，超出截断。过多附件会让串行下载+转换拖垮整体响应。
 const MAX_ATTACHMENTS_PER_PAGE = 5;
@@ -13,6 +14,8 @@ const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 // 单附件下载+转换超时。慢站点/大文件不应拖垮整体抓取。
 const ATTACHMENT_SINGLE_TIMEOUT_MS = 30_000;
 const ATTACHMENT_TIMEOUT_TEXT = "[转换超时]";
+const ATTACHMENT_SKIP_TOO_LARGE_TEXT = "[跳过：附件超 10MB]";
+const ATTACHMENT_SKIP_PRIVATE_HOST_TEXT = "[跳过：内网地址]";
 // unpdf 默认返回 text: string[]（每页一项）；mergePages:true 合并为单个字符串。
 const UNPDF_MERGE_PAGES = true;
 
@@ -54,14 +57,14 @@ async function fetchSingle(
   url: string,
 ): Promise<AttachmentResult> {
   const filename = extractFilename(url);
+  // SSRF 防护：内网/私网地址在发起任何请求前直接跳过。
+  if (isPrivateHost(url)) {
+    return { url, filename, markdown: ATTACHMENT_SKIP_PRIVATE_HOST_TEXT };
+  }
   try {
-    const resp = await request.get(url);
-    const buffer = Buffer.from(await resp.body());
-    if (buffer.byteLength > MAX_ATTACHMENT_BYTES) {
-      return { url, filename, markdown: `[跳过：附件超 ${MAX_ATTACHMENT_BYTES / 1024 / 1024}MB]` };
-    }
+    // 下载+转换作为一个整体受 30s 超时约束，慢下载/无 content-length 的大文件同样被兜底。
     const markdown = await withTimeout(
-      convertBuffer(buffer, filename),
+      downloadAndConvert(request, url, filename),
       ATTACHMENT_SINGLE_TIMEOUT_MS,
       ATTACHMENT_TIMEOUT_TEXT,
     );
@@ -70,6 +73,25 @@ async function fetchSingle(
     const msg = e instanceof Error ? e.message : String(e);
     return { url, filename, markdown: `[转换失败: ${msg}]` };
   }
+}
+
+/** 下载单附件并转换。content-length 超限时在读取 body 前快速拒绝，避免完整下载巨型文件。 */
+async function downloadAndConvert(
+  request: import("playwright").APIRequestContext,
+  url: string,
+  filename: string,
+): Promise<string> {
+  const resp = await request.get(url);
+  const contentLength = Number(resp.headers()["content-length"] ?? 0);
+  if (contentLength > MAX_ATTACHMENT_BYTES) {
+    return ATTACHMENT_SKIP_TOO_LARGE_TEXT;
+  }
+  const buffer = Buffer.from(await resp.body());
+  // content-length 缺失或不准确时，以实际下载字节数二次兜底。
+  if (buffer.byteLength > MAX_ATTACHMENT_BYTES) {
+    return ATTACHMENT_SKIP_TOO_LARGE_TEXT;
+  }
+  return convertBuffer(buffer, filename);
 }
 
 /**
