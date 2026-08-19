@@ -2,6 +2,7 @@ import { createWorker } from "tesseract.js";
 import type { PageResult } from "./browser.js";
 import type { Cookie } from "../types.js";
 import { withDownloadContext } from "./download-context.js";
+import { withTimeout } from "./timeout-utils.js";
 
 // OCR 单图超时（含下载+识别）。大图/慢站点不应拖垮整体响应。
 const OCR_SINGLE_TIMEOUT_MS = 30_000;
@@ -62,13 +63,4 @@ async function ocrSingle(
     const msg = e instanceof Error ? e.message : String(e);
     return { url, ocrText: `[OCR 失败: ${msg}]` };
   }
-}
-
-function withTimeout<T>(p: Promise<T>, ms: number, timeoutText: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(timeoutText)), ms),
-    ),
-  ]);
 }

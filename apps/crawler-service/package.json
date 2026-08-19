@@ -17,15 +17,19 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "crypto-js": "^4.2.0",
     "fastify": "^4.28.1",
+    "mammoth": "^1.12.1",
     "playwright": "^1.45.3",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "tesseract.js": "^7.0.0",
+    "turndown": "7.2.0",
+    "unpdf": "^1.8.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/crypto-js": "^4.2.2",
     "@types/node": "^20.14.11",
+    "@types/turndown": "5.0.5",
     "tsx": "^4.16.2",
     "typescript": "^5.5.4",
     "vitest": "^1.6.0"
