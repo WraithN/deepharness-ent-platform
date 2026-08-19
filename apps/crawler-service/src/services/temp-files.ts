@@ -15,8 +15,15 @@ function tempDir(): string {
 // randomUUID() 生成 36 位小写十六进制+连字符（32 hex + 4 个 -）。
 const SAFE_ID_REGEX = /^[0-9a-f-]{36}(\.[a-z0-9]+)?$/i;
 
-/** 保存 buffer 到临时目录，返回带扩展名的 id（UUID.ext）。 */
+// ext 只允许小写扩展名形态（如 .png/.pdf/.txt/.bin），拒绝含路径分隔符/.. 的输入。
+// saveTempFile 内部直接拼接 id，故必须在写入前校验，防止 ext 引入路径穿越。
+const SAFE_EXT_REGEX = /^\.[a-z0-9]+$/;
+
+/** 保存 buffer 到临时目录，返回带扩展名的 id（UUID.ext）。ext 非法时抛错（内部 API 编程错误）。 */
 export async function saveTempFile(buffer: Buffer, ext: string): Promise<string> {
+  if (!SAFE_EXT_REGEX.test(ext)) {
+    throw new Error(`非法临时文件扩展名: ${ext}`);
+  }
   await fsp.mkdir(tempDir(), { recursive: true });
   const id = `${randomUUID()}${ext}`;
   await fsp.writeFile(path.join(tempDir(), id), buffer);

@@ -54,6 +54,9 @@ go.work
 *:Zone.Identifier
 .worktrees/
 
+# tesseract 语言数据文件（测试运行产物，不应提交）
+apps/crawler-service/*.traineddata
+
 # 本地工作区（AI 生成的文件、工程原型等）不应提交到源码仓库。
 # workspace_root 配置在仓库外部时，projects/ 仍可能出现在仓库内部（如测试或默认路径），
 # 因此使用无锚点的匹配规则忽略任意位置的 projects/ 目录。

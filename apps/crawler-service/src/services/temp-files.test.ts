@@ -26,6 +26,11 @@ describe("temp-files", () => {
     expect(fs.readFileSync(p!, "utf8")).toBe("hello");
   });
 
+  it("saveTempFile 对含路径穿越的 ext 抛错", async () => {
+    await expect(saveTempFile(Buffer.from("x"), "../evil")).rejects.toThrow();
+    await expect(saveTempFile(Buffer.from("x"), "a/b")).rejects.toThrow();
+  });
+
   it("getTempFilePath 对非法 id 返回 null（防路径穿越）", () => {
     expect(getTempFilePath("../etc/passwd")).toBeNull();
     expect(getTempFilePath("a/b")).toBeNull();
