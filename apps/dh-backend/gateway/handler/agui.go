@@ -86,6 +86,7 @@ var LONG_TASK_COMMANDS = map[string]bool{
 	"/user-story":    true,
 	"/prd-write":     true,
 	"/prd-research":  true,
+	"/prd-analysis":  true,
 	"/ui-kit":        true,
 	"/test-case":     true,
 	"/auto-test":     true,
