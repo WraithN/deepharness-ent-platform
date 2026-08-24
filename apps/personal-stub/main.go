@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -57,11 +58,9 @@ func main() {
 
 	// 1:1 模式：启动时创建 gatewayd 实例。
 	// 1:N 模式：按需懒启动，不在此处创建。
-	if gatewaydMgr.Enabled() && !gatewaydMgr.IsMultiMode() {
-		if err := gatewaydMgr.StartSingle(); err != nil {
-			log.Printf("[GatewaydManager] failed to start gatewayd: %v", err)
-		}
-	}
+	// 注意：实际启动放在 HTTP server 监听之后（见文件末尾），确保 gatewayd 启动早期
+	// 通过 DH_PLATFORM_URL 拉取 crawler MCP 配置时 personal-stub HTTP server 已 ready，
+	// 否则会出现 "No MCP servers configured" 导致 agent 缺少 crawler:web_scrape 工具。
 
 	srv := server.New(cfg)
 
@@ -76,9 +75,29 @@ func main() {
 	}()
 
 	log.Printf("Personal Stub starting on port %s (gatewayd_bin=%s mode=%s)", cfg.Port, cfg.GatewaydBin, cfg.GatewaydMode)
-	if err := http.ListenAndServe(":"+cfg.Port, srv); err != nil {
-		log.Fatalf("Server failed: %v", err)
+
+	// 先 net.Listen 抢端口并开始监听，再启动 gatewayd 子进程。
+	// gatewayd 启动早期会通过 DH_PLATFORM_URL 拉取 crawler MCP 配置（GET /api/v1/admin/services/crawler），
+	// 若 personal-stub HTTP server 未 ready，拉取会失败导致 MCP 工具缺失（No MCP servers configured）。
+	ln, err := net.Listen("tcp", ":"+cfg.Port)
+	if err != nil {
+		log.Fatalf("Server failed to listen: %v", err)
 	}
+	go func() {
+		if err := http.Serve(ln, srv); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed: %v", err)
+		}
+	}()
+
+	// HTTP server 已开始监听，可安全启动 gatewayd（它会回调 personal-stub 拉 crawler 配置）。
+	if gatewaydMgr.Enabled() && !gatewaydMgr.IsMultiMode() {
+		if err := gatewaydMgr.StartSingle(); err != nil {
+			log.Printf("[GatewaydManager] failed to start gatewayd: %v", err)
+		}
+	}
+
+	// 阻塞主 goroutine，等待信号退出。
+	select {}
 }
 
 // comet init 相关常量。

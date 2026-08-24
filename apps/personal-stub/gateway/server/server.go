@@ -39,6 +39,10 @@ func New(cfg config.Config) http.Handler {
 	// personal-stub 注入 CPU/内存/IP 后转发到 dh-backend 同名端点。
 	mux.HandleFunc("/api/v1/agent-runtimes/{id}/status", handler.AgentRuntimeStatusReport)
 
+	// gatewayd 启动时通过 DH_PLATFORM_URL 拉取 crawler-service MCP 配置；
+	// personal-stub 作为 gatewayd 的 platform 入口，需代理此端点到 dh-backend。
+	mux.HandleFunc("/api/v1/admin/services/crawler", handler.CrawlerConfigProxy)
+
 	// 规范文件管理（AGENTS.md / DESIGN.md / CLAUDE.md 下发与清理）
 	mux.HandleFunc("/api/v1/standards/sync", handler.StandardsSync)
 	mux.HandleFunc("/api/v1/standards/clear", handler.StandardsClear)

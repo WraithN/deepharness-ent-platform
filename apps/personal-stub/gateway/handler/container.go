@@ -19,6 +19,9 @@ const (
 	gatewaydSleepSubPath    = "/admin/sleep"
 	gatewaydWakeSubPath     = "/admin/wake"
 	dhBackendReportPathFmt  = "/api/v1/agent-runtimes/%s/status"
+	// dhBackendCrawlerConfigPath 是 dh-backend 暴露的 crawler 配置端点（见 admin_crawler_config.go）。
+	// gatewayd 通过 DH_PLATFORM_URL 指向 personal-stub 时，由此 handler 代理转发。
+	dhBackendCrawlerConfigPath = "/api/v1/admin/services/crawler"
 )
 
 // containerCfg 容器管理面配置，通过 SetContainerConfig 注入。
@@ -327,3 +330,37 @@ func proxyToGatewayd(w http.ResponseWriter, r *http.Request, subPath string) {
 
 // 确保 context 包被使用（未来可能需要 context.WithTimeout）。
 var _ = context.Background
+
+// CrawlerConfigProxy GET /api/v1/admin/services/crawler
+// gatewayd 通过 DH_PLATFORM_URL 指向 personal-stub 时，由此 handler 代理到 dh-backend。
+// 不改写响应，仅透传 dh-backend 的 {url, maxDepth, timeoutMs} 给 gatewayd。
+func CrawlerConfigProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteJSONError(w, http.StatusMethodNotAllowed, 1, "method not allowed")
+		return
+	}
+	if containerCfg.dhBackendURL == "" {
+		WriteJSONError(w, http.StatusServiceUnavailable, 1, "dh-backend URL not configured")
+		return
+	}
+	targetURL := containerCfg.dhBackendURL + dhBackendCrawlerConfigPath
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
+	if err != nil {
+		WriteJSONError(w, http.StatusInternalServerError, 1, "create crawler config proxy request failed: "+err.Error())
+		return
+	}
+	if containerCfg.dhBackendRuntimeToken != "" {
+		req.Header.Set("Authorization", "Bearer "+containerCfg.dhBackendRuntimeToken)
+	}
+
+	resp, err := containerHTTPClient.Do(req)
+	if err != nil {
+		WriteJSONError(w, http.StatusBadGateway, 1, "proxy crawler config to dh-backend failed: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
