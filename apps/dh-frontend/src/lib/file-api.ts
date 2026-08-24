@@ -1,4 +1,5 @@
 import { api } from './api';
+import { AUTH_TOKEN_KEY } from './constants';
 
 export interface FileContent {
   path: string;
@@ -38,6 +39,20 @@ export const fileApi = {
    * 构造文件下载 URL。
    */
   downloadUrl: (path: string) => `/api/v1/files/download?path=${encodeURIComponent(path)}`,
+
+  /**
+   * 以鉴权方式下载文件原始字节（用于附件打包等场景）。
+   * 下载端点需要 Authorization 头（与 api.ts 一致从 localStorage 取 token）；
+   * 失败时抛出异常，由调用方决定容错策略。
+   */
+  downloadBytes: async (path: string): Promise<ArrayBuffer> => {
+    const token = localStorage.getItem(AUTH_TOKEN_KEY);
+    const res = await fetch(fileApi.downloadUrl(path), {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (!res.ok) throw new Error(`download failed: ${res.status}`);
+    return res.arrayBuffer();
+  },
 
   /**
    * 写入文件内容到磁盘（PUT 请求，用于 PRD 等文件的编辑保存）。

@@ -35,6 +35,9 @@ import type { WorkItemDTO } from '@/lib/api-types';
 // ── 常量 ──
 
 const PROTOTYPE_DIR_SEGMENT = '/products/prototypes/';
+// prd_analysis 卡片的数据源文件后缀：该 JSON 由 PrdAnalysisCard 消费并产出 Excel，
+// 不作为独立文件附件 chip 展示，避免把中间数据文件当作产出物暴露给用户。
+const PRD_ANALYSIS_DATA_SUFFIX = 'analysis.json';
 
 // ── FileMarkerCards: [[FILE:...]] ──
 
@@ -62,10 +65,11 @@ export const FileMarkerCards: React.FC<FileMarkerCardsProps> = ({
 
   const { files } = useMemo(() => parseAllFilePaths(textParts), [textParts]);
 
-  // 过滤：去掉工程目录下的文件、评审报告文件
+  // 过滤：去掉工程目录下的文件、评审报告文件、prd_analysis 中间数据文件。
   const visibleFiles = files.filter(path =>
     !projectPaths.some(proj => path === proj || path.startsWith(`${proj}/`)) &&
-    !reviewFilePaths.includes(path),
+    !reviewFilePaths.includes(path) &&
+    !path.endsWith(PRD_ANALYSIS_DATA_SUFFIX),
   );
 
   if (visibleFiles.length === 0) return null;

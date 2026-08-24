@@ -18,6 +18,7 @@ import { RequirementBreakdownCard, useRequirementBreakdownData } from './Require
 import type { RequirementBreakdownData, RequirementBreakdownSubmitResult, RequirementItem } from './RequirementBreakdownCard';
 import { ReviewReportCard, parseReviewReportFromText } from './ReviewReportCard';
 import type { ReviewReportData } from './ReviewReportCard';
+import { PrdAnalysisCard } from './PrdAnalysisCard';
 import type { ChatPart } from './types';
 import { toast } from 'sonner';
 import { cn, formatTime, isProductSpaceFile } from '@/lib/utils';
@@ -38,6 +39,9 @@ const RESEARCH_PROTOTYPE_SEGMENT = '/pm-jobs/prd-research/';
 // 匹配需求拆分相关文件：路径中包含 req-breakdown 且以 .md/.json 结尾。
 const REQ_BREAKDOWN_FILE_REGEX = /req-breakdown.*\.(md|json)$/i;
 const REQ_BREAKDOWN_JSON_FILE_REGEX = /req-breakdown.*\.json$/i;
+// prd_analysis 卡片的数据源文件后缀：该 JSON 由 PrdAnalysisCard 消费并产出 Excel，
+// 不作为独立文件附件 chip 展示，避免把中间数据文件当作产出物暴露给用户。
+const PRD_ANALYSIS_DATA_SUFFIX = 'analysis.json';
 
 // 工具调用名称到展示文案的映射，用于折叠卡片和状态栏统一显示。
 const TOOL_DISPLAY_NAME_MAP: Record<string, string> = {
@@ -359,6 +363,16 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
     ? nonReqBreakdownFileAttachments.filter(path => path !== reviewReportData.reportPath)
     : nonReqBreakdownFileAttachments;
 
+  // prd_analysis 卡片出现时，抑制 analysis.json 的 FileAttachmentCard：
+  // 该 JSON 仅为卡片渲染数据源，最终 Excel 由前端生成，不作为文件附件暴露。
+  const hasPrdAnalysisFromMarker = cardTypes.includes('prd_analysis');
+  const prdAnalysisJsonPath = hasPrdAnalysisFromMarker
+    ? fileAttachments.find((p) => p.endsWith(PRD_ANALYSIS_DATA_SUFFIX))
+    : undefined;
+  const nonPrdAnalysisFileAttachments = hasPrdAnalysisFromMarker
+    ? nonReviewFileAttachments.filter(path => !path.endsWith(PRD_ANALYSIS_DATA_SUFFIX))
+    : nonReviewFileAttachments;
+
   // 用户故事/需求拆分/评审报告卡片出现时，默认展开完整文本，避免"内容没有输出完整"的观感。
   useEffect(() => {
     if (hasUserStoryFromMarker || hasUserStoryFromLegacy || hasReqBreakdownFromMarker || hasReqBreakdownFromLegacy || reviewReportData) {
@@ -553,9 +567,9 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
 
           {/* 非原型文件附件卡片统一放在消息底部（有 user_story / req_breakdown / review_report 数据时隐藏对应文件，避免重复展示）。
               生成完成后再展示。 */}
-          {!hasUserStory && nonReviewFileAttachments.length > 0 && !isRunning && (
+          {!hasUserStory && nonPrdAnalysisFileAttachments.length > 0 && !isRunning && (
             <div className="px-3 pb-2 flex flex-wrap gap-2">
-              {nonReviewFileAttachments.map((path) => (
+              {nonPrdAnalysisFileAttachments.map((path) => (
                 <FileAttachmentCard key={path} path={path} onPreview={onFilePreview} workitemId={resolvedWorkitemId} />
               ))}
             </div>
@@ -574,6 +588,11 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({ message, run
           {/* 从 [[REVIEW_REPORT_START]]...[[REVIEW_REPORT_END]] 标记自动检测到的评审报告卡片，生成完成后再展示。 */}
           {reviewReportData && !isRunning && (
             <div className="px-3 py-2"><ReviewReportCard data={reviewReportData} activePreviewPath={activePreviewPath} onPreview={onReviewReportPreview} onAdopt={onReviewAdopt} onFix={onReviewFix} /></div>
+          )}
+
+          {/* 从 [[CARD:prd_analysis]] 标记自动检测到的竞品信息分析卡片，生成完成后再展示。 */}
+          {hasPrdAnalysisFromMarker && prdAnalysisJsonPath && !isRunning && (
+            <div className="px-3 py-2"><PrdAnalysisCard jsonPath={prdAnalysisJsonPath} /></div>
           )}
 
           {/* legacy data 部件（diff / task_list / tool_use / tool_result 等） */}

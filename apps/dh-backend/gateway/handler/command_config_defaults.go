@@ -99,7 +99,7 @@ var embeddedCommands = []CommandConfig{
 	{
 		Cmd:          "/prd-analysis",
 		Label:        "竞品信息分析",
-		Desc:         "输入若干网站链接+提示词，爬取并提取相关信息，生成可预览下载的对照表格",
+		Desc:         "输入若干网站链接+提示词，爬取并提取相关信息，生成可预览的 Excel 对照表格",
 		Icon:         "Table2",
 		AllowTask:    false,
 		AllowRepos:   false,
@@ -123,18 +123,29 @@ var embeddedCommands = []CommandConfig{
 
 【执行流程】
 1. 在 {WORKSPACE_PATH}/pm-jobs/prd-analysis/ 下创建本次任务目录，目录名用简短英文标识（如 pricing-research）。
-2. 对每个网站链接调用 crawler:web_scrape 工具，参数：url=链接, maxDepth=1, includeImages=true, includeAttachments=true, includeScreenshot=true。
-3. 抓取结果中的「--- 截图 ---」段包含截图下载 URL，「--- 附件文件 ---」段包含附件下载 URL。用 bash 执行 curl -L -o 下载到本任务目录的 sources/screenshots/ 与 sources/attachments/ 下（截图命名 {网站}-{序号}.png，附件保留原文件名）。若附件 curl 失败（如登录态），只保存附件 markdown 到 sources/attachments/{文件名}.md。
-4. 针对提示词，从每个网站的抓取内容中提取「提示词提及的信息」（finding，具体、可引用原文关键句）；推断「网站对应的公司」（从页脚/about/logo/域名推断）；记录「信息来源」。
+2. 【并行抓取·关键】在**同一轮**对所有 URL 同时发起 crawler:web_scrape 工具调用，禁止串行排队。
+   每个调用参数：url=链接, maxDepth=1, includeImages=true, includeAttachments=true, includeScreenshot=true。
+   单站典型耗时 5～15s，并行后总耗时≈最慢一站；串行会逐站累加，导致整体卡顿。
+   若工具运行时不支持一轮多调用，则按可用并发度分批，每批同时发起，不要逐站串行。
+3. 收齐所有 web_scrape 响应后，逐站继续后续步骤。抓取结果中的「--- 截图 ---」段含截图下载 URL，
+   「--- 附件文件 ---」段含附件下载 URL。用 bash 执行 curl -L -o 下载到本任务目录：
+   截图存 sources/screenshots/{网站}-{序号}.png；附件保留原文件名存 sources/attachments/。
+   若附件 curl 失败（如登录态），只保存附件 markdown 到 sources/attachments/{文件名}.md。
+4. 针对提示词，从每个网站的抓取内容中提取「提示词提及的信息」（finding，具体、可引用原文关键句）；
+   推断「网站对应的公司」（从页脚/about/logo/域名推断）；记录「信息来源」。
+5. 【失败容错】某网站 web_scrape 返回 isError 或异常时，finding 填「抓取失败：<原因>」，
+   sources 仅含 page URL；不要因单站失败中断整体流程，其他站点继续处理。
 
 【表格产出】
 写一个 JSON 文件 {WORKSPACE_PATH}/pm-jobs/prd-analysis/{标识}/analysis.json，结构：
-{"rows":[{"website":"https://a.com","company":"A 公司","finding":"...","sources":[{"type":"page","url":"https://a.com/pricing"},{"type":"screenshot","url":"https://a.com/pricing","path":"sources/screenshots/a-com-1.png"},{"type":"file","url":"https://a.com/x.pdf","path":"sources/attachments/x.pdf","markdown":"sources/attachments/x.pdf.md"}]}]}
+{"topic":"提前还款手续费","rows":[{"website":"https://a.com","company":"A 公司","finding":"...","sources":[{"type":"page","url":"https://a.com/pricing"},{"type":"screenshot","url":"https://a.com/pricing","path":"sources/screenshots/a-com-1.png"},{"type":"file","url":"https://a.com/x.pdf","path":"sources/attachments/x.pdf","markdown":"sources/attachments/x.pdf.md"}]}]}
 说明：
+- topic 为从提示词中提取的核心主题（用作表格表头，如「提前还款手续费」），简短、不加标点。
 - website 为输入的网站链接；company 为推断的公司名；finding 为针对提示词提取的信息。
 - sources 数组记录信息来源：type 为 page（页面链接）/screenshot（截图）/file（附件）；path 为相对本任务目录的路径。
 - 每个网站至少一个 page 来源；有截图/附件则加对应来源。
 - 若某网站抓取失败，finding 填「抓取失败：<原因>」，sources 仅含 page URL。
+- 该 JSON 仅为前端表格渲染的数据源；最终 Excel 表格（含表头=topic、附件文件打包进 xlsx）由前端自动生成供用户下载，你无需生成 xlsx 文件。
 
 【输出标记】
 写完 analysis.json 后，在回复末尾输出两个标记，不要输出额外正文：
