@@ -64,6 +64,11 @@ export const workspaceApi = {
   listPrompts: (workspaceId: string) => api.get<WorkspacePrompt[]>(`/v1/workspaces/${workspaceId}/prompts`),
   addPrompt: (workspaceId: string, libraryPromptId: string) =>
     api.post<WorkspacePrompt>(`/v1/workspaces/${workspaceId}/prompts`, { libraryPromptId }),
+  // 直接创建自定义提示词（非市场来源），用于「将会话/文本保存为提示词」
+  createCustomPrompt: (
+    workspaceId: string,
+    req: { name: string; description: string; content: string; useCase: string; categoryIds: string[] },
+  ) => api.post<WorkspacePrompt>(`/v1/workspaces/${workspaceId}/prompts`, req),
   removePrompt: (workspaceId: string, promptId: string) =>
     api.delete<void>(`/v1/workspaces/${workspaceId}/prompts/${promptId}`),
   updatePromptCategories: (workspaceId: string, promptId: string, categoryIds: string[]) =>

@@ -1,18 +1,29 @@
-import React from 'react';
-import { User, ListTodo, Bug, FlaskConical, GitBranch, Pencil, Copy } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { User, ListTodo, Bug, FlaskConical, GitBranch, Pencil, Copy, BookmarkPlus } from 'lucide-react';
 import type { MessageState, TextMessagePart } from '@assistant-ui/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 import { extractUserPrompt } from '@/hooks/use-ag-ui-chat';
 import { formatTime } from '@/lib/utils';
+import { getCurrentWorkspaceId } from '@/lib/workspace-utils';
+import { workspaceApi } from '@/lib/workspace-api';
+import { sortPromptCategoriesByBuiltin } from '@/lib/prompt-categories';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import MultiSelect from '@/components/ui/multi-select';
 import type { SendContext } from '@/hooks/use-ag-ui-chat';
+import type { PromptCategory, WorkspacePrompt } from '@/types';
 
 interface UserMessageProps {
   message: MessageState;
   openDetail?: (type: 'req' | 'defect' | 'case', id: string) => void;
   onRepoClick?: () => void;
   onEdit?: (text: string, context?: SendContext) => void;
+  onPromptSaved?: (prompt: WorkspacePrompt) => void;
 }
 
 const COPY_DATA_ATTR = 'data-dh-chat-copy';
@@ -62,7 +73,7 @@ async function copyStructuredText(
   }
 }
 
-export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, onRepoClick, onEdit }) => {
+export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, onRepoClick, onEdit, onPromptSaved }) => {
   const custom = (message.metadata?.custom || {}) as {
     quotedCard?: SendContext['quotedCard'];
     selectedRepos?: SendContext['selectedRepos'];
@@ -76,6 +87,72 @@ export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, o
   const textPart = rawTextPart?.text
     ? { text: custom.originalText ?? extractUserPrompt(rawTextPart.text) }
     : undefined;
+
+  // 保存为提示词弹窗：名称（必填）+ 分类（可选）+ 内容（自动填充、可编辑）。
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [promptName, setPromptName] = useState('');
+  const [promptContent, setPromptContent] = useState('');
+  const [promptCategoryIds, setPromptCategoryIds] = useState<string[]>([]);
+  const [categories, setCategories] = useState<PromptCategory[]>([]);
+
+  // 打开弹窗时预填名称与内容，并加载分类列表（每次打开刷新，保证新建分类可见）。
+  useEffect(() => {
+    if (!saveOpen) return;
+    let cancelled = false;
+    let wsId: string;
+    try {
+      wsId = getCurrentWorkspaceId();
+    } catch {
+      setCategories([]);
+      return;
+    }
+    workspaceApi.listPromptCategories(wsId)
+      .then(list => { if (!cancelled) setCategories(list); })
+      .catch(() => { if (!cancelled) setCategories([]); });
+    return () => { cancelled = true; };
+  }, [saveOpen]);
+
+  // 打开弹窗：名称预填消息首行（截断 20 字），内容预填消息全文，分类清空（默认「未分类」）。
+  const openSaveDialog = () => {
+    if (!textPart?.text) return;
+    const firstLine = textPart.text.replace(/\s+/g, ' ').trim();
+    setPromptName(firstLine.length > 20 ? `${firstLine.slice(0, 20)}…` : firstLine);
+    setPromptContent(textPart.text);
+    setPromptCategoryIds([]);
+    setSaveOpen(true);
+  };
+
+  // 提交保存：调用后端创建自定义提示词（任意登录用户可操作），成功后通知上层刷新菜单。
+  const handleSaveToPrompt = async () => {
+    const name = promptName.trim();
+    if (!name) {
+      toast.error('请输入提示词名称');
+      return;
+    }
+    const content = promptContent.trim();
+    if (!content) {
+      toast.error('提示词内容不能为空');
+      return;
+    }
+    setSaving(true);
+    try {
+      const created = await workspaceApi.createCustomPrompt(getCurrentWorkspaceId(), {
+        name,
+        description: '',
+        content,
+        useCase: '',
+        categoryIds: promptCategoryIds,
+      });
+      toast.success('已加入提示词库');
+      setSaveOpen(false);
+      onPromptSaved?.(created);
+    } catch (err) {
+      toast.error('保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="flex gap-3 justify-end">
@@ -154,6 +231,57 @@ export const UserMessage: React.FC<UserMessageProps> = ({ message, openDetail, o
             >
               <Copy className="h-3.5 w-3.5" />
             </button>
+            <Dialog open={saveOpen} onOpenChange={setSaveOpen}>
+              <button
+                onClick={openSaveDialog}
+                className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-colors"
+                title="加入提示词库"
+              >
+                <BookmarkPlus className="h-3.5 w-3.5" />
+              </button>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>加入提示词库</DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-4 py-2">
+                  <div className="grid gap-2">
+                    <Label htmlFor="save-prompt-name">名称 <span className="text-destructive">*</span></Label>
+                    <Input
+                      id="save-prompt-name"
+                      value={promptName}
+                      onChange={e => setPromptName(e.target.value)}
+                      placeholder="提示词名称"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>分类（可选）</Label>
+                    <MultiSelect
+                      options={sortPromptCategoriesByBuiltin(categories).map(c => ({ value: c.id, label: c.name }))}
+                      value={promptCategoryIds}
+                      onChange={setPromptCategoryIds}
+                      placeholder="未分类"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="save-prompt-content">内容</Label>
+                    <Textarea
+                      id="save-prompt-content"
+                      value={promptContent}
+                      onChange={e => setPromptContent(e.target.value)}
+                      placeholder="提示词内容"
+                      rows={5}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setSaveOpen(false)} disabled={saving}>取消</Button>
+                  <Button onClick={handleSaveToPrompt} disabled={saving}>
+                    {saving ? '保存中…' : '保存'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         )}
       </div>

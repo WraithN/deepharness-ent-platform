@@ -134,6 +134,16 @@ type AddWorkspacePromptRequest struct {
 	LibraryPromptID string `json:"libraryPromptId"`
 }
 
+// CreateWorkspacePromptRequest 在空间内直接创建自定义提示词（非市场来源）的请求。
+// 用于「将会话/文本保存为提示词」等场景，创建出的提示词 library_prompt_id 为空、is_custom=true。
+type CreateWorkspacePromptRequest struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Content     string   `json:"content"`
+	UseCase     string   `json:"useCase"`
+	CategoryIDs []string `json:"categoryIds"`
+}
+
 // UpdateWorkspacePromptCategoryRequest 更新空间提示词分类的请求。
 type UpdateWorkspacePromptCategoryRequest struct {
 	CategoryIDs []string `json:"categoryIds"`

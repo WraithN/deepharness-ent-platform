@@ -9,6 +9,9 @@ export const BUILTIN_PROMPT_CATEGORY_NAMES = [
   '文档',
 ] as const;
 
+// 「未分类」是前端内置语义分类，表示未关联任何分类的提示词（categories 为空）。
+export const UNCATEGORIZED_PROMPT_CATEGORY_NAME = '未分类';
+
 // 判断分类名称是否为系统内置。
 export function isBuiltinPromptCategoryName(name: string): boolean {
   return BUILTIN_PROMPT_CATEGORY_NAMES.includes(name as typeof BUILTIN_PROMPT_CATEGORY_NAMES[number]);

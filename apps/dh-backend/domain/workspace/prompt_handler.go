@@ -80,16 +80,36 @@ func Prompts(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(prompts)
 	case http.MethodPost:
+		userID, _ := middleware.UserIDFromContext(r.Context())
+		// 读一次 body，按字段分发：含 content 走「创建自定义提示词」，含 libraryPromptId 走「从市场添加」。
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "invalid request body")
+			return
+		}
+		// 创建自定义提示词：任意登录用户可操作（类似 copy，属个人保存行为）。
+		var createReq object.CreateWorkspacePromptRequest
+		if err := json.Unmarshal(body, &createReq); err == nil && createReq.Content != "" {
+			p, err := defaultPromptService.CreateCustom(workspaceID, createReq, userID)
+			if err != nil {
+				handler.HandleServiceError(w, err, "failed to create prompt", "failed to create prompt")
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(p)
+			return
+		}
+		// 从市场添加：需空间/租户管理员权限。
 		if !canManageSpacePrompts(r, workspaceID) {
 			handler.WriteJSONError(w, http.StatusForbidden, handler.ErrCodeForbidden, "forbidden: tenant admin or space admin required")
 			return
 		}
-		userID, _ := middleware.UserIDFromContext(r.Context())
-		var req object.AddWorkspacePromptRequest
-		if !handler.DecodeJSONBody(w, r, &req) {
+		var addReq object.AddWorkspacePromptRequest
+		if err := json.Unmarshal(body, &addReq); err != nil || addReq.LibraryPromptID == "" {
+			handler.WriteJSONError(w, http.StatusBadRequest, handler.ErrCodeGeneral, "libraryPromptId or content is required")
 			return
 		}
-		p, err := defaultPromptService.Add(workspaceID, req, userID)
+		p, err := defaultPromptService.Add(workspaceID, addReq, userID)
 		if err != nil {
 			handler.HandleServiceError(w, err, "prompt not found", "failed to add prompt")
 			return

@@ -25,6 +25,9 @@ type WorkspacePromptService interface {
 	RecordUsage(workspaceID, promptID string) (object.WorkspacePrompt, error)
 	// Copy 将市场来源的提示词复制为空间内可编辑的自定义副本，原市场提示词 usage_count +1。
 	Copy(workspaceID, promptID, userID string) (object.WorkspacePrompt, error)
+	// CreateCustom 在空间内直接创建自定义提示词（非市场来源，is_custom=true）。
+	// 用于「将会话/文本保存为提示词」等场景，任意登录用户可调用。
+	CreateCustom(workspaceID string, req object.CreateWorkspacePromptRequest, userID string) (object.WorkspacePrompt, error)
 	// Share 将空间自定义提示词分享到市场，创建 pending_review 审核条目。
 	Share(workspaceID, promptID, userID string) (object.WorkspacePrompt, error)
 
@@ -261,25 +264,8 @@ func (s *DBWorkspacePromptService) UpdateCategories(workspaceID, promptID string
 	}
 
 	// 校验所有 category_id 都属于当前空间。
-	if len(req.CategoryIDs) > 0 {
-		placeholders := make([]string, len(req.CategoryIDs))
-		args := make([]any, len(req.CategoryIDs)+1)
-		args[0] = workspaceID
-		for i, id := range req.CategoryIDs {
-			placeholders[i] = fmt.Sprintf("$%d", i+2)
-			args[i+1] = id
-		}
-		query := fmt.Sprintf(`
-			SELECT COUNT(*) FROM workspace_prompt_categories
-			WHERE workspace_id = $1 AND id IN (%s)
-		`, strings.Join(placeholders, ", "))
-		var validCount int
-		if err := s.db.QueryRow(query, args...).Scan(&validCount); err != nil {
-			return object.WorkspacePrompt{}, fmt.Errorf("validate categories failed: %w", err)
-		}
-		if validCount != len(req.CategoryIDs) {
-			return object.WorkspacePrompt{}, fmt.Errorf("%w: some categories do not belong to workspace", common.ErrInvalidInput)
-		}
+	if err := s.validateCategoryIDs(workspaceID, req.CategoryIDs); err != nil {
+		return object.WorkspacePrompt{}, err
 	}
 
 	tx, err := s.db.Begin()
@@ -292,16 +278,8 @@ func (s *DBWorkspacePromptService) UpdateCategories(workspaceID, promptID string
 		return object.WorkspacePrompt{}, fmt.Errorf("delete old category links failed: %w", err)
 	}
 
-	for _, categoryID := range req.CategoryIDs {
-		if categoryID == "" {
-			continue
-		}
-		if _, err := tx.Exec(`
-			INSERT INTO workspace_prompt_category_links (prompt_id, category_id)
-			VALUES ($1, $2)
-		`, promptID, categoryID); err != nil {
-			return object.WorkspacePrompt{}, fmt.Errorf("insert category link failed: %w", err)
-		}
+	if err := linkPromptCategories(tx, promptID, req.CategoryIDs); err != nil {
+		return object.WorkspacePrompt{}, err
 	}
 
 	if _, err := tx.Exec(`
@@ -315,6 +293,48 @@ func (s *DBWorkspacePromptService) UpdateCategories(workspaceID, promptID string
 	}
 
 	return s.get(workspaceID, promptID)
+}
+
+// validateCategoryIDs 校验一组 category_id 均属于指定工作空间；为空列表直接通过。
+func (s *DBWorkspacePromptService) validateCategoryIDs(workspaceID string, categoryIDs []string) error {
+	if len(categoryIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(categoryIDs))
+	args := make([]any, len(categoryIDs)+1)
+	args[0] = workspaceID
+	for i, id := range categoryIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args[i+1] = id
+	}
+	query := fmt.Sprintf(`
+		SELECT COUNT(*) FROM workspace_prompt_categories
+		WHERE workspace_id = $1 AND id IN (%s)
+	`, strings.Join(placeholders, ", "))
+	var validCount int
+	if err := s.db.QueryRow(query, args...).Scan(&validCount); err != nil {
+		return fmt.Errorf("validate categories failed: %w", err)
+	}
+	if validCount != len(categoryIDs) {
+		return fmt.Errorf("%w: some categories do not belong to workspace", common.ErrInvalidInput)
+	}
+	return nil
+}
+
+// linkPromptCategories 在事务内为提示词插入分类关联，跳过空 id。
+func linkPromptCategories(tx *sql.Tx, promptID string, categoryIDs []string) error {
+	for _, categoryID := range categoryIDs {
+		if categoryID == "" {
+			continue
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO workspace_prompt_category_links (prompt_id, category_id)
+			VALUES ($1, $2)
+		`, promptID, categoryID); err != nil {
+			return fmt.Errorf("insert category link failed: %w", err)
+		}
+	}
+	return nil
 }
 
 // UpdateEnabled 更新空间提示词的启用状态。
@@ -390,6 +410,66 @@ func (s *DBWorkspacePromptService) RecordUsage(workspaceID, promptID string) (ob
 		return object.WorkspacePrompt{}, fmt.Errorf("commit failed: %w", err)
 	}
 	return s.get(workspaceID, promptID)
+}
+
+// CreateCustom 在空间内直接创建自定义提示词（非市场来源，is_custom=true）。
+// 用于「将会话/文本保存为提示词」等场景，任意登录用户可调用。
+// 支持可选分类关联；未指定分类时保持未分类（categories 为空）。
+func (s *DBWorkspacePromptService) CreateCustom(workspaceID string, req object.CreateWorkspacePromptRequest, userID string) (object.WorkspacePrompt, error) {
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return object.WorkspacePrompt{}, fmt.Errorf("%w: name is required", common.ErrInvalidInput)
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		return object.WorkspacePrompt{}, fmt.Errorf("%w: content is required", common.ErrInvalidInput)
+	}
+	// 校验分类属于当前空间（空列表直接通过，即「未分类」）。
+	if err := s.validateCategoryIDs(workspaceID, req.CategoryIDs); err != nil {
+		return object.WorkspacePrompt{}, err
+	}
+
+	now := time.Now().UTC()
+	p := object.WorkspacePrompt{
+		ID:           idutil.GenerateID(),
+		WorkspaceID:  workspaceID,
+		Name:         name,
+		Description:  req.Description,
+		Content:      req.Content,
+		UseCase:      req.UseCase,
+		Categories:   []object.PromptCategory{},
+		UsageCount:   0,
+		IsCustom:     true,
+		AddedToSpace: true,
+		Enabled:      true,
+		CreatedBy:    userID,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return object.WorkspacePrompt{}, fmt.Errorf("begin transaction failed: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		INSERT INTO workspace_prompts (id, workspace_id, library_prompt_id, name, description, content, use_case,
+		                               usage_count, is_custom, added_to_space, enabled, created_by, created_at, updated_at)
+		VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`, p.ID, p.WorkspaceID, p.Name, p.Description, p.Content, p.UseCase,
+		p.UsageCount, p.IsCustom, p.AddedToSpace, p.Enabled, p.CreatedBy, p.CreatedAt, p.UpdatedAt); err != nil {
+		return object.WorkspacePrompt{}, fmt.Errorf("insert custom workspace prompt failed: %w", err)
+	}
+
+	if err := linkPromptCategories(tx, p.ID, req.CategoryIDs); err != nil {
+		return object.WorkspacePrompt{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return object.WorkspacePrompt{}, fmt.Errorf("commit failed: %w", err)
+	}
+
+	return s.get(workspaceID, p.ID)
 }
 
 // Copy 将空间内提示词复制为可编辑的自定义副本（is_custom=true, library_prompt_id=NULL），

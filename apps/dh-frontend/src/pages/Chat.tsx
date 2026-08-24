@@ -86,7 +86,7 @@ import {
 import { PROTO_MAKE_PENDING_KEY } from '@/lib/constants';
 import { fileApi } from '@/lib/file-api';
 import { type ProductDoc, productDocApi } from '@/lib/productdoc-api';
-import { sortPromptCategoriesByBuiltin } from '@/lib/prompt-categories';
+import { sortPromptCategoriesByBuiltin, UNCATEGORIZED_PROMPT_CATEGORY_NAME } from '@/lib/prompt-categories';
 import { getCommandSystemPrompts, SYSTEM_PROMPT_CATEGORY_NAME, type SystemPrompt } from '@/lib/system-prompts';
 import { repositoryApi, type UserRepoStatus } from '@/lib/repository-api';
 import { workItemApi, type RequirementWithDesignItems, type LinkedProductSpaceItem } from '@/lib/workitem-api';
@@ -1506,7 +1506,9 @@ export const Chat: React.FC = () => {
         (p.content || '').toLowerCase().includes(term) ||
         (p.description || '').toLowerCase().includes(term);
       const matchesCategory = promptMenuCategory === '全部' ||
-        p.categories.some(c => c.name === promptMenuCategory);
+        (promptMenuCategory === UNCATEGORIZED_PROMPT_CATEGORY_NAME
+          ? p.categories.length === 0
+          : p.categories.some(c => c.name === promptMenuCategory));
       return matchesSearch && matchesCategory;
     });
   }, [availablePrompts, promptMenuSearch, promptMenuCategory]);
@@ -2927,6 +2929,7 @@ export const Chat: React.FC = () => {
       ...sortPromptCategoriesByBuiltin(promptCategories)
         .map(c => c.name)
         .filter(name => name !== SYSTEM_PROMPT_CATEGORY_NAME),
+      UNCATEGORIZED_PROMPT_CATEGORY_NAME,
     ];
     // 列表项统一为 { id, name, preview, onSelect }：系统分类取内置模板，其余取空间提示词。
     const isSystemCategory = promptMenuCategory === SYSTEM_PROMPT_CATEGORY_NAME && activeSystemPrompts.length > 0;
@@ -3436,6 +3439,10 @@ export const Chat: React.FC = () => {
                       ta.focus();
                       ta.setSelectionRange(text.length, text.length);
                     });
+                  }}
+                  onPromptSaved={(prompt) => {
+                    // 新保存的提示词插入列表最前（与后端 created_at DESC 顺序一致），刷新提示词菜单。
+                    setAvailablePrompts(prev => [prompt, ...prev]);
                   }}
                   onRegenerate={() => {
                     const lastUserMsg = messages.filter(m => m.role === 'user').pop();

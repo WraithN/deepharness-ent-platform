@@ -8,12 +8,14 @@ import type { PreviewMode } from './LivePreview';
 import type { SendContext } from '@/hooks/use-ag-ui-chat';
 import type { UserStoryData } from './UserStoryCard';
 import type { RequirementBreakdownData, RequirementBreakdownSubmitResult, RequirementItem } from './RequirementBreakdownCard';
+import type { WorkspacePrompt } from '@/types';
 
 interface ChatThreadProps {
   openDetail: (type: 'req' | 'defect' | 'case', id: string) => void;
   onArtifactClick: () => void;
   onEditMessage?: (text: string, context?: SendContext) => void;
   onRegenerate?: () => void;
+  onPromptSaved?: (prompt: WorkspacePrompt) => void;
   onFilePreview?: (path: string) => void;
   onProjectPreview?: (path: string, mode: PreviewMode) => void;
   onUserStoryPreview?: (data: UserStoryData) => void;
@@ -66,6 +68,7 @@ const ChatMessageItem: React.FC<{
           openDetail={props.openDetail}
           onRepoClick={props.onArtifactClick}
           onEdit={props.onEditMessage}
+          onPromptSaved={props.onPromptSaved}
         />
       ) : (
         <AssistantMessage
